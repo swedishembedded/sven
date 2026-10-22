@@ -49,7 +49,7 @@ impl App {
             Action::EditMessageAtCursor => {
                 if let Some(seg_idx) = self.chat.focused_segment {
                     if let Some(text) =
-                        crate::chat::segment::segment_editable_text(&self.chat.segments, seg_idx)
+                        crate::chat::segment::segment_editable_text(self.chat.segments(), seg_idx)
                     {
                         self.edit.message_index = Some(seg_idx);
                         self.edit.cursor = text.len();
@@ -72,8 +72,7 @@ impl App {
                     {
                         self.edit.clear();
                     }
-                    self.chat.segments.truncate(seg_idx);
-                    self.chat.expand_level.retain(|&i, _| i < seg_idx);
+                    self.chat.truncate_segments(seg_idx);
                     self.chat.focused_segment = None;
                     self.rerender_chat().await;
                     self.save_history_async();
@@ -84,14 +83,14 @@ impl App {
                 if let Some(seg_idx) = self.chat.focused_segment {
                     let paired_id: Option<String> = self
                         .chat
-                        .segments
+                        .segments()
                         .get(seg_idx)
                         .and_then(segment_tool_call_id)
                         .map(String::from);
 
                     let mut to_remove: Vec<usize> = vec![seg_idx];
                     if let Some(ref call_id) = paired_id {
-                        for (i, seg) in self.chat.segments.iter().enumerate() {
+                        for (i, seg) in self.chat.segments().iter().enumerate() {
                             if i != seg_idx && segment_tool_call_id(seg) == Some(call_id.as_str()) {
                                 to_remove.push(i);
                             }
@@ -108,28 +107,12 @@ impl App {
                         self.edit.clear();
                     }
 
+                    // Highest index first, so the lower ones stay valid.
                     for idx in &to_remove {
-                        if *idx < self.chat.segments.len() {
-                            self.chat.segments.remove(*idx);
+                        if *idx < self.chat.segments().len() {
+                            self.chat.remove_segment(*idx);
                         }
                     }
-
-                    let min_removed = *to_remove.last().unwrap_or(&seg_idx);
-                    let removed_count = to_remove.len();
-                    self.chat.expand_level = self
-                        .chat
-                        .expand_level
-                        .iter()
-                        .filter_map(|(&i, &level)| {
-                            if to_remove.contains(&i) {
-                                None
-                            } else if i > min_removed {
-                                Some((i - removed_count, level))
-                            } else {
-                                Some((i, level))
-                            }
-                        })
-                        .collect();
 
                     self.chat.focused_segment = None;
                     self.rerender_chat().await;
@@ -158,7 +141,7 @@ impl App {
                     let last_user =
                         (0..seg_idx)
                             .rev()
-                            .find_map(|i| match self.chat.segments.get(i) {
+                            .find_map(|i| match self.chat.segments().get(i) {
                                 Some(ChatSegment::Message(m)) => {
                                     if matches!(
                                         (&m.role, &m.content),
@@ -182,12 +165,12 @@ impl App {
 
                     if let Some((user_idx, user_text)) = last_user {
                         self.edit.clear();
-                        self.chat.segments.truncate(user_idx);
-                        self.chat.expand_level.retain(|&i, _| i < user_idx);
-                        let messages = messages_for_resubmit(&self.chat.segments);
+                        self.chat.truncate_segments(user_idx);
+                        let messages = messages_for_resubmit(self.chat.segments());
                         self.chat
-                            .segments
-                            .push(ChatSegment::Message(sven_model::Message::user(&user_text)));
+                            .push_segment(ChatSegment::Message(sven_model::Message::user(
+                                &user_text,
+                            )));
                         self.chat.focused_segment = None;
                         let qm = crate::app::QueuedMessage {
                             content: user_text,
@@ -227,7 +210,7 @@ impl App {
                     if new_content.is_empty() {
                         return false;
                     }
-                    let seg = match self.chat.segments.get(i) {
+                    let seg = match self.chat.segments().get(i) {
                         Some(ChatSegment::Message(m)) => m.clone(),
                         _ => return false,
                     };
@@ -240,18 +223,19 @@ impl App {
                                     .map(|c| crate::app::ModelDirective::SwitchTo(Box::new(c))),
                                 mode_transition: staged_mode,
                             };
-                            self.chat.segments.truncate(i + 1);
-                            self.chat.segments.pop();
-                            self.chat.segments.push(ChatSegment::Message(
+                            self.chat.truncate_segments(i);
+                            self.chat.push_segment(ChatSegment::Message(
                                 sven_model::Message::user(&new_content),
                             ));
-                            let messages = messages_for_resubmit(&self.chat.segments);
+                            let messages = messages_for_resubmit(self.chat.segments());
                             self.rerender_chat().await;
                             self.scroll_to_bottom();
                             self.send_resubmit_to_agent(messages, qm).await;
                         }
                         (Role::Assistant, MessageContent::Text(_)) => {
-                            if let Some(ChatSegment::Message(m)) = self.chat.segments.get_mut(i) {
+                            if let Some(ChatSegment::Message(m)) =
+                                self.chat.segments_mut().get_mut(i)
+                            {
                                 m.content = MessageContent::Text(new_content);
                             }
                             self.build_display_from_segments();
@@ -297,7 +281,9 @@ impl App {
                     }
                     if let Some(idx) = self.edit.message_index {
                         if let Some(original) = self.edit.original_text.clone() {
-                            if let Some(ChatSegment::Message(m)) = self.chat.segments.get_mut(idx) {
+                            if let Some(ChatSegment::Message(m)) =
+                                self.chat.segments_mut().get_mut(idx)
+                            {
                                 match (&m.role, &mut m.content) {
                                     (Role::User, MessageContent::Text(t)) => *t = original,
                                     (Role::Assistant, MessageContent::Text(t)) => *t = original,
@@ -349,7 +335,8 @@ impl App {
                 // Cancel chat-segment edit.
                 if let Some(idx) = self.edit.message_index {
                     if let Some(original) = self.edit.original_text.clone() {
-                        if let Some(ChatSegment::Message(m)) = self.chat.segments.get_mut(idx) {
+                        if let Some(ChatSegment::Message(m)) = self.chat.segments_mut().get_mut(idx)
+                        {
                             match (&m.role, &mut m.content) {
                                 (Role::User, MessageContent::Text(t)) => *t = original,
                                 (Role::Assistant, MessageContent::Text(t)) => *t = original,
@@ -401,10 +388,12 @@ impl App {
                             if trimmed.starts_with('/') {
                                 return self.submit_nvim_command(trimmed).await;
                             }
-                            self.chat.segments = messages
-                                .iter()
-                                .map(|m| ChatSegment::Message(m.clone()))
-                                .collect();
+                            self.chat.set_segments(
+                                messages
+                                    .iter()
+                                    .map(|m| ChatSegment::Message(m.clone()))
+                                    .collect(),
+                            );
                             self.chat.tool_args.clear();
                             for msg in &messages {
                                 if let MessageContent::ToolCall {
@@ -451,7 +440,7 @@ impl App {
                 if self.nvim.bridge.is_some() {
                     return false;
                 }
-                let n = self.chat.segments.len();
+                let n = self.chat.segments().len();
                 if n == 0 {
                     return false;
                 }
@@ -466,7 +455,7 @@ impl App {
                 if self.nvim.bridge.is_some() {
                     return false;
                 }
-                let n = self.chat.segments.len();
+                let n = self.chat.segments().len();
                 if n == 0 {
                     return false;
                 }
@@ -658,7 +647,7 @@ impl App {
             Action::ToggleDelegateSummary => {
                 if let Some(seg_idx) = self.chat.focused_segment {
                     if let Some(ChatSegment::DelegateSummary { expanded, .. }) =
-                        self.chat.segments.get_mut(seg_idx)
+                        self.chat.segments_mut().get_mut(seg_idx)
                     {
                         *expanded = !*expanded;
                         self.rerender_chat().await;
@@ -685,7 +674,7 @@ impl App {
 
                 // Expand/collapse if the click lands on a collapsible segment.
                 if let Some(seg_idx) = segment_at_line(&self.chat.segment_line_ranges, abs_line) {
-                    let is_collapsible = match self.chat.segments.get(seg_idx) {
+                    let is_collapsible = match self.chat.segments().get(seg_idx) {
                         Some(ChatSegment::Message(m)) => matches!(
                             (&m.role, &m.content),
                             (Role::User, MessageContent::Text(_))
@@ -697,20 +686,18 @@ impl App {
                         _ => false,
                     };
                     if is_collapsible {
-                        if let Some(seg) = self.chat.segments.get(seg_idx) {
-                            let cur = self.chat.effective_expand_level(seg_idx, seg);
-                            let next = if cur == 0 { 2 } else { 0 };
-                            self.chat.expand_level.insert(seg_idx, next);
-                            // When expanding a tool call, also expand the paired result
-                            // so it is visible without an extra click.
-                            if next >= 2 {
-                                if let Some(result_idx) = self.paired_result_for(seg_idx) {
-                                    let result_seg = self.chat.segments[result_idx].clone();
-                                    let cur_result =
-                                        self.chat.effective_expand_level(result_idx, &result_seg);
-                                    if cur_result == 0 {
-                                        self.chat.expand_level.insert(result_idx, 2);
-                                    }
+                        let next = if self.chat.expand_level(seg_idx) == 0 {
+                            2
+                        } else {
+                            0
+                        };
+                        self.chat.set_expand_level(seg_idx, next);
+                        // When expanding a tool call, also expand the paired result
+                        // so it is visible without an extra click.
+                        if next >= 2 {
+                            if let Some(result_idx) = self.paired_result_for(seg_idx) {
+                                if self.chat.expand_level(result_idx) == 0 {
+                                    self.chat.set_expand_level(result_idx, 2);
                                 }
                             }
                         }

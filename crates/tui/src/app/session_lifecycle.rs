@@ -122,7 +122,7 @@ impl App {
                         content: MessageContent::Text(content),
                     });
                     let mut chat = ChatState::new();
-                    chat.segments = vec![seg];
+                    chat.set_segments(vec![seg]);
                     Some(chat)
                 } else {
                     None
@@ -315,7 +315,7 @@ impl App {
         }
 
         let mut chat = ChatState::new();
-        chat.segments = segments;
+        chat.set_segments(segments);
         Some((chat, messages))
     }
 
@@ -437,10 +437,10 @@ mod tests {
         let mut entry = SessionEntry::new_blank("Test session");
         entry.id = SessionId::from_string(session_id.to_string());
         let mut chat = ChatState::new();
-        chat.segments = vec![
+        chat.set_segments(vec![
             crate::chat::segment::ChatSegment::Message(sven_model::Message::user(user_text)),
             crate::chat::segment::ChatSegment::Message(sven_model::Message::assistant("ok")),
-        ];
+        ]);
         let trajectory = entry.to_trajectory(&chat, None, None);
         atif::persist::write_trajectory_atomic(path, &trajectory, None)
             .expect("write test trajectory");
@@ -496,7 +496,7 @@ mod tests {
             .expect("trajectory on disk must load");
 
         assert_eq!(
-            chat.segments.len(),
+            chat.segments().len(),
             2,
             "both messages must be in the display chat"
         );

@@ -96,7 +96,7 @@ impl App {
                     }
 
                     if matches!(result.immediate_action, Some(ImmediateAction::ClearChat)) {
-                        self.chat.segments.clear();
+                        self.chat.set_segments(Vec::new());
                         self.chat.tool_args.clear();
                         self.save_history_async();
                         self.rerender_chat().await;
@@ -305,8 +305,7 @@ impl App {
                             task_id: task_id.clone(),
                         };
                         self.chat
-                            .segments
-                            .push(crate::chat::segment::ChatSegment::CollabEvent(ev));
+                            .push_segment(crate::chat::segment::ChatSegment::CollabEvent(ev));
                         self.save_history_async();
                         self.rerender_chat().await;
                         return false;
@@ -323,8 +322,7 @@ impl App {
                             feedback: feedback.clone(),
                         };
                         self.chat
-                            .segments
-                            .push(crate::chat::segment::ChatSegment::CollabEvent(ev));
+                            .push_segment(crate::chat::segment::ChatSegment::CollabEvent(ev));
                         self.save_history_async();
                         self.rerender_chat().await;
                         return false;
@@ -372,10 +370,9 @@ impl App {
             self.queue.selected = Some(self.queue.messages.len() - 1);
         } else {
             self.sync_nvim_buffer_to_segments().await;
-            let history = messages_for_resubmit(&self.chat.segments);
+            let history = messages_for_resubmit(self.chat.segments());
             self.chat
-                .segments
-                .push(ChatSegment::Message(Message::user(text)));
+                .push_segment(ChatSegment::Message(Message::user(text)));
             self.save_history_async();
             self.rerender_chat().await;
             self.scroll_to_bottom();
@@ -436,8 +433,7 @@ impl App {
                     "send_to_agent: agent channel closed; kernel session may have exited"
                 );
                 self.chat
-                    .segments
-                    .push(crate::chat::segment::ChatSegment::Error(
+                    .push_segment(crate::chat::segment::ChatSegment::Error(
                         "Agent session has stopped — check the error above for details.\n\
                      Verify your model config (provider / base_url) and restart sven."
                             .into(),
@@ -447,7 +443,7 @@ impl App {
             }
             self.agent.busy = true;
             // First message in chat: request LLM-generated title (local agent only).
-            if self.chat.segments.len() == 1
+            if self.chat.segments().len() == 1
                 && (self.chat_title == "New chat" || self.chat_title.is_empty())
                 && !self.is_node_proxy
             {
@@ -500,8 +496,7 @@ impl App {
                     "send_resubmit_to_agent: agent channel closed; kernel session may have exited"
                 );
                 self.chat
-                    .segments
-                    .push(crate::chat::segment::ChatSegment::Error(
+                    .push_segment(crate::chat::segment::ChatSegment::Error(
                         "Agent session has stopped — check the error above for details.\n\
                      Verify your model config (provider / base_url) and restart sven."
                             .into(),
@@ -536,8 +531,7 @@ impl App {
                     self.ui.focus = FocusPane::Input;
                 }
                 self.chat
-                    .segments
-                    .push(ChatSegment::Message(Message::user(&next.content)));
+                    .push_segment(ChatSegment::Message(Message::user(&next.content)));
                 self.rerender_chat().await;
                 self.chat.auto_scroll = true;
                 self.scroll_to_bottom();
@@ -587,10 +581,9 @@ impl App {
             self.send_abort_signal().await;
         } else {
             self.queue.abort_pending = false;
-            let history = messages_for_resubmit(&self.chat.segments);
+            let history = messages_for_resubmit(self.chat.segments());
             self.chat
-                .segments
-                .push(ChatSegment::Message(Message::user(&qm.content)));
+                .push_segment(ChatSegment::Message(Message::user(&qm.content)));
             self.save_history_async();
             self.rerender_chat().await;
             self.chat.auto_scroll = true;

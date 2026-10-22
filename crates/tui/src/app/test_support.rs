@@ -61,10 +61,9 @@ impl App {
     }
 
     pub fn inject_chat_user_message(&mut self, text: &str) -> usize {
-        let idx = self.chat.segments.len();
+        let idx = self.chat.segments().len();
         self.chat
-            .segments
-            .push(crate::chat::segment::ChatSegment::Message(
+            .push_segment(crate::chat::segment::ChatSegment::Message(
                 sven_model::Message::user(text),
             ));
         idx
@@ -90,8 +89,7 @@ impl App {
         self.chat.streaming_is_thinking = false;
         if !partial_text.is_empty() {
             self.chat
-                .segments
-                .push(ChatSegment::Message(Message::assistant(partial_text)));
+                .push_segment(ChatSegment::Message(Message::assistant(partial_text)));
         }
         self.agent.busy = false;
         self.agent.current_tool = None;

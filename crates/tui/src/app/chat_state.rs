@@ -5,7 +5,14 @@
 
 use std::collections::HashMap;
 
-use crate::{chat::segment::ChatSegment, markdown::StyledLines};
+use crate::{
+    chat::segment::{tool_result_insert_position, ChatSegment},
+    markdown::StyledLines,
+};
+
+/// Identity of a segment within one chat. It stays with the segment when
+/// segments are inserted or removed around it, which an index does not.
+pub type SegmentId = u64;
 
 /// Expand level for a collapsible segment.
 ///
@@ -20,7 +27,14 @@ pub(crate) struct ChatState {
     /// Rendered display lines (pre-wrapped, styled) used by the chat widget.
     pub lines: StyledLines,
     /// Authoritative conversation history (source of truth for display and resubmit).
-    pub segments: Vec<ChatSegment>,
+    /// Structural changes go through the `*_segment(s)` methods, which keep
+    /// `segment_ids`, the expand state and the highlight attached to the
+    /// segments they belong to.
+    segments: Vec<ChatSegment>,
+    /// `segment_ids[i]` is the identity of `segments[i]`.
+    segment_ids: Vec<SegmentId>,
+    /// The id the next added segment gets; ids are never reused.
+    next_segment_id: SegmentId,
     /// Accumulated assistant text during streaming (until `TextComplete`).
     pub streaming_buffer: String,
     /// True while receiving `ThinkingDelta` events; controls thinking-block style.
@@ -32,10 +46,11 @@ pub(crate) struct ChatState {
     pub scroll_offset: usize,
     /// When true, new agent content automatically scrolls to the bottom.
     pub auto_scroll: bool,
-    /// Per-segment expand level (ratatui-only mode).
+    /// Per-segment expand level (ratatui-only mode), keyed by segment id.
     /// Segments not in this map use the default level for their type.
-    pub expand_level: HashMap<usize, ExpandLevel>,
-    /// The segment index closest to the vertical centre of the chat viewport.
+    expand_level: HashMap<SegmentId, ExpandLevel>,
+    /// Index of the keyboard-highlighted segment. Inserting or removing a
+    /// segment before it moves it along with its segment.
     pub focused_segment: Option<usize>,
     /// `call_id → tool_name` lookup used when rendering tool results.
     pub tool_args: HashMap<String, String>,
@@ -66,6 +81,8 @@ impl ChatState {
         Self {
             lines: Vec::new(),
             segments: Vec::new(),
+            segment_ids: Vec::new(),
+            next_segment_id: 0,
             streaming_buffer: String::new(),
             streaming_is_thinking: false,
             segment_line_ranges: Vec::new(),
@@ -94,12 +111,124 @@ impl ChatState {
         }
     }
 
-    /// Return the effective expand level for segment `idx`.
-    pub fn effective_expand_level(&self, idx: usize, seg: &ChatSegment) -> ExpandLevel {
-        if let Some(&level) = self.expand_level.get(&idx) {
-            return level;
+    // ── Segments ──────────────────────────────────────────────────────────────
+
+    /// The conversation, in display order.
+    pub fn segments(&self) -> &[ChatSegment] {
+        &self.segments
+    }
+
+    /// Mutable access to the segments' content. A slice cannot change the
+    /// number or order of segments, so their identities are unchanged.
+    pub fn segments_mut(&mut self) -> &mut [ChatSegment] {
+        &mut self.segments
+    }
+
+    /// The stable id of the segment at `idx`.
+    pub fn segment_id(&self, idx: usize) -> Option<SegmentId> {
+        self.segment_ids.get(idx).copied()
+    }
+
+    fn fresh_id(&mut self) -> SegmentId {
+        let id = self.next_segment_id;
+        self.next_segment_id += 1;
+        id
+    }
+
+    /// Append a segment and return its index.
+    pub fn push_segment(&mut self, seg: ChatSegment) -> usize {
+        let id = self.fresh_id();
+        self.segments.push(seg);
+        self.segment_ids.push(id);
+        self.segments.len() - 1
+    }
+
+    /// Insert a segment at `idx`, shifting the segments after it.
+    pub fn insert_segment(&mut self, idx: usize, seg: ChatSegment) {
+        let id = self.fresh_id();
+        self.segments.insert(idx, seg);
+        self.segment_ids.insert(idx, id);
+        if let Some(f) = self.focused_segment.as_mut() {
+            if *f >= idx {
+                *f += 1;
+            }
         }
-        default_expand_level(seg)
+    }
+
+    /// Remove and return the segment at `idx`.
+    pub fn remove_segment(&mut self, idx: usize) -> ChatSegment {
+        let id = self.segment_ids.remove(idx);
+        self.expand_level.remove(&id);
+        self.focused_segment = match self.focused_segment {
+            Some(f) if f == idx => None,
+            Some(f) if f > idx => Some(f - 1),
+            other => other,
+        };
+        self.segments.remove(idx)
+    }
+
+    /// Keep only the first `len` segments.
+    pub fn truncate_segments(&mut self, len: usize) {
+        for id in self.segment_ids.drain(len.min(self.segments.len())..) {
+            self.expand_level.remove(&id);
+        }
+        self.segments.truncate(len);
+        if self.focused_segment.is_some_and(|f| f >= len) {
+            self.focused_segment = None;
+        }
+    }
+
+    /// Replace the whole conversation. The new segments are new identities:
+    /// no expand state or highlight carries over from the old ones.
+    pub fn set_segments(&mut self, segments: Vec<ChatSegment>) {
+        self.segments.clear();
+        self.segment_ids.clear();
+        self.expand_level.clear();
+        self.focused_segment = None;
+        for seg in segments {
+            self.push_segment(seg);
+        }
+    }
+
+    /// Add a tool's result right after the call it answers (or at the end
+    /// when that call is not in this chat), and return its index. Errors are
+    /// recorded with the `error: ` prefix the renderers key on.
+    pub fn insert_tool_result(&mut self, call_id: &str, output: &str, is_error: bool) -> usize {
+        let content = if is_error {
+            format!("error: {output}")
+        } else {
+            output.to_string()
+        };
+        let seg = ChatSegment::Message(sven_model::Message::tool_result(call_id, &content));
+        match tool_result_insert_position(&self.segments, call_id) {
+            Some(pos) => {
+                self.insert_segment(pos, seg);
+                pos
+            }
+            None => self.push_segment(seg),
+        }
+    }
+
+    // ── Expansion ─────────────────────────────────────────────────────────────
+
+    /// The expand level of the segment at `idx`: the one set for it, or the
+    /// default for its kind.
+    pub fn expand_level(&self, idx: usize) -> ExpandLevel {
+        let set = self
+            .segment_id(idx)
+            .and_then(|id| self.expand_level.get(&id).copied());
+        match (set, self.segments.get(idx)) {
+            (Some(level), _) => level,
+            (None, Some(seg)) => default_expand_level(seg),
+            (None, None) => 0,
+        }
+    }
+
+    /// Set the expand level of the segment at `idx`.
+    pub fn set_expand_level(&mut self, idx: usize, level: ExpandLevel) {
+        if let Some(id) = self.segment_id(idx) {
+            self.expand_level.insert(id, level);
+        }
     }
 }
 

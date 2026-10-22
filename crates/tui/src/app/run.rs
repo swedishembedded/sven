@@ -139,10 +139,10 @@ impl App {
             }
         }
 
-        if !self.chat.segments.is_empty() {
+        if !self.chat.segments().is_empty() {
             let messages: Vec<Message> = self
                 .chat
-                .segments
+                .segments()
                 .iter()
                 .filter_map(|seg| {
                     if let ChatSegment::Message(m) = seg {
@@ -199,7 +199,7 @@ impl App {
                 }
             }
 
-            if self.nvim.bridge.is_some() && !self.chat.segments.is_empty() {
+            if self.nvim.bridge.is_some() && !self.chat.segments().is_empty() {
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
             }
@@ -207,8 +207,7 @@ impl App {
 
         if let Some(qm) = self.queue.messages.pop_front() {
             self.chat
-                .segments
-                .push(ChatSegment::Message(Message::user(&qm.content)));
+                .push_segment(ChatSegment::Message(Message::user(&qm.content)));
             self.rerender_chat().await;
             self.send_to_agent(qm).await;
         }

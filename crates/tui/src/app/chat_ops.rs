@@ -34,7 +34,7 @@ const PARTIAL_VIEW_LINES: usize = 12;
 impl App {
     // ── Chat display ──────────────────────────────────────────────────────────
 
-    /// Rebuild `chat.lines` and `chat.segment_line_ranges` from `chat.segments`
+    /// Rebuild `chat.lines` and `chat.segment_line_ranges` from the segments
     /// plus the streaming buffer.
     pub(crate) fn build_display_from_segments(&mut self) {
         let mut all_lines = Vec::new();
@@ -53,7 +53,7 @@ impl App {
         let tool_streaming_content = self.chat.tool_streaming_content.clone();
         let anim_frame = self.agent.anim_frame;
         let tool_display_registry: ToolDisplayRegistryRef = self.shared_tool_displays.get();
-        let segs_len = self.chat.segments.len();
+        let segs_len = self.chat.segments().len();
 
         // Track result segments that have been visually merged into a grouped pair
         // line so their loop iteration can be skipped without rendering a duplicate.
@@ -68,9 +68,9 @@ impl App {
                 continue;
             }
 
-            let seg = &self.chat.segments[i];
+            let seg = &self.chat.segments()[i];
             let expand = if self.nvim.disabled {
-                self.chat.effective_expand_level(i, seg)
+                self.chat.expand_level(i)
             } else {
                 2 // always full in nvim mode
             };
@@ -78,7 +78,7 @@ impl App {
             // Check if this is a ToolCall paired with the immediately following
             // ToolResult - when both are at tier 0, render as a single grouped line.
             let paired_result_idx = if expand == 0 {
-                get_paired_result_idx(&self.chat.segments, i)
+                get_paired_result_idx(self.chat.segments(), i)
             } else {
                 None
             };
@@ -97,7 +97,7 @@ impl App {
             // Determine if this is a tool call/result segment eligible for rich rendering.
             let rich_lines_opt = render_segment_rich(
                 seg,
-                paired_result_idx.and_then(|ri| self.chat.segments.get(ri)),
+                paired_result_idx.and_then(|ri| self.chat.segments().get(ri)),
                 expand,
                 &self.chat.tool_args,
                 &tool_durations,
@@ -116,7 +116,7 @@ impl App {
                 let s = if let Some(result_idx) = paired_result_idx {
                     // Both the tool call (i) and result (result_idx) are tier-0:
                     // render as a single grouped line.
-                    let result_seg = &self.chat.segments[result_idx];
+                    let result_seg = &self.chat.segments()[result_idx];
                     make_grouped_preview(
                         seg,
                         result_seg,
@@ -179,7 +179,7 @@ impl App {
             if self.chat.streaming_is_thinking {
                 // Scanning dot (side to side) for Seasoning, same as in-progress tool calls.
                 let dot = crate::ui::theme::tool_scan(anim_frame, ascii);
-                let sep = if self.chat.segments.is_empty() {
+                let sep = if self.chat.segments().is_empty() {
                     ""
                 } else {
                     "\n"
@@ -210,7 +210,7 @@ impl App {
             } else {
                 // Blinking ▌ cursor shows the stream is live.
                 let cursor = crate::ui::theme::stream_cursor(anim_frame, ascii);
-                let sep = if self.chat.segments.is_empty() {
+                let sep = if self.chat.segments().is_empty() {
                     ""
                 } else {
                     "\n"
@@ -233,7 +233,7 @@ impl App {
     /// If segment `idx` is a ToolCall, return the index of the immediately
     /// following ToolResult with the same call_id (if any).
     pub(crate) fn paired_result_for(&self, idx: usize) -> Option<usize> {
-        get_paired_result_idx(&self.chat.segments, idx)
+        get_paired_result_idx(self.chat.segments(), idx)
     }
 
     /// Re-render the chat pane: update the Neovim buffer (if active) and
@@ -241,7 +241,7 @@ impl App {
     pub(crate) async fn rerender_chat(&mut self) {
         if let Some(nvim_bridge) = &self.nvim.bridge {
             let content = format_conversation(
-                &self.chat.segments,
+                self.chat.segments(),
                 &self.chat.streaming_buffer,
                 &self.chat.tool_args,
             );
@@ -349,7 +349,7 @@ impl App {
     /// old `records.is_empty()` early-return: display-only segments like
     /// `TodoUpdate`/`CollabEvent`/`Error` never count).
     fn active_chat_has_persistable_content(&self) -> bool {
-        self.chat.segments.iter().any(|seg| {
+        self.chat.segments().iter().any(|seg| {
             matches!(
                 seg,
                 ChatSegment::Message(_)
@@ -407,10 +407,8 @@ impl App {
         if let Some(content) = content {
             match parse_markdown_to_messages(&content) {
                 Ok(messages) if !messages.is_empty() => {
-                    self.chat.segments = messages
-                        .iter()
-                        .map(|m| ChatSegment::Message(m.clone()))
-                        .collect();
+                    self.chat
+                        .set_segments(messages.iter().cloned().map(ChatSegment::Message).collect());
                     self.chat.tool_args.clear();
                     for m in &messages {
                         if let MessageContent::ToolCall {
@@ -443,7 +441,7 @@ impl App {
 
     /// Copy the text content of a segment to the terminal clipboard via OSC 52.
     pub(crate) fn copy_segment_to_clipboard(&self, seg_idx: usize) -> bool {
-        if let Some(seg) = self.chat.segments.get(seg_idx) {
+        if let Some(seg) = self.chat.segments().get(seg_idx) {
             let text = extract_segment_text(seg, &self.chat.tool_args);
             if !text.is_empty() {
                 osc52_copy(&text);
@@ -455,10 +453,10 @@ impl App {
 
     /// Copy all chat content to the clipboard via OSC 52.
     pub(crate) fn copy_all_to_clipboard(&self) -> bool {
-        if self.chat.segments.is_empty() {
+        if self.chat.segments().is_empty() {
             return false;
         }
-        let text = format_conversation(&self.chat.segments, "", &self.chat.tool_args);
+        let text = format_conversation(self.chat.segments(), "", &self.chat.tool_args);
         osc52_copy(&text);
         true
     }

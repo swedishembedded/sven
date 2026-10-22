@@ -40,7 +40,7 @@ impl SessionEntry {
             // drops it; record the failure as a plain assistant message
             // instead, mirroring the CI runner's own failure marker
             // (`sven_ci::runner::event::finalize_subagent_child`).
-            for seg in &mut chat.segments {
+            for seg in chat.segments_mut() {
                 if let ChatSegment::Error(reason) = seg {
                     *seg = ChatSegment::Message(sven_model::Message::assistant(format!(
                         "(subagent failed: {reason})"
@@ -53,7 +53,9 @@ impl SessionEntry {
             // failed before its first event) - persist the spawn prompt
             // rather than silently dropping the subagent.
             let mut chat = ChatState::new();
-            chat.segments = vec![ChatSegment::Message(sven_model::Message::user(prompt))];
+            chat.set_segments(vec![ChatSegment::Message(sven_model::Message::user(
+                prompt,
+            ))]);
             chat
         } else {
             return None;
@@ -86,7 +88,7 @@ pub fn build_active_trajectory(
     } else {
         // Fallback for the rare case where the active entry isn't found.
         let records: Vec<sven_session_store::ConversationRecord> = chat
-            .segments
+            .segments()
             .iter()
             .filter_map(|seg| match seg {
                 ChatSegment::Message(m) => {
@@ -194,7 +196,7 @@ pub fn restore_subagent_children(
                 .filter_map(crate::app::construct::conversation_record_to_chat_segment)
                 .collect();
         let mut chat = ChatState::new();
-        chat.segments = segments;
+        chat.set_segments(segments);
 
         let mut entry = SessionEntry::new_subagent(title, parent_id.clone(), None, String::new());
         entry.id = child_id;
@@ -222,16 +224,17 @@ mod tests {
     /// `false` for an assistant turn.
     fn chat_with_messages(msgs: &[(bool, &str)]) -> ChatState {
         let mut chat = ChatState::new();
-        chat.segments = msgs
-            .iter()
-            .map(|(is_user, text)| {
-                ChatSegment::Message(if *is_user {
-                    Message::user(*text)
-                } else {
-                    Message::assistant(*text)
+        chat.set_segments(
+            msgs.iter()
+                .map(|(is_user, text)| {
+                    ChatSegment::Message(if *is_user {
+                        Message::user(*text)
+                    } else {
+                        Message::assistant(*text)
+                    })
                 })
-            })
-            .collect();
+                .collect(),
+        );
         chat
     }
     const USER: bool = true;
@@ -333,8 +336,7 @@ mod tests {
         let mut child =
             SessionEntry::new_subagent("Doomed task", root.id.clone(), None, "do X".to_string());
         let mut chat = chat_with_messages(&[(USER, "do X")]);
-        chat.segments
-            .push(ChatSegment::Error("network timeout".to_string()));
+        chat.push_segment(ChatSegment::Error("network timeout".to_string()));
         child.stored_chat = Some(chat);
 
         let trajectory = child.to_child_trajectory(None, None).unwrap();
@@ -372,7 +374,7 @@ mod tests {
             restored.buffer_handle.is_none(),
             "a restored child must never claim a buffer handle"
         );
-        let segments = &restored.stored_chat.as_ref().unwrap().segments;
+        let segments = &restored.stored_chat.as_ref().unwrap().segments();
         assert!(segments
             .iter()
             .any(|s| matches!(s, ChatSegment::Message(m) if m.as_text() == Some("fix it"))));

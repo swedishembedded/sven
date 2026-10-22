@@ -285,7 +285,7 @@ impl SessionEntry {
         use sven_session_store::ConversationRecord;
 
         let records: Vec<ConversationRecord> = chat
-            .segments
+            .segments()
             .iter()
             .filter_map(|seg| match seg {
                 crate::chat::segment::ChatSegment::Message(m) => {
@@ -370,10 +370,9 @@ impl SessionEntry {
             }
             Ev::TextComplete(text) => {
                 if let Some(chat) = &mut self.stored_chat {
-                    chat.segments
-                        .push(crate::chat::segment::ChatSegment::Message(
-                            sven_model::Message::assistant(text),
-                        ));
+                    chat.push_segment(crate::chat::segment::ChatSegment::Message(
+                        sven_model::Message::assistant(text),
+                    ));
                     chat.streaming_buffer.clear();
                 }
                 self.busy = true;
@@ -394,27 +393,7 @@ impl SessionEntry {
                     self.current_tool = None;
                 }
                 if let Some(chat) = &mut self.stored_chat {
-                    let output_with_error = if *is_error {
-                        format!("error: {output}")
-                    } else {
-                        output.clone()
-                    };
-                    let result_seg = crate::chat::segment::ChatSegment::Message(
-                        sven_model::Message::tool_result(call_id, &output_with_error),
-                    );
-                    let insert_pos =
-                        crate::chat::segment::tool_result_insert_position(&chat.segments, call_id);
-                    if let Some(pos) = insert_pos {
-                        let shifted: std::collections::HashMap<usize, u8> = chat
-                            .expand_level
-                            .drain()
-                            .map(|(i, v)| (if i >= pos { i + 1 } else { i }, v))
-                            .collect();
-                        chat.expand_level = shifted;
-                        chat.segments.insert(pos, result_seg);
-                    } else {
-                        chat.segments.push(result_seg);
-                    }
+                    chat.insert_tool_result(call_id, output, *is_error);
                 }
             }
             Ev::TurnComplete => {
@@ -431,8 +410,7 @@ impl SessionEntry {
                 self.busy = false;
                 self.current_tool = None;
                 if let Some(chat) = &mut self.stored_chat {
-                    chat.segments
-                        .push(crate::chat::segment::ChatSegment::Error(msg.clone()));
+                    chat.push_segment(crate::chat::segment::ChatSegment::Error(msg.clone()));
                 }
             }
             Ev::TokenUsage {
@@ -471,27 +449,24 @@ impl SessionEntry {
                 turn,
             } => {
                 if let Some(chat) = &mut self.stored_chat {
-                    chat.segments
-                        .push(crate::chat::segment::ChatSegment::ContextCompacted {
-                            tokens_before: *tokens_before,
-                            tokens_after: *tokens_after,
-                            strategy: strategy.clone(),
-                            turn: *turn,
-                        });
+                    chat.push_segment(crate::chat::segment::ChatSegment::ContextCompacted {
+                        tokens_before: *tokens_before,
+                        tokens_after: *tokens_after,
+                        strategy: strategy.clone(),
+                        turn: *turn,
+                    });
                 }
             }
             Ev::ThinkingComplete(content) => {
                 if let Some(chat) = &mut self.stored_chat {
-                    chat.segments
-                        .push(crate::chat::segment::ChatSegment::Thinking {
-                            content: content.clone(),
-                        });
+                    chat.push_segment(crate::chat::segment::ChatSegment::Thinking {
+                        content: content.clone(),
+                    });
                 }
             }
             Ev::CollabEvent(ev) => {
                 if let Some(chat) = &mut self.stored_chat {
-                    chat.segments
-                        .push(crate::chat::segment::ChatSegment::CollabEvent(ev.clone()));
+                    chat.push_segment(crate::chat::segment::ChatSegment::CollabEvent(ev.clone()));
                 }
             }
             Ev::DelegateSummary {
@@ -502,16 +477,15 @@ impl SessionEntry {
                 result_preview,
             } => {
                 if let Some(chat) = &mut self.stored_chat {
-                    chat.segments
-                        .push(crate::chat::segment::ChatSegment::DelegateSummary {
-                            to_name: to_name.clone(),
-                            task_title: task_title.clone(),
-                            duration_ms: *duration_ms,
-                            status: status.clone(),
-                            result_preview: result_preview.clone(),
-                            expanded: false,
-                            inner: vec![],
-                        });
+                    chat.push_segment(crate::chat::segment::ChatSegment::DelegateSummary {
+                        to_name: to_name.clone(),
+                        task_title: task_title.clone(),
+                        duration_ms: *duration_ms,
+                        status: status.clone(),
+                        result_preview: result_preview.clone(),
+                        expanded: false,
+                        inner: vec![],
+                    });
                 }
             }
             // Display-only or metadata-only: no stored segment.
@@ -861,7 +835,7 @@ mod tests {
 
     fn chat_with_multi_turn_tool_call_and_thinking() -> ChatState {
         let mut chat = ChatState::new();
-        chat.segments = vec![
+        chat.set_segments(vec![
             ChatSegment::Message(Message::user("What is 2+2?")),
             ChatSegment::Thinking {
                 content: "I should compute it.".to_string(),
@@ -880,7 +854,7 @@ mod tests {
             ChatSegment::Message(Message::assistant("The answer is 4.")),
             ChatSegment::Message(Message::user("Thanks!")),
             ChatSegment::Message(Message::assistant("You're welcome!")),
-        ];
+        ]);
         chat
     }
 
@@ -986,10 +960,12 @@ mod tests {
         // omits the copied step), then save.
         let records = sven_session_store::steps_to_conversation_records(&source.steps);
         let mut chat = ChatState::new();
-        chat.segments = records
-            .into_iter()
-            .filter_map(crate::app::construct::conversation_record_to_chat_segment)
-            .collect();
+        chat.set_segments(
+            records
+                .into_iter()
+                .filter_map(crate::app::construct::conversation_record_to_chat_segment)
+                .collect(),
+        );
         let saved = entry.to_trajectory(&chat, None, None);
 
         let carried: Vec<_> = saved

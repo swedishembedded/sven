@@ -189,7 +189,7 @@ impl App {
 
         // ── Chat pane ─────────────────────────────────────────────────────────
         // Show the welcome screen when the chat is empty and the agent is idle.
-        let show_welcome = self.chat.segments.is_empty()
+        let show_welcome = self.chat.segments().is_empty()
             && self.chat.streaming_buffer.is_empty()
             && !self.agent.busy
             && self.nvim.disabled;
@@ -235,7 +235,7 @@ impl App {
                     search_current: self.ui.search.current,
                     search_regex: self.ui.search.regex.as_ref(),
                     editing_line_range: editing_range,
-                    segment_count: self.chat.segments.len(),
+                    segment_count: self.chat.segments().len(),
                     auto_scroll_paused,
                     selection: self.chat.normalized_selection(),
                     highlight_line_range,

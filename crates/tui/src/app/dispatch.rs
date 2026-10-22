@@ -316,10 +316,9 @@ impl App {
                             if self.queue.messages.is_empty() && self.ui.focus == FocusPane::Queue {
                                 self.ui.focus = FocusPane::Input;
                             }
-                            let history = messages_for_resubmit(&self.chat.segments);
+                            let history = messages_for_resubmit(self.chat.segments());
                             self.chat
-                                .segments
-                                .push(ChatSegment::Message(Message::user(&qm.content)));
+                                .push_segment(ChatSegment::Message(Message::user(&qm.content)));
                             self.save_history_async();
                             self.rerender_chat().await;
                             self.chat.auto_scroll = true;
@@ -620,7 +619,7 @@ impl App {
     pub(crate) fn update_editing_segment_live(&mut self) {
         if let Some(idx) = self.edit.message_index {
             let new_text = self.edit.buffer.clone();
-            if let Some(ChatSegment::Message(m)) = self.chat.segments.get_mut(idx) {
+            if let Some(ChatSegment::Message(m)) = self.chat.segments_mut().get_mut(idx) {
                 match (&m.role, &mut m.content) {
                     (sven_model::Role::User, sven_model::MessageContent::Text(t)) => *t = new_text,
                     (sven_model::Role::Assistant, sven_model::MessageContent::Text(t)) => {

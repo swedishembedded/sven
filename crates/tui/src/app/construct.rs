@@ -91,7 +91,7 @@ impl App {
         let completion_manager = CompletionManager::new(registry.clone());
 
         let mut chat = ChatState::new();
-        chat.segments = initial_segments;
+        chat.set_segments(initial_segments);
 
         let is_node_proxy = opts.node_backend.is_some();
         let (node_url, node_token, node_insecure) = opts
@@ -196,23 +196,6 @@ impl App {
             app.queue
                 .messages
                 .push_back(crate::QueuedMessage::plain(prompt));
-        }
-
-        // In ratatui-only mode, set default expand levels for loaded segments.
-        // Tool calls, tool results, and thinking default to tier 0 (summary).
-        // User and agent text default to tier 2 (full). Since the HashMap default
-        // is already tier-0 for collapsible types (via default_expand_level), we
-        // only need to set explicit entries for collapsible types that already
-        // exist in the loaded history.
-        if app.nvim.disabled {
-            use crate::app::chat_state::default_expand_level;
-            for (i, seg) in app.chat.segments.iter().enumerate() {
-                let level = default_expand_level(seg);
-                // Only insert if the default would be 0 (collapsible types).
-                if level == 0 {
-                    app.chat.expand_level.insert(i, 0);
-                }
-            }
         }
 
         // Bare `--resume` (no id): open the session picker immediately instead

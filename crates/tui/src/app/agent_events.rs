@@ -37,8 +37,7 @@ impl App {
                     if entry.stored_chat.is_none() {
                         let mut chat = ChatState::new();
                         if let Some(ref prompt) = entry.initial_prompt.clone() {
-                            chat.segments
-                                .push(ChatSegment::Message(Message::user(prompt)));
+                            chat.push_segment(ChatSegment::Message(Message::user(prompt)));
                         }
                         entry.stored_chat = Some(chat);
                     }
@@ -159,8 +158,7 @@ impl App {
             AgentEvent::TextComplete(full_text) => {
                 tracing::info!(len = full_text.len(), "TUI: TextComplete received");
                 self.chat
-                    .segments
-                    .push(ChatSegment::Message(Message::assistant(&full_text)));
+                    .push_segment(ChatSegment::Message(Message::assistant(&full_text)));
                 self.chat.streaming_buffer.clear();
                 self.chat.streaming_is_thinking = false;
                 self.save_history_async();
@@ -185,8 +183,7 @@ impl App {
                 self.agent
                     .tool_start_times
                     .insert(tc.id.clone(), Instant::now());
-                let seg_idx = self.chat.segments.len();
-                self.chat.segments.push(ChatSegment::Message(Message {
+                self.chat.push_segment(ChatSegment::Message(Message {
                     role: Role::Assistant,
                     content: MessageContent::ToolCall {
                         tool_call_id: tc.id.clone(),
@@ -196,11 +193,6 @@ impl App {
                         },
                     },
                 }));
-                if self.nvim.disabled {
-                    // Default expand level for tool calls is 0 (summary).
-                    // The HashMap default is used so no explicit insert needed.
-                    let _ = seg_idx;
-                }
                 self.save_history_async();
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
@@ -221,36 +213,9 @@ impl App {
                     let elapsed = start.elapsed().as_secs_f32();
                     self.chat.tool_durations.insert(call_id.clone(), elapsed);
                 }
-                let output_with_error = if is_error {
-                    format!("error: {output}")
-                } else {
-                    output
-                };
-                let result_seg =
-                    ChatSegment::Message(Message::tool_result(&call_id, &output_with_error));
-                // Insert the result immediately after the matching tool call so
-                // that get_paired_result_idx() groups them correctly during streaming.
-                let insert_pos = crate::chat::segment::tool_result_insert_position(
-                    &self.chat.segments,
-                    &call_id,
-                );
-                let seg_idx = if let Some(pos) = insert_pos {
-                    // Shift expand_level indices >= pos up by 1 to keep them aligned.
-                    let shifted: std::collections::HashMap<usize, u8> = self
-                        .chat
-                        .expand_level
-                        .drain()
-                        .map(|(i, v)| (if i >= pos { i + 1 } else { i }, v))
-                        .collect();
-                    self.chat.expand_level = shifted;
-                    self.chat.segments.insert(pos, result_seg);
-                    pos
-                } else {
-                    let idx = self.chat.segments.len();
-                    self.chat.segments.push(result_seg);
-                    idx
-                };
-                let _ = seg_idx;
+                // The result goes right after its call so get_paired_result_idx()
+                // groups them while other calls are still streaming.
+                self.chat.insert_tool_result(&call_id, &output, is_error);
                 // Signal the run-loop to check and restore terminal state.
                 self.needs_terminal_recover = true;
                 self.save_history_async();
@@ -267,7 +232,7 @@ impl App {
                 strategy,
                 turn,
             } => {
-                self.chat.segments.push(ChatSegment::ContextCompacted {
+                self.chat.push_segment(ChatSegment::ContextCompacted {
                     tokens_before,
                     tokens_after,
                     strategy,
@@ -346,7 +311,7 @@ impl App {
                 if self.is_node_proxy
                     && (self.chat_title == "New chat" || self.chat_title.is_empty())
                 {
-                    let first_user_text = self.chat.segments.iter().find_map(|seg| {
+                    let first_user_text = self.chat.segments().iter().find_map(|seg| {
                         use crate::chat::segment::ChatSegment;
                         use sven_model::{MessageContent, Role};
                         if let ChatSegment::Message(m) = seg {
@@ -383,8 +348,7 @@ impl App {
                         "TUI: TurnComplete draining non-empty streaming_buffer (TextComplete was dropped)"
                     );
                     self.chat
-                        .segments
-                        .push(ChatSegment::Message(Message::assistant(&leftover)));
+                        .push_segment(ChatSegment::Message(Message::assistant(&leftover)));
                 }
                 self.chat.streaming_buffer.clear();
                 self.chat.streaming_is_thinking = false;
@@ -436,8 +400,7 @@ impl App {
                             self.ui.focus = FocusPane::Input;
                         }
                         self.chat
-                            .segments
-                            .push(ChatSegment::Message(Message::user(&next.content)));
+                            .push_segment(ChatSegment::Message(Message::user(&next.content)));
                         self.save_history_async();
                         self.rerender_chat().await;
                         self.chat.auto_scroll = true;
@@ -451,8 +414,7 @@ impl App {
                 self.chat.streaming_is_thinking = false;
                 if !partial_text.is_empty() {
                     self.chat
-                        .segments
-                        .push(ChatSegment::Message(Message::assistant(&partial_text)));
+                        .push_segment(ChatSegment::Message(Message::assistant(&partial_text)));
                 }
                 self.agent.busy = false;
                 self.agent.current_tool = None;
@@ -489,10 +451,9 @@ impl App {
                         if self.queue.messages.is_empty() && self.ui.focus == FocusPane::Queue {
                             self.ui.focus = FocusPane::Input;
                         }
-                        let history = messages_for_resubmit(&self.chat.segments);
+                        let history = messages_for_resubmit(self.chat.segments());
                         self.chat
-                            .segments
-                            .push(ChatSegment::Message(Message::user(&next.content)));
+                            .push_segment(ChatSegment::Message(Message::user(&next.content)));
                         self.save_history_async();
                         self.rerender_chat().await;
                         self.chat.auto_scroll = true;
@@ -527,7 +488,7 @@ impl App {
                 self.rerender_chat().await;
             }
             AgentEvent::Error(msg) => {
-                self.chat.segments.push(ChatSegment::Error(msg.clone()));
+                self.chat.push_segment(ChatSegment::Error(msg.clone()));
                 self.save_history_async();
                 self.rerender_chat().await;
                 self.agent.busy = false;
@@ -535,7 +496,7 @@ impl App {
                 self.agent.model_waiting = None;
             }
             AgentEvent::TodoUpdate(todos) => {
-                self.chat.segments.push(ChatSegment::TodoUpdate(todos));
+                self.chat.push_segment(ChatSegment::TodoUpdate(todos));
                 self.rerender_chat().await;
                 if let Some(nvim_bridge) = &self.nvim.bridge {
                     let mut bridge = nvim_bridge.lock().await;
@@ -557,7 +518,7 @@ impl App {
             AgentEvent::ThinkingComplete(content) => {
                 self.chat.streaming_buffer.clear();
                 self.chat.streaming_is_thinking = false;
-                self.chat.segments.push(ChatSegment::Thinking { content });
+                self.chat.push_segment(ChatSegment::Thinking { content });
                 // Default expand level is 0 (summary) - no explicit insert needed.
                 self.save_history_async();
                 self.rerender_chat().await;
@@ -572,7 +533,7 @@ impl App {
                 self.session.stage_model(resolved);
             }
             AgentEvent::CollabEvent(ev) => {
-                self.chat.segments.push(ChatSegment::CollabEvent(ev));
+                self.chat.push_segment(ChatSegment::CollabEvent(ev));
                 self.save_history_async();
                 self.rerender_chat().await;
                 self.scroll_to_bottom();
@@ -584,7 +545,7 @@ impl App {
                 status,
                 result_preview,
             } => {
-                self.chat.segments.push(ChatSegment::DelegateSummary {
+                self.chat.push_segment(ChatSegment::DelegateSummary {
                     to_name,
                     task_title,
                     duration_ms,
@@ -621,8 +582,7 @@ impl App {
                         // Seed the chat with the user prompt so the subagent view
                         // shows the initial request as the first message.
                         if let Some(ref prompt) = entry.initial_prompt.clone() {
-                            chat.segments
-                                .push(ChatSegment::Message(Message::user(prompt)));
+                            chat.push_segment(ChatSegment::Message(Message::user(prompt)));
                         }
                         entry.stored_chat = Some(chat);
                     }
@@ -689,7 +649,7 @@ fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
             // Flush any accumulated assistant text before the tool call.
             flush_streaming_buffer(chat);
             chat.tool_args.insert(id.clone(), name.clone());
-            chat.segments.push(ChatSegment::Message(Message {
+            chat.push_segment(ChatSegment::Message(Message {
                 role: Role::Assistant,
                 content: MessageContent::ToolCall {
                     tool_call_id: id.clone(),
@@ -706,26 +666,7 @@ fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
             is_error,
             ..
         } => {
-            let output_with_error = if *is_error {
-                format!("error: {output}")
-            } else {
-                output.clone()
-            };
-            let result_seg = ChatSegment::Message(Message::tool_result(id, &output_with_error));
-            // Correlate by call_id so the result lands right after its matching
-            // ToolCall, same as the foreground and background-session paths.
-            match crate::chat::segment::tool_result_insert_position(&chat.segments, id) {
-                Some(pos) => {
-                    let shifted: std::collections::HashMap<usize, u8> = chat
-                        .expand_level
-                        .drain()
-                        .map(|(i, v)| (if i >= pos { i + 1 } else { i }, v))
-                        .collect();
-                    chat.expand_level = shifted;
-                    chat.segments.insert(pos, result_seg);
-                }
-                None => chat.segments.push(result_seg),
-            }
+            chat.insert_tool_result(id, output, *is_error);
         }
         SubagentUpdate::Finished { .. } => {
             // Flush remaining streamed text as the final assistant message.
@@ -734,7 +675,7 @@ fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdate) {
         }
         SubagentUpdate::Failed { reason } => {
             flush_streaming_buffer(chat);
-            chat.segments.push(ChatSegment::Error(reason.clone()));
+            chat.push_segment(ChatSegment::Error(reason.clone()));
             chat.streaming_is_thinking = false;
         }
         SubagentUpdate::TokenUsage { .. } | SubagentUpdate::TokensUsed { .. } => {
@@ -754,10 +695,9 @@ fn flush_streaming_buffer(chat: &mut ChatState) {
         let text = std::mem::take(&mut chat.streaming_buffer);
         // If streaming_is_thinking, wrap as a thinking block.
         if chat.streaming_is_thinking {
-            chat.segments.push(ChatSegment::Thinking { content: text });
+            chat.push_segment(ChatSegment::Thinking { content: text });
         } else {
-            chat.segments
-                .push(ChatSegment::Message(Message::assistant(&text)));
+            chat.push_segment(ChatSegment::Message(Message::assistant(&text)));
         }
         chat.streaming_is_thinking = false;
     }
