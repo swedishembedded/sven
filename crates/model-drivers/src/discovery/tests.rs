@@ -131,6 +131,41 @@ fn the_first_chat_capable_model_is_chosen_and_non_chat_models_are_skipped() {
     assert_eq!(choose_model(&models).unwrap().id, "chat-a");
 }
 
+/// An agent calls tools: a model the server says can call them is chosen
+/// over one it says cannot, and over one it says nothing about.
+#[test]
+fn a_model_that_can_call_tools_is_chosen_over_one_that_cannot() {
+    let tools = |id: &str, t: Option<bool>| ServedModel {
+        tools: t,
+        ..model(id, Some(4096))
+    };
+    let models = vec![
+        tools("no-tools", Some(false)),
+        tools("unknown", None),
+        tools("agent", Some(true)),
+    ];
+    assert_eq!(choose_model(&models).unwrap().id, "agent");
+    assert_eq!(choose_model(&models[..2]).unwrap().id, "unknown");
+    assert_eq!(
+        choose_model(&models[..1]).unwrap().id,
+        "no-tools",
+        "one that cannot is still better than none"
+    );
+}
+
+/// OpenRouter says which request parameters a model honours; `tools` among
+/// them is tool support.
+#[test]
+fn supported_parameters_name_tool_support() {
+    let models = parse_served_models(&json!({"data": [
+        {"id": "a", "context_length": 8192, "supported_parameters": ["tools", "temperature"]},
+        {"id": "b", "context_length": 8192, "supported_parameters": ["temperature"]},
+    ]}))
+    .unwrap();
+    assert_eq!(models[0].tools, Some(true));
+    assert_eq!(models[1].tools, Some(false));
+}
+
 #[test]
 fn without_any_context_lengths_the_first_listed_model_is_chosen() {
     let models = vec![model("x", None), model("y", None)];

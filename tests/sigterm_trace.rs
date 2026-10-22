@@ -38,8 +38,7 @@ fn a_terminated_run_writes_its_trajectory_so_far() {
                 "/tests/fixtures/mock_responses.yaml"
             ),
         )
-        .env("OPENAI_API_KEY", "test-dummy-key")
-        .env("SVEN_DISABLE_BRAIN_AUTODETECT", "1")
+        .env("XDG_RUNTIME_DIR", dir.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

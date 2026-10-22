@@ -11,10 +11,10 @@ model:
   # Model name forwarded to the provider.
   name: gpt-4o
 
-  # Environment variable that holds the API key. Unset: the provider's
-  # standard variable (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...).
-  # The variable is read at runtime so it never needs to be in this file.
-  api_key_env: OPENAI_API_KEY
+  # File that holds the API key (~/ is the home directory). Unset: the key
+  # stored for the provider with `sven auth set openai`, so it never needs to
+  # be in this file. Keys are never read from the environment.
+  api_key_file: ~/.config/keys/openai
 
   # Alternatively, embed the key directly (not recommended for shared files).
   # api_key: sk-...

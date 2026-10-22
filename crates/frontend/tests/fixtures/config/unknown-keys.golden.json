@@ -84,7 +84,7 @@
     },
     "model": {
       "api_key": null,
-      "api_key_env": null,
+      "api_key_file": null,
       "aws_region": null,
       "azure_api_version": null,
       "azure_deployment": null,

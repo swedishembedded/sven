@@ -18,7 +18,6 @@
 //! info@swedishembedded.com.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use sven_config::{default_true, Schema};
@@ -134,12 +133,14 @@ pub struct ProviderEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
 
-    /// Environment variable that holds the API key for this endpoint.
+    /// File holding the API key for this endpoint (`~/` is the home
+    /// directory). Without it and `api_key`, the key stored for the driver
+    /// (`sven auth set <driver>`) is used.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_env: Option<String>,
+    pub api_key_file: Option<String>,
 
-    /// Explicit API key; prefer `api_key_env` to keep secrets out of
-    /// version-controlled config files.
+    /// Explicit API key; prefer `sven auth set` or `api_key_file` to keep
+    /// secrets out of version-controlled config files.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
 
@@ -193,7 +194,7 @@ impl Default for ProviderEntry {
         Self {
             name: "openai".into(),
             base_url: None,
-            api_key_env: None,
+            api_key_file: None,
             api_key: None,
             models: std::collections::HashMap::new(),
             max_tokens: None,
@@ -219,7 +220,7 @@ impl ProviderEntry {
         Schema::keys(&[
             "name",
             "base_url",
-            "api_key_env",
+            "api_key_file",
             "api_key",
             "max_tokens",
             "max_output_tokens",
@@ -244,7 +245,7 @@ impl ProviderEntry {
             provider: self.name.clone(),
             name: model_name.to_string(),
             base_url: self.base_url.clone(),
-            api_key_env: self.api_key_env.clone(),
+            api_key_file: self.api_key_file.clone(),
             api_key: self.api_key.clone(),
             max_tokens: self.max_tokens,
             max_output_tokens: None,
@@ -318,10 +319,11 @@ pub struct ModelConfig {
     pub provider: String,
     /// Model name forwarded to the provider API
     pub name: String,
-    /// Environment variable that holds the API key (read at runtime)
-    pub api_key_env: Option<String>,
-    /// Explicit API key; prefer api_key_env in config files to avoid secrets
-    /// in version-controlled files
+    /// File holding the API key (`~/` is the home directory). Without it and
+    /// `api_key`, the key stored for the provider (`sven auth set`) is used.
+    pub api_key_file: Option<String>,
+    /// Explicit API key; prefer `sven auth set` or `api_key_file` to keep
+    /// secrets out of version-controlled files
     pub api_key: Option<String>,
     /// Base URL override.  Useful for local proxies, LiteLLM, or Cloudflare.
     /// For most hosted providers the correct default is auto-selected.
@@ -490,13 +492,11 @@ impl Default for ModelConfig {
         Self {
             provider: "openrouter".into(),
             name: "openrouter/auto".into(),
-            // api_key_env is intentionally None here.  resolve_api_key() falls
-            // through to the driver registry, which already knows the canonical
-            // env-var name for each provider (OPENAI_API_KEY, ANTHROPIC_API_KEY,
-            // etc.).  Hard-coding it here would shadow the registry lookup and
-            // cause the wrong key to be sent whenever the provider is overridden
-            // at the step level (e.g. <!-- sven: provider=anthropic -->).
-            api_key_env: None,
+            // No key source here: resolve_api_key() falls through to the key
+            // stored for whichever provider this ends up naming, so a
+            // provider overridden at the step level (e.g.
+            // <!-- sven: provider=anthropic -->) gets its own key.
+            api_key_file: None,
             api_key: None,
             base_url: None,
             max_tokens: None,
@@ -534,7 +534,7 @@ impl ModelConfig {
         Schema::keys(&[
             "provider",
             "name",
-            "api_key_env",
+            "api_key_file",
             "api_key",
             "base_url",
             "max_tokens",
@@ -593,7 +593,7 @@ pub fn model_reference(model: &ModelConfig, providers: &Providers) -> String {
         .filter(|(_, entry)| {
             entry.name == model.provider
                 && entry.base_url == model.base_url
-                && entry.api_key_env == model.api_key_env
+                && entry.api_key_file == model.api_key_file
                 && entry.api_key == model.api_key
         })
         .map(|(alias, _)| alias.as_str())
@@ -605,11 +605,11 @@ pub fn model_reference(model: &ModelConfig, providers: &Providers) -> String {
 /// environment offers.
 ///
 /// Priority: brain (local) > OpenRouter > Anthropic > OpenAI. A locally
-/// running brain wins over cloud providers when detectable - getting started
-/// on a brain-enabled machine should need zero config - but ONLY when
-/// detectable, so an existing cloud user (who has neither `BRAIN_API_KEY`
-/// nor a brain keys file) sees no change at all. Everything here is a sync,
-/// network-free check (env var / file existence); whether brain is actually
+/// running brain wins over hosted providers when detectable - getting started
+/// on a brain-enabled machine should need zero config - but ONLY when one is
+/// running, so a user with no brain server sees the stored-key choice alone.
+/// Everything here is a sync, network-free check (files and a process
+/// liveness test); whether brain is actually
 /// reachable is verified when the provider is constructed
 /// ([`crate::from_config_probed`]): a brain that does not answer yields to
 /// the cloud choice recorded in [`ModelConfig::detection_fallback`], and with
@@ -618,8 +618,8 @@ fn detect_model(model: &mut ModelConfig) {
     let cloud = detect_cloud_model(model);
     if brain_is_locally_detectable() {
         // The cloud choice, when a key offers one, is kept in reserve: the
-        // brain hint is only a file or variable, and a stale one must not
-        // strand a user whose cloud provider works. Probed at build time by
+        // brain hint is only a record, and a server that stopped answering
+        // must not strand a user whose cloud provider works. Probed at build time by
         // `from_config_probed`.
         let reserve = cloud.then(|| Box::new(model.clone()));
         model.provider = "brain".into();
@@ -640,18 +640,20 @@ fn detect_model(model: &mut ModelConfig) {
     // produces a clear missing-key error when actually invoked.
 }
 
-/// Applies the cloud provider an API key in the environment implies:
+/// Applies the hosted provider a stored key implies (`sven auth set`):
 /// OpenRouter, then Anthropic, then OpenAI. Returns whether a key chose one.
 ///
 /// The model names are deliberate: a hosted provider lists hundreds of
 /// models, so no served model can stand in for the choice a key implies.
 fn detect_cloud_model(model: &mut ModelConfig) -> bool {
-    if std::env::var("OPENROUTER_API_KEY").is_ok() {
+    let stored = crate::credentials::providers();
+    let has = |id: &str| stored.iter().any(|p| p == id);
+    if has("openrouter") {
         // Keep the defaults: provider="openrouter", name="openrouter/auto".
-    } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+    } else if has("anthropic") {
         model.provider = "anthropic".into();
         model.name = "claude-sonnet-4-6".into();
-    } else if std::env::var("OPENAI_API_KEY").is_ok() {
+    } else if has("openai") {
         model.provider = "openai".into();
         model.name = "gpt-5.2".into();
     } else {
@@ -660,37 +662,12 @@ fn detect_cloud_model(model: &mut ModelConfig) -> bool {
     true
 }
 
-/// Is a locally running `brain` model server detectable without any network
-/// I/O?
-///
-/// Deliberately sync and cheap (env var reads + one `fs::metadata` stat). This
-/// is a HINT, not proof brain is actually reachable - a stale leftover keys
-/// file with brain no longer running is harmless: constructing the provider
-/// falls back to the cloud choice when a key offers one, and otherwise turns
-/// an unreachable brain into a loud, actionable error rather than a silent
-/// hang, same as any other misconfigured provider.
-///
-/// Set `SVEN_DISABLE_BRAIN_AUTODETECT=1` to opt out entirely (e.g. CI
-/// environments that happen to have a stale brain keys file lying around but
-/// want cloud-provider defaults).
+/// Is a brain server running on this host? Network-free: it has published a
+/// connection record that this user owns and whose process is alive
+/// ([`crate::brain_local`]). Whether it answers is checked when the provider
+/// is built ([`crate::from_config_probed`]).
 fn brain_is_locally_detectable() -> bool {
-    if brain_autodetect_disabled() {
-        return false;
-    }
-    if std::env::var("BRAIN_API_KEY").is_ok() {
-        return true;
-    }
-    brain_keys_file().is_some_and(|p| p.is_file())
-}
-
-/// Whether `SVEN_DISABLE_BRAIN_AUTODETECT` opts out of finding a local brain,
-/// by key file or by probing its default endpoint. The one place it is read.
-pub(crate) fn brain_autodetect_disabled() -> bool {
-    std::env::var("SVEN_DISABLE_BRAIN_AUTODETECT").is_ok()
-}
-
-fn brain_keys_file() -> Option<PathBuf> {
-    crate::api_key::brain_keys_file()
+    crate::brain_local::find(None).is_some()
 }
 
 /// If `model.provider` names one of `providers`, replace `model` with that

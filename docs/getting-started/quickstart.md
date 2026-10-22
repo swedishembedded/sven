@@ -309,7 +309,12 @@ Create `~/.config/sven/config.yaml` to set your default model and other options:
 model:
   provider: openai
   name: gpt-4o
-  api_key_env: OPENAI_API_KEY
+```
+
+and store the provider's key once (read from stdin):
+
+```sh
+sven auth set openai
 ```
 
 To use Anthropic Claude instead:
@@ -318,10 +323,16 @@ To use Anthropic Claude instead:
 model:
   provider: anthropic
   name: claude-opus-4-5
-  api_key_env: ANTHROPIC_API_KEY
 ```
 
-See all available models:
+```sh
+sven auth set anthropic
+```
+
+Several providers work side by side: with a brain server running and an
+OpenRouter key stored, `-M brain/<model>` and `-M openrouter/<model>` both work
+in the same setup. See every model you can use now, by the name `--model`
+takes:
 
 ```sh
 sven list-models

@@ -7,17 +7,17 @@
 // reliable LLM provider integration then you can procure our services by
 // sending an email to info@swedishembedded.com.
 //! Whether the configured model can be used, answered before a session
-//! starts: the provider builds, a local server answers, it serves the model,
-//! and the model can call tools.
+//! starts: the provider builds, its endpoint answers with the key, it serves
+//! the model, and the model can call tools.
 //!
-//! A hosted provider is never probed: the check would spend a request on the
-//! user's account, and a key that exists says nothing the first request will
-//! not.
+//! A hosted provider is asked only for its model list, which costs nothing
+//! on the user's account; no completion is ever requested.
 
 use serde::Serialize;
 
 use crate::config::ModelConfig;
-use crate::discovery::{effective_base_url, is_local_endpoint};
+use crate::discovery::effective_base_url;
+use crate::reachable::{find, served_by, shown};
 
 /// How a check came out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -84,33 +84,28 @@ impl ProviderReport {
     }
 }
 
-/// `url` without credentials, query or fragment, for showing to a person.
-fn shown(url: &str) -> String {
-    match reqwest::Url::parse(url) {
-        Ok(mut parsed) => {
-            let _ = parsed.set_username("");
-            let _ = parsed.set_password(None);
-            parsed.set_query(None);
-            parsed.set_fragment(None);
-            parsed.to_string()
-        }
-        Err(_) => "(not a URL)".to_string(),
-    }
-}
-
-/// Checks the model `cfg` selects, probing only a server on this host or a
-/// private network.
+/// Checks the model `cfg` selects. A provider whose model list cannot be
+/// read the OpenAI way (Google, AWS, Azure, Cohere, D-Bus) stops after the
+/// provider check.
 pub async fn check_provider(cfg: &ModelConfig) -> ProviderReport {
     let mut checks = Vec::new();
-    let provider = match crate::from_config_probed(cfg).await {
+    let cfg = &crate::resolve_probed(cfg).await;
+    let provider = match crate::from_config(cfg) {
         Ok(provider) => provider,
         Err(e) => {
+            let message = e.to_string();
+            let mut lines = message.lines();
+            let detail = lines.next().unwrap_or_default().to_string();
+            let fix = lines.collect::<Vec<_>>().join(" ");
             checks.push(ProviderCheck::problem(
                 Verdict::Fail,
                 "provider",
-                // The first line names the problem; the rest repeats the fix.
-                e.to_string().lines().next().unwrap_or_default(),
-                "run `sven list-providers`, then set the provider's key or choose another with --model",
+                detail,
+                if fix.trim().is_empty() {
+                    "run `sven list-providers` and choose a model with --model".to_string()
+                } else {
+                    fix
+                },
             ));
             return ProviderReport { checks };
         }
@@ -121,30 +116,43 @@ pub async fn check_provider(cfg: &ModelConfig) -> ProviderReport {
         format!("{}/{model}", provider.name()),
     ));
 
-    let Some(base) = effective_base_url(cfg).filter(|b| is_local_endpoint(b)) else {
-        return ProviderReport { checks };
-    };
-    let Some(served) = provider.discover().await.filter(|s| !s.is_empty()) else {
-        checks.push(ProviderCheck::problem(
-            Verdict::Fail,
-            "endpoint",
-            format!("{} did not answer, or serves no model", shown(&base)),
-            "start the server and load a model, or correct base_url and the key",
-        ));
-        return ProviderReport { checks };
+    let base = effective_base_url(cfg)
+        .map(|b| shown(&b))
+        .unwrap_or_default();
+    let served = match served_by(cfg).await {
+        Ok(served) => served,
+        Err(problem) if problem.contains("does not list its models") => {
+            return ProviderReport { checks }
+        }
+        Err(problem) => {
+            checks.push(ProviderCheck::problem(
+                Verdict::Fail,
+                "endpoint",
+                problem,
+                "start the server and load a model, or correct base_url and the key (`sven auth set <provider>`)",
+            ));
+            return ProviderReport { checks };
+        }
     };
     checks.push(ProviderCheck::ok(
         "endpoint",
-        format!("{} serves {} model(s)", shown(&base), served.len()),
+        format!("{base} serves {} model(s)", served.len()),
     ));
 
-    let Some(entry) = served.iter().find(|m| m.id == model) else {
-        let ids: Vec<&str> = served.iter().map(|m| m.id.as_str()).collect();
+    let Some(entry) = find(&served, &model) else {
+        let mut ids: Vec<&str> = served.iter().map(|m| m.id.as_str()).collect();
+        let more = ids.len().saturating_sub(12);
+        ids.truncate(12);
+        let listed = if more > 0 {
+            format!("{} and {more} more", ids.join(", "))
+        } else {
+            ids.join(", ")
+        };
         checks.push(ProviderCheck::problem(
             Verdict::Fail,
             "model",
-            format!("{model:?} is not served; the server has {}", ids.join(", ")),
-            "name one of those with --model, or load the model on the server",
+            format!("{model:?} is not served; the server has {listed}"),
+            "name one of those with --model (`sven list-models` lists every one), or load the model on the server",
         ));
         return ProviderReport { checks };
     };

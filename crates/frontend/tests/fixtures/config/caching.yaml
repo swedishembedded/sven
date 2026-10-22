@@ -2,7 +2,7 @@
 model:
   provider: anthropic
   name: claude-sonnet-4-5
-  api_key_env: ANTHROPIC_API_KEY
+  api_key_file: ~/.config/keys/anthropic
   extended_cache_time: true
   cache_system_prompt: false
   cache_tools: false

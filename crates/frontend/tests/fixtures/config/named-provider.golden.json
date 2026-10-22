@@ -72,7 +72,7 @@
     "mcp_servers": {},
     "model": {
       "api_key": null,
-      "api_key_env": "OLLAMA_KEY",
+      "api_key_file": "~/.config/keys/ollama",
       "aws_region": null,
       "azure_api_version": null,
       "azure_deployment": null,
@@ -101,7 +101,7 @@
     },
     "providers": {
       "my_ollama": {
-        "api_key_env": "OLLAMA_KEY",
+        "api_key_file": "~/.config/keys/ollama",
         "base_url": "http://localhost:8000/v1",
         "driver_options": {
           "parse_tool_calls": true

@@ -13,45 +13,45 @@ It builds the provider the way a session would and reports each step as `ok`,
 | Check | What it tells you |
 |---|---|
 | `provider` | the provider and model sven resolved, or the missing key |
-| `endpoint` | a local server (this host or a private network) answered and serves a model |
+| `endpoint` | the endpoint answered with its model list and accepted the key |
 | `model` | the model you named is one the server serves, and what it serves instead |
 | `tools` | the server advertises tool calling for it (a `warn` if it says it does not) |
 
-A hosted provider is never probed, so the check costs nothing and sends nothing; it
-reports only that the provider could be built. The exit status is non-zero when a
+A hosted provider is asked for its model list only, so the check costs nothing
+on the account and sends no prompt. Google, AWS, Azure, Cohere and D-Bus stop
+after the provider check. The exit status is non-zero when a
 check fails, so it can gate a CI job.
 
 ## API key issues
 
 ### sven exits immediately with "no API key"
 
-sven reads the API key from an environment variable. Make sure it is exported
-before running sven.
+sven does not read keys from the environment. Store the provider's key once:
 
 ```sh
-# Check the variable is set
-echo $OPENAI_API_KEY    # should print your key, not blank
-
-# If it is blank, export it
-export OPENAI_API_KEY="sk-..."
-
-# For a permanent fix, add the line to your shell profile:
-echo 'export OPENAI_API_KEY="sk-..."' >> ~/.bashrc
-source ~/.bashrc
+sven auth set openai     # the key is read from stdin, without echo
+sven auth list           # the providers with a stored key
 ```
 
-The default variable name is `OPENAI_API_KEY` for the OpenAI provider,
-`ANTHROPIC_API_KEY` for Anthropic and `OPENROUTER_API_KEY` for OpenRouter. You can
-change which variable is read in the config file, or give the key as `api_key`:
+A stored key is used for that provider's own endpoint only. An endpoint you
+name with `base_url` (a proxy, a gateway, a self-hosted server) takes its own
+key, from a file:
 
 ```yaml
 model:
-  api_key_env: MY_CUSTOM_KEY_VAR
+  provider: openai
+  base_url: https://gateway.example/v1
+  api_key_file: ~/.config/keys/gateway
 ```
 
-A variable named this way is the only place the key is looked for. If it is not
-set, sven stops with a message naming it rather than sending a request with no
-key.
+A key file that does not exist stops sven with a message naming it rather
+than sending a request with no key.
+
+### "No running brain server was found"
+
+The `brain` provider found no connection record of a running server. Start
+one with `brain serve`; sven reads its address and key from the record it
+publishes in `$XDG_RUNTIME_DIR/brain` while it runs.
 
 ### "401 Unauthorized" or "invalid API key"
 

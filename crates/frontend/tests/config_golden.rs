@@ -85,23 +85,17 @@ fn fixtures() -> Vec<PathBuf> {
 }
 
 /// Only the fixture is read: no user, system or project configuration, no
-/// model detected from the environment, and the variables the fixtures
+/// model detected from a running server or a stored key, and the variables the fixtures
 /// expand set to known values. One test in this binary, so the process
 /// environment it sets is its own.
 fn isolate_environment(home: &Path) {
     std::env::set_var("HOME", home);
     std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
     std::env::set_current_dir(home).expect("an empty working directory");
-    std::env::set_var("SVEN_DISABLE_BRAIN_AUTODETECT", "1");
-    for key in [
-        "OPENROUTER_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "BRAIN_API_KEY",
-        "BRAIN_API_KEYS_FILE",
-        "SVEN_GOLDEN_UNSET",
-        "SVEN_GOLDEN_ALSO_UNSET",
-    ] {
+    // No brain server's connection record, and no stored keys: both live
+    // under the directories set here.
+    std::env::set_var("XDG_RUNTIME_DIR", home.join("run"));
+    for key in ["SVEN_GOLDEN_UNSET", "SVEN_GOLDEN_ALSO_UNSET"] {
         std::env::remove_var(key);
     }
     std::env::set_var("SVEN_GOLDEN_MODEL", "openrouter/auto");

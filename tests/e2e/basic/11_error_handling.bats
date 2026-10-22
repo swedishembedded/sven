@@ -2,72 +2,72 @@
 # 11_error_handling.bats - Error handling and graceful failure scenarios.
 #
 # Validates:
-#   • Missing API keys produce clear, actionable error messages before any
-#     network request is made (pre-flight validation in sven-model)
-#   • Error messages name the exact environment variable to set
-#   • Error messages include an `export VAR=<key>` example
+#   • A missing API key produces a clear, actionable error before any network
+#     request is made (pre-flight validation in sven-model-drivers)
+#   • The error names the command that stores the key (`sven auth set <id>`)
+#     and never asks for an environment variable: keys are not read from it
 #   • Errors go to stderr; stdout remains clean
 #   • Exit code is non-zero on all hard failures
 #   • Missing --file path exits non-zero with a descriptive message
 #   • Unknown --model provider exits non-zero
 #
-# NOTE: These tests deliberately do NOT load helpers.bash for the API-key tests
-# so that the dummy keys exported there do not interfere.  Each test creates its
-# own isolated environment by unsetting the relevant variables in a subshell.
+# helpers.bash points the configuration and runtime directories at empty ones,
+# so no stored key and no running brain server reaches these tests. A key in
+# the environment is set on purpose below, to show it is not read.
 
 load helpers
 
 # ── Missing API key - OpenAI ──────────────────────────────────────────────────
 
-@test "11.01 missing OPENAI_API_KEY exits non-zero" {
-    run bash -c 'unset OPENAI_API_KEY; echo "hi" | "$BIN" --headless --model openai 2>&1'
+@test "11.01 a missing openai key exits non-zero, whatever the environment holds" {
+    run bash -c 'echo "hi" | OPENAI_API_KEY=sk-from-the-environment "$BIN" --headless --model openai 2>&1'
     [ "${status}" -ne 0 ]
 }
 
-@test "11.02 missing OPENAI_API_KEY error names the environment variable" {
-    run bash -c 'unset OPENAI_API_KEY; echo "hi" | "$BIN" --headless --model openai 2>&1'
+@test "11.02 a missing openai key error names the command that stores it" {
+    run bash -c 'echo "hi" | "$BIN" --headless --model openai 2>&1'
     [ "${status}" -ne 0 ]
-    assert_output_contains "OPENAI_API_KEY"
+    assert_output_contains "sven auth set openai"
 }
 
-@test "11.03 missing OPENAI_API_KEY error includes export instruction" {
-    run bash -c 'unset OPENAI_API_KEY; echo "hi" | "$BIN" --headless --model openai 2>&1'
+@test "11.03 a missing openai key error asks for no environment variable" {
+    run bash -c 'echo "hi" | "$BIN" --headless --model openai 2>&1'
     [ "${status}" -ne 0 ]
-    assert_output_contains "export"
+    [[ "${output}" != *"export"* ]]
 }
 
-@test "11.04 missing OPENAI_API_KEY error goes to stderr not stdout" {
+@test "11.04 a missing openai key error goes to stderr not stdout" {
     local stderr_file stdout_file
     stderr_file="$(mktemp)"
     stdout_file="$(mktemp)"
-    bash -c 'unset OPENAI_API_KEY; echo "hi" | "$BIN" --headless --model openai' \
+    bash -c 'echo "hi" | "$BIN" --headless --model openai' \
         >"${stdout_file}" 2>"${stderr_file}" || true
     # Error must be in stderr
-    grep -q "OPENAI_API_KEY" "${stderr_file}"
+    grep -q "sven auth set openai" "${stderr_file}"
     # Stdout must not contain the error (it is not a model response)
     local out
     out="$(cat "${stdout_file}")"
-    [[ "${out}" != *"OPENAI_API_KEY"* ]]
+    [[ "${out}" != *"sven auth set"* ]]
     rm -f "${stderr_file}" "${stdout_file}"
 }
 
 # ── Missing API key - Anthropic ───────────────────────────────────────────────
 
-@test "11.05 missing ANTHROPIC_API_KEY exits non-zero" {
-    run bash -c 'unset ANTHROPIC_API_KEY; echo "hi" | "$BIN" --headless --model anthropic 2>&1'
+@test "11.05 a missing anthropic key exits non-zero, whatever the environment holds" {
+    run bash -c 'echo "hi" | ANTHROPIC_API_KEY=sk-from-the-environment "$BIN" --headless --model anthropic 2>&1'
     [ "${status}" -ne 0 ]
 }
 
-@test "11.06 missing ANTHROPIC_API_KEY error names the environment variable" {
-    run bash -c 'unset ANTHROPIC_API_KEY; echo "hi" | "$BIN" --headless --model anthropic 2>&1'
+@test "11.06 a missing anthropic key error names the command that stores it" {
+    run bash -c 'echo "hi" | "$BIN" --headless --model anthropic 2>&1'
     [ "${status}" -ne 0 ]
-    assert_output_contains "ANTHROPIC_API_KEY"
+    assert_output_contains "sven auth set anthropic"
 }
 
-@test "11.07 missing ANTHROPIC_API_KEY error includes export instruction" {
-    run bash -c 'unset ANTHROPIC_API_KEY; echo "hi" | "$BIN" --headless --model anthropic 2>&1'
+@test "11.07 a missing anthropic key error asks for no environment variable" {
+    run bash -c 'echo "hi" | "$BIN" --headless --model anthropic 2>&1'
     [ "${status}" -ne 0 ]
-    assert_output_contains "export"
+    [[ "${output}" != *"export"* ]]
 }
 
 # ── Missing --file path ───────────────────────────────────────────────────────

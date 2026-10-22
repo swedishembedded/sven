@@ -68,10 +68,9 @@ WAV_TEXT_FILE="$STATE_DIR/command.txt"
 WORKDIR_FILE="$STATE_DIR/workdir"
 
 # A fixed key beats reading brain's generated one back out of a file: brain
-# reuses $BRAIN_API_KEY across every surface it binds, so the config below can
-# be written before the server has started.
-BRAIN_API_KEY="${BRAIN_API_KEY:-sk-brain-voice-e2e}"
-export BRAIN_API_KEY
+# serves every surface it binds with the key `--api-key-file` names, so the
+# config below can be written before the server has started.
+KEY_FILE="$STATE_DIR/api-key"
 
 OPENAI_PORT="${OPENAI_PORT:-8788}"
 
@@ -202,6 +201,14 @@ load_bus() {
 
 # ── Brain ────────────────────────────────────────────────────────────────────
 
+# The key the server and the sven config share, owner-only; kept across runs.
+write_key() {
+  mkdir -p "$STATE_DIR"
+  if [ ! -s "$KEY_FILE" ]; then
+    (umask 077 && printf 'sk-brain-voice-e2e-%s\n' "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" > "$KEY_FILE")
+  fi
+}
+
 # `serve -d` returns once every surface is listening and enforces one server
 # per user itself, so this needs no pidfile of its own.
 start_brain() {
@@ -218,12 +225,14 @@ start_brain() {
   # it returns, which is a minute or two cold.  It echoes its log while it
   # waits, so the lines below come from the server, not from this script.
   info "starting the server (cold start takes a minute or two)"
+  write_key
   BRAIN_NEMOTRONASR="$ASR_CKPT" \
-  BRAIN_QWEN_WEIGHTS="$LLM_CKPT" \
   BRAIN_QWEN3TTS_CKPT="$TTS_CKPT" \
     "$BRAIN" serve \
       --dbus-address "$BUS_ADDR" \
       --openai "$OPENAI_PORT" \
+      --checkpoint "$LLM_CKPT" \
+      --api-key-file "$KEY_FILE" \
       --api-keys-out "$KEYS_FILE" \
       --ctx 40960 \
       -d
@@ -250,6 +259,7 @@ $models" ;;
 
 write_config() {
   step "Writing sven config"
+  write_key
   if [ -z "$WORKDIR" ]; then
     if [ -s "$WORKDIR_FILE" ]; then WORKDIR="$(cat "$WORKDIR_FILE")"
     else WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/sven-voice-XXXXXX")"; fi
@@ -263,7 +273,7 @@ model:
   provider: openai
   name: brain/qwen3
   base_url: http://127.0.0.1:$OPENAI_PORT/v1
-  api_key: $BRAIN_API_KEY
+  api_key_file: $KEY_FILE
   # max_tokens is the whole CONTEXT WINDOW (input + output), so it matches
   # --ctx above.  max_output_tokens is the room to answer in, and it
   # has to be set: without it the window doubles as the per-request output

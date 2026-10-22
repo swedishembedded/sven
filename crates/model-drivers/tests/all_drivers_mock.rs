@@ -194,7 +194,6 @@ fn all_major_providers_registered() {
 fn openai_driver_correct_metadata() {
     let meta = get_driver("openai").unwrap();
     assert_eq!(meta.id, "openai");
-    assert_eq!(meta.default_api_key_env, Some("OPENAI_API_KEY"));
     assert!(meta.requires_api_key);
 }
 
@@ -202,14 +201,12 @@ fn openai_driver_correct_metadata() {
 fn ollama_driver_no_key_required() {
     let meta = get_driver("ollama").unwrap();
     assert!(!meta.requires_api_key);
-    assert!(meta.default_api_key_env.is_none());
     assert!(meta.default_base_url.unwrap().contains("localhost"));
 }
 
 #[test]
-fn aws_driver_no_default_key_env() {
+fn aws_driver_requires_no_api_key() {
     let meta = get_driver("aws").unwrap();
-    // AWS uses IAM credentials, not a simple API key env var.
-    assert!(meta.default_api_key_env.is_none());
+    // AWS uses IAM credentials, not an API key.
     assert!(!meta.requires_api_key);
 }

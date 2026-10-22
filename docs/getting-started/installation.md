@@ -131,26 +131,24 @@ It prints `sven` followed by the version number.
 
 ## Set your API key
 
-sven needs a model to talk to. With no model configured, it picks a provider
-from the environment: a local brain server, then OpenRouter, Anthropic, OpenAI,
+sven needs a model to talk to. With no model configured, it picks one from
+what it finds: a brain server running here, then OpenRouter, Anthropic, OpenAI
+(whichever key is stored),
 and finally a local model server found on localhost. See
 [Default provider auto-detection](../reference/providers.md#default-provider-auto-detection).
 
-For a hosted provider the simplest way is an environment variable. Add one of
-these lines to your shell profile (`~/.bashrc`, `~/.zshrc`, or similar):
+With brain, there is nothing to set: run `brain serve` and sven finds the
+server, its address and its key.
+
+For a hosted provider, store its key once. It is read from stdin, typed
+without echo, and kept in `~/.config/sven/credentials.yaml` (mode 0600):
 
 ```sh
-# OpenRouter
-export OPENROUTER_API_KEY="sk-or-..."
-
-# OpenAI
-export OPENAI_API_KEY="sk-..."
-
-# Anthropic
-export ANTHROPIC_API_KEY="sk-ant-..."
+sven auth set openrouter     # or anthropic, openai, groq, ... (`sven list-providers`)
 ```
 
-You can also put the key in the sven config file - see
+Keys are not read from the environment. A key can also live in a file named by
+`api_key_file` in the config - see
 [Configuration](../reference/configuration.md) for details.
 
 ---

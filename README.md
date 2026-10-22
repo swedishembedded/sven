@@ -99,8 +99,8 @@ sven --version
 
 ## Quick start
 
-Export a key for a hosted provider (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` or
-`OPENAI_API_KEY`), or run a local model with brain (below), then:
+Run a local model with brain (below), or store a hosted provider's key once
+with `sven auth set openrouter` (or `anthropic`, `openai`, ...), then:
 
 ```sh
 sven doctor provider                  # can sven reach a model?
@@ -113,8 +113,10 @@ sven --file plan.md                   # multi-step workflow file
 
 [brain](https://github.com/swedishembedded/brain) serves models on your own
 machine, so sven works with no cloud account and nothing leaving the computer.
-With brain serving an OpenAI-compatible endpoint, sven finds it from brain's
-keys file and asks it which model it serves; see
+With `brain serve` running, sven finds the server, its address and its key
+from the connection record brain publishes, and asks it which model it
+serves; nothing is configured. Local and hosted models work side by side
+(`-M brain/<model>`, `-M openrouter/<model>`, `sven list-models`). See
 [Brain in the provider reference](docs/reference/providers.md#brain-local-edge-ai-server)
 and [brain's documentation](https://swedishembedded.com/docs/brain) for serving
 a model.

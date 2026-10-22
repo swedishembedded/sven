@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `sven doctor provider`: the real binary against a loopback model server.
 //!
-//! Every test runs with a tempdir as its working directory and a throwaway
-//! HOME, no model environment and brain auto-detection off, so only the
-//! config file each test writes decides what is checked. The specs: a served
+//! Every test runs with a tempdir as its working directory, a throwaway
+//! HOME, configuration and runtime directory and nothing else in its
+//! environment, so only the config file each test writes decides what is
+//! checked. The specs: a served
 //! model that can call tools is ready; a server that is down, a model it does
 //! not serve and a missing key each fail with what to change and a non-zero
 //! exit; `--json` is pure JSON.
@@ -77,13 +78,10 @@ impl Scratch {
         std::fs::write(config, model_yaml).unwrap();
         Command::new(env!("CARGO_BIN_EXE_sven"))
             .current_dir(&self.0)
+            .env_clear()
             .env("HOME", &self.0)
             .env("XDG_CONFIG_HOME", &self.0)
-            .env("SVEN_DISABLE_BRAIN_AUTODETECT", "1")
-            .env_remove("SVEN_MODEL")
-            .env_remove("ANTHROPIC_API_KEY")
-            .env_remove("OPENAI_API_KEY")
-            .env_remove("OPENROUTER_API_KEY")
+            .env("XDG_RUNTIME_DIR", &self.0)
             .args(["--config"])
             .arg(config)
             .args(["doctor", "provider", "--json"])
@@ -174,9 +172,9 @@ fn a_model_the_server_does_not_serve_is_named_with_what_it_does_serve() {
 }
 
 #[test]
-fn a_key_variable_that_is_not_set_fails_the_provider_check_without_any_network() {
+fn a_key_file_that_does_not_exist_fails_the_provider_check_without_any_network() {
     let scratch = Scratch::new("nokey");
-    let out = scratch.doctor("model:\n  provider: anthropic\n  name: claude-sonnet-4-6\n  api_key_env: SVEN_DOCTOR_TEST_NO_SUCH_KEY\n");
+    let out = scratch.doctor("model:\n  provider: anthropic\n  name: claude-sonnet-4-6\n  api_key_file: /nonexistent/sven-doctor-key\n");
     assert_ne!(out.status.code(), Some(0));
     let report = report(&out);
     assert_eq!(verdict(&report, "provider"), "fail");

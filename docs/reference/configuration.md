@@ -62,10 +62,10 @@ contents of `tools.context` are accepted as written and not checked for
 misspelt keys.
 
 **The model is chosen for you when the file names none.** With no `model:`
-section, sven picks a locally served brain model if one is detectable, then
-OpenRouter, Anthropic or OpenAI according to which API key is set
-(setting `SVEN_DISABLE_BRAIN_AUTODETECT`, to any value, turns the brain check
-off). With no key for any of them, sven looks for a local server (see
+section, sven picks the model of a brain server running on this machine (found
+from the connection record brain publishes), then OpenRouter, Anthropic or
+OpenAI according to which key is stored (`sven auth set`). With no key for any
+of them, sven looks for a local server (see
 [Local model discovery](#local-model-discovery)). The order and the models
 chosen are listed in [Providers](providers.md#default-provider-auto-detection).
 A `model.provider` that names an entry of `providers:` is expanded into that
@@ -107,22 +107,24 @@ sven show-config > ~/.config/sven/config.yaml
 
 ## List available models
 
-To see all models in the built-in catalog:
+To see every model that can be used now, asked live from each local server
+that answers, each `providers:` entry and each hosted provider with a stored
+key, with the name `--model` takes for it:
 
 ```sh
 sven list-models
 ```
 
-Filter by provider:
+Only one provider or `providers:` entry:
 
 ```sh
-sven list-models --provider anthropic
+sven list-models --provider openrouter
 ```
 
-Query the provider API for a live list (requires API key):
+The bundled catalog instead:
 
 ```sh
-sven list-models --refresh
+sven list-models --catalog
 ```
 
 Output as JSON:
@@ -147,17 +149,18 @@ include options you are not changing.
 
 model:
   # Provider id. Run `sven list-providers` for the supported values.
-  # With no model: section sven picks one from the environment (see above);
-  # the built-in fallback is openrouter / openrouter/auto.
+  # With no model: section sven picks one from what is running and the keys
+  # stored with `sven auth set` (see above); the built-in fallback is
+  # openrouter / openrouter/auto.
   provider: openai
 
   # Model name forwarded to the provider.
   name: gpt-4o
 
-  # Environment variable that holds the API key. Unset: the provider's
-  # standard variable (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...).
-  # The variable is read at runtime so it never needs to be in this file.
-  api_key_env: OPENAI_API_KEY
+  # File that holds the API key (~/ is the home directory). Unset: the key
+  # stored for the provider with `sven auth set openai`, so it never needs to
+  # be in this file. Keys are never read from the environment.
+  api_key_file: ~/.config/keys/openai
 
   # Alternatively, embed the key directly (not recommended for shared files).
   # api_key: sk-...
@@ -553,8 +556,8 @@ Controls which language model sven talks to and how.
 |-----|---------|-------------|
 | `provider` | `"openrouter"` | Provider id (`sven list-providers`) or the name of a `providers:` entry |
 | `name` | `"openrouter/auto"` | Model identifier sent to the provider. Empty on a local server: the model the server serves |
-| `api_key_env` | the provider's standard variable | Environment variable containing the API key |
-| `api_key` | - | Inline API key (use `api_key_env` instead when possible) |
+| `api_key_file` | the key stored for the provider (`sven auth set`), sent only to the provider's own endpoint | File holding the API key; `~/` is the home directory |
+| `api_key` | - | Inline API key (use `sven auth set` or `api_key_file` instead when possible) |
 | `base_url` | provider default | Override the API endpoint (proxies, gateways, local servers) |
 | `max_tokens` | catalog or server value | Total context window in tokens (input plus output), used for compaction. With `max_output_tokens` unset it also limits one response |
 | `max_output_tokens` | catalog or server value | Output tokens per response |
@@ -589,10 +592,10 @@ naming the section when it is not.
 
 #### Supported providers
 
-`sven list-providers` prints every provider id, and `-v` adds each one's
-default API-key variable and base URL; [Providers](providers.md) walks through
-the setup of each. A key is read from `api_key_env`, else `api_key`, else the
-provider's standard variable.
+`sven list-providers` prints every provider id, and `-v` adds whether a key is
+stored for each and its base URL; [Providers](providers.md) walks through the
+setup of each. A key is read from `api_key`, else `api_key_file`, else the key
+stored with `sven auth set <provider>` (at the provider's own endpoint only).
 
 To use a proxy or local model that has an OpenAI-compatible API (such as
 LiteLLM or Ollama), set `provider: openai` and override `base_url`:
@@ -670,7 +673,7 @@ endpoint.
 | Key | Description |
 |-----|-------------|
 | `name` | Driver id that speaks the endpoint's protocol (default `openai`) |
-| `base_url`, `api_key_env`, `api_key` | As for `model` |
+| `base_url`, `api_key_file`, `api_key` | As for `model` |
 | `max_tokens`, `max_output_tokens`, `max_input_tokens`, `temperature`, `driver_options`, `input_modalities` | Defaults for every model on the endpoint |
 | `azure_resource`, `azure_deployment`, `azure_api_version`, `aws_region`, `mock_responses_file` | As for `model` |
 | `models.<name>` | Per-model overrides: `max_tokens`, `max_output_tokens`, `max_input_tokens`, `temperature`, `driver_options`, `input_modalities`, `mock_responses_file` and the `cache_*` flags with `extended_cache_time` |
@@ -1359,7 +1362,6 @@ environment variable, which is useful when you cannot edit the config file
 model:
   provider: anthropic
   name: claude-opus-4-5
-  api_key_env: ANTHROPIC_API_KEY
 ```
 
 **Use Anthropic Claude - all cache layers are on by default:**
@@ -1368,7 +1370,6 @@ model:
 model:
   provider: anthropic
   name: claude-sonnet-4-5
-  api_key_env: ANTHROPIC_API_KEY
   # Nothing extra needed: sven enables comprehensive caching out of the box.
   # Add extended_cache_time: true for CI or any workflow with gaps > 5 minutes:
   extended_cache_time: true    # 1-hour TTL for system/tools/images/tool-results
@@ -1380,7 +1381,6 @@ model:
 model:
   provider: anthropic
   name: claude-sonnet-4-5
-  api_key_env: ANTHROPIC_API_KEY
   cache_system_prompt: false
   cache_tools: false
   cache_conversation: false
@@ -1425,9 +1425,7 @@ tui:
 
 | Variable | Effect |
 |----------|--------|
-| `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and the other providers' standard variables (`sven list-providers -v`) | API keys; with no `model:` section the first of these that is set picks the provider |
-| `BRAIN_API_KEY`, `BRAIN_API_KEYS_FILE` | Key (or key file) of a local brain model server; their presence makes brain the detected model |
-| `SVEN_DISABLE_BRAIN_AUTODETECT` | Any value: do not detect or probe a local brain |
+| `XDG_RUNTIME_DIR` | Where a running brain server's connection record is looked for (`$XDG_RUNTIME_DIR/brain`, else `<tmpdir>/brain-<uid>`) |
 | `SVEN_MODEL` | Default for `--model` |
 | `SVEN_MOCK_RESPONSES` | Responses file for the mock provider |
 | `BRAVE_API_KEY` | Key of the `web_search` tool when `tools.web.search.api_key` is unset |
@@ -1436,5 +1434,7 @@ tui:
 | `SVEN_LOG_FILE`, `RUST_LOG` | Logging; see the [command-line reference](cli.md#environment) |
 | `SVEN_NO_PATH_ASCENT` | Any value: `read_file` reads exactly the path asked for instead of resolving a near miss |
 
-Any string in a configuration file may also read the environment with
-`${VAR}`; see [How the file is read](#how-the-file-is-read).
+Provider keys are not read from the environment: store them with
+`sven auth set <provider>` or name a file with `api_key_file`. Any string in a
+configuration file may still read the environment with `${VAR}`; see
+[How the file is read](#how-the-file-is-read).

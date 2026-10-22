@@ -84,9 +84,11 @@ export MOCK_RESPONSES="${FIXTURES}/mock_responses.yaml"
 # Export so every sven invocation picks up the mock responses file.
 export SVEN_MOCK_RESPONSES="${MOCK_RESPONSES}"
 
-# Dummy keys so the binary does not bail before reaching the mock provider.
-export OPENAI_API_KEY="test-dummy-key"
-export ANTHROPIC_API_KEY="test-dummy-key"
+# No stored provider keys and no running brain server: every test sees only
+# the model it names, whatever the machine running the suite has set up.
+export XDG_CONFIG_HOME="${BATS_RUN_TMPDIR:-${TMPDIR:-/tmp}}/sven-e2e-config"
+export XDG_RUNTIME_DIR="${BATS_RUN_TMPDIR:-${TMPDIR:-/tmp}}/sven-e2e-run"
+mkdir -p "${XDG_CONFIG_HOME}" "${XDG_RUNTIME_DIR}"
 
 # ── Helper: run sven in headless/CI mode with the mock model ──────────────────
 #

@@ -17,6 +17,14 @@ inputs:
     required: false
     default: ''
 
+  api-key:
+    description: >
+      Key of the hosted provider that `model` names (pass a secret, e.g.
+      secrets.ANTHROPIC_API_KEY). Stored with `sven auth set <provider>`
+      for this run; sven reads no key from the environment.
+    required: false
+    default: ''
+
   mode:
     description: >
       Agent mode: "agent" (default, read+write), "research" (read-only),
@@ -91,6 +99,20 @@ runs:
           -o /usr/local/bin/sven
         chmod +x /usr/local/bin/sven
         sven --version
+
+    - name: Store the provider key
+      if: inputs.api-key != ''
+      shell: bash
+      env:
+        PROVIDER_KEY: ${{ inputs.api-key }}
+        MODEL: ${{ inputs.model }}
+      run: |
+        provider="${MODEL%%/*}"
+        if [ -z "$provider" ] || [ "$provider" = "$MODEL" ]; then
+          echo "::error::api-key needs model as provider/name, to know whose key it is"
+          exit 2
+        fi
+        printf '%s' "$PROVIDER_KEY" | sven auth set "$provider"
 
     - name: Run sven workflow
       id: run-sven

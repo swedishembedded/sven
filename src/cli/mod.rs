@@ -9,6 +9,7 @@
 
 mod agent;
 mod assembly;
+mod auth;
 mod decisions;
 mod disclosure;
 mod harness;
@@ -26,6 +27,7 @@ pub use disclosure::DisclosureFlags;
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
 // than duplicated here.
 pub use agent::AgentCommands;
+pub use auth::AuthCommands;
 pub use decisions::{DecisionsCommands, DoctorCommands};
 pub use harness::{ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, PlanFormatArg};
 pub use index::IndexCommands;
@@ -336,6 +338,15 @@ pub enum Commands {
         command: ToolCommands,
     },
 
+    /// Store, list and forget the keys of hosted providers.
+    ///
+    ///   sven auth set openrouter   - store OpenRouter's key (read from stdin)
+    ///   sven auth list             - the providers with a stored key
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
+
     /// Find out why something does not work.
     ///
     ///   sven doctor decisions    - the decision model: readiness, limits, latency
@@ -621,17 +632,20 @@ pub enum Commands {
         preamble: Option<String>,
     },
 
-    /// List available models for the configured provider(s).
+    /// List the models that can be used now, each with the name `--model`
+    /// takes: every local server that answers (brain, ollama, vLLM, LM
+    /// Studio), every `providers:` entry and every hosted provider with a
+    /// stored key, asked live. A source that does not answer is reported.
     ///
-    /// By default the static built-in catalog is shown.
-    /// With --refresh the configured provider API is queried for live data.
+    /// With --catalog the bundled model catalog is shown instead.
     ListModels {
-        /// Filter by provider name (e.g. "openai", "anthropic", "groq")
+        /// Only this provider: a driver id ("openrouter", "brain") or a
+        /// `providers:` entry
         #[arg(long, short = 'p')]
         provider: Option<String>,
-        /// Query the provider API for the live list of available models
+        /// Show the bundled catalog instead of asking the providers
         #[arg(long)]
-        refresh: bool,
+        catalog: bool,
         /// Output as JSON instead of a formatted table
         #[arg(long)]
         json: bool,

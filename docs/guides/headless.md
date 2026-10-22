@@ -583,11 +583,11 @@ jobs:
           vars: |
             pr_number=${{ github.event.number }}
             branch=${{ github.head_ref }}
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: anthropic/claude-sonnet-4-6
+          api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-Inputs: `workflow-file` (required), `model`, `mode` (`agent`), `output-format`
+Inputs: `workflow-file` (required), `model`, `api-key` (the key of the provider `model` names, stored for the run), `mode` (`agent`), `output-format`
 (`conversation`), `artifacts-dir` (`.sven/artifacts`; each run writes to a
 `<run id>` subdirectory), `step-timeout` and `run-timeout` (`0` omits the flag,
 so the configured defaults apply), `dry-run`, `vars` (one `KEY=VALUE` per

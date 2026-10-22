@@ -8,7 +8,7 @@ providers:
   my_ollama:
     name: openai
     base_url: http://localhost:8000/v1
-    api_key_env: OLLAMA_KEY
+    api_key_file: ~/.config/keys/ollama
     max_tokens: 8192
     temperature: 0.4
     driver_options:

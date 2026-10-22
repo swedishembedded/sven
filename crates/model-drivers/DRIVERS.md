@@ -92,7 +92,6 @@ DriverMeta {
     id: "myprovider",
     name: "My Provider",
     description: "Short one-line description",
-    default_api_key_env: Some("MYPROVIDER_API_KEY"),
     default_base_url: Some("https://api.myprovider.com/v1"),
     requires_api_key: true,
 },
@@ -183,7 +182,7 @@ All model settings live in `sven_model_drivers::ModelConfig`:
 model:
   provider: groq                # driver id from registry
   name: llama-3.3-70b-versatile
-  api_key_env: GROQ_API_KEY     # env var holding the key
+  # key: `sven auth set groq` (or api_key_file: FILE beside a custom base_url)
   max_tokens: 8192              # optional (catalog default used otherwise)
   temperature: 0.2
 
@@ -205,11 +204,13 @@ model:
 Integration tests are `#[ignore]`d by default.  To run them:
 
 ```sh
-# All integration tests (requires respective API keys):
+# All integration tests (each needs its provider's key, stored once with
+# `sven auth set <provider>`):
 cargo test -p sven-model-drivers -- --include-ignored
 
 # Specific provider:
-GROQ_API_KEY=gsk_... cargo test -p sven-model-drivers test_groq -- --include-ignored
+sven auth set groq
+cargo test -p sven-model-drivers test_groq -- --include-ignored
 ```
 
 Test files:
@@ -222,15 +223,15 @@ Test files:
 # List all providers with id, name, description
 sven list-providers
 
-# Verbose: also show API key env var and default URL
+# Verbose: also show whether a key is stored, and the default URL
 sven list-providers --verbose
 
 # JSON output
 sven list-providers --json
 
-# List catalog models for a specific provider
+# The models a provider serves now (live; needs its stored key)
 sven list-models --provider groq
 
-# Live query (requires API key in env)
-sven list-models --provider openai --refresh
+# The bundled catalog
+sven list-models --catalog --provider openai
 ```

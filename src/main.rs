@@ -11,6 +11,7 @@ use cli::{Cli, Commands, DecisionsCommands, DoctorCommands};
 
 use run::agent::run_agent_command;
 use run::agent_dispatch::run_agent_dispatch_command;
+use run::auth::run_auth_command;
 use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
 use run::decisions::{run_decisions_models, run_doctor_decisions};
@@ -197,11 +198,14 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::ListModels {
                 provider,
-                refresh,
+                catalog,
                 json,
             } => {
                 let config = Settings::load(cli.config.as_deref())?.runtime;
-                return list_models_cmd(&config, provider.as_deref(), *refresh, *json).await;
+                return list_models_cmd(&config, provider.as_deref(), *catalog, *json).await;
+            }
+            Commands::Auth { command } => {
+                return run_auth_command(command);
             }
             Commands::ListProviders { verbose, json } => {
                 return list_providers_cmd(*verbose, *json);

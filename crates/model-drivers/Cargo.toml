@@ -22,6 +22,7 @@ sha2        = { workspace = true }
 hex         = { workspace = true }
 chrono      = { workspace = true }
 dirs        = { workspace = true }
+serde_yaml  = { workspace = true }
 
 # ── D-Bus transport (optional) ────────────────────────────────────────────────
 # brain's `com.swedishembedded.Brain1` interface: the `dbus` model provider and
@@ -33,6 +34,10 @@ sven-image = { path = "../image", optional = true }
 sven-audio = { path = "../sven-audio", optional = true }
 
 # memfd_create and fcntl seals (the blob wire format) exist on Linux only.
+# Who owns a local server's connection record, and whether its process lives.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 nix        = { version = "0.29", features = ["mman", "fs"], optional = true }
 

@@ -7,6 +7,7 @@
 
 pub(crate) mod agent;
 pub(crate) mod agent_dispatch;
+pub(crate) mod auth;
 pub(crate) mod chats;
 pub(crate) mod ci;
 pub(crate) mod decisions;

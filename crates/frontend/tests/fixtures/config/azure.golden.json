@@ -72,7 +72,7 @@
     "mcp_servers": {},
     "model": {
       "api_key": null,
-      "api_key_env": "AZURE_OPENAI_API_KEY",
+      "api_key_file": "~/.config/keys/azure",
       "aws_region": null,
       "azure_api_version": "2024-02-01",
       "azure_deployment": "my-gpt4o-dep",

@@ -4,7 +4,7 @@ Sven registers 36 provider ids. Five are native drivers (`openai`,
 `anthropic`, `google`, `aws`, `cohere`); `dbus` is a native transport to a
 local brain server; `mock` is an offline test provider; every other id speaks
 the OpenAI chat-completions dialect through one shared driver and differs only
-in its default URL and key variable. `sven list-providers` prints the
+in its default URL and whether it needs a key. `sven list-providers` prints the
 registry.
 
 ## Quick start
@@ -15,7 +15,13 @@ Set the provider and model in your config file (`~/.config/sven/config.yaml`):
 model:
   provider: groq
   name: llama-3.3-70b-versatile
-  api_key_env: GROQ_API_KEY
+```
+
+and store the provider's key once (it is read from stdin, typed without echo
+on a terminal):
+
+```sh
+sven auth set groq
 ```
 
 Or override on the command line (`--model`/`-M`, also read from `SVEN_MODEL`):
@@ -26,25 +32,45 @@ sven -M anthropic/claude-sonnet-4-6 "Explain async Rust"
 sven -M ollama/llama3.2 "What is the capital of France?"
 ```
 
-A key is looked up in this order: `api_key`, the variable named by
-`api_key_env` (and nowhere else), the provider's default variable (listed
-below), and, for `brain`, brain's keys file. A provider that needs a key and
-finds none fails at startup with the variable to set.
+A key is looked up in this order: `api_key`, the file `api_key_file` names
+(`~/` is the home directory), the key stored for the provider with
+`sven auth set <provider>`, and, for `brain`, the connection record of the
+running server. A stored key serves every model of its provider, and every
+`providers:` entry of that driver at the provider's own endpoint, so
+`openrouter/<any model>` needs it once. It is never sent to another
+`base_url`: configuration is also read from the working directory, so an
+endpoint a cloned repository names gets only the key it names itself
+(`api_key_file`). Keys are never read from the environment. A provider that needs a key and
+finds none fails at startup saying how to store one.
+
+```sh
+sven auth set openrouter            # store a key (stdin)
+sven auth set anthropic --key-file ~/keys/anthropic
+sven auth list                      # the providers with a stored key
+sven auth remove openrouter
+```
+
+Keys live in `~/.config/sven/credentials.yaml`, mode 0600. On a CI runner,
+pipe the secret in: `printf '%s' "$SECRET" | sven auth set anthropic`.
 
 To list all providers:
 
 ```sh
 sven list-providers
-sven list-providers --verbose   # adds API key env var and default URL
+sven list-providers --verbose   # adds whether a key is stored, and the default URL
 sven list-providers --json
 ```
 
-To list models for a provider (the bundled catalog by default):
+To list every model that can be used now, with the name `--model` takes for
+it: each local server that answers (brain, ollama, vLLM, LM Studio), each
+`providers:` entry and each hosted provider with a stored key, asked live. A
+source that does not answer, or refuses its key, is reported on stderr.
 
 ```sh
-sven list-models --provider groq
-sven list-models --provider openai --refresh   # query the provider's API
+sven list-models                    # e.g. brain/Qwen/Qwen3-0.6B, openrouter/z-ai/glm-5.3-flash
+sven list-models --provider openrouter
 sven list-models --json
+sven list-models --catalog          # the bundled catalog instead
 ```
 
 To check that the configured model can be used before starting a session:
@@ -54,9 +80,11 @@ sven doctor provider          # exits non-zero when it cannot
 sven doctor provider --json
 ```
 
-The check builds the provider, and for a server on this host or a private
-network also confirms that the endpoint answers, serves the model, and
-advertises tool calling. Hosted providers are never probed.
+The check builds the provider, confirms that its endpoint answers and accepts
+the key, that it serves the model, and that the model advertises tool calling.
+A hosted provider is asked for its model list only, which costs nothing; no
+completion is requested. Google, AWS, Azure, Cohere and D-Bus stop after the
+provider check.
 
 ## Selecting a model
 
@@ -78,30 +106,24 @@ takes, in order of precedence:
 ## Default provider auto-detection
 
 When **no model is configured at all** (no `model:` block, no `--model`,
-no `SVEN_MODEL`), sven picks a provider from the environment, in priority
-order:
+no `SVEN_MODEL`), sven picks a provider, in priority order:
 
-1. **`brain`**: a locally running [brain](#brain-local-edge-ai-server) model
-   server, detected without network I/O by `BRAIN_API_KEY`, `BRAIN_API_KEYS_FILE`
-   or brain's keys file (`$BRAIN_API_KEYS_FILE`, else
-   `$XDG_RUNTIME_DIR/brain/api-keys.json`, else
-   `<state dir>/brain/api-keys.json`). The model name is left empty and
-   resolved by asking brain's `/v1/models` (the only model, else the first
-   one that reports a context length). When brain does not answer or serves no
-   model, and a key for 2-4 is set, that cloud provider is used instead; with
-   no cloud key sven reports that brain is unreachable.
-2. **OpenRouter** (`openrouter/auto`) when `OPENROUTER_API_KEY` is set.
-3. **Anthropic** (`claude-sonnet-4-6`) when `ANTHROPIC_API_KEY` is set.
-4. **OpenAI** (`gpt-5.2`) when `OPENAI_API_KEY` is set.
+1. **`brain`**: a brain server running on this machine, found without network
+   I/O from the connection record it publishes (see
+   [Brain](#brain-local-edge-ai-server)). The model name is left empty and
+   resolved by asking brain's `/v1/models`. When brain does not answer or
+   serves no model, and a key for 2-4 is stored, that hosted provider is used
+   instead.
+2. **OpenRouter** (`openrouter/auto`) when its key is stored.
+3. **Anthropic** (`claude-sonnet-4-6`) when its key is stored.
+4. **OpenAI** (`gpt-5.2`) when its key is stored.
 5. **A local server** when none of the above applies: `brain` (8788),
    `ollama` (11434), `vllm` (8000) and `lmstudio` (1234) are probed on
    localhost concurrently for one second, and the first in that order that
    serves a model is used. See
    [Local model discovery](configuration.md#local-model-discovery).
 
-Setting `SVEN_DISABLE_BRAIN_AUTODETECT` (to any value) removes brain from
-steps 1 and 5, for example on a CI host with a stale keys file. Any explicit
-model configuration wins over auto-detection.
+Any explicit model configuration wins over auto-detection.
 
 ---
 
@@ -112,14 +134,13 @@ model configuration wins over auto-detection.
 | Setting    | Value                        |
 |------------|------------------------------|
 | Provider id | `openai`                    |
-| API key env | `OPENAI_API_KEY`            |
+| Key         | `sven auth set openai` |
 | Default URL | `https://api.openai.com/v1` |
 
 ```yaml
 model:
   provider: openai
   name: gpt-4o
-  api_key_env: OPENAI_API_KEY
 ```
 
 Catalog models include `gpt-5.2`, `gpt-5.1`, `gpt-5-mini`, `gpt-4o`, `gpt-4.1`, `o3`, `o4-mini`.
@@ -131,14 +152,13 @@ Catalog models include `gpt-5.2`, `gpt-5.1`, `gpt-5-mini`, `gpt-4o`, `gpt-4.1`, 
 | Setting    | Value                         |
 |------------|-------------------------------|
 | Provider id | `anthropic`                  |
-| API key env | `ANTHROPIC_API_KEY`          |
+| Key         | `sven auth set anthropic` |
 | Default URL | `https://api.anthropic.com`  |
 
 ```yaml
 model:
   provider: anthropic
   name: claude-sonnet-4-6
-  api_key_env: ANTHROPIC_API_KEY
 ```
 
 Catalog models: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-sonnet-4-5`,
@@ -156,14 +176,13 @@ Prompt caching is on by default for Anthropic (`cache_system_prompt`,
 | Setting    | Value                                               |
 |------------|-----------------------------------------------------|
 | Provider id | `google`                                           |
-| API key env | `GEMINI_API_KEY`                                  |
+| Key         | `sven auth set google` |
 | Default URL | `https://generativelanguage.googleapis.com`       |
 
 ```yaml
 model:
   provider: google
   name: gemini-2.5-flash
-  api_key_env: GEMINI_API_KEY
 ```
 
 Catalog models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.0-flash`,
@@ -178,17 +197,17 @@ Get a free API key at [aistudio.google.com](https://aistudio.google.com).
 | Setting    | Value                    |
 |------------|--------------------------|
 | Provider id | `azure`                 |
-| API key env | `AZURE_OPENAI_API_KEY` (sent as the `api-key` header) |
+| Key         | `api_key_file` beside `azure_resource` (sent as the `api-key` header) |
 | Default URL | none: set `azure_resource` or `base_url` |
 
 ```yaml
 model:
   provider: azure
   name: gpt-4o
-  api_key_env: AZURE_OPENAI_API_KEY
   azure_resource: myresource       # subdomain of .openai.azure.com
   azure_deployment: my-gpt4o-dep  # optional, defaults to model name
   azure_api_version: "2024-02-01" # optional, defaults to 2024-02-01
+  api_key_file: ~/.config/keys/azure
 ```
 
 Or set `base_url` to the deployment URL (sven appends
@@ -240,14 +259,13 @@ Catalog models:
 | Setting    | Value                       |
 |------------|-----------------------------|
 | Provider id | `cohere`                   |
-| API key env | `COHERE_API_KEY`           |
+| Key         | `sven auth set cohere` |
 | Default URL | `https://api.cohere.com`  |
 
 ```yaml
 model:
   provider: cohere
   name: command-r-plus-08-2024
-  api_key_env: COHERE_API_KEY
 ```
 
 Catalog models: `command-r-plus-08-2024`, `command-r`, `command-nightly`.
@@ -263,14 +281,13 @@ Access 200+ models from many providers through a single API key.
 | Setting    | Value                              |
 |------------|------------------------------------|
 | Provider id | `openrouter`                      |
-| API key env | `OPENROUTER_API_KEY`             |
+| Key         | `sven auth set openrouter` |
 | Default URL | `https://openrouter.ai/api/v1`   |
 
 ```yaml
 model:
   provider: openrouter
   name: anthropic/claude-sonnet-4-6
-  api_key_env: OPENROUTER_API_KEY
 ```
 
 The default model, used when nothing else is configured, is
@@ -297,7 +314,7 @@ Proxy gateway to 100+ providers using OpenAI-compatible format.
 | Setting    | Value           |
 |------------|-----------------|
 | Provider id | `litellm`      |
-| API key env | `LITELLM_API_KEY` (a key must be set, via the variable or `api_key`) |
+| Key         | `api_key_file` beside the `base_url` |
 | Requires   | `base_url` set  |
 
 ```yaml
@@ -314,7 +331,7 @@ model:
 | Setting    | Value                              |
 |------------|------------------------------------|
 | Provider id | `vercel`                          |
-| API key env | `VERCEL_API_KEY`                  |
+| Key         | `sven auth set vercel` |
 | Default URL | `https://sdk.vercel.ai/openai`    |
 
 ---
@@ -324,7 +341,7 @@ model:
 | Setting    | Value                                            |
 |------------|--------------------------------------------------|
 | Provider id | `cloudflare`                                    |
-| API key env | `CLOUDFLARE_API_TOKEN`                          |
+| Key         | `api_key_file` beside the `base_url` |
 | Requires   | `base_url` set (your account-specific gateway URL) |
 
 ---
@@ -332,15 +349,15 @@ model:
 ### Any OpenAI-compatible hosted endpoint
 
 A metered or self-run service that speaks the OpenAI chat-completions dialect
-works through the `openai` provider with a `base_url` and a key read from the
-environment. No model-specific configuration is needed:
+works through the `openai` provider with a `base_url` and its own key. No
+model-specific configuration is needed:
 
 ```yaml
 model:
   provider: openai
   name: <model id as listed by the endpoint's /v1/models>
   base_url: https://api.example.com/v1
-  api_key_env: EXAMPLE_API_KEY
+  api_key_file: ~/.config/keys/example
 ```
 
 What sven relies on from the endpoint:
@@ -366,14 +383,13 @@ AI gateway with observability, caching, and routing.
 | Setting    | Value                          |
 |------------|--------------------------------|
 | Provider id | `portkey`                     |
-| API key env | `PORTKEY_API_KEY`            |
+| Key         | `sven auth set portkey` |
 | Default URL | `https://api.portkey.ai/v1`  |
 
 ```yaml
 model:
   provider: portkey
   name: gpt-4o
-  api_key_env: PORTKEY_API_KEY
   driver_options:
     portkey_virtual_key: pk-live-xxx  # sent as the x-portkey-virtual-key header
 ```
@@ -389,14 +405,13 @@ Near-instant inference via custom LPU hardware.
 | Setting    | Value                                |
 |------------|--------------------------------------|
 | Provider id | `groq`                              |
-| API key env | `GROQ_API_KEY`                     |
+| Key         | `sven auth set groq` |
 | Default URL | `https://api.groq.com/openai/v1`   |
 
 ```yaml
 model:
   provider: groq
   name: llama-3.3-70b-versatile
-  api_key_env: GROQ_API_KEY
 ```
 
 Catalog models: `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`,
@@ -411,14 +426,13 @@ Ultra-fast inference on Cerebras silicon.
 | Setting    | Value                            |
 |------------|----------------------------------|
 | Provider id | `cerebras`                      |
-| API key env | `CEREBRAS_API_KEY`             |
+| Key         | `sven auth set cerebras` |
 | Default URL | `https://api.cerebras.ai/v1`   |
 
 ```yaml
 model:
   provider: cerebras
   name: llama3.1-70b
-  api_key_env: CEREBRAS_API_KEY
 ```
 
 ---
@@ -430,14 +444,13 @@ model:
 | Setting    | Value                               |
 |------------|-------------------------------------|
 | Provider id | `together`                         |
-| API key env | `TOGETHER_API_KEY`                |
+| Key         | `sven auth set together` |
 | Default URL | `https://api.together.xyz/v1`      |
 
 ```yaml
 model:
   provider: together
   name: meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
-  api_key_env: TOGETHER_API_KEY
 ```
 
 ---
@@ -447,14 +460,13 @@ model:
 | Setting    | Value                                         |
 |------------|-----------------------------------------------|
 | Provider id | `fireworks`                                  |
-| API key env | `FIREWORKS_API_KEY`                         |
+| Key         | `sven auth set fireworks` |
 | Default URL | `https://api.fireworks.ai/inference/v1`     |
 
 ```yaml
 model:
   provider: fireworks
   name: accounts/fireworks/models/llama-v3p3-70b-instruct
-  api_key_env: FIREWORKS_API_KEY
 ```
 
 ---
@@ -464,7 +476,7 @@ model:
 | Setting    | Value                                          |
 |------------|------------------------------------------------|
 | Provider id | `deepinfra`                                   |
-| API key env | `DEEPINFRA_API_KEY`                          |
+| Key         | `sven auth set deepinfra` |
 | Default URL | `https://api.deepinfra.com/v1/openai`        |
 
 ---
@@ -474,7 +486,7 @@ model:
 | Setting    | Value                                   |
 |------------|-----------------------------------------|
 | Provider id | `nebius`                               |
-| API key env | `NEBIUS_API_KEY`                      |
+| Key         | `sven auth set nebius` |
 | Default URL | `https://api.studio.nebius.ai/v1`     |
 
 ---
@@ -484,7 +496,7 @@ model:
 | Setting    | Value                               |
 |------------|-------------------------------------|
 | Provider id | `sambanova`                        |
-| API key env | `SAMBANOVA_API_KEY`               |
+| Key         | `sven auth set sambanova` |
 | Default URL | `https://api.sambanova.ai/v1`      |
 
 ---
@@ -494,7 +506,7 @@ model:
 | Setting    | Value                                         |
 |------------|-----------------------------------------------|
 | Provider id | `nvidia`                                     |
-| API key env | `NVIDIA_API_KEY`                            |
+| Key         | `sven auth set nvidia` |
 | Default URL | `https://integrate.api.nvidia.com/v1`        |
 
 ---
@@ -504,7 +516,7 @@ model:
 | Setting    | Value                                        |
 |------------|----------------------------------------------|
 | Provider id | `huggingface`                               |
-| API key env | `HF_API_KEY`                               |
+| Key         | `sven auth set huggingface` |
 | Default URL | `https://router.huggingface.co/v1`          |
 
 ---
@@ -516,7 +528,7 @@ model:
 | Setting    | Value                            |
 |------------|----------------------------------|
 | Provider id | `mistral`                       |
-| API key env | `MISTRAL_API_KEY`              |
+| Key         | `sven auth set mistral` |
 | Default URL | `https://api.mistral.ai/v1`    |
 
 Catalog models: `mistral-large-latest`, `codestral-latest`, `open-mistral-nemo`,
@@ -529,7 +541,7 @@ Catalog models: `mistral-large-latest`, `codestral-latest`, `open-mistral-nemo`,
 | Setting    | Value                      |
 |------------|----------------------------|
 | Provider id | `xai`                     |
-| API key env | `XAI_API_KEY`            |
+| Key         | `sven auth set xai` |
 | Default URL | `https://api.x.ai/v1`     |
 
 Catalog models: `grok-3`, `grok-3-mini`, `grok-2`.
@@ -543,7 +555,7 @@ AI with real-time web search.
 | Setting    | Value                              |
 |------------|------------------------------------|
 | Provider id | `perplexity`                      |
-| API key env | `PERPLEXITY_API_KEY`             |
+| Key         | `sven auth set perplexity` |
 | Default URL | `https://api.perplexity.ai`       |
 
 Catalog models: `sonar-pro`, `sonar`, `sonar-reasoning-pro`.
@@ -557,7 +569,7 @@ Catalog models: `sonar-pro`, `sonar`, `sonar-reasoning-pro`.
 | Setting    | Value                               |
 |------------|-------------------------------------|
 | Provider id | `deepseek`                         |
-| API key env | `DEEPSEEK_API_KEY`                |
+| Key         | `sven auth set deepseek` |
 | Default URL | `https://api.deepseek.com/v1`      |
 
 Catalog models: `deepseek-chat`, `deepseek-reasoner`.
@@ -569,7 +581,7 @@ Catalog models: `deepseek-chat`, `deepseek-reasoner`.
 | Setting    | Value                              |
 |------------|------------------------------------|
 | Provider id | `moonshot`                        |
-| API key env | `MOONSHOT_API_KEY`               |
+| Key         | `sven auth set moonshot` |
 | Default URL | `https://api.moonshot.cn/v1`      |
 
 ---
@@ -579,7 +591,7 @@ Catalog models: `deepseek-chat`, `deepseek-reasoner`.
 | Setting    | Value                                                        |
 |------------|--------------------------------------------------------------|
 | Provider id | `dashscope`                                                 |
-| API key env | `DASHSCOPE_API_KEY`                                        |
+| Key         | `sven auth set dashscope` |
 | Default URL | `https://dashscope.aliyuncs.com/compatible-mode/v1`        |
 
 Catalog models: `qwen-max`, `qwen-plus`, `qwen2.5-72b-instruct`, `qwq-32b`.
@@ -591,7 +603,7 @@ Catalog models: `qwen-max`, `qwen-plus`, `qwen2.5-72b-instruct`, `qwq-32b`.
 | Setting    | Value                                      |
 |------------|--------------------------------------------|
 | Provider id | `glm`                                     |
-| API key env | `GLM_API_KEY`                            |
+| Key         | `sven auth set glm` |
 | Default URL | `https://open.bigmodel.cn/api/paas/v4`   |
 
 ---
@@ -601,7 +613,7 @@ Catalog models: `qwen-max`, `qwen-plus`, `qwen2.5-72b-instruct`, `qwq-32b`.
 | Setting    | Value                               |
 |------------|-------------------------------------|
 | Provider id | `minimax`                          |
-| API key env | `MINIMAX_API_KEY`                 |
+| Key         | `sven auth set minimax` |
 | Default URL | `https://api.minimax.chat/v1`      |
 
 ---
@@ -611,7 +623,7 @@ Catalog models: `qwen-max`, `qwen-plus`, `qwen2.5-72b-instruct`, `qwq-32b`.
 | Setting    | Value                                       |
 |------------|---------------------------------------------|
 | Provider id | `qianfan`                                  |
-| API key env | `QIANFAN_API_KEY`                         |
+| Key         | `sven auth set qianfan` |
 | Default URL | `https://qianfan.baidubce.com/v2`          |
 
 ---
@@ -622,19 +634,21 @@ Local providers are marked local in the registry: a request may legitimately
 take minutes to start answering (prefill of a long prompt), so their stall
 limits are far more generous than a hosted provider's, and sven asks them what
 they serve (see [Local model discovery](configuration.md#local-model-discovery)).
-`ollama`, `vllm` and `lmstudio` need no key; `brain` needs the key it mints.
+`ollama`, `vllm` and `lmstudio` need no key; `brain` needs the key it mints,
+which sven reads from the server's connection record.
 
 ### Brain (local edge-AI server)
 
 [brain](https://swedishembedded.com/docs/brain) is a local model server that
 exposes an OpenAI-compatible endpoint. Sven talks to it like any other local
-OpenAI-compatible server.
+OpenAI-compatible server, and finds it, its address and its key with no
+configuration: run `brain serve`, then `sven`.
 
 | Setting    | Value                                 |
 |------------|---------------------------------------|
 | Provider id | `brain`                              |
-| API key env | `BRAIN_API_KEY`                      |
-| Default URL | `http://127.0.0.1:8788/v1`           |
+| Key         | from the server's connection record  |
+| Default URL | the running server's, else `http://127.0.0.1:8788/v1` |
 
 ```yaml
 model:
@@ -654,11 +668,16 @@ What sven consumes:
   are used when present.
 - `POST /v1/chat/completions` with `stream: true`, as described in
   [Any OpenAI-compatible hosted endpoint](#any-openai-compatible-hosted-endpoint).
-- A bearer key. Sven uses `api_key`, `api_key_env`, `BRAIN_API_KEY`, or the
-  `"openai"` entry of brain's keys file (a JSON object `{"<dialect>": "<key>"}`)
-  at `$BRAIN_API_KEYS_FILE`, else `$XDG_RUNTIME_DIR/brain/api-keys.json`, else
-  `<state dir>/brain/api-keys.json`. The file is read each time a provider is
-  built, so a restarted server with a new key needs no re-export.
+- The connection record every `brain serve` with an HTTP surface publishes
+  while it runs: `$XDG_RUNTIME_DIR/brain/serve-<pid>.json` (else
+  `<tmpdir>/brain-<uid>/`), a JSON object whose `surfaces` list holds an
+  `openai` entry with the `url` it listens on and its `key`. Sven uses the
+  server on brain's default port when several run, else the most recently
+  started; a configured `base_url` selects the record of that server. A record
+  is trusted only when this user owns it and its directory and nobody else
+  can write either (or read the record), and only while its process lives.
+  It is read each time a provider is built, so a restarted server with a new
+  key needs nothing. `api_key` or `api_key_file` still name a key explicitly.
 
 Thinking models (the Qwen family) reason by default: unless told otherwise,
 sven sends no `enable_thinking` and the served chat template decides. Set
@@ -855,7 +874,7 @@ model:
   provider: openai
   name: my-custom-model
   base_url: https://my-custom-api.example.com/v1
-  api_key_env: MY_API_KEY
+  api_key_file: ~/.config/keys/my-endpoint
 ```
 
 To give an endpoint its own name, define it under `providers:` and select it
@@ -866,14 +885,14 @@ providers:
   workbench:
     name: openai
     base_url: https://my-custom-api.example.com/v1
-    api_key_env: MY_API_KEY
+    api_key_file: ~/.config/keys/my-endpoint
     models:
       my-custom-model:
         max_tokens: 65536
 ```
 
 Each `providers.<name>` entry takes `name` (the driver id), `base_url`,
-`api_key_env`, `api_key`, `max_tokens`, `max_output_tokens`, `max_input_tokens`,
+`api_key_file`, `api_key`, `max_tokens`, `max_output_tokens`, `max_input_tokens`,
 `temperature`, `driver_options`, `azure_*`, `aws_region`,
 `mock_responses_file`, `input_modalities` and `models`; a `models.<id>` entry
 overrides the token limits, `temperature`, `driver_options`, the `cache_*`

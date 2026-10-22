@@ -663,14 +663,14 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
                 let key = self
                     .api_key
                     .as_deref()
-                    .context("API key not set; provide api_key or api_key_env in config")?;
+                    .context("API key not set; store one with `sven auth set <provider>`, or give api_key or api_key_file in config")?;
                 http_req.bearer_auth(key)
             }
             AuthStyle::ApiKeyHeader => {
                 let key = self
                     .api_key
                     .as_deref()
-                    .context("API key not set; provide api_key or api_key_env in config")?;
+                    .context("API key not set; store one with `sven auth set <provider>`, or give api_key or api_key_file in config")?;
                 http_req.header("api-key", key)
             }
             AuthStyle::None => http_req,

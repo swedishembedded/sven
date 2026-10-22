@@ -61,9 +61,19 @@ fn parse_served_model(entry: &Value) -> Option<ServedModel> {
                 .filter_map(|c| c.as_str().map(str::to_string))
                 .collect::<Vec<_>>()
         });
+    // OpenRouter reports the request parameters a model honours instead.
+    let parameters = entry
+        .get("supported_parameters")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .any(|p| TOOL_CAPABILITIES.contains(&p))
+        });
     let tools = capabilities
         .as_ref()
-        .map(|caps| caps.iter().any(|c| TOOL_CAPABILITIES.contains(&c.as_str())));
+        .map(|caps| caps.iter().any(|c| TOOL_CAPABILITIES.contains(&c.as_str())))
+        .or(parameters);
     let adapter = entry.get("adapter").and_then(|a| {
         Some(AdapterRef {
             id: a.get("id")?.as_str()?.to_string(),
@@ -108,15 +118,20 @@ pub(crate) async fn fetch_served_models(
 
 // ── Choosing ──────────────────────────────────────────────────────────────────
 
-/// The model to use when the configuration names none: the first chat-capable
-/// entry, where "chat-capable" means the server reports a context length (a
-/// server that lists image or speech models beside its language models only
-/// gives the latter one). A server that reports no context lengths at all is
-/// not filtered.
+/// The model to use when the configuration names none. An agent calls tools,
+/// so the first chat-capable entry the server says can call them wins, then
+/// the first chat-capable one it says nothing about, then any chat-capable
+/// one; "chat-capable" means the server reports a context length (a server
+/// that lists image or speech models beside its language models only gives
+/// the latter one). A server that reports no context lengths at all is not
+/// filtered.
 pub(crate) fn choose_model(models: &[ServedModel]) -> Option<&ServedModel> {
-    models
-        .iter()
-        .find(|m| m.context_length.is_some())
+    let chat = || models.iter().filter(|m| m.context_length.is_some());
+    chat()
+        .find(|m| m.tools == Some(true))
+        .or_else(|| chat().find(|m| m.tools.is_none()))
+        .or_else(|| chat().next())
+        .or_else(|| models.iter().find(|m| m.tools != Some(false)))
         .or_else(|| models.first())
 }
 
@@ -144,12 +159,18 @@ pub(crate) fn is_local_endpoint(url: &str) -> bool {
     }
 }
 
-/// The base URL a config resolves to: its own, else the driver's default.
+/// The base URL a config resolves to: its own, else for `brain` the server
+/// running here (its connection record), else the driver's default.
 pub(crate) fn effective_base_url(cfg: &ModelConfig) -> Option<String> {
     cfg.base_url.clone().or_else(|| {
-        registry::get_driver(&cfg.provider)
-            .and_then(|m| m.default_base_url)
-            .map(str::to_string)
+        let running = (cfg.provider == "brain")
+            .then(|| crate::brain_local::find(None))
+            .flatten();
+        running.map(|b| b.base_url).or_else(|| {
+            registry::get_driver(&cfg.provider)
+                .and_then(|m| m.default_base_url)
+                .map(str::to_string)
+        })
     })
 }
 
@@ -382,8 +403,8 @@ pub(crate) async fn resolve_empty_model_name(cfg: &ModelConfig) -> ModelConfig {
     }
 }
 
-/// Settle a brain that configuration loading merely *detected* (a keys file
-/// or `BRAIN_API_KEY`, no network check): when it answers with at least one
+/// Settle a brain that configuration loading merely *detected* (its
+/// connection record, no network check): when it answers with at least one
 /// model it is kept, otherwise the cloud choice held in
 /// [`ModelConfig::detection_fallback`] replaces it. A configuration without a
 /// fallback - everything an operator wrote down - is returned unchanged.
@@ -463,17 +484,18 @@ pub(crate) async fn resolve_unconfigured(cfg: &ModelConfig) -> ModelConfig {
     if !is_unconfigured_default(cfg) {
         return cfg.clone();
     }
-    let brain_off = crate::config::brain_autodetect_disabled();
     let candidates = ZERO_CONFIG_DRIVERS
         .iter()
-        .filter(|id| !(brain_off && **id == "brain"))
         .filter_map(|id| {
-            let url = registry::get_driver(id)?.default_base_url?;
-            let key = resolve_api_key(&ModelConfig {
+            let probe = ModelConfig {
                 provider: (*id).to_string(),
                 ..ModelConfig::default()
-            });
-            Some(((*id).to_string(), url.to_string(), key))
+            };
+            Some((
+                (*id).to_string(),
+                effective_base_url(&probe)?,
+                resolve_api_key(&probe),
+            ))
         })
         .collect();
     let Some(found) = probe_endpoints(candidates, ZERO_CONFIG_TIMEOUT).await else {

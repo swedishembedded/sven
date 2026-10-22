@@ -2,6 +2,6 @@
 model:
   provider: portkey
   name: gpt-4o
-  api_key_env: PORTKEY_API_KEY
+  api_key_file: ~/.config/keys/portkey
   driver_options:
     portkey_virtual_key: pk-live-xxx  # optional virtual key for routing

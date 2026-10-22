@@ -110,8 +110,9 @@ In a CI workflow:
 # GitHub Actions example
 - name: sven code review
   env:
-    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
   run: |
+    printf '%s' "$OPENAI_KEY" | sven auth set openai
     git diff origin/main...HEAD \
       | sven --mode research \
               "Review this pull request diff. List bugs, security issues, and style problems."

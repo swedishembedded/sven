@@ -127,9 +127,12 @@ Everything a subcommand prints on failure goes to stderr and the exit code is
 |---------|-------------|
 | `sven show-config` | Print the effective configuration as YAML: every layer merged, defaults filled in. |
 | `sven completions SHELL` | Print a completion script for `bash`, `elvish`, `fish`, `powershell` or `zsh`. |
-| `sven list-models [-p PROVIDER] [--refresh] [--json]` | Print the built-in model catalog (id, provider, context window, maximum output, description). `--refresh` asks the configured provider, or `PROVIDER`, for its live list and needs a key. An unknown `PROVIDER` is an error that lists the valid ids. |
-| `sven list-providers [-v] [--json]` | Print every provider id with its name and description; `-v` adds the default API-key variable and base URL. Use the id as `model.provider`. |
-| `sven doctor provider [--json]` | Check that the model sven would use can be reached: the provider builds, a local server answers and serves the model, and the model can call tools. Probes only a server on this host or a private network, so it costs nothing on a hosted provider. Honours `--model`. Exits `1` when the model cannot be used. |
+| `sven list-models [-p PROVIDER] [--catalog] [--json]` | Print every model that can be used now, with the name `--model` takes for it (`brain/Qwen/Qwen3-0.6B`, `openrouter/z-ai/glm-5.3-flash`), its context window, output cap and tool support: each local server that answers (brain, ollama, vLLM, LM Studio), each `providers:` entry and each hosted provider with a stored key, asked live. A source that does not answer or refuses its key is reported on stderr. `PROVIDER` is a driver id or a `providers:` entry; an unknown one is an error that lists them. `--catalog` prints the bundled catalog instead. |
+| `sven list-providers [-v] [--json]` | Print every provider id with its name and description; `-v` adds whether a key is stored and the base URL. Use the id as `model.provider`. |
+| `sven auth set PROVIDER [--key-file FILE]` | Store a hosted provider's key in `~/.config/sven/credentials.yaml` (mode 0600), read from stdin (without echo on a terminal) or `FILE`, never from the command line. It serves every model of the provider and every `providers:` entry of that driver at the provider's own endpoint, never another `base_url`. Refused for `brain` (its key comes from its connection record) and for providers with no endpoint of their own (LiteLLM, Cloudflare, Azure), whose key is `api_key_file` beside the endpoint. |
+| `sven auth list` | Print the providers with a stored key (never the keys). |
+| `sven auth remove PROVIDER` | Forget a provider's stored key. |
+| `sven doctor provider [--json]` | Check that the model sven would use can be reached: the provider builds, its endpoint answers and accepts the key, it serves the model, and the model can call tools. A hosted provider is asked for its model list only, which costs nothing. Honours `--model`. Exits `1` when the model cannot be used. |
 | `sven doctor decisions [--json]` | Report what the decision runtime would do: selected model, readiness, supported question types, input limit, validation status, a latency profile and the inactive decision points with reasons. Contacts the provider even when `decision.enabled` is `false`. Exits `1` when decisions are unavailable. |
 | `sven decisions models [--json]` | List the decision models the provider knows with state, validation, question types and input limit. Loads no model. |
 
@@ -251,5 +254,7 @@ by a bound, `4` cancelled, `5` infrastructure; `validate` and `inspect` exit
 | `SVEN_LOG_FILE` | Append logs to this file in the TUI and in sub-agent processes, where logging to stderr is otherwise off. |
 | `RUST_LOG` | Log filter; replaces the level chosen by `-v`. |
 
-Provider keys, `${VAR}` expansion in configuration files and the model
-detection variables are described in [Configuration](configuration.md).
+Provider keys are never read from the environment (`sven auth set`); a
+running brain server is found from its connection record under
+`$XDG_RUNTIME_DIR/brain`. `${VAR}` expansion in configuration files is
+described in [Configuration](configuration.md).

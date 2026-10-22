@@ -111,7 +111,7 @@ providers:
   compat:
     name: deepseek                       # the driver that speaks the endpoint's protocol
     base_url: https://api.deepseek.com/v1   # or a brain server: http://127.0.0.1:8788/v1
-    api_key: ...                         # or api_key_env
+    api_key_file: ~/.config/keys/deepseek   # or api_key; a brain server needs neither
     models:
       deepseek-chat: {}
 ```

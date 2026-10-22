@@ -80,7 +80,7 @@ async fn a_hosted_provider_is_not_probed_and_a_missing_key_is_the_failure() {
         provider: "anthropic".into(),
         name: "claude-sonnet-4-6".into(),
         api_key: None,
-        api_key_env: Some("SVEN_TEST_NO_SUCH_KEY_VAR".into()),
+        api_key_file: Some("SVEN_TEST_NO_SUCH_KEY_VAR".into()),
         ..ModelConfig::default()
     };
     let report = check_provider(&cfg).await;

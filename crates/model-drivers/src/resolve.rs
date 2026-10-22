@@ -54,13 +54,38 @@ impl<'a> ModelResolver<'a> {
         if let Some(cfg) = self.try_named_provider(provider_key, model_suffix) {
             return cfg;
         }
-        if let Some(cfg) = self.try_catalog_by_provider_name(provider_key, model_suffix) {
+        let cfg = self
+            .try_catalog_by_provider_name(provider_key, model_suffix)
+            .or_else(|| self.try_catalog_by_bare_model_name(provider_key, model_suffix))
+            .unwrap_or_else(|| self.fallback());
+        self.with_entry_key(cfg)
+    }
+
+    /// A driver reached by its own id (`openrouter/<model>`) at its own
+    /// endpoint uses the key of a `providers:` entry for that same driver and
+    /// endpoint when nothing else gives it one: the key was written down
+    /// once, for the provider, not for one model.
+    fn with_entry_key(&self, mut cfg: ModelConfig) -> ModelConfig {
+        if cfg.api_key.is_some()
+            || cfg.api_key_file.is_some()
+            || crate::api_key::resolve_api_key(&cfg).is_some()
+        {
             return cfg;
         }
-        if let Some(cfg) = self.try_catalog_by_bare_model_name(provider_key, model_suffix) {
-            return cfg;
+        let same_endpoint = self
+            .providers
+            .iter()
+            .filter(|(_, e)| {
+                e.name == cfg.provider
+                    && e.base_url == cfg.base_url
+                    && (e.api_key.is_some() || e.api_key_file.is_some())
+            })
+            .min_by(|a, b| a.0.cmp(b.0));
+        if let Some((_, entry)) = same_endpoint {
+            cfg.api_key = entry.api_key.clone();
+            cfg.api_key_file = entry.api_key_file.clone();
         }
-        self.fallback()
+        cfg
     }
 
     /// Step 0 (pre-processing): split `override_str` at the first `/`.
@@ -127,7 +152,7 @@ impl<'a> ModelResolver<'a> {
         };
         if cfg.provider == self.model.provider {
             cfg.api_key = self.model.api_key.clone();
-            cfg.api_key_env = self.model.api_key_env.clone();
+            cfg.api_key_file = self.model.api_key_file.clone();
         }
         cfg
     }
@@ -166,7 +191,7 @@ pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig 
     // registry defaults / live probe / catalog entry), rather than silently
     // wearing the old provider's capacity limits and wire quirks:
     //
-    // - `api_key`/`api_key_env`/`base_url`: resolve_api_key() falls through
+    // - `api_key`/`api_key_file`/`base_url`: resolve_api_key() falls through
     //   to the new provider's registry default env var and from_config()
     //   uses the new provider's canonical endpoint instead of the old one.
     //   Example: config.model has base_url="http://koala:8000/v1" (local
@@ -190,7 +215,7 @@ pub fn resolve_model_cfg(base: &ModelConfig, override_str: &str) -> ModelConfig 
     //   meaningless (or actively wrong) outside their own provider.
     if provider_changed {
         cfg.api_key = None;
-        cfg.api_key_env = None;
+        cfg.api_key_file = None;
         cfg.base_url = None;
         cfg.max_tokens = None;
         cfg.max_output_tokens = None;
@@ -257,7 +282,7 @@ mod tests {
         ModelConfig {
             provider: "openai".into(),
             name: "gpt-4o".into(),
-            api_key_env: Some("OPENAI_API_KEY".into()),
+            api_key_file: Some("OPENAI_API_KEY".into()),
             ..ModelConfig::default()
         }
     }
@@ -273,7 +298,7 @@ mod tests {
     fn resolve_slash_separated_clears_api_key_on_provider_change() {
         let cfg = resolve_model_cfg(&openai_base(), "anthropic/claude-opus-4-5");
         assert!(
-            cfg.api_key_env.is_none(),
+            cfg.api_key_file.is_none(),
             "key env must be cleared when provider changes"
         );
         assert!(cfg.api_key.is_none());
@@ -285,7 +310,7 @@ mod tests {
         assert_eq!(cfg.provider, "openai");
         assert_eq!(cfg.name, "gpt-4o-mini");
         assert_eq!(
-            cfg.api_key_env.as_deref(),
+            cfg.api_key_file.as_deref(),
             Some("OPENAI_API_KEY"),
             "key env must be preserved when provider does not change"
         );
@@ -295,7 +320,7 @@ mod tests {
     fn resolve_bare_provider_id_changes_provider_and_clears_key() {
         let cfg = resolve_model_cfg(&openai_base(), "anthropic");
         assert_eq!(cfg.provider, "anthropic");
-        assert!(cfg.api_key_env.is_none());
+        assert!(cfg.api_key_file.is_none());
     }
 
     #[test]
@@ -303,7 +328,7 @@ mod tests {
         let cfg = resolve_model_cfg(&openai_base(), "openai");
         assert_eq!(cfg.provider, "openai");
         assert_eq!(
-            cfg.api_key_env.as_deref(),
+            cfg.api_key_file.as_deref(),
             Some("OPENAI_API_KEY"),
             "key env must not be cleared when provider is unchanged"
         );
@@ -713,5 +738,41 @@ mod tests {
         .resolve();
         assert_eq!(cfg.provider, "myprovider");
         assert_eq!(cfg.name, "mycustom-model");
+    }
+
+    /// A key written once in a `providers:` entry serves the same driver
+    /// reached by its own id: `-M openrouter/<model>` finds the key of an
+    /// `or: {name: openrouter, api_key: ...}` entry. An entry for another
+    /// endpoint lends nothing.
+    #[test]
+    fn a_driver_reached_by_its_id_uses_the_key_of_its_entry() {
+        let model = ModelConfig::default();
+        let mut providers = Providers::new();
+        providers.insert(
+            "or".into(),
+            crate::config::ProviderEntry {
+                name: "openrouter".into(),
+                api_key: Some("sk-or-entry".into()),
+                ..Default::default()
+            },
+        );
+        providers.insert(
+            "proxy".into(),
+            crate::config::ProviderEntry {
+                name: "openai".into(),
+                base_url: Some("http://proxy.example/v1".into()),
+                api_key: Some("sk-proxy".into()),
+                ..Default::default()
+            },
+        );
+        let cfg = ModelResolver::new(&model, &providers, "openrouter/z-ai/glm-5.3-flash").resolve();
+        assert_eq!(cfg.provider, "openrouter");
+        assert_eq!(cfg.api_key.as_deref(), Some("sk-or-entry"));
+        let cfg = ModelResolver::new(&model, &providers, "openai/gpt-5.2").resolve();
+        assert_ne!(
+            cfg.api_key.as_deref(),
+            Some("sk-proxy"),
+            "the proxy entry's key is for another endpoint"
+        );
     }
 }

@@ -3,40 +3,67 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
-/// Guards every test that touches the detection env vars
-/// (`OPENROUTER_API_KEY`/`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`BRAIN_*`/
-/// `SVEN_DISABLE_BRAIN_AUTODETECT`/`XDG_RUNTIME_DIR`): process-global state
-/// that `cargo test`'s parallelism does not isolate, all read by the same
+/// Guards every test that points the configuration and runtime directories
+/// elsewhere (`XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR`): process-global state
+/// that `cargo test`'s parallelism does not isolate, both read by the same
 /// priority selection in [`detect_model`].
 static DETECT_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-const DETECT_VARS: &[&str] = &[
-    "OPENROUTER_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "BRAIN_API_KEY",
-    "BRAIN_API_KEYS_FILE",
-    "SVEN_DISABLE_BRAIN_AUTODETECT",
-];
+/// What the machine offers in a detection test.
+#[derive(Default)]
+struct Machine<'a> {
+    /// Providers with a stored key (`sven auth set`).
+    stored: &'a [&'a str],
+    /// Whether a brain server's connection record is published.
+    brain: bool,
+    /// Variables set in the environment, which detection must not read.
+    environment: &'a [(&'a str, &'a str)],
+}
 
-/// The model `settle` chooses with no `model:` section, under `vars` alone.
-fn detected_with(vars: &[(&str, &str)]) -> ModelConfig {
+/// The model `settle` chooses with no `model:` section on `machine` alone.
+fn detected_on(machine: &Machine) -> ModelConfig {
+    use std::os::unix::fs::PermissionsExt;
     let _guard = DETECT_ENV_MUTEX
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let saved: Vec<_> = DETECT_VARS
+    let root = std::env::temp_dir().join(format!("sven-detect-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (config, runtime) = (root.join("config"), root.join("run"));
+    std::fs::create_dir_all(config.join("sven")).unwrap();
+    std::fs::create_dir_all(runtime.join("brain")).unwrap();
+    std::fs::set_permissions(
+        runtime.join("brain"),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    let keys: String = machine
+        .stored
         .iter()
-        .map(|k| (*k, std::env::var_os(k)))
+        .map(|p| format!("{p}: sk-{p}\n"))
         .collect();
-    for key in DETECT_VARS {
-        std::env::remove_var(key);
+    std::fs::write(config.join("sven/credentials.yaml"), keys).unwrap();
+    if machine.brain {
+        let record = runtime.join(format!("brain/serve-{}.json", std::process::id()));
+        let body = serde_json::json!({"pid": std::process::id(), "surfaces": [
+            {"provider": "openai", "url": "http://127.0.0.1:8788", "key": "sk-brain-record"}]});
+        std::fs::write(&record, body.to_string()).unwrap();
+        std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
-    // No brain keys file from the machine running the tests.
-    std::env::set_var(
-        "BRAIN_API_KEYS_FILE",
-        "/nonexistent/sven-test/api-keys.json",
+    let mut vars: Vec<(&str, std::ffi::OsString)> = vec![
+        ("XDG_CONFIG_HOME", config.into_os_string()),
+        ("XDG_RUNTIME_DIR", runtime.into_os_string()),
+    ];
+    vars.extend(
+        machine
+            .environment
+            .iter()
+            .map(|(k, v)| (*k, std::ffi::OsString::from(v))),
     );
-    for (key, value) in vars {
+    let saved: Vec<_> = vars
+        .iter()
+        .map(|(k, _)| (*k, std::env::var_os(k)))
+        .collect();
+    for (key, value) in &vars {
         std::env::set_var(key, value);
     }
     let mut model = ModelConfig::default();
@@ -47,6 +74,7 @@ fn detected_with(vars: &[(&str, &str)]) -> ModelConfig {
             None => std::env::remove_var(key),
         }
     }
+    let _ = std::fs::remove_dir_all(&root);
     model
 }
 
@@ -59,10 +87,10 @@ fn the_default_model_is_openrouter_auto_with_the_registry_key() {
         (m.provider.as_str(), m.name.as_str()),
         ("openrouter", "openrouter/auto")
     );
-    // api_key_env must be None so resolve_api_key() falls through to the
+    // api_key_file must be None so resolve_api_key() falls through to the
     // driver registry; a hard-coded value would shadow it and send the wrong
     // key on a per-step provider override.
-    assert!(m.api_key_env.is_none());
+    assert!(m.api_key_file.is_none());
     assert!(m.api_key.is_none());
 }
 
@@ -221,7 +249,7 @@ fn model_reference_names_the_provider_alias_the_model_came_from() {
         ProviderEntry {
             name: "openai".into(),
             base_url: Some("http://gateway:4000/v1".into()),
-            api_key_env: Some("GATEWAY_KEY".into()),
+            api_key_file: Some("GATEWAY_KEY".into()),
             ..ProviderEntry::default()
         },
     );
@@ -244,78 +272,70 @@ fn an_explicit_model_section_is_never_replaced_by_detection() {
     let _guard = DETECT_ENV_MUTEX
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    std::env::set_var("BRAIN_API_KEY", "sk-brain-test");
     let mut model = ModelConfig {
         provider: "anthropic".into(),
         name: "test-model".into(),
         ..ModelConfig::default()
     };
     settle(&mut model, &Providers::new(), true);
-    std::env::remove_var("BRAIN_API_KEY");
     assert_eq!(model.provider, "anthropic");
 }
 
 #[test]
 fn openrouter_then_anthropic_then_openai_are_detected_in_that_order() {
-    let m = detected_with(&[
-        ("OPENROUTER_API_KEY", "sk-or"),
-        ("ANTHROPIC_API_KEY", "sk-ant"),
-    ]);
+    let m = detected_on(&Machine {
+        stored: &["openrouter", "anthropic"],
+        ..Machine::default()
+    });
     assert_eq!(
         (m.provider.as_str(), m.name.as_str()),
         ("openrouter", "openrouter/auto")
     );
-    let m = detected_with(&[("ANTHROPIC_API_KEY", "sk-ant"), ("OPENAI_API_KEY", "sk")]);
+    let m = detected_on(&Machine {
+        stored: &["anthropic", "openai"],
+        ..Machine::default()
+    });
     assert_eq!(
         (m.provider.as_str(), m.name.as_str()),
         ("anthropic", "claude-sonnet-4-6")
     );
-    let m = detected_with(&[("OPENAI_API_KEY", "sk")]);
+    let m = detected_on(&Machine {
+        stored: &["openai"],
+        ..Machine::default()
+    });
     assert_eq!(
         (m.provider.as_str(), m.name.as_str()),
         ("openai", "gpt-5.2")
     );
-    let m = detected_with(&[]);
+    let m = detected_on(&Machine::default());
     assert_eq!(m.provider, "openrouter", "no key leaves the defaults");
 }
 
+/// A key in the environment chooses nothing: keys are stored, not exported.
 #[test]
-fn a_local_brain_wins_over_cloud_keys() {
-    let m = detected_with(&[
-        ("BRAIN_API_KEY", "sk-brain"),
-        ("OPENROUTER_API_KEY", "sk-or"),
-    ]);
+fn a_key_in_the_environment_chooses_no_provider() {
+    let m = detected_on(&Machine {
+        environment: &[("ANTHROPIC_API_KEY", "sk-ant")],
+        ..Machine::default()
+    });
+    assert_eq!(
+        (m.provider.as_str(), m.name.as_str()),
+        ("openrouter", "openrouter/auto")
+    );
+}
+
+#[test]
+fn a_running_brain_wins_over_stored_keys() {
+    let m = detected_on(&Machine {
+        stored: &["openrouter"],
+        brain: true,
+        ..Machine::default()
+    });
     assert_eq!(m.provider, "brain");
     assert_eq!(
         m.name, "",
         "empty is the deliberate sentinel resolved later by from_config_probed"
     );
-
-    let keys = tempfile_path("brain-keys.json");
-    std::fs::write(&keys, r#"{"openai":"sk-brain-from-file"}"#).unwrap();
-    let m = detected_with(&[
-        ("BRAIN_API_KEYS_FILE", keys.to_str().unwrap()),
-        ("OPENROUTER_API_KEY", "sk-or"),
-    ]);
-    std::fs::remove_file(&keys).unwrap();
-    assert_eq!(m.provider, "brain", "a brain keys file is detected too");
-}
-
-#[test]
-fn brain_detection_can_be_turned_off() {
-    let m = detected_with(&[
-        ("BRAIN_API_KEY", "sk-brain"),
-        ("SVEN_DISABLE_BRAIN_AUTODETECT", "1"),
-        ("OPENROUTER_API_KEY", "sk-or"),
-    ]);
-    assert_eq!(
-        m.provider, "openrouter",
-        "the opt-out falls through to the next priority tier"
-    );
-}
-
-fn tempfile_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("sven-model-drivers-{}-{name}", std::process::id()))
 }
 
 // ── Schema ───────────────────────────────────────────────────────────────
@@ -337,7 +357,7 @@ fn each_schema_names_exactly_its_types_fields() {
             .unknown_keys(schema)
     }
     let full_model = ModelConfig {
-        api_key_env: Some(String::new()),
+        api_key_file: Some(String::new()),
         input_modalities: Some(vec![]),
         ..ModelConfig::default()
     };
@@ -359,12 +379,13 @@ fn each_schema_names_exactly_its_types_fields() {
 
 #[test]
 fn detected_brain_keeps_the_cloud_choice_in_reserve() {
-    let m = detected_with(&[
-        ("BRAIN_API_KEY", "sk-brain"),
-        ("ANTHROPIC_API_KEY", "sk-ant"),
-    ]);
+    let m = detected_on(&Machine {
+        stored: &["anthropic"],
+        brain: true,
+        ..Machine::default()
+    });
     assert_eq!(m.provider, "brain");
-    let reserve = m.detection_fallback.expect("a cloud key is a fallback");
+    let reserve = m.detection_fallback.expect("a stored key is a fallback");
     assert_eq!(
         (reserve.provider.as_str(), reserve.name.as_str()),
         ("anthropic", "claude-sonnet-4-6")
@@ -372,8 +393,11 @@ fn detected_brain_keeps_the_cloud_choice_in_reserve() {
 }
 
 #[test]
-fn detected_brain_without_a_cloud_key_has_no_fallback() {
-    let m = detected_with(&[("BRAIN_API_KEY", "sk-brain")]);
+fn detected_brain_without_a_stored_key_has_no_fallback() {
+    let m = detected_on(&Machine {
+        brain: true,
+        ..Machine::default()
+    });
     assert_eq!(m.provider, "brain");
     assert!(m.detection_fallback.is_none());
 }

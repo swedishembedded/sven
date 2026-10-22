@@ -4,14 +4,18 @@
 //! Shared test harness for integration-testing model drivers against live APIs.
 //!
 //! All tests in this module are `#[ignore]`d by default so they do not run
-//! in CI without network access and real API keys.  To run them:
+//! in CI without network access and real API keys. Each uses the key stored
+//! for its provider. To run them:
 //!
 //! ```sh
+//! # Store the key of each provider to test, once:
+//! sven auth set openai
+//!
 //! # Run all integration tests:
-//! OPENAI_API_KEY=sk-... cargo test -p sven-model -- --include-ignored
+//! cargo test -p sven-model-drivers --test driver_tests -- --include-ignored
 //!
 //! # Run tests for a specific provider:
-//! GROQ_API_KEY=gsk_... cargo test -p sven-model groq -- --include-ignored
+//! cargo test -p sven-model-drivers --test driver_tests groq -- --include-ignored
 //! ```
 
 use futures::StreamExt;
@@ -24,19 +28,13 @@ use sven_model_drivers::ModelConfig;
 pub struct DriverTestHarness {
     provider_id: &'static str,
     test_model: &'static str,
-    api_key_env: &'static str,
 }
 
 impl DriverTestHarness {
-    pub fn new(
-        provider_id: &'static str,
-        test_model: &'static str,
-        api_key_env: &'static str,
-    ) -> Self {
+    pub fn new(provider_id: &'static str, test_model: &'static str) -> Self {
         Self {
             provider_id,
             test_model,
-            api_key_env,
         }
     }
 
@@ -44,7 +42,6 @@ impl DriverTestHarness {
         ModelConfig {
             provider: self.provider_id.into(),
             name: self.test_model.into(),
-            api_key_env: Some(self.api_key_env.into()),
             max_tokens: Some(64),
             temperature: Some(0.0),
             ..ModelConfig::default()
@@ -214,185 +211,172 @@ impl DriverTestHarness {
 // ── Per-provider tests ────────────────────────────────────────────────────────
 
 #[tokio::test]
-#[ignore = "requires OPENAI_API_KEY and network"]
+#[ignore = "requires a stored openai key (`sven auth set openai`) and network"]
 async fn test_openai_basic() {
-    let h = DriverTestHarness::new("openai", "gpt-4o-mini", "OPENAI_API_KEY");
+    let h = DriverTestHarness::new("openai", "gpt-4o-mini");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires OPENAI_API_KEY and network"]
+#[ignore = "requires a stored openai key (`sven auth set openai`) and network"]
 async fn test_openai_list_models() {
-    let h = DriverTestHarness::new("openai", "gpt-4o-mini", "OPENAI_API_KEY");
+    let h = DriverTestHarness::new("openai", "gpt-4o-mini");
     h.test_list_models().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires ANTHROPIC_API_KEY and network"]
+#[ignore = "requires a stored anthropic key (`sven auth set anthropic`) and network"]
 async fn test_anthropic_basic() {
-    let h = DriverTestHarness::new("anthropic", "claude-3-haiku-20240307", "ANTHROPIC_API_KEY");
+    let h = DriverTestHarness::new("anthropic", "claude-3-haiku-20240307");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires GEMINI_API_KEY and network"]
+#[ignore = "requires a stored google key (`sven auth set google`) and network"]
 async fn test_google_basic() {
-    let h = DriverTestHarness::new("google", "gemini-1.5-flash-002", "GEMINI_API_KEY");
+    let h = DriverTestHarness::new("google", "gemini-1.5-flash-002");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and network"]
 async fn test_aws_bedrock_basic() {
-    let h = DriverTestHarness::new("aws", "amazon.nova-micro-v1:0", "AWS_ACCESS_KEY_ID");
+    let h = DriverTestHarness::new("aws", "amazon.nova-micro-v1:0");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires COHERE_API_KEY and network"]
+#[ignore = "requires a stored cohere key (`sven auth set cohere`) and network"]
 async fn test_cohere_basic() {
-    let h = DriverTestHarness::new("cohere", "command-r", "COHERE_API_KEY");
+    let h = DriverTestHarness::new("cohere", "command-r");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires GROQ_API_KEY and network"]
+#[ignore = "requires a stored groq key (`sven auth set groq`) and network"]
 async fn test_groq_basic() {
-    let h = DriverTestHarness::new("groq", "llama-3.1-8b-instant", "GROQ_API_KEY");
+    let h = DriverTestHarness::new("groq", "llama-3.1-8b-instant");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires TOGETHER_API_KEY and network"]
+#[ignore = "requires a stored together key (`sven auth set together`) and network"]
 async fn test_together_basic() {
-    let h = DriverTestHarness::new(
-        "together",
-        "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-        "TOGETHER_API_KEY",
-    );
+    let h = DriverTestHarness::new("together", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires MISTRAL_API_KEY and network"]
+#[ignore = "requires a stored mistral key (`sven auth set mistral`) and network"]
 async fn test_mistral_basic() {
-    let h = DriverTestHarness::new("mistral", "mistral-small-latest", "MISTRAL_API_KEY");
+    let h = DriverTestHarness::new("mistral", "mistral-small-latest");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires DEEPSEEK_API_KEY and network"]
+#[ignore = "requires a stored deepseek key (`sven auth set deepseek`) and network"]
 async fn test_deepseek_basic() {
-    let h = DriverTestHarness::new("deepseek", "deepseek-chat", "DEEPSEEK_API_KEY");
+    let h = DriverTestHarness::new("deepseek", "deepseek-chat");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires XAI_API_KEY and network"]
+#[ignore = "requires a stored xai key (`sven auth set xai`) and network"]
 async fn test_xai_basic() {
-    let h = DriverTestHarness::new("xai", "grok-beta", "XAI_API_KEY");
+    let h = DriverTestHarness::new("xai", "grok-beta");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires PERPLEXITY_API_KEY and network"]
+#[ignore = "requires a stored perplexity key (`sven auth set perplexity`) and network"]
 async fn test_perplexity_basic() {
-    let h = DriverTestHarness::new("perplexity", "sonar", "PERPLEXITY_API_KEY");
+    let h = DriverTestHarness::new("perplexity", "sonar");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires OPENROUTER_API_KEY and network"]
+#[ignore = "requires a stored openrouter key (`sven auth set openrouter`) and network"]
 async fn test_openrouter_basic() {
-    let h = DriverTestHarness::new(
-        "openrouter",
-        "meta-llama/llama-3.3-70b-instruct",
-        "OPENROUTER_API_KEY",
-    );
+    let h = DriverTestHarness::new("openrouter", "meta-llama/llama-3.3-70b-instruct");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Ollama server at localhost:11434"]
 async fn test_ollama_basic() {
-    let h = DriverTestHarness::new("ollama", "llama3.2", "IGNORED_NO_KEY");
+    let h = DriverTestHarness::new("ollama", "llama3.2");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires DASHSCOPE_API_KEY and network"]
+#[ignore = "requires a stored dashscope key (`sven auth set dashscope`) and network"]
 async fn test_dashscope_basic() {
-    let h = DriverTestHarness::new("dashscope", "qwen-turbo", "DASHSCOPE_API_KEY");
+    let h = DriverTestHarness::new("dashscope", "qwen-turbo");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires MOONSHOT_API_KEY and network"]
+#[ignore = "requires a stored moonshot key (`sven auth set moonshot`) and network"]
 async fn test_moonshot_basic() {
-    let h = DriverTestHarness::new("moonshot", "moonshot-v1-8k", "MOONSHOT_API_KEY");
+    let h = DriverTestHarness::new("moonshot", "moonshot-v1-8k");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires CEREBRAS_API_KEY and network"]
+#[ignore = "requires a stored cerebras key (`sven auth set cerebras`) and network"]
 async fn test_cerebras_basic() {
-    let h = DriverTestHarness::new("cerebras", "llama3.1-8b", "CEREBRAS_API_KEY");
+    let h = DriverTestHarness::new("cerebras", "llama3.1-8b");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires FIREWORKS_API_KEY and network"]
+#[ignore = "requires a stored fireworks key (`sven auth set fireworks`) and network"]
 async fn test_fireworks_basic() {
     let h = DriverTestHarness::new(
         "fireworks",
         "accounts/fireworks/models/llama-v3p3-70b-instruct",
-        "FIREWORKS_API_KEY",
     );
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires NVIDIA_API_KEY and network"]
+#[ignore = "requires a stored nvidia key (`sven auth set nvidia`) and network"]
 async fn test_nvidia_basic() {
-    let h = DriverTestHarness::new("nvidia", "meta/llama-3.3-70b-instruct", "NVIDIA_API_KEY");
+    let h = DriverTestHarness::new("nvidia", "meta/llama-3.3-70b-instruct");
     h.test_basic_completion().await.unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires SAMBANOVA_API_KEY and network"]
+#[ignore = "requires a stored sambanova key (`sven auth set sambanova`) and network"]
 async fn test_sambanova_basic() {
-    let h = DriverTestHarness::new(
-        "sambanova",
-        "Meta-Llama-3.3-70B-Instruct",
-        "SAMBANOVA_API_KEY",
-    );
+    let h = DriverTestHarness::new("sambanova", "Meta-Llama-3.3-70B-Instruct");
     h.test_basic_completion().await.unwrap();
 }
 
 // ── Streaming chunk validation ─────────────────────────────────────────────────
 
 #[tokio::test]
-#[ignore = "requires OPENAI_API_KEY and network"]
+#[ignore = "requires a stored openai key (`sven auth set openai`) and network"]
 async fn test_openai_streaming_chunks() {
-    DriverTestHarness::new("openai", "gpt-4o-mini", "OPENAI_API_KEY")
+    DriverTestHarness::new("openai", "gpt-4o-mini")
         .test_streaming_chunks()
         .await
         .unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires ANTHROPIC_API_KEY and network"]
+#[ignore = "requires a stored anthropic key (`sven auth set anthropic`) and network"]
 async fn test_anthropic_streaming_chunks() {
-    DriverTestHarness::new("anthropic", "claude-3-haiku-20240307", "ANTHROPIC_API_KEY")
+    DriverTestHarness::new("anthropic", "claude-3-haiku-20240307")
         .test_streaming_chunks()
         .await
         .unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires GEMINI_API_KEY and network"]
+#[ignore = "requires a stored google key (`sven auth set google`) and network"]
 async fn test_google_streaming_chunks() {
-    DriverTestHarness::new("google", "gemini-1.5-flash-002", "GEMINI_API_KEY")
+    DriverTestHarness::new("google", "gemini-1.5-flash-002")
         .test_streaming_chunks()
         .await
         .unwrap();
@@ -401,91 +385,96 @@ async fn test_google_streaming_chunks() {
 // ── Tool calling ───────────────────────────────────────────────────────────────
 
 #[tokio::test]
-#[ignore = "requires OPENAI_API_KEY and network"]
+#[ignore = "requires a stored openai key (`sven auth set openai`) and network"]
 async fn test_openai_tool_calling() {
-    DriverTestHarness::new("openai", "gpt-4o-mini", "OPENAI_API_KEY")
+    DriverTestHarness::new("openai", "gpt-4o-mini")
         .test_tool_calling()
         .await
         .unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires ANTHROPIC_API_KEY and network"]
+#[ignore = "requires a stored anthropic key (`sven auth set anthropic`) and network"]
 async fn test_anthropic_tool_calling() {
-    DriverTestHarness::new("anthropic", "claude-3-haiku-20240307", "ANTHROPIC_API_KEY")
+    DriverTestHarness::new("anthropic", "claude-3-haiku-20240307")
         .test_tool_calling()
         .await
         .unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires GEMINI_API_KEY and network"]
+#[ignore = "requires a stored google key (`sven auth set google`) and network"]
 async fn test_google_tool_calling() {
-    DriverTestHarness::new("google", "gemini-1.5-flash-002", "GEMINI_API_KEY")
+    DriverTestHarness::new("google", "gemini-1.5-flash-002")
         .test_tool_calling()
         .await
         .unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires GROQ_API_KEY and network"]
+#[ignore = "requires a stored groq key (`sven auth set groq`) and network"]
 async fn test_groq_tool_calling() {
-    DriverTestHarness::new("groq", "llama-3.3-70b-versatile", "GROQ_API_KEY")
+    DriverTestHarness::new("groq", "llama-3.3-70b-versatile")
         .test_tool_calling()
         .await
         .unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires COHERE_API_KEY and network"]
+#[ignore = "requires a stored cohere key (`sven auth set cohere`) and network"]
 async fn test_cohere_tool_calling() {
-    DriverTestHarness::new("cohere", "command-r-plus", "COHERE_API_KEY")
+    DriverTestHarness::new("cohere", "command-r-plus")
         .test_tool_calling()
         .await
         .unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires MISTRAL_API_KEY and network"]
+#[ignore = "requires a stored mistral key (`sven auth set mistral`) and network"]
 async fn test_mistral_tool_calling() {
-    DriverTestHarness::new("mistral", "mistral-small-latest", "MISTRAL_API_KEY")
+    DriverTestHarness::new("mistral", "mistral-small-latest")
         .test_tool_calling()
         .await
         .unwrap();
 }
 
 #[tokio::test]
-#[ignore = "requires DEEPSEEK_API_KEY and network"]
+#[ignore = "requires a stored deepseek key (`sven auth set deepseek`) and network"]
 async fn test_deepseek_tool_calling() {
-    DriverTestHarness::new("deepseek", "deepseek-chat", "DEEPSEEK_API_KEY")
+    DriverTestHarness::new("deepseek", "deepseek-chat")
         .test_tool_calling()
         .await
         .unwrap();
 }
 
 #[test]
-fn a_key_variable_that_is_not_set_is_a_missing_key_not_a_satisfied_one() {
+fn a_key_file_that_does_not_exist_is_a_missing_key_naming_it() {
     let cfg = ModelConfig {
         provider: "anthropic".into(),
         name: "claude-sonnet-4-6".into(),
-        api_key_env: Some("SVEN_TEST_NO_SUCH_KEY_VAR".into()),
+        api_key_file: Some("/nonexistent/sven-test-key".into()),
         ..ModelConfig::default()
     };
     let err = from_config(&cfg).err().expect("no key must be refused");
     let text = err.to_string();
-    assert!(
-        text.contains("SVEN_TEST_NO_SUCH_KEY_VAR") && text.contains("not set"),
-        "{text}"
-    );
+    assert!(text.contains("/nonexistent/sven-test-key"), "{text}");
 }
 
+/// A key file the configuration names is the operator's statement that the
+/// key is there, so its absence is an error even for a provider that needs
+/// no key: silently running without it would hide the mistake.
 #[test]
-fn a_provider_that_needs_no_key_is_not_refused_for_an_unset_key_variable() {
+fn a_named_key_file_that_is_missing_is_refused_even_where_no_key_is_needed() {
     let cfg = ModelConfig {
         provider: "ollama".into(),
         name: "m".into(),
-        api_key_env: Some("SVEN_TEST_NO_SUCH_KEY_VAR".into()),
+        api_key_file: Some("/nonexistent/sven-test-key".into()),
         ..ModelConfig::default()
     };
-    assert!(from_config(&cfg).is_ok());
+    assert!(from_config(&cfg).is_err());
+    let keyless = ModelConfig {
+        api_key_file: None,
+        ..cfg
+    };
+    assert!(from_config(&keyless).is_ok());
 }
