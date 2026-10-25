@@ -19,6 +19,7 @@ sven-memory-sqlite = { path = "../memory-sqlite", optional = true }
 sven-sources    = { path = "../sources" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tool-api  = { path = "../tool-api" }
+sven-tool-registry = { path = "../tool-registry" }
 sven-tools-exec = { path = "../tools-exec" }
 sven-tools-agent = { path = "../tools-agent" }
 sven-tools-fs  = { path = "../tools-fs", default-features = false }
@@ -34,6 +35,8 @@ schemars       = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
 serde_yaml     = { workspace = true }
+sha2           = { workspace = true }
+walkdir        = { workspace = true }
 thiserror      = { workspace = true }
 uuid           = { workspace = true }
 tokio          = { workspace = true }

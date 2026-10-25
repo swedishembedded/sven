@@ -25,7 +25,7 @@
 //! `CallTool` effects **and stays in `Generating`** (`Reaction::Handled`).
 //! `ToolSucceeded` / `ToolFailed` / `ToolApprovalRequired` / `HumanApproved`
 //! (tool) / `HumanRejected` (tool) are all handled by the shared
-//! [`handle_tool_event`](super::loop_core::handle_tool_event) helper which
+//! [`handle_tool_event`] helper which
 //! drains the pending set, requests human approval, and emits continuation
 //! turns — all while staying in `Generating`.
 //!
@@ -38,13 +38,13 @@
 //! post-check: when the model's own final answer leaves the request unresolved,
 //! the machine emits one `ask_question` `CallTool` and **stays** in
 //! `Generating`, so the loop resumes with the user's pick instead of dead-ending
-//! in `Idle`. It is bounded by the same [`DEFAULT_MAX_TOOL_ROUNDS`] budget as
+//! in `Idle`. It is bounded by the same `DEFAULT_MAX_TOOL_ROUNDS` budget as
 //! the tool loop.
 //!
 //! The check is deliberately evidence-based and never inventive: it fires only
 //! when the model **itself** asked the user a question and **itself** listed,
 //! *after asking*, the alternatives that answer it (see
-//! [`clarification_question`]). The machine supplies neither.
+//! `clarification_question`). The machine supplies neither.
 //! Anything else — a plain answer, a rhetorical question, a bare "I'm not sure"
 //! with no alternatives — is left byte-identical to the previous behaviour,
 //! because this path is on every turn of the default mode.
@@ -74,8 +74,19 @@ const DEFAULT_MAX_TOOL_ROUNDS: u32 = 16;
 /// The context fact the configured round limit arrives under.
 /// `RuntimeBuilder` seeds it from `AgentConfig.max_tool_rounds` for every
 /// session; a caller may override it with `RuntimeBuilder::with_context_facts`.
-/// Without it [`DEFAULT_MAX_TOOL_ROUNDS`] stands.
+/// Without it `DEFAULT_MAX_TOOL_ROUNDS` stands.
 pub const MAX_TOOL_ROUNDS_FACT: &str = "agent.max_tool_rounds";
+
+/// The internal signal that continues the conversation: a turn whose model
+/// request carries no new instruction, asked on the thread as it stands.
+///
+/// An embedding host sends this after seeding a session with a recorded
+/// conversation and restoring no kernel state: the model then produces the
+/// next turn of that conversation instead of a first turn answering a prompt.
+/// A user message would add a message the recorded conversation never held,
+/// which is why continuation is a signal of its own rather than an empty
+/// [`Event::UserMessage`].
+pub const CONTINUE_SIGNAL: &str = "agent.continue";
 
 /// Whether the session registers `ask_question`. The clarification
 /// post-check turns a closing question into an `ask_question` call only when
@@ -445,6 +456,25 @@ impl Machine for ReactiveAgentMachine {
                         Generating,
                         vec![Self::first_turn_effect(text)],
                         "user sent message; starting turn",
+                    )
+                }
+                Event::Internal(InternalEvent::Custom { name, .. }) if name == CONTINUE_SIGNAL => {
+                    let rounds = configured_max_tool_rounds(ctx);
+                    init_loop(ctx, CHAT_THREAD, &[], AGENT_MODE, rounds);
+                    Reaction::transition(
+                        Generating,
+                        vec![build_turn_effect(
+                            CHAT_THREAD,
+                            &[],
+                            AGENT_MODE,
+                            None,
+                            None,
+                            None,
+                            rounds,
+                            None,
+                            None,
+                        )],
+                        "the conversation continues",
                     )
                 }
                 _ => Reaction::Super(Session),

@@ -43,6 +43,8 @@ pub(crate) async fn stop(
 pub(crate) enum Entry {
     /// A message from the user.
     Message(String),
+    /// No message: the conversation continues from what it already holds.
+    Continue,
     /// The answer to the question the agent is waiting on.
     Answer {
         question_id: sven_hsm::QuestionId,

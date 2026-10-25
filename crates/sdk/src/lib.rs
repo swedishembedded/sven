@@ -48,6 +48,7 @@ mod agent;
 mod engine;
 mod error;
 mod events;
+pub mod fork;
 mod gates;
 mod harness;
 mod memory_scope;
@@ -211,7 +212,7 @@ pub mod model {
 /// [`from_config_probed`](drivers::from_config_probed) additionally probes a
 /// live server for its real context window before clamping.
 ///
-/// The [`model`](crate::model) module is the seam; this is what the shipped
+/// The [`model`] module is the seam; this is what the shipped
 /// drivers hanging off it look like. Re-exported so an application that is
 /// content with the built-ins never has to reach past the facade.
 pub mod drivers {

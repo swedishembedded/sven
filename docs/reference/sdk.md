@@ -763,6 +763,44 @@ with its result, so a later reader knows which definitions produced it.
 let agents = sven_sdk::workspace::discover_agents(Some(&project_root));
 ```
 
+## Forking a recorded transcript
+
+A session normally starts clean. `Engine::fork` starts one from a recorded
+transcript and the workspace an agent had reached, so another model can
+continue the same tool loop:
+
+```rust
+use sven_sdk::fork::{Fork, RecordedState};
+
+// At record time: the transcript the model was shown and the tree it left.
+let recorded = RecordedState::of(&agent.state().transcript(), &tree)?;
+
+// Later, on an engine built with the teacher's provider and the fresh tree as
+// its project root (the same toolset and tools the recorded session had):
+let mut teacher = teacher_engine
+    .fork(&Fork::new(transcript, &fresh_tree, recorded))
+    .await?;
+teacher.continue_with(RunOptions::new()).await?;
+```
+
+The fork replays every recorded tool call, in order, through the tools the
+engine offers, into the fresh workspace, and compares each observation with
+the one the transcript recorded (after the same deterministic truncation,
+error marking and repeat note the tool executor applies). It is refused with a
+`ForkError` naming the first disagreement when a replayed observation differs
+(`ResultMismatch`), the workspace it leaves does not hash to the recorded
+digest (`WorkspaceMismatch`), the visible transcript does not hash to the
+recorded one (`TranscriptMismatch`), or a recorded call cannot be replayed
+faithfully (`UnknownTool`, `Unreplayable`, unpaired calls). A refused fork
+returns no agent.
+
+`Agent::continue_with` asks the model for the conversation's next turn without
+adding a user message, which is what makes the continuation the recorded
+conversation's own. `workspace_digest` hashes a tree's paths and contents and
+ignores `.git` and `.sven`; `transcript_digest` hashes the transcript's
+canonical JSON. A recorded transcript may open with one `Turn::System`, which
+becomes the agent's role and therefore its system prompt on the continuation.
+
 ## The state's format
 
 An `AgentState` names the format it was written in (`AgentState::version`,

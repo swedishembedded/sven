@@ -42,7 +42,7 @@ pub const RECORDING_FORMAT: &str = "sven-harness-recording/1";
 /// Serializes to JSON; [`Harness::replay`] consumes it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HarnessRecording {
-    /// Always [`RECORDING_FORMAT`] for a recording this SDK writes.
+    /// Always `RECORDING_FORMAT` for a recording this SDK writes.
     pub format: String,
     /// The name of the harness that ran.
     pub harness: String,

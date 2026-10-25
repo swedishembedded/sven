@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sven_bootstrap::{RuntimeBuilder, RuntimeContext};
-use sven_hsm::{ApprovalId, Event};
+use sven_hsm::{Event, InternalEvent};
 use sven_model::Message;
 use sven_session_model::reduce_history;
 use sven_vocab::SessionEvent;
@@ -31,6 +31,7 @@ use crate::state::AgentState;
 mod capture;
 mod export;
 mod journal;
+mod turns;
 
 /// A live agent: a conversation in progress against an [`Engine`].
 ///
@@ -120,144 +121,6 @@ impl Agent {
     #[must_use]
     pub fn suspend(self) -> AgentState {
         self.state
-    }
-
-    /// Sends `text` to the agent and runs one turn with no bounds beyond the
-    /// engine's own. See [`Self::send_with`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::send_with`].
-    pub async fn send(&mut self, text: &str) -> Result<RunOutcome, CallError> {
-        self.send_with(text, RunOptions::default()).await
-    }
-
-    /// Sends `text` to the agent and runs one turn within `bounds`, returning
-    /// how it ended, the reply and the tokens it used.
-    ///
-    /// The turn's history and ending kernel state are folded back into this
-    /// agent, so a subsequent `send` - or a `send` after a suspend/resume
-    /// round trip - continues the same conversation, also after a run that
-    /// was cancelled or stopped by a bound.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CallError::Precondition`] if the agent's mode is not
-    /// registered, and [`CallError::Infrastructure`] if the kernel session
-    /// cannot be built, the event queue closes mid-turn, or the turn itself
-    /// failed (the provider errored). A model that simply answers badly is
-    /// not an error - it is the reply - and a run stopped by one of `bounds`
-    /// is an outcome, not an error.
-    pub async fn send_with(
-        &mut self,
-        text: &str,
-        bounds: RunOptions,
-    ) -> Result<RunOutcome, CallError> {
-        self.run(
-            Entry::Message(text.to_string()),
-            &TurnOptions::default(),
-            &bounds,
-        )
-        .await
-    }
-
-    /// Answers the question the agent is waiting on and continues the run.
-    /// See [`Self::answer_with`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::answer_with`].
-    pub async fn answer(&mut self, question_id: &str, text: &str) -> Result<RunOutcome, CallError> {
-        self.answer_with(question_id, text, RunOptions::default())
-            .await
-    }
-
-    /// Answers the question a run ended [`RunConclusion::Waiting`] on, and
-    /// continues that run within `bounds`.
-    ///
-    /// The answer becomes the result of the tool call that asked, so the
-    /// model reads it exactly as if the question had been answered on the
-    /// spot. Works on a resumed agent as well as on the one that asked.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CallError::Precondition`] if the agent is not waiting on
-    /// `question_id`, and otherwise fails as [`Self::send_with`].
-    pub async fn answer_with(
-        &mut self,
-        question_id: &str,
-        text: &str,
-        bounds: RunOptions,
-    ) -> Result<RunOutcome, CallError> {
-        let pending = self
-            .state
-            .kernel
-            .as_ref()
-            .and_then(|snapshot| snapshot.context.pending_question.as_ref())
-            .filter(|q| q.question_id.as_uuid().to_string() == question_id)
-            .ok_or_else(|| {
-                CallError::Precondition(format!(
-                    "the agent is not waiting on question {question_id:?}"
-                ))
-            })?;
-        if pending.call_ref.is_empty() {
-            return Err(CallError::Precondition(format!(
-                "question {question_id:?} was parked without the id of the call that asked, \
-                 so its answer has nowhere to go"
-            )));
-        }
-        let entry = Entry::Answer {
-            question_id: pending.question_id,
-            call_ref: pending.call_ref.clone(),
-            answer: text.to_string(),
-        };
-        self.run(entry, &TurnOptions::default(), &bounds).await
-    }
-
-    /// Decides the approval the agent is parked on and continues the run. See
-    /// [`Self::decide_with`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::decide_with`].
-    pub async fn decide(
-        &mut self,
-        approval_id: ApprovalId,
-        decision: Decision,
-    ) -> Result<RunOutcome, CallError> {
-        self.decide_with(approval_id, decision, RunOptions::default())
-            .await
-    }
-
-    /// Decides the approval a run ended [`RunConclusion::Waiting`] on - see
-    /// [`EngineBuilder::park_approvals`](crate::EngineBuilder::park_approvals) -
-    /// and continues that run within `bounds`.
-    ///
-    /// An approved call runs exactly as the model proposed it; a denied one
-    /// does not run, and the model reads the reason. Works on a resumed agent
-    /// as well as on the one that asked, and the run keeps the [`RunId`] it
-    /// had. An approval is decided once.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CallError::Precondition`] if the agent is not waiting on
-    /// `approval_id`, and otherwise fails as [`Self::send_with`].
-    pub async fn decide_with(
-        &mut self,
-        approval_id: ApprovalId,
-        decision: Decision,
-        bounds: RunOptions,
-    ) -> Result<RunOutcome, CallError> {
-        if self.pending_approval().map(|a| a.id) != Some(approval_id) {
-            return Err(CallError::Precondition(format!(
-                "the agent is not waiting on approval {approval_id}"
-            )));
-        }
-        let entry = Entry::Decision {
-            approval_id,
-            decision,
-        };
-        self.run(entry, &TurnOptions::default(), &bounds).await
     }
 
     /// Calls a model-driven method with typed input and a validated result.
@@ -445,7 +308,7 @@ impl Agent {
         // A message starts a run. An answer or a decision continues the run
         // the agent is parked in, which keeps its id.
         let run_id = match &entry {
-            Entry::Message(_) => RunId::new(),
+            Entry::Message(_) | Entry::Continue => RunId::new(),
             Entry::Answer { .. } | Entry::Decision { .. } => {
                 self.state.open_run.unwrap_or_else(RunId::new)
             }
@@ -494,6 +357,15 @@ impl Agent {
                         reason: Some(reason),
                     },
                 },
+                None,
+            ),
+            // A continuation asks the machine to produce the conversation's
+            // next turn; it adds no message of its own.
+            Entry::Continue => (
+                Event::Internal(InternalEvent::Custom {
+                    name: sven_machines::CONTINUE_SIGNAL.to_string(),
+                    payload: serde_json::Value::Null,
+                }),
                 None,
             ),
         };
