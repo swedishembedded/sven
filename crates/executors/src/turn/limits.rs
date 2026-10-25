@@ -99,6 +99,12 @@ pub(super) fn compaction_limit(
     prompt_tokens: usize,
     reply_cap: usize,
 ) -> usize {
+    if threshold >= 1.0 {
+        // Off: a request is never that full, and the fit bound is not consulted
+        // either - a run that must keep its transcript ends at the budget gate
+        // instead of being rewritten.
+        return usize::MAX;
+    }
     let by_threshold = ((input_budget as f32 * threshold) as usize).saturating_sub(output_reserve);
     let by_fit = (window as usize)
         .saturating_sub(prompt_tokens)
@@ -357,6 +363,15 @@ mod tests {
                 "window {window}: limit {limit}"
             );
         }
+    }
+
+    #[test]
+    fn a_threshold_of_one_turns_compaction_off() {
+        // A run whose transcript has to survive (a failure meant to be corrected)
+        // sets the threshold to 1.0: no request is ever that full, and the fit
+        // bound must not bring compaction back.
+        let limit = compaction_limit(32_768, 32_000, 1.0, 640, 600, 8_192);
+        assert_eq!(limit, usize::MAX);
     }
 
     #[test]

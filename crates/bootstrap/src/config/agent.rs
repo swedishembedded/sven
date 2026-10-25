@@ -75,6 +75,8 @@ pub struct AgentConfig {
     /// input budget (`sven_model::budget::effective_input_budget`), minus
     /// `compaction_overhead_reserve`. Compaction also fires earlier when
     /// the request that asks for the notes would stop fitting the window.
+    /// 1.0 turns compaction off: a run that must keep its whole transcript
+    /// then ends at the budget gate instead of being rewritten.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: f32,
     /// Most tokens the notes a compaction asks the model to write may take.
