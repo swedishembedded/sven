@@ -2,7 +2,7 @@
   "config": {
     "agent": {
       "child_run_timeout_secs": 3600,
-      "compaction_output_reserve": 0.25,
+      "compaction_output_reserve": 0.019999999552965164,
       "compaction_overhead_reserve": 0.10000000149011612,
       "compaction_summary_tokens": 10000,
       "compaction_threshold": 0.8500000238418579,
