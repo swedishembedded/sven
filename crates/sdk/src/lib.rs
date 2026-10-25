@@ -49,6 +49,7 @@ mod engine;
 mod error;
 mod events;
 pub mod fork;
+mod fork_observation;
 mod gates;
 mod harness;
 mod memory_scope;
