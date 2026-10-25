@@ -312,8 +312,8 @@ files that are read).
 
 | Key | Default | Description |
 |---|---|---|
-| `compaction_threshold` | `0.85` | Fraction of the input budget that triggers compaction |
-| `compaction_output_reserve` | `0.25` | Fraction of the window kept free for the response, reasoning included |
+| `compaction_threshold` | `0.98` | Fraction of the input budget that triggers compaction |
+| `compaction_output_reserve` | `0.02` | Fraction of the window kept free for the response, reasoning included |
 | `compaction_summary_tokens` | `10000` | Most tokens the notes may take (also at most a quarter of the window) |
 | `compaction_overhead_reserve` | `0.0` | Fraction of the input budget set aside for what the token count does not see |
 | `tool_result_token_cap` | `4000` | Per-result token ceiling before truncation (`0` disables) |

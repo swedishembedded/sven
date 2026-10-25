@@ -304,13 +304,13 @@ agent:
   # less compaction_output_reserve (below). The input budget is
   # context_window − 256. Compaction also fires earlier when the request
   # that asks for the notes would stop fitting the window.
-  compaction_threshold: 0.85
+  compaction_threshold: 0.98
 
   # Fraction of the context window kept free for the model's response,
   # reasoning included. Compaction fires when the request plus this reserve
   # passes the threshold, so a normal turn always has room to think and
   # answer.
-  compaction_output_reserve: 0.25
+  compaction_output_reserve: 0.02
 
   # Most tokens the notes a compaction asks the model to write may take
   # (also capped at a quarter of the window).
@@ -732,8 +732,8 @@ Controls the agent's autonomy and defaults.
 |-----|---------|-------------|
 | `default_mode` | `"agent"` | The mode of an interactive or headless run that gets no `--mode`: `research`, `plan`, `agent`, `chat` or `sdlc` |
 | `max_tool_rounds` | `200` | Maximum autonomous tool-call rounds before stopping |
-| `compaction_threshold` | `0.85` | Fraction of the input budget that triggers compaction |
-| `compaction_output_reserve` | `0.25` | Fraction of the window kept free for the response (reasoning included) when judging the conversation full |
+| `compaction_threshold` | `0.98` | Fraction of the input budget that triggers compaction |
+| `compaction_output_reserve` | `0.02` | Fraction of the window kept free for the response (reasoning included) when judging the conversation full |
 | `compaction_summary_tokens` | `10000` | Most tokens the compaction notes may take; also capped at a quarter of the window |
 | `tool_result_token_cap` | `4000` | Token cap per tool result before smart truncation; `0` disables |
 | `note_repeated_results` | `true` | Note on the result of a call that repeats an earlier one with the same result |
