@@ -137,6 +137,62 @@ pub struct Fork {
     mode: String,
 }
 
+/// The observation `text` with the values the *sandbox* injects removed, so a
+/// replay in a fresh workspace can be compared to a recording made in another
+/// one: the per-attempt temporary directory a workspace or its `.sven` state
+/// symlink lives in (every attempt has its own, so the path always differs),
+/// and the clock's timestamp column in an `ls -l`-style listing (a replay runs
+/// later, so every directory and the symlink show a new time).
+///
+/// Nothing the student caused is removed: file names, sizes, link targets
+/// outside the temporary directory, command output and exit text stay, and the
+/// student's tree is checked by its digest (`RecordedState::workspace`) rather
+/// than by this text.
+fn without_harness_values(text: &str) -> std::borrow::Cow<'_, str> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    if !text.contains(".tmp") && !MONTHS.iter().any(|m| text.contains(m)) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        // Whitespace runs are collapsed on both sides, so a listing's aligned
+        // columns compare equal without depending on the width of a number.
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let is_listing = fields.first().is_some_and(|f| {
+            f.len() >= 10 && f.chars().next().is_some_and(|c| "[-dlbcps]".contains(c))
+        });
+        let stamp = is_listing
+            && fields.len() >= 9
+            && MONTHS.contains(&fields[5])
+            && (fields[7].contains(':') || fields[7].len() == 4);
+        let mut written = 0usize;
+        for (j, f) in fields.iter().enumerate() {
+            if stamp && (5..8).contains(&j) {
+                if j == 5 {
+                    out.push_str("<time>");
+                    written += 1;
+                }
+                continue;
+            }
+            if written > 0 {
+                out.push(' ');
+            }
+            if f.contains(".tmp") {
+                out.push_str("<tmp>");
+            } else {
+                out.push_str(f);
+            }
+            written += 1;
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 impl Fork {
     /// A fork of `transcript` into `workspace`, held to `recorded`.
     #[must_use]
@@ -616,7 +672,7 @@ impl Engine {
                 stored.push_str(&sven_model::repeat::repeat_note(earlier));
             }
         }
-        if stored != recorded {
+        if without_harness_values(&stored) != without_harness_values(recorded) {
             return Err(ForkError::ResultMismatch {
                 call_id: record.id.clone(),
                 tool: record.name.clone(),
@@ -626,6 +682,8 @@ impl Engine {
         }
         Ok(stored)
     }
+
+
 
     /// The tools a replayed session would run: the built-in set this engine's
     /// toolset names, then the engine's own tools over them, all confined to
@@ -720,5 +778,33 @@ fn tool_call_message(record: &ToolCallRecord) -> Message {
                 arguments: record.arguments.clone(),
             },
         },
+    }
+}
+
+#[cfg(test)]
+mod harness_value_tests {
+    use super::without_harness_values as n;
+
+    #[test]
+    fn a_listing_from_another_attempt_and_another_day_is_the_same_observation() {
+        let recorded = "lrwxrwxrwx+   1 marsch nogroup   41 Oct 24 19:26 .sven -> /home/marsch/tmp/g8-eval/.tmpVAHVM8/state\n-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.md";
+        let replayed = "lrwxrwxrwx+ 1 marsch nogroup 41 Oct 25 18:19 .sven -> /home/marsch/tmp/corr-diag/.tmpSeKf3j/state\n-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.md";
+        assert_eq!(n(recorded), n(replayed));
+    }
+
+    #[test]
+    fn a_changed_name_size_or_sentence_is_not_normalised_away() {
+        let a = "-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.md";
+        assert_ne!(n(a), n("-rw-------+ 1 marsch nogroup 4366 Jan  1  1970 README.md"));
+        assert_ne!(n(a), n("-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.txt"));
+        assert_ne!(
+            n("all seven symptoms behave correctly"),
+            n("all six symptoms behave correctly")
+        );
+    }
+
+    #[test]
+    fn text_without_a_temporary_path_or_a_month_is_borrowed_unchanged() {
+        assert!(matches!(n("3 passed"), std::borrow::Cow::Borrowed(_)));
     }
 }
