@@ -54,9 +54,9 @@ impl Default for CompactionConfig {
     /// Matches the agent settings' default compaction fields.
     fn default() -> Self {
         Self {
-            threshold: 0.85,
+            threshold: 0.98,
             overhead_reserve: 0.0,
-            output_reserve: 0.25,
+            output_reserve: 0.02,
             summary_tokens: 10_000,
         }
     }
@@ -360,11 +360,26 @@ mod tests {
     }
 
     #[test]
-    fn the_output_reserve_is_a_quarter_of_the_window_by_default() {
+    fn a_conversation_that_still_fits_is_left_whole() {
+        // Every token below the trigger is detail the episode keeps, so the
+        // trigger sits at the top of the window; the request-fit bound is what
+        // fires first on a window too small to hold the notes beside it.
         let cfg = CompactionConfig::default();
-        assert_eq!(cfg.output_reserve_tokens(98_304), 24_576);
-        assert_eq!(cfg.output_reserve_tokens(16_000), 4_000);
-        assert_eq!(cfg.effective_threshold(), 0.85);
+        assert!(cfg.effective_threshold() >= 0.95);
+        let by_threshold = compaction_limit(131_072, 130_000, cfg.threshold, 0, 600, 10_000);
+        let by_fit = 131_072 - 600 - 10_000 - REQUEST_MARGIN_TOKENS;
+        assert_eq!(
+            by_threshold, by_fit,
+            "the fit bound governs on a large window"
+        );
+    }
+
+    #[test]
+    fn the_output_reserve_leaves_a_turn_room_at_the_top_of_the_window() {
+        let cfg = CompactionConfig::default();
+        assert_eq!(cfg.output_reserve_tokens(98_304), 1_966);
+        assert_eq!(cfg.output_reserve_tokens(16_000), 319);
+        assert_eq!(cfg.effective_threshold(), 0.98);
     }
 
     // ── the request estimate ─────────────────────────────────────────────────

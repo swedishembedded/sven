@@ -31,7 +31,12 @@ fn default_max_tool_rounds() -> u32 {
     200
 }
 fn default_compaction_threshold() -> f32 {
-    0.85
+    // A conversation that still fits is worth keeping whole: compaction costs a
+    // summary write and a loss of detail, and the output reserve below already
+    // keeps room for the model's answer at the top of the window. On a window
+    // small enough that the notes would not fit beside the conversation, the
+    // request-fit bound fires earlier than this fraction does.
+    0.98
 }
 fn default_child_run_timeout_secs() -> u64 {
     3600
@@ -49,7 +54,11 @@ fn default_compaction_overhead_reserve() -> f32 {
     0.0
 }
 fn default_compaction_output_reserve() -> f32 {
-    0.25
+    // A turn near the trigger still needs room to think and answer, but the
+    // threshold already leaves what the window has left, and sven asks for no
+    // more output than the request leaves: a quarter of the window was reserved
+    // twice over, and it made every episode compact at 60 % of its window.
+    0.02
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,8 +111,8 @@ pub struct AgentConfig {
     /// effective compaction trigger threshold. The count is the server's own
     /// for everything already sent, so the default is 0.
     ///
-    /// Example: threshold=0.85, reserve=0.05 → compaction fires when the
-    /// request reaches 80% of the input budget (less the output reserve).
+    /// Example: threshold=0.95, reserve=0.05 → compaction fires when the
+    /// request reaches 90% of the input budget (less the output reserve).
     #[serde(default = "default_compaction_overhead_reserve")]
     pub compaction_overhead_reserve: f32,
     /// Fraction of the context window kept free for the model's response,
@@ -264,7 +273,7 @@ impl Default for AgentConfig {
         Self {
             default_mode: AgentMode::Agent,
             max_tool_rounds: 200,
-            compaction_threshold: 0.85,
+            compaction_threshold: default_compaction_threshold(),
             compaction_summary_tokens: default_compaction_summary_tokens(),
             tool_result_token_cap: default_tool_result_token_cap(),
             note_repeated_results: default_note_repeated_results(),
@@ -293,7 +302,7 @@ mod tests {
         let a = AgentConfig::default();
         assert_eq!(a.default_mode, AgentMode::Agent);
         assert_eq!(a.max_tool_rounds, 200);
-        assert!((a.compaction_threshold - 0.85).abs() < f32::EPSILON);
+        assert!((a.compaction_threshold - 0.98).abs() < f32::EPSILON);
         assert_eq!(a.compaction_summary_tokens, 10_000);
         assert!(a.system_prompt.is_none());
     }
