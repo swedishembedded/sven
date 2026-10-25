@@ -1,22 +1,17 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Concrete [`sven_model::ModelProvider`] driver implementations (native
-//! OpenAI/Anthropic/Google/AWS Bedrock/Cohere/D-Bus clients plus the shared
-//! OpenAI-compatible wire format that every other provider in
-//! `sven_model::registry` speaks) and the `from_config`/`from_config_probed`
-//! factory that selects and constructs one from a [`ModelConfig`], plus the
-//! resolution of a user-supplied model string into that configuration
-//! ([`ModelResolver`], [`resolve_model_from_config`]).
+//! Concrete [`sven_model::ModelProvider`] drivers (OpenAI, Anthropic, Google,
+//! AWS Bedrock, Cohere, D-Bus and the shared OpenAI-compatible wire format
+//! every other provider speaks), the `from_config`/`from_config_probed`
+//! factory that selects and constructs one from a [`ModelConfig`], and the
+//! resolution of a user-supplied model string ([`ModelResolver`],
+//! [`resolve_model_from_config`]). The provider section of the configuration
+//! file - [`ModelConfig`], [`ProviderEntry`] and how an unconfigured model is
+//! detected - is here too, in [`config`], because this crate reads it.
 //!
-//! The provider section of the configuration file - [`ModelConfig`],
-//! [`ProviderEntry`] and how an unconfigured model is detected - is defined
-//! here too, in [`config`], because this is the crate that reads it.
-//!
-//! This is where `reqwest`, `aws-sdk`-style SigV4 signing, and every
-//! provider's own dependency closure live, so crates that only need the
-//! `ModelProvider` trait + request/response types (`sven-model`) do not pay
-//! for any of it transitively.
+//! `reqwest`, SigV4 signing and every provider's dependency closure live here,
+//! so a crate that needs only the trait and its types pays for none of it.
 mod anthropic;
 mod api_key;
 mod aws;
@@ -311,7 +306,7 @@ impl ModelProvider for ConfigBoundedProvider {
 /// Select and construct the driver implementation for `cfg.provider`, plus
 /// the two config-derived limits [`from_config`]/[`from_config_probed`] wrap
 /// it with. Shared by both so neither duplicates the driver-selection match
-/// or double-wraps the result in [`ConfigBoundedProvider`].
+/// or double-wraps the result in `ConfigBoundedProvider`.
 ///
 /// The resolved output token limit (third tuple element) is determined in
 /// priority order:
@@ -645,9 +640,9 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
 ///
 /// Selects the driver implementation based on `cfg.provider`.  Run
 /// `sven list-providers` to see all recognised provider ids. See
-/// [`build_inner`] for the output-token resolution priority order.
+/// `build_inner` for the output-token resolution priority order.
 ///
-/// Wraps the driver in [`ConfigBoundedProvider`] so that
+/// Wraps the driver in `ConfigBoundedProvider` so that
 /// `catalog_context_window()` and `catalog_max_output_tokens()` reflect the
 /// user's explicit configuration rather than the static catalog alone. This
 /// ensures compaction thresholds and session budget calculations use the
