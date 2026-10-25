@@ -848,29 +848,29 @@ mod harness_value_tests {
     use super::without_harness_values as n;
 
     #[test]
-    fn the_sandbox_entries_of_a_real_listing_are_the_same_observation_in_another_attempt() {
+    fn the_sandbox_entries_of_a_listing_are_the_same_observation_in_another_attempt() {
         // The observation of `ls -la` in a workspace root, recorded in one attempt
         // and replayed in a fresh one: the student's own files are identical, and
         // what differs belongs to the sandbox - the clock, the attempt's temporary
         // directory, the `.sven` symlink that points into it and its target's
         // length, and the link count of `..`, which counts the entries the
         // sandbox makes beside the workspace.
-        let recorded = "total 16\ndrwx------+       4 marsch marsch 4096 Oct 24 19:26 .\ndrwx------+       6 marsch marsch 4096 Oct 24 19:26 ..\nlrwxrwxrwx+       1 marsch marsch   41 Oct 24 19:26 .sven -> /home/marsch/tmp/g8-eval/.tmpVAHVM8/state\n-rw-------+       1 marsch marsch 4365 Jan  1  1970 README.md\ndrwx------+       2 marsch marsch 4096 Jan  1  1970 tests";
-        let replayed = "total 16\ndrwx------+       4 marsch marsch 4096 Oct 25 18:31 .\ndrwx------+       4 marsch marsch 4096 Oct 25 18:31 ..\nlrwxrwxrwx+       1 marsch marsch   43 Oct 25 18:31 .sven -> /home/marsch/tmp/corr-diag/.tmpRkNgvE/state\n-rw-------+       1 marsch marsch 4365 Jan  1  1970 README.md\ndrwx------+       2 marsch marsch 4096 Jan  1  1970 tests";
+        let recorded = "total 16\ndrwx------+       4 user user 4096 Oct 24 19:26 .\ndrwx------+       6 user user 4096 Oct 24 19:26 ..\nlrwxrwxrwx+       1 user user   41 Oct 24 19:26 .sven -> /sandbox/attempt-a/.tmpAAAAAA/state\n-rw-------+       1 user user 4365 Jan  1  1970 README.md\ndrwx------+       2 user user 4096 Jan  1  1970 tests";
+        let replayed = "total 16\ndrwx------+       4 user user 4096 Oct 25 18:31 .\ndrwx------+       4 user user 4096 Oct 25 18:31 ..\nlrwxrwxrwx+       1 user user   43 Oct 25 18:31 .sven -> /sandbox/attempt-b/.tmpBBBBBB/state\n-rw-------+       1 user user 4365 Jan  1  1970 README.md\ndrwx------+       2 user user 4096 Jan  1  1970 tests";
         assert_eq!(n(recorded), n(replayed));
     }
 
     #[test]
-    fn the_block_total_of_a_copy_of_the_same_tree_is_the_sandbox_s() {
+    fn the_block_total_of_a_copy_of_the_same_tree_is_not_compared() {
         // A real refusal: two listings of the same directory by the same `ls -la`,
         // differing in the total, because the tree was copied rather than written.
-        let recorded = "src:\ntotal 28\ndrwx------+  4 marsch marsch 4096 Oct 24 19:26 ..\n-rw-------+  1 marsch marsch 4289 Jan  1  1970 adjacency.lua";
-        let replayed = "src:\ntotal 8\ndrwx------+  4 marsch marsch 4096 Oct 25 18:55 ..\n-rw-------+  1 marsch marsch 4289 Jan  1  1970 adjacency.lua";
+        let recorded = "src:\ntotal 28\ndrwx------+  4 user user 4096 Oct 24 19:26 ..\n-rw-------+  1 user user 4289 Jan  1  1970 graph.lua";
+        let replayed = "src:\ntotal 8\ndrwx------+  4 user user 4096 Oct 25 18:55 ..\n-rw-------+  1 user user 4289 Jan  1  1970 graph.lua";
         assert_eq!(n(recorded), n(replayed));
         // The entries themselves are still compared.
         assert_ne!(
             n(recorded),
-            n("src:\ntotal 8\ndrwx------+  4 marsch marsch 4096 Oct 25 18:55 ..\n-rw-------+  1 marsch marsch 4290 Jan  1  1970 adjacency.lua")
+            n("src:\ntotal 8\ndrwx------+  4 user user 4096 Oct 25 18:55 ..\n-rw-------+  1 user user 4290 Jan  1  1970 graph.lua")
         );
     }
 
@@ -878,60 +878,57 @@ mod harness_value_tests {
     fn a_traceback_from_another_attempt_names_the_same_file() {
         // A real refusal: the student's own test run raised in the workspace,
         // and only the attempt's temporary directory differs.
-        let recorded = "Traceback (most recent call last):\n  File \"<stdin>\", line 7, in <module>\n  File \"/home/marsch/tmp/g8-eval/.tmpVAHVM8/tree/ttlcache/memoizer.py\", line 34, in __init__\n    raise ValueError(\"maxsize must be at least 1\")\nValueError: maxsize must be at least 1";
-        let replayed = "Traceback (most recent call last):\n  File \"<stdin>\", line 7, in <module>\n  File \"/home/marsch/tmp/corr-diag/.tmpwj4qT0/tree/ttlcache/memoizer.py\", line 34, in __init__\n    raise ValueError(\"maxsize must be at least 1\")\nValueError: maxsize must be at least 1";
+        let recorded = "Traceback (most recent call last):\n  File \"<stdin>\", line 7, in <module>\n  File \"/sandbox/attempt-a/.tmpAAAAAA/tree/store/memo.py\", line 34, in __init__\n    raise ValueError(\"size must be at least 1\")\nValueError: size must be at least 1";
+        let replayed = "Traceback (most recent call last):\n  File \"<stdin>\", line 7, in <module>\n  File \"/sandbox/attempt-b/.tmpBBBBBB/tree/store/memo.py\", line 34, in __init__\n    raise ValueError(\"size must be at least 1\")\nValueError: size must be at least 1";
         assert_eq!(n(recorded), n(replayed));
         // The file the traceback names is still compared.
         assert_ne!(
             n(recorded),
-            n(&replayed.replace(
-                "ttlcache/memoizer.py\", line 34",
-                "ttlcache/partitions.py\", line 34"
-            ))
+            n(&replayed.replace("store/memo.py\", line 34", "store/cache.py\", line 34"))
         );
     }
 
     #[test]
-    fn the_note_sven_adds_to_a_repeated_result_is_not_part_of_the_observation() {
-        let recorded = "ValueError: maxsize must be at least 1\n\n[exit code 1]";
-        let replayed = "ValueError: maxsize must be at least 1\n\n[exit code 1]\n\n[sven note: this exact call returned this exact result once before in this run, and the result is unchanged. Repeating it will not give you new information; take a different action.]";
+    fn the_note_the_harness_adds_to_a_repeated_result_is_not_the_observation() {
+        let recorded = "ValueError: size must be at least 1\n\n[exit code 1]";
+        let replayed = "ValueError: size must be at least 1\n\n[exit code 1]\n\n[sven note: this exact call returned this exact result once before in this run, and the result is unchanged. Repeating it will not give you new information; take a different action.]";
         assert_eq!(n(recorded), n(replayed));
         assert_ne!(
             n(recorded),
-            n("ValueError: maxsize must be at least 2\n\n[exit code 1]")
+            n("ValueError: size must be at least 2\n\n[exit code 1]")
         );
     }
 
     #[test]
     fn a_changed_student_entry_beside_the_sandbox_entries_is_still_not_normalised_away() {
-        let a = "total 16\ndrwx------+ 4 marsch marsch 4096 Oct 24 19:26 .\n-rw-------+ 1 marsch marsch 4365 Jan  1  1970 README.md";
+        let a = "total 16\ndrwx------+ 4 user user 4096 Oct 24 19:26 .\n-rw-------+ 1 user user 4365 Jan  1  1970 README.md";
         assert_ne!(
             n(a),
-            n("total 16\ndrwx------+ 4 marsch marsch 4096 Oct 25 18:31 .\n-rw-------+ 1 marsch marsch 4366 Jan  1  1970 README.md")
+            n("total 16\ndrwx------+ 4 user user 4096 Oct 25 18:31 .\n-rw-------+ 1 user user 4366 Jan  1  1970 README.md")
         );
         assert_ne!(
             n(a),
-            n("total 16\ndrwx------+ 4 marsch marsch 4096 Oct 25 18:31 .\n-rw-------+ 1 marsch marsch 4365 Jan  1  1970 README.txt")
+            n("total 16\ndrwx------+ 4 user user 4096 Oct 25 18:31 .\n-rw-------+ 1 user user 4365 Jan  1  1970 README.txt")
         );
     }
 
     #[test]
     fn a_listing_from_another_attempt_and_another_day_is_the_same_observation() {
-        let recorded = "lrwxrwxrwx+   1 marsch nogroup   41 Oct 24 19:26 .sven -> /home/marsch/tmp/g8-eval/.tmpVAHVM8/state\n-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.md";
-        let replayed = "lrwxrwxrwx+ 1 marsch nogroup 41 Oct 25 18:19 .sven -> /home/marsch/tmp/corr-diag/.tmpSeKf3j/state\n-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.md";
+        let recorded = "lrwxrwxrwx+   1 user user   41 Oct 24 19:26 .sven -> /sandbox/attempt-a/.tmpAAAAAA/state\n-rw-------+ 1 user user 4365 Jan  1  1970 README.md";
+        let replayed = "lrwxrwxrwx+ 1 user user 41 Oct 25 18:19 .sven -> /sandbox/attempt-b/.tmpBBBBBB/state\n-rw-------+ 1 user user 4365 Jan  1  1970 README.md";
         assert_eq!(n(recorded), n(replayed));
     }
 
     #[test]
     fn a_changed_name_size_or_sentence_is_not_normalised_away() {
-        let a = "-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.md";
+        let a = "-rw-------+ 1 user user 4365 Jan  1  1970 README.md";
         assert_ne!(
             n(a),
-            n("-rw-------+ 1 marsch nogroup 4366 Jan  1  1970 README.md")
+            n("-rw-------+ 1 user user 4366 Jan  1  1970 README.md")
         );
         assert_ne!(
             n(a),
-            n("-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.txt")
+            n("-rw-------+ 1 user user 4365 Jan  1  1970 README.txt")
         );
         assert_ne!(
             n("all seven symptoms behave correctly"),
