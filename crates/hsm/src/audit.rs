@@ -1,7 +1,7 @@
 //! Audit records and event-sourcing replay.
 //!
 //! Every dispatch appends exactly one [`AuditRecord`] to the
-//! [`Context`](crate::context::Context). The records form an append-only log
+//! [`Context`]. The records form an append-only log
 //! that is the system's source of truth: given the recorded **input events**,
 //! [`replay`] deterministically reconstructs the machine's state, because the
 //! dispatch engine is pure (no I/O; effects are returned, not executed).

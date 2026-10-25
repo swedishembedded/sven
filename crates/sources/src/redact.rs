@@ -6,7 +6,7 @@
 /// The mark a removed secret leaves.
 pub const REDACTED: &str = "[redacted]";
 
-/// Replaces what looks like a credential with [`REDACTED`]: provider API keys
+/// Replaces what looks like a credential with `REDACTED`: provider API keys
 /// (`sk-...`), cloud access key ids (`AKIA...`), PEM private key blocks and the
 /// value of a `password`, `secret`, `token` or `api_key` assignment. Everything
 /// else is returned as it was. This is a safety net for what an agent or a

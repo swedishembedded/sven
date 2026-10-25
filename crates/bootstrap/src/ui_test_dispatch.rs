@@ -93,7 +93,7 @@ pub struct UiTestDispatchOverrides {
     /// secure screen to act on - fails at once, saying so).
     pub ask_tool: Option<Arc<dyn Tool>>,
     /// Replaces the real device lister
-    /// (`sven_tools_android::adb::RealDeviceLister`) [`resolve_effective_serial`]
+    /// (`sven_tools_android::adb::RealDeviceLister`) `resolve_effective_serial`
     /// uses to validate `device.serial` against what's actually attached.
     /// `None` uses the real one (shells out to `adb devices`) - a test
     /// substitutes a fake to exercise the fallback/ambiguity paths without a

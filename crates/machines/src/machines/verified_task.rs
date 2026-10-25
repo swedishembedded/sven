@@ -39,7 +39,7 @@
 //! # The four anti-self-grading guarantees
 //!
 //! 1. **Freeze-before-attempt.** `Freeze` is the only state that ever writes
-//!    [`FROZEN_VERIFIER_FACT`]; every other state only reads it.  No tool
+//!    `FROZEN_VERIFIER_FACT`; every other state only reads it.  No tool
 //!    available during `Attempting` can write an arbitrary `Context` fact
 //!    (tool results become thread messages, not fact mutations), so nothing
 //!    in the attempt loop can rewrite the spec - but `Verifying` still

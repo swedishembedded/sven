@@ -10,7 +10,7 @@
 //! knowledge documents.
 //!
 //! Each skill is one line, its command and a summary of at most
-//! [`SUMMARY_CHARS`](crate::instructions::SUMMARY_CHARS) characters. Above
+//! [`SUMMARY_CHARS`] characters. Above
 //! [`INDEX_LINE_LIMIT`] skills the index gives the number of skills in each
 //! package instead, so a project with hundreds of skills does not pay for
 //! hundreds of lines on every request. A pinned skill (`sven.always`) keeps

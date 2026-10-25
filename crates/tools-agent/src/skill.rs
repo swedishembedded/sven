@@ -15,7 +15,7 @@
 //! - The full SKILL.md body (everything after the frontmatter fence).
 //! - The absolute path to the skill directory so the model can resolve bundled
 //!   resources (`scripts/`, `references/`, `assets/`) relative to it.
-//! - A sampled listing of up to [`MAX_BUNDLED_FILES`] bundled file paths so
+//! - A sampled listing of up to `MAX_BUNDLED_FILES` bundled file paths so
 //!   the model knows what resources are available without reading them all.
 //! - A compact navigation hint listing **direct child sub-skills** (name +
 //!   one-line description) when the skill has nested skill packages below it.

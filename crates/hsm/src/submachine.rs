@@ -4,7 +4,7 @@
 //! are routed to the **child first**; anything the child does not handle bubbles
 //! up to the parent (the orthogonal/submachine pattern). When the child reaches
 //! its terminal state, the parent is notified with
-//! [`InternalEvent::SubmachineCompleted`](crate::event::InternalEvent::SubmachineCompleted)
+//! [`InternalEvent::SubmachineCompleted`]
 //! and the child is dropped.
 //!
 //! Because the kernel's [`Machine`] has an associated `State` type, child

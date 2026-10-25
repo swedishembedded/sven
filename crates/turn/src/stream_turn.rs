@@ -201,7 +201,7 @@ const DEFAULT_THINKING_TIMEOUT: Duration = Duration::from_secs(600);
 /// marks it:
 ///
 /// - **Repetition**: the reasoning repeats a stretch of itself verbatim
-///   (see [`RepetitionWatch`]).
+///   (see `RepetitionWatch`).
 /// - **Time cap**: time spent thinking with no forward progress.
 /// - **Token cap**, opt-in: estimated thinking tokens (chars/4) per call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -210,7 +210,7 @@ pub struct ThinkingBudget {
     /// cap: the request's output budget is the bound.
     pub max_thinking_tokens: Option<u32>,
     /// Cap on time spent thinking without forward progress. `None` defaults
-    /// to [`DEFAULT_THINKING_TIMEOUT`].
+    /// to `DEFAULT_THINKING_TIMEOUT`.
     pub thinking_timeout_secs: Option<u64>,
 }
 
@@ -243,7 +243,7 @@ static THINKING_BUDGET_OVERRIDE: std::sync::OnceLock<std::sync::Mutex<Option<Thi
     std::sync::OnceLock::new();
 
 /// Set (`Some`) or clear (`None`, reverting to config) the process-wide
-/// thinking-budget override. See [`THINKING_BUDGET_OVERRIDE`].
+/// thinking-budget override. See `THINKING_BUDGET_OVERRIDE`.
 pub fn set_thinking_budget_override(budget: Option<ThinkingBudget>) {
     let cell = THINKING_BUDGET_OVERRIDE.get_or_init(|| std::sync::Mutex::new(None));
     if let Ok(mut guard) = cell.lock() {

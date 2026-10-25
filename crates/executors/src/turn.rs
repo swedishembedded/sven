@@ -54,7 +54,7 @@
 //!
 //! A turn with no text and no tool calls is tolerated once per thread -
 //! `GeneratingAction::EmptyTurn` nudges the model to try again - but a
-//! streak of [`EMPTY_TURN_FAILURE_THRESHOLD`] consecutive empty turns on the
+//! streak of `EMPTY_TURN_FAILURE_THRESHOLD` consecutive empty turns on the
 //! same thread fails the turn instead of letting the run silently "succeed"
 //! with no output. This guards against providers that admit a streaming
 //! request (`HTTP 200` + SSE) and only discover mid-stream that it can't be
@@ -115,7 +115,7 @@ pub struct TurnExecutor {
     /// handler to interrupt an in-flight stream.
     cancel_handle: Arc<TokioMutex<Option<oneshot::Sender<()>>>>,
     /// Consecutive-empty-turn counter per thread; see the module docs and
-    /// [`EMPTY_TURN_FAILURE_THRESHOLD`]. Internal to this executor - not
+    /// `EMPTY_TURN_FAILURE_THRESHOLD`. Internal to this executor - not
     /// shared with `ToolExecutor` like `call_id_to_thread` is.
     empty_turns: Arc<Mutex<HashMap<String, u32>>>,
     /// When set (`--no-tools`), no tool schemas are ever sent to the model -

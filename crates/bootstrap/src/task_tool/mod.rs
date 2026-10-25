@@ -72,7 +72,7 @@
 //!
 //! ## Cancellation
 //!
-//! A [`CancelGuard`] RAII type holds the cancel sender.  When `execute` is
+//! A `CancelGuard` RAII type holds the cancel sender.  When `execute` is
 //! dropped (parent task cancelled) or completes normally, the guard fires the
 //! sender, signalling the OS thread to forward ACP `session/cancel` to the child.
 

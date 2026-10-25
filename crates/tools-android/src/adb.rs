@@ -168,7 +168,7 @@ pub enum SerialPick {
 ///
 /// No I/O - pure over an already-fetched `ready` slice, so it is unit-tested
 /// directly against a synthetic device list rather than a real `adb
-/// devices` invocation, the same convention [`parse_devices`]'s own tests
+/// devices` invocation, the same convention `parse_devices`'s own tests
 /// already use.
 #[must_use]
 pub fn pick_serial(requested: Option<&str>, ready: &[DeviceEntry]) -> SerialPick {
