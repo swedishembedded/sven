@@ -3,12 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
-/// Guards every test that points the configuration and runtime directories
-/// elsewhere (`XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR`): process-global state
-/// that `cargo test`'s parallelism does not isolate, both read by the same
-/// priority selection in [`detect_model`].
-static DETECT_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// What the machine offers in a detection test.
 #[derive(Default)]
 struct Machine<'a> {
@@ -23,7 +17,7 @@ struct Machine<'a> {
 /// The model `settle` chooses with no `model:` section on `machine` alone.
 fn detected_on(machine: &Machine) -> ModelConfig {
     use std::os::unix::fs::PermissionsExt;
-    let _guard = DETECT_ENV_MUTEX
+    let _guard = crate::TEST_ENV
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let root = std::env::temp_dir().join(format!("sven-detect-{}", std::process::id()));
@@ -269,7 +263,7 @@ fn model_reference_names_the_provider_alias_the_model_came_from() {
 
 #[test]
 fn an_explicit_model_section_is_never_replaced_by_detection() {
-    let _guard = DETECT_ENV_MUTEX
+    let _guard = crate::TEST_ENV
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut model = ModelConfig {

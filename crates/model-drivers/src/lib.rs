@@ -798,6 +798,13 @@ fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
     headers
 }
 
+/// Serializes every test of this crate that points process-global state
+/// (`XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR`, provider key variables) elsewhere:
+/// `cargo test` runs tests on parallel threads of one process, and two locks
+/// over the same variables do not exclude each other.
+#[cfg(test)]
+pub(crate) static TEST_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -978,11 +985,6 @@ mod tests {
     }
 
     // ── key resolution ─────────────────────────────────────────────────────
-    //
-    // Serializes the tests that point the configuration directory elsewhere:
-    // set_var mutates process state that the other tests here read.
-
-    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn scratch(tag: &str) -> std::path::PathBuf {
         let dir =
@@ -994,9 +996,9 @@ mod tests {
 
     /// Run `f` with the user's configuration directory at `dir`.
     fn with_config_dir<T>(dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let prior = std::env::var_os("XDG_CONFIG_HOME");
-        // SAFETY (test-only, serialized by ENV_MUTEX).
+        // SAFETY (test-only, serialized by crate::TEST_ENV).
         unsafe { std::env::set_var("XDG_CONFIG_HOME", dir) };
         let out = f();
         unsafe {
@@ -1058,7 +1060,7 @@ mod tests {
     fn the_stored_key_of_a_driver_is_used_and_the_environment_is_not() {
         let dir = scratch("stored");
         with_config_dir(&dir, || {
-            // SAFETY (test-only, serialized by ENV_MUTEX in with_config_dir).
+            // SAFETY (test-only, serialized by crate::TEST_ENV in with_config_dir).
             unsafe { std::env::set_var("OPENROUTER_API_KEY", "sk-from-environment") };
             let cfg = ModelConfig {
                 provider: "openrouter".into(),
