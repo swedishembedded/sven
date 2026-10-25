@@ -139,13 +139,14 @@ pub struct Fork {
 
 /// The observation `text` with the values the *sandbox* injects removed, so a
 /// replay in a fresh workspace can be compared to a recording made in another
-/// one: the per-attempt temporary directory a workspace or its `.sven` state
-/// symlink lives in (every attempt has its own, so the path always differs),
-/// the clock's timestamp column in an `ls -l`-style listing (a replay runs
-/// later, so every directory and the symlink show a new time), and the numbers
-/// on the sandbox's own entries - `.` and `..` describe the temporary directory
-/// the workspace was copied into, and `.sven`'s size is the length of its
-/// target's path, so both move between attempts.
+/// one: the per-attempt temporary directory a workspace, a `.sven` state
+/// symlink or a traceback names (every attempt has its own, so the path always
+/// differs), the clock's timestamp column in an `ls -l`-style listing (a replay
+/// runs later, so every directory and the symlink show a new time), and the
+/// numbers on the sandbox's own entries - `.` and `..` describe the temporary
+/// directory the workspace was copied into, and `.sven`'s size is the length of
+/// its target's path, so both move between attempts. The advisory note the
+/// harness appends to a repeated result is not the tool's output either.
 ///
 /// Nothing the student caused is removed: file names, sizes, link targets
 /// outside the temporary directory, command output and exit text stay, and the
@@ -155,56 +156,98 @@ fn without_harness_values(text: &str) -> std::borrow::Cow<'_, str> {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
-    if !text.contains(".tmp") && !MONTHS.iter().any(|m| text.contains(m)) {
+    if !text.contains(".tmp")
+        && !MONTHS.iter().any(|m| text.contains(m))
+        && !text.contains(HARNESS_NOTE)
+    {
         return std::borrow::Cow::Borrowed(text);
     }
-    let mut out = String::with_capacity(text.len());
-    for (i, line) in text.split('\n').enumerate() {
-        if i > 0 {
-            out.push('\n');
+    let mut lines: Vec<String> = Vec::with_capacity(text.lines().count());
+    for line in text.split('\n') {
+        if line.trim_start().starts_with(HARNESS_NOTE) {
+            continue;
         }
-        // Whitespace runs are collapsed on both sides, so a listing's aligned
-        // columns compare equal without depending on the width of a number.
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        let is_listing = fields.first().is_some_and(|f| {
-            f.len() >= 10 && f.chars().next().is_some_and(|c| "[-dlbcps]".contains(c))
-        });
-        // `ls -l` puts the name after mode, links, owner, group, size and the
-        // three fields of a timestamp; a listing whose month is there is one.
-        let stamp = is_listing
-            && fields.len() >= 9
-            && MONTHS.contains(&fields[5])
-            && (fields[7].contains(':') || fields[7].len() == 4);
-        let sandbox = stamp && matches!(fields.get(8), Some(&".") | Some(&"..") | Some(&".sven"));
-        let mut kept: Vec<&str> = Vec::with_capacity(fields.len());
-        for (j, f) in fields.iter().enumerate() {
-            if sandbox {
-                // The sandbox entry itself, by its mode and its name: everything
-                // between and after describes the temporary directory.
-                if j == 0 || j == 8 {
-                    kept.push(f);
-                }
-                continue;
-            }
-            if stamp && (5..8).contains(&j) {
-                if j == 5 {
-                    kept.push("<time>");
-                }
-                continue;
-            }
-            kept.push(f);
-        }
-        for (k, f) in kept.iter().enumerate() {
-            if k > 0 {
-                out.push(' ');
-            }
-            if f.contains(".tmp") {
-                out.push_str("<tmp>");
-            } else {
-                out.push_str(f);
-            }
-        }
+        lines.push(without_listing_values(line, &MONTHS));
     }
+    // A note that closed the observation leaves its blank line behind.
+    let mut out = lines.join("\n");
+    out.truncate(out.trim_end().len());
+    std::borrow::Cow::Owned(out)
+}
+
+/// The first words of the note the harness appends to a result a previous call
+/// returned unchanged.
+const HARNESS_NOTE: &str = "[sven note:";
+
+/// One line of `without_harness_values`: the sandbox's numbers removed from an
+/// `ls -l`-style listing, whitespace collapsed, and every path into a temporary
+/// directory reduced to `<tmp>`.
+fn without_listing_values(line: &str, months: &[&str; 12]) -> String {
+    // Whitespace runs are collapsed, so a listing's aligned columns compare
+    // equal without depending on the width of a number.
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    let is_listing = fields.first().is_some_and(|f| {
+        f.len() >= 10 && f.chars().next().is_some_and(|c| "[-dlbcps]".contains(c))
+    });
+    // `ls -l` puts the name after mode, links, owner, group, size and the three
+    // fields of a timestamp; a listing whose month is there is one.
+    let stamp = is_listing
+        && fields.len() >= 9
+        && months.contains(&fields[5])
+        && (fields[7].contains(':') || fields[7].len() == 4);
+    let sandbox = stamp && matches!(fields.get(8), Some(&".") | Some(&"..") | Some(&".sven"));
+    let mut kept: Vec<&str> = Vec::with_capacity(fields.len());
+    for (j, f) in fields.iter().enumerate() {
+        if sandbox {
+            // The sandbox entry itself, by its mode and its name: everything
+            // between and after describes the temporary directory.
+            if j == 0 || j == 8 {
+                kept.push(f);
+            }
+            continue;
+        }
+        if stamp && (5..8).contains(&j) {
+            if j == 5 {
+                kept.push("<time>");
+            }
+            continue;
+        }
+        kept.push(f);
+    }
+    let mut out = String::with_capacity(line.len());
+    for (k, f) in kept.iter().enumerate() {
+        if k > 0 {
+            out.push(' ');
+        }
+        out.push_str(&without_temp_path(f));
+    }
+    out
+}
+
+/// `token` with a path into a temporary directory reduced to `<tmp>`, so what
+/// it names beside that path stays comparable: `"…/.tmpVAHVM8/tree/x.py",`
+/// becomes `"<tmp>/tree/x.py",` and `/…/.tmpXY` becomes `<tmp>`.
+fn without_temp_path(token: &str) -> std::borrow::Cow<'_, str> {
+    // Where the `.tmpXXXX` path component starts, if the token has one.
+    let at = match token.rfind("/.tmp") {
+        Some(slash) => slash + 1,
+        None if token.starts_with(".tmp") => 0,
+        None => return std::borrow::Cow::Borrowed(token),
+    };
+    let bytes = token.as_bytes();
+    let mut end = at + 4;
+    while end < bytes.len() && bytes[end].is_ascii_alphanumeric() {
+        end += 1;
+    }
+    // Where the path itself starts: after the quote, parenthesis or assignment
+    // that introduced it, else at the token's start.
+    let start = token[..at]
+        .rfind(['"', '\'', '(', '=', ':', ','])
+        .map_or(0, |i| i + 1);
+    let mut out = String::with_capacity(token.len() - (end - start) + 5);
+    out.push_str(&token[..start]);
+    out.push_str("<tmp>");
+    out.push_str(&token[end..]);
     std::borrow::Cow::Owned(out)
 }
 
@@ -811,6 +854,31 @@ mod harness_value_tests {
         let recorded = "total 16\ndrwx------+       4 marsch marsch 4096 Oct 24 19:26 .\ndrwx------+       6 marsch marsch 4096 Oct 24 19:26 ..\nlrwxrwxrwx+       1 marsch marsch   41 Oct 24 19:26 .sven -> /home/marsch/tmp/g8-eval/.tmpVAHVM8/state\n-rw-------+       1 marsch marsch 4365 Jan  1  1970 README.md\ndrwx------+       2 marsch marsch 4096 Jan  1  1970 tests";
         let replayed = "total 16\ndrwx------+       4 marsch marsch 4096 Oct 25 18:31 .\ndrwx------+       4 marsch marsch 4096 Oct 25 18:31 ..\nlrwxrwxrwx+       1 marsch marsch   43 Oct 25 18:31 .sven -> /home/marsch/tmp/corr-diag/.tmpRkNgvE/state\n-rw-------+       1 marsch marsch 4365 Jan  1  1970 README.md\ndrwx------+       2 marsch marsch 4096 Jan  1  1970 tests";
         assert_eq!(n(recorded), n(replayed));
+    }
+
+    #[test]
+    fn a_traceback_from_another_attempt_names_the_same_file() {
+        // A real refusal: the student's own test run raised in the workspace,
+        // and only the attempt's temporary directory differs.
+        let recorded = "Traceback (most recent call last):\n  File \"<stdin>\", line 7, in <module>\n  File \"/home/marsch/tmp/g8-eval/.tmpVAHVM8/tree/ttlcache/memoizer.py\", line 34, in __init__\n    raise ValueError(\"maxsize must be at least 1\")\nValueError: maxsize must be at least 1";
+        let replayed = "Traceback (most recent call last):\n  File \"<stdin>\", line 7, in <module>\n  File \"/home/marsch/tmp/corr-diag/.tmpwj4qT0/tree/ttlcache/memoizer.py\", line 34, in __init__\n    raise ValueError(\"maxsize must be at least 1\")\nValueError: maxsize must be at least 1";
+        assert_eq!(n(recorded), n(replayed));
+        // The file the traceback names is still compared.
+        assert_ne!(
+            n(recorded),
+            n(&replayed.replace("ttlcache/memoizer.py\", line 34", "ttlcache/partitions.py\", line 34"))
+        );
+    }
+
+    #[test]
+    fn the_note_sven_adds_to_a_repeated_result_is_not_part_of_the_observation() {
+        let recorded = "ValueError: maxsize must be at least 1\n\n[exit code 1]";
+        let replayed = "ValueError: maxsize must be at least 1\n\n[exit code 1]\n\n[sven note: this exact call returned this exact result once before in this run, and the result is unchanged. Repeating it will not give you new information; take a different action.]";
+        assert_eq!(n(recorded), n(replayed));
+        assert_ne!(
+            n(recorded),
+            n("ValueError: maxsize must be at least 2\n\n[exit code 1]")
+        );
     }
 
     #[test]
