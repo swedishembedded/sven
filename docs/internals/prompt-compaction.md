@@ -122,7 +122,13 @@ compact when   request size ≥ min(by_threshold, by_fit)
 `by_fit` guarantees the request that asks for the notes - conversation, the
 compaction prompt and room for the notes - fits the window. `by_threshold`
 keeps `compaction_output_reserve` of the window free for the response, so a
-normal turn always has room to think and answer. At the start of a session
+normal turn always has room to think and answer. A thread the server has
+not yet counted (a first request, or the request after a compaction) is also
+compacted when its response-sizing estimate - the plain estimate raised by half,
+since chars/4 undercounts tool schemas and the chat template - passes the input
+budget, even under the limit above; otherwise the request would be refused for
+want of room instead of compacted. A threshold of `1.0` turns all of this off.
+At the start of a session
 (and when it changes) sven prints the numbers in one `context budget:` line.
 
 ### The fork

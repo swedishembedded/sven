@@ -164,6 +164,23 @@ impl sven_tool_registry::Tool for Lookup {
 /// As [`run_seeded`], with a provider that does or does not take
 /// `tool_choice: none`.
 async fn run_full(window: u32, seed: Vec<Message>, reply: Reply, tool_choice_none: bool) -> Run {
+    let config = CompactionConfig {
+        threshold: 0.5,
+        overhead_reserve: 0.0,
+        output_reserve: 0.0,
+        summary_tokens: 10_000,
+    };
+    run_configured(window, seed, reply, tool_choice_none, config).await
+}
+
+/// As [`run_full`], under the compaction settings `config`.
+async fn run_configured(
+    window: u32,
+    seed: Vec<Message>,
+    reply: Reply,
+    tool_choice_none: bool,
+    config: CompactionConfig,
+) -> Run {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let store = Arc::new(Mutex::new(ThreadStore::new()));
     {
@@ -187,12 +204,7 @@ async fn run_full(window: u32, seed: Vec<Message>, reply: Reply, tool_choice_non
         Arc::new(Mutex::new(std::collections::HashMap::new())),
         Arc::new(tokio::sync::Mutex::new(None)),
     )
-    .with_compaction_config(CompactionConfig {
-        threshold: 0.5,
-        overhead_reserve: 0.0,
-        output_reserve: 0.0,
-        summary_tokens: 10_000,
-    });
+    .with_compaction_config(config);
     let rt = ErasedRuntime::spawn(
         Box::new(Hsm::new(ReactiveAgentMachine::new())) as Box<dyn ErasedMachine>,
         Context::new(),
@@ -645,4 +657,40 @@ async fn a_burst_of_parallel_tool_results_larger_than_the_window_is_summarised_p
     for i in 0..12 {
         assert!(sent.contains(&format!("CODEWORD-{i}")), "lost CODEWORD-{i}");
     }
+}
+
+/// With the default threshold (98%) a thread no server has counted yet is
+/// sized pessimistically for its response, and that size can pass the window
+/// while the plain estimate is still under the compaction limit. The turn
+/// must compact first, not fail for want of room.
+#[tokio::test]
+async fn a_request_under_the_limit_whose_response_sizing_overflows_is_compacted_not_refused() {
+    let window = 5_000;
+    let config = CompactionConfig {
+        threshold: 0.98,
+        overhead_reserve: 0.0,
+        output_reserve: 0.02,
+        summary_tokens: 1_000,
+    };
+    let seed = (0..6)
+        .flat_map(|i| {
+            [
+                Message::user(format!("question {i} CODEWORD-{i} {}", "q".repeat(2000))),
+                Message::assistant(format!("answer {i}")),
+            ]
+        })
+        .collect();
+    let r = run_configured(window, seed, fork_replies(), true, config).await;
+    assert!(
+        !r.events.iter().any(|e| matches!(e, UiEvent::Error(_))),
+        "{:?}",
+        r.events
+    );
+    assert_eq!(strategies(&r.events), [CompactionStrategyUsed::Fork]);
+    let fork = r.requests.iter().find(|q| is_fork(q)).expect("a fork");
+    assert!(
+        fork.max_output_tokens_override.unwrap() > 0,
+        "the fork asks for a reply"
+    );
+    assert!(!is_fork(r.requests.last().unwrap()), "the turn then ran");
 }

@@ -214,7 +214,25 @@ impl TurnExecutor {
     ) -> Option<Fit> {
         let fit = self.compaction_fit(context_window, configured_max_output)?;
         let (estimate, calibration) = self.prompt_counts.estimate(thread_id, sent, plain_estimate);
-        (estimate >= fit.limit).then_some(Fit { calibration, ..fit })
+        if estimate >= fit.limit {
+            return Some(Fit { calibration, ..fit });
+        }
+        // Compaction switched off (limit is unbounded): a run that must keep
+        // its transcript ends at the budget gate instead.
+        if fit.limit == usize::MAX {
+            return None;
+        }
+        // A thread no server has counted is sized pessimistically for its
+        // response (see `PromptCounts::sizing_estimate`), and that size can
+        // pass the input budget while the estimate is still under the limit
+        // (a small window, or a threshold near 1.0). The request would then
+        // be refused for want of room, so compact first.
+        let budget =
+            sven_model::budget::effective_input_budget(context_window, configured_max_output)?;
+        let sizing = self
+            .prompt_counts
+            .sizing_estimate(thread_id, sent, plain_estimate);
+        (sizing > budget).then_some(Fit { calibration, ..fit })
     }
 
     /// What to do about a turn that failed because the conversation does not
