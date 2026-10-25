@@ -186,6 +186,12 @@ fn without_listing_values(line: &str, months: &[&str; 12]) -> String {
     // Whitespace runs are collapsed, so a listing's aligned columns compare
     // equal without depending on the width of a number.
     let fields: Vec<&str> = line.split_whitespace().collect();
+    // A listing's block total counts what the copy allocated, not the student's
+    // work, so two listings of the same tree can total differently.
+    if matches!(fields.as_slice(), ["total", digits] if digits.chars().all(|c| c.is_ascii_digit()))
+    {
+        return "total".to_string();
+    }
     let is_listing = fields.first().is_some_and(|f| {
         f.len() >= 10 && f.chars().next().is_some_and(|c| "[-dlbcps]".contains(c))
     });
@@ -741,8 +747,6 @@ impl Engine {
         Ok(stored)
     }
 
-
-
     /// The tools a replayed session would run: the built-in set this engine's
     /// toolset names, then the engine's own tools over them, all confined to
     /// `root`.
@@ -857,6 +861,20 @@ mod harness_value_tests {
     }
 
     #[test]
+    fn the_block_total_of_a_copy_of_the_same_tree_is_the_sandbox_s() {
+        // A real refusal: two listings of the same directory by the same `ls -la`,
+        // differing in the total, because the tree was copied rather than written.
+        let recorded = "src:\ntotal 28\ndrwx------+  4 marsch marsch 4096 Oct 24 19:26 ..\n-rw-------+  1 marsch marsch 4289 Jan  1  1970 adjacency.lua";
+        let replayed = "src:\ntotal 8\ndrwx------+  4 marsch marsch 4096 Oct 25 18:55 ..\n-rw-------+  1 marsch marsch 4289 Jan  1  1970 adjacency.lua";
+        assert_eq!(n(recorded), n(replayed));
+        // The entries themselves are still compared.
+        assert_ne!(
+            n(recorded),
+            n("src:\ntotal 8\ndrwx------+  4 marsch marsch 4096 Oct 25 18:55 ..\n-rw-------+  1 marsch marsch 4290 Jan  1  1970 adjacency.lua")
+        );
+    }
+
+    #[test]
     fn a_traceback_from_another_attempt_names_the_same_file() {
         // A real refusal: the student's own test run raised in the workspace,
         // and only the attempt's temporary directory differs.
@@ -866,7 +884,10 @@ mod harness_value_tests {
         // The file the traceback names is still compared.
         assert_ne!(
             n(recorded),
-            n(&replayed.replace("ttlcache/memoizer.py\", line 34", "ttlcache/partitions.py\", line 34"))
+            n(&replayed.replace(
+                "ttlcache/memoizer.py\", line 34",
+                "ttlcache/partitions.py\", line 34"
+            ))
         );
     }
 
@@ -904,8 +925,14 @@ mod harness_value_tests {
     #[test]
     fn a_changed_name_size_or_sentence_is_not_normalised_away() {
         let a = "-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.md";
-        assert_ne!(n(a), n("-rw-------+ 1 marsch nogroup 4366 Jan  1  1970 README.md"));
-        assert_ne!(n(a), n("-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.txt"));
+        assert_ne!(
+            n(a),
+            n("-rw-------+ 1 marsch nogroup 4366 Jan  1  1970 README.md")
+        );
+        assert_ne!(
+            n(a),
+            n("-rw-------+ 1 marsch nogroup 4365 Jan  1  1970 README.txt")
+        );
         assert_ne!(
             n("all seven symptoms behave correctly"),
             n("all six symptoms behave correctly")
