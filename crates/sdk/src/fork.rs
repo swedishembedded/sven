@@ -141,8 +141,11 @@ pub struct Fork {
 /// replay in a fresh workspace can be compared to a recording made in another
 /// one: the per-attempt temporary directory a workspace or its `.sven` state
 /// symlink lives in (every attempt has its own, so the path always differs),
-/// and the clock's timestamp column in an `ls -l`-style listing (a replay runs
-/// later, so every directory and the symlink show a new time).
+/// the clock's timestamp column in an `ls -l`-style listing (a replay runs
+/// later, so every directory and the symlink show a new time), and the numbers
+/// on the sandbox's own entries - `.` and `..` describe the temporary directory
+/// the workspace was copied into, and `.sven`'s size is the length of its
+/// target's path, so both move between attempts.
 ///
 /// Nothing the student caused is removed: file names, sizes, link targets
 /// outside the temporary directory, command output and exit text stay, and the
@@ -166,20 +169,33 @@ fn without_harness_values(text: &str) -> std::borrow::Cow<'_, str> {
         let is_listing = fields.first().is_some_and(|f| {
             f.len() >= 10 && f.chars().next().is_some_and(|c| "[-dlbcps]".contains(c))
         });
+        // `ls -l` puts the name after mode, links, owner, group, size and the
+        // three fields of a timestamp; a listing whose month is there is one.
         let stamp = is_listing
             && fields.len() >= 9
             && MONTHS.contains(&fields[5])
             && (fields[7].contains(':') || fields[7].len() == 4);
-        let mut written = 0usize;
+        let sandbox = stamp && matches!(fields.get(8), Some(&".") | Some(&"..") | Some(&".sven"));
+        let mut kept: Vec<&str> = Vec::with_capacity(fields.len());
         for (j, f) in fields.iter().enumerate() {
-            if stamp && (5..8).contains(&j) {
-                if j == 5 {
-                    out.push_str("<time>");
-                    written += 1;
+            if sandbox {
+                // The sandbox entry itself, by its mode and its name: everything
+                // between and after describes the temporary directory.
+                if j == 0 || j == 8 {
+                    kept.push(f);
                 }
                 continue;
             }
-            if written > 0 {
+            if stamp && (5..8).contains(&j) {
+                if j == 5 {
+                    kept.push("<time>");
+                }
+                continue;
+            }
+            kept.push(f);
+        }
+        for (k, f) in kept.iter().enumerate() {
+            if k > 0 {
                 out.push(' ');
             }
             if f.contains(".tmp") {
@@ -187,7 +203,6 @@ fn without_harness_values(text: &str) -> std::borrow::Cow<'_, str> {
             } else {
                 out.push_str(f);
             }
-            written += 1;
         }
     }
     std::borrow::Cow::Owned(out)
@@ -784,6 +799,32 @@ fn tool_call_message(record: &ToolCallRecord) -> Message {
 #[cfg(test)]
 mod harness_value_tests {
     use super::without_harness_values as n;
+
+    #[test]
+    fn the_sandbox_entries_of_a_real_listing_are_the_same_observation_in_another_attempt() {
+        // The observation of `ls -la` in a workspace root, recorded in one attempt
+        // and replayed in a fresh one: the student's own files are identical, and
+        // what differs belongs to the sandbox - the clock, the attempt's temporary
+        // directory, the `.sven` symlink that points into it and its target's
+        // length, and the link count of `..`, which counts the entries the
+        // sandbox makes beside the workspace.
+        let recorded = "total 16\ndrwx------+       4 marsch marsch 4096 Oct 24 19:26 .\ndrwx------+       6 marsch marsch 4096 Oct 24 19:26 ..\nlrwxrwxrwx+       1 marsch marsch   41 Oct 24 19:26 .sven -> /home/marsch/tmp/g8-eval/.tmpVAHVM8/state\n-rw-------+       1 marsch marsch 4365 Jan  1  1970 README.md\ndrwx------+       2 marsch marsch 4096 Jan  1  1970 tests";
+        let replayed = "total 16\ndrwx------+       4 marsch marsch 4096 Oct 25 18:31 .\ndrwx------+       4 marsch marsch 4096 Oct 25 18:31 ..\nlrwxrwxrwx+       1 marsch marsch   43 Oct 25 18:31 .sven -> /home/marsch/tmp/corr-diag/.tmpRkNgvE/state\n-rw-------+       1 marsch marsch 4365 Jan  1  1970 README.md\ndrwx------+       2 marsch marsch 4096 Jan  1  1970 tests";
+        assert_eq!(n(recorded), n(replayed));
+    }
+
+    #[test]
+    fn a_changed_student_entry_beside_the_sandbox_entries_is_still_not_normalised_away() {
+        let a = "total 16\ndrwx------+ 4 marsch marsch 4096 Oct 24 19:26 .\n-rw-------+ 1 marsch marsch 4365 Jan  1  1970 README.md";
+        assert_ne!(
+            n(a),
+            n("total 16\ndrwx------+ 4 marsch marsch 4096 Oct 25 18:31 .\n-rw-------+ 1 marsch marsch 4366 Jan  1  1970 README.md")
+        );
+        assert_ne!(
+            n(a),
+            n("total 16\ndrwx------+ 4 marsch marsch 4096 Oct 25 18:31 .\n-rw-------+ 1 marsch marsch 4365 Jan  1  1970 README.txt")
+        );
+    }
 
     #[test]
     fn a_listing_from_another_attempt_and_another_day_is_the_same_observation() {
