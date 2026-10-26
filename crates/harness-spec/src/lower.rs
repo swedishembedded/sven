@@ -746,9 +746,11 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
         steps: b.steps,
         variables: crate::workflow_vars::decls(w),
         schemas: {
+            // Every task, a loop body's too: a structured answer may be
+            // asked for per item.
             let schemas: std::collections::BTreeMap<String, Value> = w
-                .workflow
-                .iter()
+                .all_tasks()
+                .into_iter()
                 .filter_map(|t| t.schema.clone().map(|s| (t.name.clone(), s)))
                 .collect();
             (!schemas.is_empty()).then_some(schemas)

@@ -225,3 +225,35 @@ fn a_task_names_the_model_role_that_answers_it_and_the_agent_sets_the_default() 
     let message = rejected(&yaml.replace("model: planner", "model: \"http://host/v1\""));
     assert!(message.contains("not a role name"), "{message}");
 }
+
+#[test]
+fn a_model_only_task_with_a_schema_may_sit_in_a_loop_body() {
+    let plan = compile(
+        r#"
+api_version: "2"
+name: judged-items
+inputs:
+  items: json
+execution:
+  limits: { model_turns: 8 }
+workflow:
+  - name: each
+    for_each: { source: { input: items } }
+    do:
+      - name: judge
+        model_only: true
+        schema:
+          type: object
+          required: [decision]
+          properties: { decision: { type: string, enum: [keep, drop] } }
+        task: "Judge {{ item }}."
+      - name: act
+        when: { eq: tasks.judge.output.decision, value: keep }
+        task: "Act on {{ item }}."
+"#,
+    );
+    assert!(plan
+        .schemas
+        .as_ref()
+        .is_some_and(|s| s["judge"]["properties"]["decision"]["enum"][0] == "keep"));
+}
