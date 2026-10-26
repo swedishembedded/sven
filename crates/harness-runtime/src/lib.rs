@@ -25,6 +25,7 @@
 //! to info@swedishembedded.com.
 
 mod agent_loop;
+mod answer_repair;
 mod approval;
 mod budget;
 mod checkpoint;

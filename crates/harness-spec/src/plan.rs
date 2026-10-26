@@ -179,6 +179,16 @@ pub enum PlanPrimitive {
         /// What the prompt is, for the record.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<String>,
+        /// Repair turns a truncated or unparseable schema'd answer earns.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repair_attempts: Option<u32>,
+        /// A number input that lowers `repair_attempts` at run time.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repair_limit_input: Option<String>,
+        /// Where an answer that stays unusable ends the step instead of the
+        /// run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_unusable_answer: Option<String>,
         /// Successor.
         then: String,
     },
@@ -440,6 +450,9 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             decoding: p.decoding.clone(),
             origin: p.origin.clone(),
             role: p.role.clone(),
+            repair_attempts: p.repair_attempts,
+            repair_limit_input: p.repair_limit_input.clone(),
+            on_unusable_answer: p.on_unusable_answer.clone(),
             then: p.then.clone(),
         },
         StepSpec::Agent(a) => PlanPrimitive::Agent {

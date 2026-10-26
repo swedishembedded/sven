@@ -323,9 +323,11 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
             crate::lower_counts::validate_follow_up(w.inputs.as_ref(), turn, &place)?;
         }
         if let Some(repair) = &task.repair {
-            if task.verify.is_empty() && task.outputs.is_empty() {
+            let repairs_answer = task.model_only && task.schema.is_some();
+            if task.verify.is_empty() && task.outputs.is_empty() && !repairs_answer {
                 return Err(invalid(format!(
-                    "{place}: `repair` has nothing to repair; add `verify` or `outputs`"
+                    "{place}: `repair` has nothing to repair; add `verify` or `outputs`, or a \
+                     `schema` on a `model_only` task"
                 )));
             }
             crate::lower_counts::validate_repair(w.inputs.as_ref(), repair, &place)?;

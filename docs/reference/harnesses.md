@@ -73,9 +73,14 @@ leaving the rest unreachable). A `model_only: true` task is a single model turn 
 planner or a supervisor, in a conversation of its own that `system` (a template
 over inputs and earlier outputs) opens; its repair turns are model-only turns in
 that conversation and its answer is `tasks.<name>.output`. With a `schema` (a
-JSON Schema object) the answer must be JSON satisfying the schema's shape (a
-malformed answer fails the run with `invalid_answer`) and later templates read
-its fields, `{{ tasks.plan.output.goal }}`. Values substituted into a template
+JSON Schema object) the answer must be JSON satisfying the schema's shape and
+later templates read its fields, `{{ tasks.plan.output.goal }}`. An answer that
+was cut off at the output limit or does not parse is not the end of the run: it
+earns repair turns in the same conversation (`repair.attempts`, else 2; origin
+`repair`), each naming the truncation or the parse error. When they are spent
+the run fails with `output_truncated` or `invalid_answer`, or, inside a
+`for_each` with `on_item_failure`, only the item does and the loop goes on.
+A custom `repair.prompt` applies to failed checks only. Values substituted into a template
 are data: braces or template syntax inside an input or an output are carried
 verbatim and never expanded again.
 
@@ -347,7 +352,8 @@ A run that fails ends with a code and a message. The check and loop codes are
 `missing_variable`, `child_failed` and the `iterate_*` codes above. The bounds
 are `step_budget`, `model_turn_budget`, `tool_call_budget` and `delegate_depth`.
 The rest report the environment: `invalid_answer` (a schema'd answer that is not
-JSON of that shape), `side_effect_failed` (a tool call failed or a child could not
+JSON of that shape after its repairs), `output_truncated` (a model-only answer
+cut off at the output limit, after its repairs when it has a schema), `side_effect_failed` (a tool call failed or a child could not
 run), `invalid_setting`, `empty_reply`, `model_unavailable`, `context_exhausted`,
 `trajectory_unavailable`, `scratchpad_unavailable` and `cancelled`.
 

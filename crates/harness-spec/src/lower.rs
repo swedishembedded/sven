@@ -219,6 +219,10 @@ pub(super) fn lower_task(
             )
         })
         .transpose()?;
+    let answer_repairs = repair_count
+        .as_ref()
+        .map(|count| u32::try_from(count.unroll).unwrap_or(u32::MAX));
+    let answer_repairs_input = repair_count.as_ref().and_then(|count| count.input.clone());
     let repair = task
         .repair
         .as_ref()
@@ -435,6 +439,9 @@ pub(super) fn lower_task(
             origin: Some("task".to_string()),
             role: role.clone(),
             decoding: decoding.clone(),
+            repair_attempts: answer_repairs,
+            repair_limit_input: answer_repairs_input,
+            on_unusable_answer: item_failure.clone(),
             then: following,
         }))
     } else {

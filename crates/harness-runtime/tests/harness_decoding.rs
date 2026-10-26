@@ -107,14 +107,17 @@ fn settings_ride_every_turn_and_a_model_only_answer_feeds_the_next_step() {
 }
 
 #[test]
-fn a_model_only_answer_that_breaks_its_schema_fails_the_run() {
+fn a_model_only_answer_that_keeps_breaking_its_schema_fails_the_run() {
     let (mut m, mut ctx, mut state) = start(DOC, json!({}));
-    let _ = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        turn("harness.decoded", "not json at all"),
-    );
+    // The first answer and the two default repairs.
+    for _ in 0..3 {
+        let _ = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            turn("harness.decoded", "not json at all"),
+        );
+    }
     assert_eq!(m.outcome().expect("outcome")["code"], "invalid_answer");
 }
 

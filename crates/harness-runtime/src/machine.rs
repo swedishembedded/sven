@@ -149,21 +149,27 @@ impl HarnessMachine {
 
     /// The value a completed predict step stores. A step without a schema
     /// stores the raw text; a step that named a schema must return a JSON
-    /// document, otherwise the step failed its contract.
-    pub(super) fn answer_value(&self, step_id: &str, text: &str) -> Option<Value> {
-        let schema = match self.plan().step(step_id) {
-            Some(sven_harness_spec::PlanStep {
-                primitive: PlanPrimitive::Predict { schema, .. },
-                ..
-            }) => schema.clone(),
-            _ => None,
-        };
-        if schema.is_none() {
-            return Some(Value::String(text.to_string()));
+    /// document (bare, or in one code fence), otherwise the parser's reason.
+    pub(super) fn answer_value(&self, step_id: &str, text: &str) -> Result<Value, String> {
+        if !self.has_schema(step_id) {
+            return Ok(Value::String(text.to_string()));
         }
-        serde_json::from_str(text)
-            .ok()
-            .or_else(|| serde_json::from_str(unfenced(text)?).ok())
+        serde_json::from_str(text).or_else(|first| {
+            unfenced(text)
+                .and_then(|body| serde_json::from_str(body).ok())
+                .ok_or_else(|| first.to_string())
+        })
+    }
+
+    /// Whether the predict step `step_id` names a schema.
+    pub(super) fn has_schema(&self, step_id: &str) -> bool {
+        matches!(
+            self.plan().step(step_id).map(|s| &s.primitive),
+            Some(PlanPrimitive::Predict {
+                schema: Some(_),
+                ..
+            })
+        )
     }
 
     /// The deterministic call id of `step`.
@@ -183,6 +189,22 @@ impl HarnessMachine {
         shape: TurnShape<'_>,
     ) -> Effect {
         let instruction = state.resolve_template(prompt);
+        self.turn_effect_text(
+            state,
+            instruction.as_str().unwrap_or_default().to_string(),
+            schema_name,
+            shape,
+        )
+    }
+
+    /// [`Self::turn_effect`] for an instruction already written out.
+    pub(super) fn turn_effect_text(
+        &self,
+        state: &HarnessRunState,
+        instruction: String,
+        schema_name: Option<&str>,
+        shape: TurnShape<'_>,
+    ) -> Effect {
         let mut schema = Value::Null;
         let mut name = String::new();
         if let Some(want) = schema_name {
@@ -193,7 +215,7 @@ impl HarnessMachine {
         }
         let request = TurnRequest {
             thread: shape.thread.to_string(),
-            instruction: instruction.as_str().unwrap_or_default().to_string(),
+            instruction,
             tools: Vec::new(),
             all_tools_mode: String::new(),
             active_tools: Vec::new(),
@@ -407,7 +429,15 @@ impl HarnessMachine {
                 }
                 run.turn_retries = 0;
                 run.retry_delay_ms = 0;
-                if std::mem::take(&mut run.truncated) {
+                let truncated = std::mem::take(&mut run.truncated);
+                // `predict`: the turn's text is the answer. A schema'd
+                // answer must parse as JSON (providers enforce the format,
+                // but the caller always post-parses); one that does not, or
+                // that was cut off, is repaired.
+                if self.has_schema(&inflight.step) {
+                    return self.on_schema_answer(&mut run, &inflight.step, text, truncated, ctx);
+                }
+                if truncated {
                     return self.fail_now(
                         &mut run,
                         "output_truncated",
@@ -415,13 +445,7 @@ impl HarnessMachine {
                         ctx,
                     );
                 }
-                // `predict`: the turn's text is the answer. A schema'd
-                // answer must parse as JSON (providers enforce the format,
-                // but the caller always post-parses).
-                let answer = match self.answer_value(&inflight.step, text) {
-                    Some(v) => v,
-                    None => return self.invalid_answer(&mut run, ctx),
-                };
+                let answer = Value::String(text.to_string());
                 self.complete_step(&mut run, &inflight.step, answer, ctx)
             }
             Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {

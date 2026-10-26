@@ -381,7 +381,8 @@ pub enum TraceRecord {
     TurnRetried {
         /// The step whose turn it was.
         step: String,
-        /// Why: `empty_reply`.
+        /// Why: `empty_reply`, `transient`, or what a repair turn answers
+        /// (`invalid_answer`, `output_truncated`).
         reason: String,
         /// Which retry this is.
         attempt: u64,
@@ -467,6 +468,9 @@ pub struct HarnessRunState {
     /// How often the turn being asked has been asked again.
     #[serde(default, skip_serializing_if = "crate::budget::is_zero")]
     pub turn_retries: u32,
+    /// How many repair turns the schema'd answer being asked for has had.
+    #[serde(default, skip_serializing_if = "crate::budget::is_zero")]
+    pub answer_repairs: u32,
     /// The pause before the next ask, in milliseconds.
     #[serde(default, skip_serializing_if = "crate::budget::is_zero_ms")]
     pub retry_delay_ms: u64,

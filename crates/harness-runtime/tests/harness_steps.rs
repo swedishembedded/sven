@@ -70,15 +70,19 @@ fn a_predict_step_with_a_schema_constrains_the_turn() {
 }
 
 #[test]
-fn a_non_json_answer_to_a_schema_turn_fails_the_step() {
+fn a_non_json_answer_to_a_schema_turn_that_repairs_do_not_fix_fails_the_step() {
     let (mut m, mut ctx, mut state) = start(SCHEMA_HARNESS, serde_json::json!({ "name": "Ada" }));
     let _ = m.step_effect().expect("effect");
-    let fx = drive(
-        &mut m,
-        &mut ctx,
-        &mut state,
-        turn("harness.shaped", "not json"),
-    );
+    // The first answer and the two default repairs.
+    let mut fx = Vec::new();
+    for _ in 0..3 {
+        fx = drive(
+            &mut m,
+            &mut ctx,
+            &mut state,
+            turn("harness.shaped", "not json"),
+        );
+    }
     assert_eq!(state, HarnessState::Failed);
     let out = m.outcome().expect("outcome");
     assert_eq!(out["code"], "invalid_answer");
@@ -110,10 +114,10 @@ fn a_json_answer_in_a_code_fence_is_accepted_as_the_answer() {
 }
 
 #[test]
-fn text_around_a_fenced_answer_is_not_an_answer() {
+fn text_around_a_fenced_answer_is_not_an_answer_but_a_repair_is_asked() {
     let (mut m, mut ctx, mut state) = start(SCHEMA_HARNESS, serde_json::json!({ "name": "Ada" }));
     let _ = m.step_effect().expect("effect");
-    let _ = drive(
+    let fx = drive(
         &mut m,
         &mut ctx,
         &mut state,
@@ -122,7 +126,12 @@ fn text_around_a_fenced_answer_is_not_an_answer() {
             "Sure!\n```json\n{\"greeting\": \"hi\"}\n```",
         ),
     );
-    assert_eq!(state, HarnessState::Failed);
+    assert_eq!(state, HarnessState::WaitingForModel);
+    assert!(
+        fx.iter()
+            .any(|e| matches!(e, Effect::CallLlm { request } if request["origin"] == "repair")),
+        "{fx:?}"
+    );
 }
 
 const CALLER: &str = r#"

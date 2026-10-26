@@ -390,7 +390,9 @@ fn template_texts_in_value(value: &serde_json::Value) -> Vec<String> {
 /// Every step id a step may hand control to.
 fn successors(step: &StepSpec) -> Vec<String> {
     match step {
-        StepSpec::Predict(p) => vec![p.then.clone()],
+        StepSpec::Predict(p) => std::iter::once(p.then.clone())
+            .chain(p.on_unusable_answer.clone())
+            .collect(),
         StepSpec::Agent(a) => vec![a.then.clone()],
         StepSpec::Verify(v) => vec![v.then.clone()],
         StepSpec::Assign(a) => vec![a.then.clone()],

@@ -107,6 +107,7 @@ impl HarnessMachine {
                     Ok(d) => d,
                     Err(why) => return self.fail_now(run, "invalid_setting", &why, ctx),
                 };
+                run.answer_repairs = 0;
                 run.counts.model_turns += 1;
                 if run.exceeds_model_budget(self.run.plan()) {
                     return self.fail_now(
@@ -336,16 +337,6 @@ impl HarnessMachine {
         ctx: &mut Context,
     ) -> Reaction<HarnessState> {
         self.fail_now(run, "side_effect_failed", error, ctx)
-    }
-
-    /// A schema'd predict answer did not parse as JSON: the run fails with
-    /// its own failure code.
-    pub(super) fn invalid_answer(
-        &mut self,
-        run: &mut HarnessRunState,
-        ctx: &mut Context,
-    ) -> Reaction<HarnessState> {
-        self.fail_now(run, "invalid_answer", "answer is not valid JSON", ctx)
     }
 
     /// The walk moves to `step` and keeps going: pure steps run inline (one

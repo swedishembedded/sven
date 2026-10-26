@@ -458,6 +458,9 @@ fn on_failure(
                 origin: Some("repair".to_string()),
                 role: plan.role.clone(),
                 decoding: plan.decoding.clone(),
+                repair_attempts: None,
+                repair_limit_input: None,
+                on_unusable_answer: phase.item_failure.clone(),
                 then: again,
             })),
             None => StepSpec::Agent(Box::new(AgentStepSpec {

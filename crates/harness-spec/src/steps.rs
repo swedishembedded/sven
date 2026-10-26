@@ -348,9 +348,26 @@ pub struct PredictStepSpec {
     /// `correction`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    /// With a schema: the repair turns an answer that is truncated or does
+    /// not parse earns, each in the same conversation. Absent means
+    /// [`DEFAULT_ANSWER_REPAIRS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_attempts: Option<u32>,
+    /// A number input that lowers `repair_attempts` at run time (the count
+    /// read from an input, as `repair.attempts` allows).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_limit_input: Option<String>,
+    /// Where the run continues when the repairs are spent and the answer is
+    /// still unusable: a loop's item-failure path. Absent, the run fails with
+    /// `invalid_answer` or `output_truncated`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_unusable_answer: Option<String>,
     /// The next step.
     pub then: String,
 }
+
+/// The repair turns a schema'd answer earns when its task says nothing.
+pub const DEFAULT_ANSWER_REPAIRS: u32 = 2;
 
 /// `agent`: a model turn with a tool loop.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
