@@ -46,6 +46,7 @@ mod run_support;
 mod scratchpad;
 mod trajectory;
 
+pub use live_trajectory::ConversationUpdate;
 pub use record::{HarnessRecording, HarnessReplay};
 pub use run::{HarnessFailure, HarnessOutcome, HarnessRun};
 pub use trajectory::{Correction, RefusedMessage};

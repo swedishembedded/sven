@@ -220,12 +220,8 @@ pub(super) fn build_trajectory(
     run_id: &str,
 ) -> atif::Trajectory {
     {
-        let mut agent = sven_session_store::default_agent_profile();
-        agent.model_name = Some(evidence.model.clone());
-        if !evidence.tools.is_empty() {
-            agent.tool_definitions = Some(evidence.tools.clone());
-        }
-        let mut trajectory = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
+        let mut trajectory =
+            atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, run_agent(evidence));
         trajectory.steps = sven_session_store::record_steps::conversation_steps(
             &sven_session_store::record_steps::ConversationFacts {
                 messages: &evidence.messages,
@@ -244,27 +240,7 @@ pub(super) fn build_trajectory(
             .conversations
             .iter()
             .map(|(name, conversation)| {
-                let mut own = atif::Trajectory::new(
-                    sven_session_store::ATIF_SCHEMA_VERSION,
-                    trajectory.agent.clone(),
-                );
-                own.trajectory_id = Some(format!("{}/{name}", run_id));
-                own.steps = sven_session_store::record_steps::conversation_steps(
-                    &sven_session_store::record_steps::ConversationFacts {
-                        messages: &conversation.messages,
-                        compactions: &conversation.compactions,
-                        requests: &conversation.requests,
-                        origins: &conversation.origins,
-                        reasonings: &conversation.reasonings,
-                        gate_decisions: &[],
-                        memory_retrievals: &[],
-                        call_timings: &[],
-                        system_steps: true,
-                    },
-                    &|message| as_sent(evidence, message),
-                );
-                own.extra = Some(json!({ "harness": { "conversation": name } }));
-                own
+                conversation_trajectory(evidence, &trajectory.agent, run_id, name, conversation)
             })
             .collect();
         let children: Vec<serde_json::Value> = evidence
@@ -316,6 +292,69 @@ pub(super) fn build_trajectory(
             ..atif::FinalMetrics::default()
         });
         trajectory
+    }
+}
+
+/// The agent profile every trajectory of the run carries.
+fn run_agent(evidence: &Evidence) -> atif::AgentProfile {
+    let mut agent = sven_session_store::default_agent_profile();
+    agent.model_name = Some(evidence.model.clone());
+    if !evidence.tools.is_empty() {
+        agent.tool_definitions = Some(evidence.tools.clone());
+    }
+    agent
+}
+
+/// One conversation of the run as a trajectory of its own.
+fn conversation_trajectory(
+    evidence: &Evidence,
+    agent: &atif::AgentProfile,
+    run_id: &str,
+    name: &str,
+    conversation: &Conversation,
+) -> atif::Trajectory {
+    let mut own = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent.clone());
+    own.trajectory_id = Some(format!("{run_id}/{name}"));
+    own.steps = sven_session_store::record_steps::conversation_steps(
+        &sven_session_store::record_steps::ConversationFacts {
+            messages: &conversation.messages,
+            compactions: &conversation.compactions,
+            requests: &conversation.requests,
+            origins: &conversation.origins,
+            reasonings: &conversation.reasonings,
+            gate_decisions: &[],
+            memory_retrievals: &[],
+            call_timings: &[],
+            system_steps: true,
+        },
+        &|message| as_sent(evidence, message),
+    );
+    own.extra = Some(json!({ "harness": { "conversation": name } }));
+    own
+}
+
+impl Evidence {
+    /// The conversations that gained messages or requests since `delivered`
+    /// last saw them, each with its position in the order the conversations
+    /// began; `delivered` is updated to what is returned.
+    pub(super) fn changed_conversations(
+        &self,
+        run_id: &str,
+        delivered: &mut std::collections::HashMap<String, (usize, usize)>,
+    ) -> Vec<(usize, String, atif::Trajectory)> {
+        let agent = run_agent(self);
+        let mut changed = Vec::new();
+        for (index, (name, conversation)) in self.conversations.iter().enumerate() {
+            let version = (conversation.messages.len(), conversation.requests.len());
+            if delivered.insert(name.clone(), version) != Some(version) {
+                changed.push((
+                    index,
+                    name.clone(),
+                    conversation_trajectory(self, &agent, run_id, name, conversation),
+                ));
+            }
+        }
+        changed
     }
 }
 

@@ -26,8 +26,10 @@ use sven_sdk::{ApprovalPolicy, Engine, HarnessCheckpoint, HumanGate, Toolset};
 
 use super::args;
 use super::engine_run::{
-    resume_on_engine, run_on_engine, ActivityFn, CheckpointFn, EngineRun, ProgressFn, RunResult,
+    resume_on_engine, run_on_engine, ActivityFn, CheckpointFn, ConversationsFn, EngineRun,
+    ProgressFn, RunResult,
 };
+use super::live_files::{write_conversations, TraceAppender};
 use super::stamps::{stamped_line, Stamps};
 use super::{kit, usage, Failure};
 use crate::cli::{ApprovalsArg, HarnessRunArgs};
@@ -71,6 +73,7 @@ impl Assembly {
         args: &HarnessRunArgs,
         plan: Arc<sven_sdk::harness_plan::HarnessPlan>,
         stamps: &Stamps,
+        resumed: bool,
     ) -> Result<Self, Failure> {
         let workspace = args.workspace.as_deref().ok_or_else(|| {
             usage("--workspace DIR is required: the directory the agent works in")
@@ -118,6 +121,14 @@ impl Assembly {
         };
         // Every record is noted as it arrives (the trace file is stamped from
         // these times); it is printed as well unless the run is quiet.
+        // The trace file is appended to as the records arrive, so a run that
+        // is killed keeps the records so far; the run's end rewrites it whole.
+        let trace = args
+            .trace
+            .as_deref()
+            .map(|file| TraceAppender::open(file, resumed))
+            .transpose()
+            .map_err(|e| usage(format!("cannot write the trace file: {e}")))?;
         let progress: Option<ProgressFn> = {
             let tracker = std::sync::Mutex::new(sven_sdk::SourceTracker::new(plan));
             let (stamps, quiet) = (stamps.clone(), args.quiet);
@@ -127,11 +138,21 @@ impl Assembly {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .next(record);
-                if let (false, Ok(line)) = (quiet, stamped_line(&sourced, ts_ms)) {
-                    eprintln!("[sven:harness] {line}");
+                if let Ok(line) = stamped_line(&sourced, ts_ms) {
+                    if let Some(trace) = &trace {
+                        trace.append(&line);
+                    }
+                    if !quiet {
+                        eprintln!("[sven:harness] {line}");
+                    }
                 }
             }) as ProgressFn)
         };
+        let item_conversations: Option<ConversationsFn> = args.conversations.clone().map(|dir| {
+            Arc::new(move |updates: &[sven_sdk::ConversationUpdate]| {
+                write_conversations(&dir, updates);
+            }) as ConversationsFn
+        });
         let activity: Option<ActivityFn> = (!args.quiet).then(|| {
             Arc::new(|event: &sven_sdk::SessionEvent| {
                 if let Some(line) = activity_line(event) {
@@ -171,6 +192,7 @@ impl Assembly {
                 activity,
                 suspend: Some(suspend_on_signal()),
                 item_checkpoint,
+                item_conversations,
             },
         })
     }

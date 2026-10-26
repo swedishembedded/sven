@@ -17,6 +17,7 @@ use sven_sdk::{sourced_trace, HarnessCheckpoint, SourcedRecord};
 
 use super::engine::{self, Assembly};
 use super::engine_run::{RunResult, RunStatus, RunSummary};
+use super::live_files::conversation_file;
 use super::source::Source;
 use super::stamps::{stamped_line, Stamps};
 use super::{kit, print_json, usage, Failure, Outcome};
@@ -33,7 +34,7 @@ struct Seen<'a> {
 pub(super) async fn run(path: &Path, args: &HarnessRunArgs) -> Outcome {
     let plan = Arc::new(Source::open(path).map_err(kit)?.plan);
     let stamps = Stamps::begin();
-    let assembly = Assembly::from_args(args, plan, &stamps)?;
+    let assembly = Assembly::from_args(args, plan, &stamps, false)?;
     let printed = assembly.streams_progress();
     let result = engine::run(path, assembly).await?;
     finish(
@@ -54,7 +55,7 @@ pub(super) async fn resume(path: &Path, checkpoint: &Path, args: &HarnessRunArgs
     let checkpoint: HarnessCheckpoint = serde_json::from_str(&text)
         .map_err(|e| usage(format!("{} is not a checkpoint: {e}", checkpoint.display())))?;
     let stamps = Stamps::begin();
-    let assembly = Assembly::from_args(args, plan, &stamps)?;
+    let assembly = Assembly::from_args(args, plan, &stamps, true)?;
     let printed = assembly.streams_progress();
     let result = engine::resume(path, checkpoint, assembly).await?;
     finish(
@@ -154,20 +155,11 @@ fn write_conversations(
         .filter(|t| t["extra"]["harness"]["conversation"].is_string())
         .enumerate()
     {
-        let name: String = conversation["extra"]["harness"]["conversation"]
+        let name = conversation["extra"]["harness"]["conversation"]
             .as_str()
-            .unwrap_or_default()
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '-'
-                }
-            })
-            .collect();
+            .unwrap_or_default();
         write(
-            &dir.join(format!("{index:04}-{name}.json")),
+            &dir.join(conversation_file(index, name)),
             &to_json(conversation)?,
         )?;
     }

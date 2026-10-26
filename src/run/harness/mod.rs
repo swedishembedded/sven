@@ -24,6 +24,7 @@ mod engine_run;
 mod error;
 mod exec;
 mod inspect;
+mod live_files;
 mod plan_view;
 mod render;
 mod replay;

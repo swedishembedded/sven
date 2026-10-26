@@ -156,6 +156,9 @@ pub(super) struct EngineRun {
     /// host that keeps the latest one durable so a killed run resumes at the
     /// item it was on.
     pub item_checkpoint: Option<CheckpointFn>,
+    /// Called with the conversations that changed each time a `for_each`
+    /// item finishes, for a host that keeps them durable while the run goes.
+    pub item_conversations: Option<ConversationsFn>,
 }
 
 /// A trace observer; see [`EngineRun::progress`].
@@ -163,6 +166,9 @@ pub(super) type ProgressFn = Arc<dyn Fn(&sven_sdk::TraceRecord) + Send + Sync>;
 
 /// A checkpoint observer; see [`EngineRun::item_checkpoint`].
 pub(super) type CheckpointFn = Arc<dyn Fn(&HarnessCheckpoint) + Send + Sync>;
+
+/// A conversation observer; see [`EngineRun::item_conversations`].
+pub(super) type ConversationsFn = Arc<dyn Fn(&[sven_sdk::ConversationUpdate]) + Send + Sync>;
 
 /// A session-event observer; see [`EngineRun::activity`].
 pub(super) type ActivityFn = Arc<dyn Fn(&sven_sdk::SessionEvent) + Send + Sync>;
@@ -332,6 +338,9 @@ async fn drive(
     }
     if let Some(sink) = request.item_checkpoint {
         run = run.on_item_checkpoint(move |checkpoint| sink(&checkpoint));
+    }
+    if let Some(sink) = request.item_conversations {
+        run = run.on_item_conversations(move |updates| sink(&updates));
     }
     let mut options = RunOptions::new();
     if let Some(ms) = request.deadline_ms {

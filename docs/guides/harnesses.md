@@ -324,8 +324,11 @@ observed it), `--record` (the recording, JSON), `--trajectory` (the ATIF
 trajectory, JSON), `--conversations DIR` (each conversation of the run - one
 task's agent, or one role of one loop item - as its own ATIF file
 `NNNN-<name>.json`, the form tool-call training data wants) and
-`--checkpoint-out` (the checkpoint of a suspended run, JSON). A run keeps its
-scratchpad and prints the path. No sven configuration is read.
+`--checkpoint-out` (the checkpoint of a suspended run, JSON). `--trace` is
+appended to record by record and `--conversations` receives a finished loop
+item's conversations when the item finishes, so a killed run keeps both up to
+its last finished item; the files written at the end replace them. A run keeps
+its scratchpad and prints the path. No sven configuration is read.
 
 ## Samples tour
 

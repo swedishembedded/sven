@@ -88,9 +88,9 @@ pub(super) struct Source {
 }
 
 impl Source {
-    /// The trajectory so far, as JSON text. The trace comes from the latest
-    /// state the machine showed; the conversations from the live stores.
-    fn render(&self) -> Result<String, String> {
+    /// What the run has done so far: the trace from the latest state the
+    /// machine showed, the conversations from the live stores.
+    fn evidence(&self) -> Evidence {
         let state = self
             .tap
             .borrow()
@@ -104,21 +104,105 @@ impl Source {
             trace: state.trace.clone(),
             steps: state.counts.steps,
         };
-        let evidence = Evidence::capture(
+        Evidence::capture(
             &self.engine,
             &self.plan,
             &self.handle,
             &so_far,
             (self.bundle_digest.as_deref(), &state.steps),
             self.children.finished(),
-        );
-        serde_json::to_string_pretty(&build_trajectory(&evidence, &self.plan, &self.run_id))
-            .map_err(|e| e.to_string())
+        )
+    }
+
+    /// The trajectory so far, as JSON text.
+    fn render(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(&build_trajectory(
+            &self.evidence(),
+            &self.plan,
+            &self.run_id,
+        ))
+        .map_err(|e| e.to_string())
     }
 
     /// Writes the trajectory so far to `path`, replacing it whole.
     pub(super) fn write(&self, path: &Path) -> Result<(), String> {
         write_atomically(path, &self.render()?)
+    }
+}
+
+/// A conversation of the run, handed to the host when an item finishes.
+#[derive(Debug, Clone)]
+pub struct ConversationUpdate {
+    /// Where the conversation sits in the order the conversations began;
+    /// stable for the whole run.
+    pub index: usize,
+    /// The conversation's name (`<task>#<item index>` inside a `for_each`).
+    pub name: String,
+    /// The conversation so far, as a trajectory of its own.
+    pub trajectory: atif::Trajectory,
+}
+
+/// Receives the conversations that changed since the host was last told.
+pub(super) type ConversationSink = Box<dyn Fn(Vec<ConversationUpdate>) + Send + Sync>;
+
+impl super::HarnessRun {
+    /// Hands `sink` the conversations that changed each time a `for_each`
+    /// item finishes (completed or failed), while the run goes: a run that is
+    /// stopped keeps the transcripts of the items it finished. Each call
+    /// carries only the conversations that gained messages since the last
+    /// one, with their position in the order the conversations began.
+    #[must_use]
+    pub fn on_item_conversations(
+        mut self,
+        sink: impl Fn(Vec<ConversationUpdate>) + Send + Sync + 'static,
+    ) -> Self {
+        self.item_conversations = Some(Box::new(sink));
+        self
+    }
+}
+
+/// Tells the host of the changed conversations when `finished_loops` says an
+/// item has just finished.
+pub(super) fn hand_over_finished(handoff: Option<&mut Handoff>, finished_loops: &[String]) {
+    if let (Some(handoff), false) = (handoff, finished_loops.is_empty()) {
+        handoff.hand_over();
+    }
+}
+
+/// Hands the host the conversations that changed each time an item finishes.
+pub(super) struct Handoff {
+    sink: ConversationSink,
+    source: Arc<Source>,
+    /// What the host has seen of each conversation, by name.
+    delivered: std::collections::HashMap<String, (usize, usize)>,
+}
+
+impl Handoff {
+    pub(super) fn new(sink: ConversationSink, source: Arc<Source>) -> Self {
+        Self {
+            sink,
+            source,
+            delivered: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Tells the host of every conversation that changed since it was last
+    /// told.
+    pub(super) fn hand_over(&mut self) {
+        let updates: Vec<ConversationUpdate> = self
+            .source
+            .evidence()
+            .changed_conversations(&self.source.run_id, &mut self.delivered)
+            .into_iter()
+            .map(|(index, name, trajectory)| ConversationUpdate {
+                index,
+                name,
+                trajectory,
+            })
+            .collect();
+        if !updates.is_empty() {
+            (self.sink)(updates);
+        }
     }
 }
 

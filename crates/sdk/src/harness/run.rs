@@ -79,6 +79,8 @@ pub struct HarnessRun {
     workspace: Option<sven_tool_api::PathScope>,
     /// Told of a checkpoint whenever a `for_each` item has completed.
     item_checkpoint: Option<ItemCheckpointSink>,
+    /// Told of the conversations that changed whenever an item has finished.
+    pub(super) item_conversations: Option<live_trajectory::ConversationSink>,
     /// Whether the trajectory file a gate reads outlives the run.
     keep_trajectory_file: bool,
     /// The directory the host chose for this run, if it chose one.
@@ -161,6 +163,7 @@ impl HarnessRun {
             evidence: None,
             workspace: None,
             item_checkpoint: None,
+            item_conversations: None,
             keep_trajectory_file: false,
             scratchpad_choice: None,
             run_values: RunValues::default(),
@@ -490,7 +493,7 @@ impl HarnessRun {
             None => tokio::spawn(session.channels.answer_unattended()),
         };
 
-        let live = reads_trajectory.then(|| {
+        let source = (reads_trajectory || self.item_conversations.is_some()).then(|| {
             Arc::new(live_trajectory::Source {
                 engine: self.engine.clone(),
                 plan: Arc::clone(&self.plan),
@@ -501,6 +504,12 @@ impl HarnessRun {
                 tap: session.runtime.snapshots(),
             })
         });
+        let live = source.clone().filter(|_| reads_trajectory);
+        let mut handoff = self
+            .item_conversations
+            .take()
+            .zip(source)
+            .map(|(sink, source)| live_trajectory::Handoff::new(sink, source));
         let _dir = live.as_ref().map(|_| {
             live_trajectory::Cleanup::of(scratch.trajectory_file(), self.keep_trajectory_file)
         });
@@ -631,6 +640,7 @@ impl HarnessRun {
                                 &mut observed,
                             );
                             self.checkpoint_item(&completed_loops, &snapshot);
+                            live_trajectory::hand_over_finished(handoff.as_mut(), &completed_loops);
                         }
                     },
                     captured = settled.as_mut() => match captured {
@@ -644,6 +654,7 @@ impl HarnessRun {
                                 &mut observed,
                             );
                             self.checkpoint_item(&completed_loops, &snapshot);
+                            live_trajectory::hand_over_finished(handoff.as_mut(), &completed_loops);
                             // A capture is only served when the machine has
                             // nothing left to do; two in a row over the very
                             // same processed count mean it can no longer make

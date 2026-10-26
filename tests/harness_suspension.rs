@@ -206,6 +206,61 @@ fn a_killed_sweep_resumes_at_the_item_it_was_on() {
     );
 }
 
+/// A run killed in the middle of a sweep has already written the trace
+/// records so far and the conversations of the items it finished.
+#[cfg(unix)]
+#[test]
+fn a_killed_sweep_leaves_its_trace_and_the_finished_items_conversations() {
+    use std::process::Stdio;
+
+    let setup = setup();
+    let stalled = serve(vec![
+        Turn::Calls(vec![write("a.txt", "ok")]),
+        Turn::Text("done a"),
+        Turn::Calls(vec![write("b.txt", "ok")]),
+        Turn::Stall,
+    ]);
+    let (trace, conversations) = (setup.out("trace.jsonl"), setup.out("conversations"));
+    let mut child = setup
+        .subcommand("run", &coding_sweep(), &stalled)
+        .args([
+            "--approvals",
+            "auto",
+            "--quiet",
+            "--input",
+            SWEEP_INPUT,
+            "--trace",
+        ])
+        .arg(&trace)
+        .arg("--conversations")
+        .arg(&conversations)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sven starts");
+    // Item b is in flight once its second request has arrived; item a's
+    // conversation is written when item a finished, which is before that.
+    let first = conversations.join("0000-notes-0.json");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while (stalled.seen.lock().unwrap().requests < 4 || !first.is_file())
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.kill().expect("sven is still running");
+    child.wait().unwrap();
+
+    let conversation: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&first).expect("item a's conversation"))
+            .expect("a trajectory");
+    assert_eq!(conversation["extra"]["harness"]["conversation"], "notes#0");
+    let trace = std::fs::read_to_string(&trace).expect("the trace so far");
+    assert!(
+        trace.lines().any(|l| l.contains("item_completed")),
+        "the finished item is in the trace: {trace}"
+    );
+}
+
 /// A step is reported when it begins, not when it ends: with the model
 /// stalled on its first turn, the step's start is already on stderr.
 #[cfg(unix)]

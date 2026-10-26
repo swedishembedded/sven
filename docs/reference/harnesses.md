@@ -717,6 +717,7 @@ assert_eq!(replay.trace, outcome.trace);
 | `RunOptions::{cancel, deadline, max_output_tokens}` | cancellation is a `CancelToken`; a bound suspends |
 | `HarnessRun::{events, subscribe_trace, run_id, checkpoint, with_recording, recording, trajectory, conversations}` | observation and export |
 | `HarnessRun::on_item_checkpoint(sink)` | a checkpoint each time a `for_each` item completes |
+| `HarnessRun::on_item_conversations(sink)` | the conversations that changed (`ConversationUpdate`: index, name, trajectory) each time a loop item finishes |
 | `HarnessRun::{with_scratchpad, scratchpad}` | choose the run's private directory; read it once the run executed |
 | `HarnessOutcome { conclusion, result, usage, trace, steps }` | `result` is the plan's verdict, `None` when a bound stopped the run first |
 | `TraceRecord`, `HarnessEvent`, `harness_plan::*` | re-exported so an application need not name the crates behind the facade |

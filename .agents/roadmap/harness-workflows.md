@@ -12,20 +12,14 @@ went. This file keeps only what is still open, and what the live runs taught.
 
 ## Open
 
-1. **A run that is stopped loses its conversations and trace file.**
-   `--conversations`, `--trace` and the final report are written when the run
-   ends. Run 5 was stopped with SIGTERM during an agent turn and left only the
-   progress checkpoint, so the transcripts of its first two files are gone; the
-   stderr trace lines (with `ts_ms`) were the only record. Write each finished
-   item's conversations and trace records at its item checkpoint, the same tap
-   that writes `--checkpoint-out`.
-2. **An auditor that never published `findings`.** In run 5, file 2
+1. **An auditor that never published `findings`.** In run 5, file 2
    (`crates/ablation/src/evidence.rs`) made about 30 read calls and ended three
    times without calling `harness_vars_set`. It was reminded twice, then rolled
-   back, as designed. The transcript was lost to (1). Rerun that one file with
+   back, as designed. The transcript was lost when the run was stopped, before
+   conversations were written at each item. Rerun that one file with
    `--conversations`, and decide whether the cause is the prompt, context
    pressure or the repetition guard.
-3. **Cost per file.** One file was completed in 27.2 min: audit 3.1, repair
+2. **Cost per file.** One file was completed in 27.2 min: audit 3.1, repair
    12.2 (its check gate, build + lint + format, took 55 s), review 11.8 (its
    `make test` gate took 4.3 min), and the executor's commit. One failed file was
    rolled back after 11.6 min. Exploration and baseline took 14.8 min once.
@@ -37,7 +31,7 @@ went. This file keeps only what is still open, and what the live runs taught.
      one clone per lane and a merge step);
    - a cheaper check than the project's full `make test` per file.
 
-4. **An agent cannot author and run a harness.** A harness is a reusable,
+3. **An agent cannot author and run a harness.** A harness is a reusable,
    versioned process, but only a compiled `use:` step can start one as a
    child. An agent should be able to write a harness document in its
    workspace, compile it, run it as a child and change it after reading how it
@@ -73,7 +67,7 @@ Each of these was fixed in the engine or the sample before the next run:
 - **Run 5.** Exploration and baseline passed. File 1 was refactored, reviewed
   and committed by the executor: `ablation: deduplicate citation test in
   score_answer`, one file, behaviour-preserving, a correct message. File 2
-  failed and was rolled back (open item 2). The run was then stopped to end the
+  failed and was rolled back (open item 1). The run was then stopped to end the
   session.
 - **Observability.** Variable sets never reach an executor, so the trace now
   records each one (`VariableSet`, with a preview of the value).
