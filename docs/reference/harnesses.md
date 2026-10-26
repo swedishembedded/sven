@@ -139,7 +139,12 @@ asked again up to four times after 5, 10, 20 and 40 s (`transient`) and then
 fails with `model_unavailable`. A prompt that does not fit the model's context fails with
 `context_exhausted`, and a reply cut off at the output limit is the stop status
 `output_truncated` (a thinking model can use a small `turn.max_output_tokens`
-entirely on reasoning; raise it).
+entirely on reasoning; raise it). What a cut-off turn produced is kept: its
+partial text, its reasoning (also when the cut fell inside an unclosed `<think>`
+block) and a tool call cut mid-argument, whose name and raw arguments the
+trajectory step records (`extra.raw_arguments`). A call cut off is never run,
+even if its text could be closed into valid JSON: the agent is told, as the
+call's error, that it was truncated, and can send a shorter call.
 A turn that sven's own thinking watchdog cuts short (the model loops in its
 reasoning, or passes `agent.max_thinking_tokens`, `agent.thinking_timeout_secs`
 or the turn deadline) is not a cancel: an agent task ends with the stop status

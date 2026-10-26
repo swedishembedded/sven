@@ -189,6 +189,27 @@ impl HarnessMachine {
         Reaction::Handled(effect.into_iter().collect())
     }
 
+    /// A proposed call of the agent loop failed. The call may have failed
+    /// before it ran (refused as cut off, garbled or not loaded), in which
+    /// case nothing put a result in the conversation: the error is filed as the
+    /// call's answer, so the model reads why on its next turn. A result the
+    /// call already has in the conversation is left as it is.
+    pub(super) fn on_agent_tool_failed(
+        &mut self,
+        run: &mut HarnessRunState,
+        failed: ToolCallId,
+        error: &str,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
+        let answer = format!("error: {error}");
+        if let Some(agent) = run.agent.as_mut().filter(|a| a.pending.contains(&failed)) {
+            agent
+                .answered
+                .insert(failed.as_uuid().to_string(), answer.clone());
+        }
+        self.on_agent_tool_settled(run, failed, &answer, ctx)
+    }
+
     /// Ends the loop: records how it ended where the step asked, and
     /// completes the step with `text`.
     fn end_agent_loop(

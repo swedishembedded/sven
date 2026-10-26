@@ -97,6 +97,15 @@ pub fn conversation_steps(
         }
         requests(&mut assembler, position + 1);
     }
+    // Reasoning of a response that ended without a message (cut off while
+    // still thinking) belongs after the last one.
+    for (_, reasoning) in facts
+        .reasonings
+        .iter()
+        .filter(|(at, _)| *at >= facts.messages.len())
+    {
+        assembler.push_reasoning(reasoning);
+    }
     // A compaction after the last message (the run ended right after it).
     if !facts.messages.is_empty() {
         marks(&mut assembler, facts.messages.len());

@@ -60,3 +60,15 @@ pub(crate) fn unparsed_reason(tool: &str, raw: &str) -> String {
         raw.len()
     )
 }
+
+/// What the model is told when the output-token limit cut its `tool` call off
+/// before the arguments were complete.
+pub(crate) fn truncated_reason(tool: &str, raw: &str) -> String {
+    let head: String = raw.chars().take(QUOTED_CHARS).collect();
+    format!(
+        "the `{tool}` call was truncated: the reply reached its output-token limit before the \
+         arguments were complete ({} bytes received, starting: {head}), so it was not run. \
+         Send the call again with less in it, or split the work across several calls.",
+        raw.len()
+    )
+}

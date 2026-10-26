@@ -451,7 +451,7 @@ impl HarnessMachine {
                 self.on_agent_tool_settled(&mut run, *call_id, &answer, ctx)
             }
             Event::ToolFailed { call_id, error } => {
-                self.on_agent_tool_settled(&mut run, *call_id, &format!("error: {error}"), ctx)
+                self.on_agent_tool_failed(&mut run, *call_id, error, ctx)
             }
             _ => self.on_gate_event(&mut run, event, ctx),
         }

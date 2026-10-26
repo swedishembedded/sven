@@ -361,6 +361,11 @@ pub struct StreamedTurn {
     /// valid JSON and could not be repaired. Such a call is in `tool_calls`
     /// with `{}` arguments; the text here is what the model really sent.
     pub unparsed_arguments: HashMap<String, String>,
+    /// Ids of the calls in `tool_calls` that the output-token limit cut off
+    /// before their arguments were complete. Their arguments are `{}` and the
+    /// raw text received is in `unparsed_arguments`: a call that is cut off is
+    /// never run, even when its text could be closed into valid JSON.
+    pub cut_off_calls: std::collections::HashSet<String>,
     /// The provider stopped the reply at its output-token limit, so `text`
     /// (and any call) may be cut off.
     pub truncated: bool,
@@ -458,6 +463,7 @@ pub async fn stream_turn(
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
     let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
+    let mut cut_off_calls: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut truncated = false;
     let mut issued_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut sampled = Sampled {
@@ -648,7 +654,16 @@ pub async fn stream_turn(
             );
             continue;
         }
-        let (mut tc, unparsed) = slot.finalize();
+        let raw_arguments = slot.args_buf.clone();
+        let (mut tc, mut unparsed) = slot.finalize();
+        let cut_off =
+            truncated && serde_json::from_str::<serde_json::Value>(&raw_arguments).is_err();
+        if cut_off {
+            // Closing the text into valid JSON would run a call the model
+            // never finished.
+            tc.args = serde_json::Value::Object(serde_json::Map::new());
+            unparsed = Some(raw_arguments);
+        }
         if tc.id.is_empty() {
             tc.id = format!("tc_synthetic_{slot_count}");
             warn!(
@@ -658,6 +673,9 @@ pub async fn stream_turn(
             );
         }
         tc.id = unique_call_id(&mut issued_ids, &tc.id);
+        if cut_off {
+            cut_off_calls.insert(tc.id.clone());
+        }
         if let Some(raw) = unparsed {
             unparsed_arguments.insert(tc.id.clone(), raw);
         }
@@ -696,6 +714,7 @@ pub async fn stream_turn(
         text: full_text,
         tool_calls: completed,
         unparsed_arguments,
+        cut_off_calls,
         truncated,
         thinking_tokens: thinking_token_estimate,
         reasoning,

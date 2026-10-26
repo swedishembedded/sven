@@ -39,6 +39,7 @@ impl TurnExecutor {
             withheld_tools,
         } = request;
         let unparsed = turn.unparsed_arguments.clone();
+        let cut_off = turn.cut_off_calls;
         if let Ok(mut store) = self.store.lock() {
             store.record_unparsed_arguments(turn.unparsed_arguments);
         }
@@ -124,7 +125,11 @@ impl TurnExecutor {
         // it is refused with the reason rather than run on those arguments.
         for (tc, call) in tool_calls.iter().zip(&proposed) {
             if let Some(raw) = unparsed.get(&tc.id) {
-                self.tools.refuse_unparsed(call.call_id, &tc.name, raw);
+                if cut_off.contains(&tc.id) {
+                    self.tools.refuse_truncated(call.call_id, &tc.name, raw);
+                } else {
+                    self.tools.refuse_unparsed(call.call_id, &tc.name, raw);
+                }
             }
         }
 

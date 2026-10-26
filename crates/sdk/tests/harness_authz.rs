@@ -220,8 +220,8 @@ async fn a_delegated_child_holds_no_capability_its_own_document_does_not_declare
     assert_eq!(runs.load(Ordering::SeqCst), 0, "the child may not write");
     let told = format!("{:?}", last_request.lock().unwrap());
     assert!(
-        told.contains("it was refused"),
-        "the child's agent is told the call was refused, got {told}"
+        told.contains("permission denied"),
+        "the child's agent is told why the call was refused, got {told}"
     );
 }
 

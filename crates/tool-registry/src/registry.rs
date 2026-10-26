@@ -353,6 +353,15 @@ impl ToolRegistry {
         }
     }
 
+    /// Records that the output-token limit cut the model's `call` to `tool`
+    /// off mid-arguments (`raw` is what arrived), so the executor refuses it
+    /// and tells the model the call was truncated.
+    pub fn refuse_truncated(&self, call: sven_hsm::ToolCallId, tool: &str, raw: &str) {
+        if let Ok(mut refused) = self.refused.lock() {
+            refused.insert(call, crate::refusal::truncated_reason(tool, raw));
+        }
+    }
+
     /// The reason `call` is refused, forgetting it: the answer is `Some` once.
     pub fn take_refusal(&self, call: sven_hsm::ToolCallId) -> Option<String> {
         self.refused.lock().ok()?.take(call)
