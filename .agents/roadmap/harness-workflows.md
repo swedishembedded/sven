@@ -37,6 +37,22 @@ went. This file keeps only what is still open, and what the live runs taught.
      one clone per lane and a merge step);
    - a cheaper check than the project's full `make test` per file.
 
+4. **An agent cannot author and run a harness.** A harness is a reusable,
+   versioned process, but only a compiled `use:` step can start one as a
+   child. An agent should be able to write a harness document in its
+   workspace, compile it, run it as a child and change it after reading how it
+   failed, the way it starts a subagent with instructions. Tools for an agent
+   task: `harness_validate {path}` (the compile report, with the culprit
+   named) and `harness_run {path, inputs}` (loads the document or package at
+   `path` inside the workspace, compiles it, and starts it through the kernel's
+   `ChildSpawner::spawn_harness_child` with the caller's remaining budgets as
+   its ceiling and the caller's capabilities as its upper bound; the tool
+   result is the child's envelope - `ok`, `value` or `code` and `message`,
+   `usage` - and the path of the child's trajectory). Capability `SpawnChild`;
+   the child's conversations join the run's `--conversations`. A document the
+   agent wrote is untrusted: it compiles under the same validator and trust
+   rule, and cannot widen what the caller holds.
+
 ## Live findings (Qwen3.8-27B served by brain, the rust-refactor sample over sven)
 
 Each of these was fixed in the engine or the sample before the next run:
