@@ -9,7 +9,7 @@
 //! expertise in unattended agents you can procure our services by sending an
 //! email to info@swedishembedded.com.
 
-use sven_hsm::{Event, InternalEvent, CONTEXT_EXHAUSTED, TRANSIENT, TURN_TRUNCATED};
+use sven_hsm::{Event, InternalEvent, CONTEXT_EXHAUSTED, TRANSIENT, TURN_TRUNCATED, TURN_WATCHDOG};
 use sven_kernel::EventSink;
 
 /// Says, just before the turn's completion, that the provider cut the reply
@@ -19,6 +19,17 @@ pub(super) async fn tell_truncated(sink: &EventSink) {
         .emit(Event::Internal(InternalEvent::Custom {
             name: TURN_TRUNCATED.to_string(),
             payload: serde_json::Value::Null,
+        }))
+        .await;
+}
+
+/// Says, just before the cancel that ends the turn, that a watchdog and not a
+/// person cut it short, and why.
+pub(super) async fn tell_watchdog(sink: &EventSink, reason: &str) {
+    let _ = sink
+        .emit(Event::Internal(InternalEvent::Custom {
+            name: TURN_WATCHDOG.to_string(),
+            payload: serde_json::Value::String(reason.to_string()),
         }))
         .await;
 }

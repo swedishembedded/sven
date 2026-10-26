@@ -22,8 +22,8 @@ use tokio::sync::broadcast;
 use super::live_trajectory;
 use super::record::{start_checkpoint, Recorder};
 use super::run_support::{
-    checkpoint_at, harness_tools, interrupted_failure, outcome_of, publish_trace, settle_cancel,
-    WIND_DOWN,
+    checkpoint_at, conclusion_of, harness_tools, interrupted_failure, outcome_of, publish_trace,
+    settle_cancel, WIND_DOWN,
 };
 use super::scratchpad::{Choices, Scratchpad};
 use super::trajectory::Evidence;
@@ -697,6 +697,7 @@ impl HarnessRun {
             &mut observed,
         );
         let result = outcome_of(&report.state_label, report.ctx.fact(OUTCOME_FACT));
+        let state_label = report.state_label.clone();
         if stopped.is_none() && result.is_none() {
             return match failure {
                 Some(message) => Err(CallError::Infrastructure(anyhow::anyhow!(message))),
@@ -721,7 +722,7 @@ impl HarnessRun {
         }
         let (usage, _) = meter.finish(started.elapsed());
         let outcome = HarnessOutcome {
-            conclusion: stopped.unwrap_or(RunConclusion::Success),
+            conclusion: stopped.unwrap_or_else(|| conclusion_of(&state_label)),
             result,
             usage,
             trace: run_state.trace,

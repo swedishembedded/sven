@@ -209,6 +209,25 @@ impl HarnessMachine {
         self.complete_step(run, &agent.step, Value::String(text.to_string()), ctx)
     }
 
+    /// A watchdog cut the turn in flight short. An agent loop ends with the
+    /// stop status `watchdog` (like every stop, it does not fail the run: the
+    /// task's checks decide); a `predict` has no answer and fails with
+    /// `turn_aborted`, carrying the watchdog's reason.
+    pub(super) fn on_turn_aborted(
+        &mut self,
+        run: &mut HarnessRunState,
+        reason: &str,
+        ctx: &mut Context,
+    ) -> Reaction<HarnessState> {
+        let inflight_step = run.inflight.as_ref().map(|i| i.step.clone());
+        match run.agent.clone() {
+            Some(agent) if inflight_step.as_ref() == Some(&agent.step) => {
+                self.end_agent_loop(run, &agent, "watchdog", "", ctx)
+            }
+            _ => self.fail_now(run, "turn_aborted", reason, ctx),
+        }
+    }
+
     /// One turn of an agent step's model/tool loop: admitted tool proposals
     /// run as `CallTool` effects (the loop stays in
     /// [`HarnessState::WaitingForModel`] and receives the results there, via

@@ -473,6 +473,10 @@ pub struct HarnessRunState {
     /// The turn in flight was cut off at the output-token limit.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
+    /// Why a watchdog cut the turn in flight short (the executor says so just
+    /// before the cancel that ends the turn); `None` when none did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watchdog: Option<String>,
     /// What the parent run had left when it started this one: the child's own
     /// budgets can only be tighter.
     #[serde(default, skip_serializing_if = "crate::budget::Ceiling::is_open")]

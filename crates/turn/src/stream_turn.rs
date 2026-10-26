@@ -507,7 +507,7 @@ pub async fn stream_turn(
                 }
 
                 // Thinking-loop watchdog: whichever cap fires first aborts
-                // the turn through the same path as a user-initiated cancel
+                // the turn, ended like a cancel but marked as the watchdog's
                 // (see `AbortedError`'s doc comment for why).
                 if let Some(cap) = thinking_token_cap {
                     if thinking_token_estimate >= cap {

@@ -317,6 +317,12 @@ pub const TRANSIENT: &str = "transient";
 /// output-token limit.
 pub const TURN_TRUNCATED: &str = "turn.truncated";
 
+/// The name of the [`InternalEvent::Custom`] a turn executor sends, just
+/// before the `UserCancelled` that ends the turn, when a watchdog (not a
+/// person) cut the turn short. Its payload is the reason as text, so a
+/// machine that can tell the two apart does not report a user cancel.
+pub const TURN_WATCHDOG: &str = "turn.watchdog";
+
 impl Event {
     /// The reserved state-entry signal.
     #[must_use]

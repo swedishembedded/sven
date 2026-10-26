@@ -635,6 +635,7 @@ impl EffectExecutor for TurnExecutor {
                 // reason instead of as a silent success.
                 if !aborted.by_user {
                     obs.emit(UiEvent::Error(aborted.to_string()));
+                    replies::tell_watchdog(sink, &aborted.reason).await;
                 }
                 let persisted = if partial.is_empty() {
                     marker

@@ -115,7 +115,7 @@ sets it afresh) and a call beyond it is refused. `max_repeated_results: N` ends 
 turn when the same call has been answered the same way N times. A turn ends
 with a stop status readable as `tasks.<name>.stop` (`concluded`,
 `stopped_without_conclusion`, `output_truncated` when the provider cut the final
-reply off at its output-token limit, `tool_cap`, `repetition`) and `tasks.<name>.calls_left`; none of them fails
+reply off at its output-token limit, `tool_cap`, `repetition`, `watchdog`) and `tasks.<name>.calls_left`; none of them fails
 the run, and `when` conditions can branch on them. A follow-up's `max` (1 to 8)
 repeats it while its `when` holds.
 
@@ -140,6 +140,12 @@ fails with `model_unavailable`. A prompt that does not fit the model's context f
 `context_exhausted`, and a reply cut off at the output limit is the stop status
 `output_truncated` (a thinking model can use a small `turn.max_output_tokens`
 entirely on reasoning; raise it).
+A turn that sven's own thinking watchdog cuts short (the model loops in its
+reasoning, or passes `agent.max_thinking_tokens`, `agent.thinking_timeout_secs`
+or the turn deadline) is not a cancel: an agent task ends with the stop status
+`watchdog` and its checks decide, a `predict` step (which has no answer to
+fall back on) fails with `turn_aborted` and the watchdog's reason. Only a
+person's or a signal's cancel ends the run as `cancelled`.
 
 **Corrections.** `corrections: {max, count, check, while, author, accept, retries,
 refusal, allowance}` on an agent task is a supervisor loop: the command gate
@@ -156,7 +162,7 @@ A gate's arguments read the tasks that have run, so a check can be told why the
 agent stopped (`command: [check, --stopped, "{{ tasks.work.stop }}"]`), and
 `while` can follow the stop status (`while: {eq: tasks.work.stop, value:
 concluded}` corrects only a run that really concluded, not one that was cut off
-by `output_truncated`, `tool_cap`, `repetition` or `stopped_without_conclusion`).
+by `output_truncated`, `tool_cap`, `repetition`, `watchdog` or `stopped_without_conclusion`).
 
 Templates read `inputs.<name>` and `tasks.<name>.output` (the text of that
 task's last agent turn) for tasks that have run; `facts` and `steps` are

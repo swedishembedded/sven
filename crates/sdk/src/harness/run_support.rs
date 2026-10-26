@@ -22,6 +22,7 @@ use tokio::sync::broadcast;
 
 use super::run::HarnessFailure;
 use super::HarnessCheckpoint;
+use crate::RunConclusion;
 
 /// How long a stopped run is given to report what it had before it is
 /// left - the same grace a mode session's wind-down gets.
@@ -186,6 +187,16 @@ pub(super) fn outcome_of(
             message: "the user cancelled the run".to_string(),
         })),
         _ => None,
+    }
+}
+
+/// How a run that no bound stopped ended, from its terminal state: only a
+/// completed run is a success.
+pub(super) fn conclusion_of(state_label: &str) -> RunConclusion {
+    match state_label {
+        "Failed" => RunConclusion::AgentError,
+        "Cancelled" => RunConclusion::Cancelled,
+        _ => RunConclusion::Success,
     }
 }
 

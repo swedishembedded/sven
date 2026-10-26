@@ -12,6 +12,11 @@
 /// `Event::LlmFailed`/`UiEvent::Error` - the latter drives `SdlcMachine` into
 /// `Recovery`/`Failed`, which is correct for a real failure but wrong for a
 /// turn the user (or the watchdog) deliberately cut short.
+///
+/// The kernel still ends both with `UserCancelled` (so a machine returns to
+/// rest); `by_user` is what tells them apart. For a watchdog abort the turn
+/// executor first sends `TURN_WATCHDOG` with the reason, so a harness reports
+/// the stop status `watchdog` instead of a user cancel.
 #[derive(Debug)]
 pub struct AbortedError {
     /// What cut the turn short, as shown to the user.

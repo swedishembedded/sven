@@ -391,7 +391,7 @@ pub struct AgentStepSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
     /// Where to record how the step's loop ended (`concluded`,
-    /// `stopped_without_conclusion`, `output_truncated`, `tool_cap`, `repetition`).
+    /// `stopped_without_conclusion`, `output_truncated`, `tool_cap`, `repetition`, `watchdog`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_as: Option<String>,
     /// The fact holding the tool calls the step may still make.

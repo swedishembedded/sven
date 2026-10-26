@@ -232,8 +232,8 @@ async fn a_failed_harness_reports_its_own_failure() {
     let outcome = run.execute(RunOptions::new()).await.expect("ends");
     assert_eq!(
         outcome.conclusion,
-        RunConclusion::Success,
-        "the run completed"
+        RunConclusion::AgentError,
+        "a failed run is not a success"
     );
     assert!(
         matches!(&outcome.result, Some(Err(failure)) if failure.code == "gate_failed"),

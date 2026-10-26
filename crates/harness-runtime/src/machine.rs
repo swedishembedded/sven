@@ -36,7 +36,7 @@ use serde_json::Value;
 use sven_harness_spec::{HarnessPlan, PlanPrimitive, PlanStep, Template};
 use sven_hsm::{
     Context, Effect, Event, InternalEvent, Machine, MachineId, Reaction, ToolCallId,
-    ToolCapability, TURN_TRUNCATED,
+    ToolCapability, TURN_TRUNCATED, TURN_WATCHDOG,
 };
 use sven_vocab::verify::VerifierVerdict;
 use sven_vocab::TurnRequest;
@@ -366,10 +366,17 @@ impl HarnessMachine {
     /// Nothing is in flight any more (the completion already stored and
     /// followed the `then` edge): a tick advances the walk.
     fn on_model(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
-        if matches!(event, Event::UserCancelled) {
-            return self.cancel(ctx);
-        }
         let mut run = self.run_state(ctx);
+        if matches!(event, Event::UserCancelled) {
+            // The turn executor ends a turn a watchdog cut short with the
+            // same cancel a person's would be; it says why just before.
+            return match run.watchdog.take() {
+                Some(reason) if run.awaiting == Some(Waiting::Model) => {
+                    self.on_turn_aborted(&mut run, &reason, ctx)
+                }
+                _ => self.cancel(ctx),
+            };
+        }
         if run.awaiting != Some(Waiting::Model) {
             return self.tick_when_idle(&mut run, event, ctx);
         }
@@ -377,6 +384,11 @@ impl HarnessMachine {
             return Reaction::Ignored;
         };
         match event {
+            Event::Internal(InternalEvent::Custom { name, payload }) if name == TURN_WATCHDOG => {
+                run.watchdog = Some(payload.as_str().unwrap_or("a watchdog").to_string());
+                run.store(ctx);
+                Reaction::Ignored
+            }
             Event::Internal(InternalEvent::Custom { name, .. }) if name == TURN_TRUNCATED => {
                 run.truncated = true;
                 run.store(ctx);
