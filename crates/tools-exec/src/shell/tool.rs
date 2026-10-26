@@ -126,13 +126,26 @@ impl Tool for ShellTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        let command = match call.args.get("shell_command").and_then(|v| v.as_str()) {
+        // `command` is what most models are trained to send to a shell tool;
+        // taking it as well keeps such a model from failing every call.
+        let given = call
+            .args
+            .get("shell_command")
+            .or_else(|| call.args.get("command"));
+        let command = match given.and_then(|v| v.as_str()) {
             Some(c) => c.to_string(),
             None => {
+                let keys: Vec<&str> = call
+                    .args
+                    .as_object()
+                    .map(|o| o.keys().map(String::as_str).collect())
+                    .unwrap_or_default();
                 return ToolOutput::err(
                     &call.id,
-                    "Please provide a shell command to execute as 'shell_command' parameter to this tool call. \
-                    The shell command can be any bash one liner",
+                    format!(
+                        "Please provide a shell command to execute as 'shell_command' parameter to this tool call \
+                         (the call gave {keys:?}). The shell command can be any bash one liner"
+                    ),
                 );
             }
         };
@@ -700,6 +713,16 @@ mod adversarial_tests {
             name: "shell".into(),
             args,
         }
+    }
+
+    #[tokio::test]
+    async fn the_common_command_argument_name_is_accepted() {
+        // Most models are trained on a shell tool whose argument is `command`;
+        // a call that names it so runs instead of failing turn after turn.
+        let t = ShellTool::default();
+        let out = t.execute(&call(json!({"command": "echo hello"}))).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("hello"), "{}", out.content);
     }
 
     #[tokio::test]
