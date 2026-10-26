@@ -66,20 +66,26 @@ fn plausible_token(token: &str) -> bool {
     }
     if core
         .chars()
-        .all(|c| c.is_ascii_digit() || ".,:/-%".contains(c))
-    {
-        return true;
-    }
-    if core
-        .chars()
-        .any(|c| !(c.is_alphanumeric() || "'’-.".contains(c)))
+        .any(|c| !(c.is_alphanumeric() || "'’-._/:%".contains(c)))
     {
         return false;
     }
-    let letters: Vec<char> = core.chars().filter(|c| c.is_alphabetic()).collect();
-    if letters.is_empty() {
+    let parts: Vec<&str> = core
+        .split(|c: char| "'’-._/:%".contains(c))
+        .filter(|p| !p.is_empty())
+        .collect();
+    let compound = parts.len() > 1;
+    parts.iter().all(|p| plausible_part(p, compound))
+}
+
+/// One alphanumeric run of a token. Technical text is full of codes
+/// (`0x5006`, `AHB1ENR`) and acronyms; only runs of letters that no language
+/// produces mark a broken text layer.
+fn plausible_part(part: &str, in_compound: bool) -> bool {
+    if part.chars().any(|c| c.is_ascii_digit()) {
         return true;
     }
+    let letters: Vec<char> = part.chars().collect();
     // Scripts without a vowel notion: trust them.
     if letters
         .iter()
@@ -88,12 +94,15 @@ fn plausible_token(token: &str) -> bool {
         return true;
     }
     if letters.len() == 1 {
-        return matches!(letters[0], 'a' | 'A' | 'I' | 'i' | 'O' | 'o') || !letters[0].is_ascii();
+        return in_compound
+            || matches!(letters[0], 'a' | 'A' | 'I' | 'i' | 'O' | 'o')
+            || !letters[0].is_ascii();
+    }
+    if letters.iter().all(|c| c.is_uppercase()) {
+        return letters.len() <= 12;
     }
     if !letters.iter().any(|c| is_vowel(*c)) {
-        // Acronyms such as "NASA" or "TV" are upper-case; consonant clumps
-        // of a broken layer are not.
-        return letters.len() <= 5 && letters.iter().all(|c| c.is_uppercase());
+        return false;
     }
     let mut run = 0;
     for c in &letters {
@@ -103,8 +112,7 @@ fn plausible_token(token: &str) -> bool {
         }
     }
     // Internal capitals ("tHe", "aBcD") mark misrecognised glyphs.
-    let internal_caps = letters.iter().skip(1).filter(|c| c.is_uppercase()).count();
-    internal_caps <= 1 || letters.iter().all(|c| c.is_uppercase())
+    letters.iter().skip(1).filter(|c| c.is_uppercase()).count() <= 1
 }
 
 fn is_vowel(c: char) -> bool {

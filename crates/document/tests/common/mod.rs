@@ -19,6 +19,8 @@ pub struct Seen {
     /// The gray level of the page image (its identity in these tests).
     pub gray: u8,
     pub width: u32,
+    /// The instruction sent with the image.
+    pub prompt: String,
 }
 
 pub struct Reply {
@@ -97,7 +99,19 @@ impl ModelProvider for ScriptedOcr {
             .expect("a PNG data URL");
         let png = base64::engine::general_purpose::STANDARD.decode(b64)?;
         let img = image::load_from_memory(&png)?.to_rgb8();
+        let prompt = req
+            .messages
+            .iter()
+            .find_map(|m| match &m.content {
+                MessageContent::ContentParts(parts) => parts.iter().find_map(|p| match p {
+                    ContentPart::Text { text } => Some(text.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .unwrap_or_default();
         let seen = Seen {
+            prompt,
             gray: img.get_pixel(img.width() / 2, img.height() / 2)[0],
             width: img.width(),
         };

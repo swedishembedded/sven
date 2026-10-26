@@ -26,11 +26,33 @@ text is read by pure-Rust libraries.
    scanned archive's old OCR layer is full of non-words and is not trusted.
    Pages without usable text are rendered and sent to the OCR model.
    `--ocr always` sends every page, `--ocr never` uses native text only.
-3. **Recognise.** Up to `--concurrency` page images are in flight at once, so
-   memory does not grow with the document. Each request carries one page image
+3. **Recognise.** Pages are rendered ahead of the model on all cores, and the
+   model is kept busy: up to `--concurrency` requests are in flight per endpoint
+   (the window starts there and is halved while the server pushes back with
+   429/503, a full queue or a timeout, then grows again). Only about twice that
+   many page images exist at any time, so memory does not grow with the
+   document, and the report states the peak in flight and how long the backend
+   sat idle while pages remained. Each request carries one page image
    and the prompt (default `Convert the document to markdown.`, deliberately
    without a grounding marker, which would switch a grounding-capable model to
    bounding-box output). Blank pages cost no request.
+   **Columns and articles.** Whole-page OCR reads a newspaper badly: columns
+   interleave and a model loses its place after the first column. With
+   `--layout auto` (the default) a page that looks like columns, or whose
+   whole-page reading was cut off or looped, is read block by block instead.
+   The model is asked for each block with its location (DeepSeek-OCR's
+   grounding output, `<|ref|>label<|/ref|><|det|>[[x1,y1,x2,y2]]<|/det|>`); the
+   blocks are put in reading order by a deterministic rule, with no chat model
+   involved (wide blocks such as a masthead cut the page into bands; within a
+   band the blocks are read column by column, each headline before the text
+   under it and each article whole before the next); and every block is read
+   again from a crop of the page at `--region-dpi`, which resolves small
+   type that the whole page cannot. The crops are independent requests and use
+   the same concurrency window. A crop that loops, runs to the token limit or
+   is mostly non-words is a picture the model invented text for; the layout
+   pass's own text stands in and the page is marked with a warning. A model that
+   does not return locations simply reads the page whole, with a note. `--layout regions` does this for every OCR
+   page, `--layout off` never.
 4. **Validate and retry.** An answer is checked for a cut-off (token limit),
    emptiness, degenerate repetition, leaked model control tokens and, where the
    page has a good native layer, coverage of its words. A page that fails is
@@ -87,7 +109,7 @@ provider that serves it.
 A model the catalog does not know as image-capable needs
 `input_modalities: [text, image]` on its provider entry. Several endpoints that
 serve the same model (one server per GPU) are listed as
-`models: {pool: [a/m, b/m]}`; requests are spread across them.
+`models: {pool: [a/m, b/m]}`; requests go to the endpoint with the most headroom, so work spreads in proportion to what each can take.
 
 **No OCR model.** When none is configured or discovered, or the configured one
 is unreachable or cannot take images, nothing falls back silently. The CLI exits
@@ -101,7 +123,7 @@ them).
 
 ```
 sven document convert in.pdf out.md [--model SPEC] [--pages 1-3,7] [--ocr auto|always|never]
-    [--concurrency N] [--dpi N] [--max-tokens N] [--prompt TEXT] [--max-attempts N]
+    [--layout auto|off|regions] [--region-dpi N] [--layout-prompt TEXT] [--concurrency N] [--dpi N] [--max-tokens N] [--prompt TEXT] [--max-attempts N]
     [--page-markers] [--dedupe-headers] [--no-resume] [--json] [--quiet]
 sven document score reference.txt out.md
 ```

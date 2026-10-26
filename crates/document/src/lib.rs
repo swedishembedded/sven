@@ -13,10 +13,15 @@
 
 mod assemble;
 mod backend;
+mod checkpoint;
+mod columns;
 mod convert;
 mod error;
+mod layout;
+mod limiter;
 mod manifest;
 mod names;
+mod page;
 mod pages;
 mod quality;
 mod score;
@@ -26,9 +31,13 @@ mod validate;
 pub mod testing;
 
 pub use backend::{HayroBackend, PdfBackend, PdfSource, RenderedPage};
-pub use convert::{ConvertOptions, Converter, OcrMode, Progress, Report, DEFAULT_PROMPT};
+pub use convert::{
+    ConvertOptions, Converter, LayoutMode, OcrMode, Progress, Report, DEFAULT_LAYOUT_PROMPT,
+    DEFAULT_PROMPT,
+};
 pub use error::DocumentError;
-pub use manifest::{manifest_path, Manifest, Method, PageRecord, Status};
+pub use layout::{column_count, reading_order, DeepseekGrounding, LayoutParser, Region};
+pub use manifest::{manifest_path, LayoutInfo, Manifest, Method, PageRecord, Status};
 pub use names::{match_model, Candidate, MatchError};
 pub use pages::parse_selection;
 pub use quality::{assess as assess_native_text, TextQuality};

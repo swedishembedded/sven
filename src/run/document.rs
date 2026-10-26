@@ -49,6 +49,15 @@ async fn convert(args: &ConvertArgs, config: &Config) -> anyhow::Result<i32> {
         resume: !args.no_resume,
         ..sven_bootstrap::convert_options(&config.ocr)
     };
+    if let Some(v) = &args.layout {
+        options.layout = v.parse().map_err(anyhow::Error::msg)?;
+    }
+    if let Some(v) = &args.layout_prompt {
+        options.layout_prompt = v.clone();
+    }
+    if let Some(v) = args.region_dpi {
+        options.region_dpi = v;
+    }
     if let Some(v) = args.concurrency {
         options.concurrency = v;
     }
@@ -113,7 +122,7 @@ async fn convert(args: &ConvertArgs, config: &Config) -> anyhow::Result<i32> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "{}  {} pages: {} native, {} ocr, {} blank, {} reused, {} warning, {} failed  {:.1}s\nsha256 {}\nmanifest {}",
+            "{}  {} pages: {} native, {} ocr, {} blank, {} reused, {} warning, {} failed  {:.1}s\nrequests: peak {} in flight, backend idle {} ms, per endpoint {:?}\nsha256 {}\nmanifest {}",
             report.output.display(),
             report.pages_total,
             report.pages_native,
@@ -123,6 +132,9 @@ async fn convert(args: &ConvertArgs, config: &Config) -> anyhow::Result<i32> {
             report.pages_warning,
             report.pages_failed,
             report.elapsed_ms as f64 / 1000.0,
+            report.max_in_flight,
+            report.backend_idle_ms,
+            report.requests_per_endpoint,
             report.sha256,
             report.manifest.display(),
         );

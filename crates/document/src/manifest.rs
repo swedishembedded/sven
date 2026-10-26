@@ -39,6 +39,18 @@ pub enum Status {
     Failed,
 }
 
+/// How a page was read when its layout was used.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayoutInfo {
+    /// Blocks the model located on the page.
+    pub regions: usize,
+    /// Text columns those blocks line up in.
+    pub columns: usize,
+    /// Blocks whose own crop could not be read cleanly, so the text of the
+    /// layout pass stands in or a failed check was accepted.
+    pub degraded: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageRecord {
     /// 1-based page number.
@@ -62,6 +74,9 @@ pub struct PageRecord {
     pub warnings: Vec<String>,
     pub render_ms: u64,
     pub ocr_ms: u64,
+    /// Present when the page was read block by block from its layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<LayoutInfo>,
     #[serde(default)]
     pub input_tokens: u64,
     #[serde(default)]

@@ -40,6 +40,9 @@ pub fn convert_options(ocr: &OcrConfig) -> sven_document::ConvertOptions {
     if let Some(v) = ocr.max_tokens {
         o.max_tokens = v;
     }
+    if let Some(v) = ocr.layout.as_deref().and_then(|v| v.parse().ok()) {
+        o.layout = v;
+    }
     if let Some(v) = &ocr.prompt {
         o.prompt = v.clone();
     }

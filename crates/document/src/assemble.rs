@@ -109,6 +109,7 @@ mod tests {
             sha256: String::new(),
             text: text.into(),
             warnings: vec![],
+            layout: None,
             render_ms: 0,
             ocr_ms: 0,
             input_tokens: 0,

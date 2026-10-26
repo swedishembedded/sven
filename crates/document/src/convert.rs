@@ -19,28 +19,58 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use base64::Engine as _;
 use futures::StreamExt;
 use serde::Serialize;
-use sven_model::{
-    CompletionRequest, ContentPart, Message, ModelProvider, ResponseEvent, SamplingParams,
-};
+use sven_model::ModelProvider;
 use tokio::sync::Semaphore;
 
 use crate::assemble::{assemble, AssembleOptions};
-use crate::backend::{PdfBackend, PdfSource, RenderedPage};
+use crate::backend::{PdfBackend, PdfSource};
+use crate::checkpoint::{Checkpoint, FlushOnDrop};
 use crate::error::DocumentError;
+use crate::layout::DeepseekGrounding;
+use crate::limiter::{Limiter, LimiterStats};
 use crate::manifest::{
     manifest_path, page_key, sha256_hex, write_atomic, Manifest, Method, PageRecord, Status,
     MANIFEST_VERSION,
 };
+use crate::page::{process_page, render, PageContext, PageWork, Prepared};
 use crate::pages::parse_selection;
 use crate::quality::{assess, TextQuality};
-use crate::validate::{check, clean, Problem};
 
 /// Default prompt: plain Markdown. Deliberately without a grounding marker,
 /// which would switch a grounding-capable model into bounding-box output.
 pub const DEFAULT_PROMPT: &str = "Convert the document to markdown.";
+
+/// Whether a page is read block by block from its layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutMode {
+    /// Pages that look like columns are, and so is a page whose whole-page
+    /// reading was cut off or looped.
+    #[default]
+    Auto,
+    /// Never: every page is read whole.
+    Off,
+    /// Every OCR page.
+    Regions,
+}
+
+impl std::str::FromStr for LayoutMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "auto" => Ok(Self::Auto),
+            "off" => Ok(Self::Off),
+            "regions" => Ok(Self::Regions),
+            other => Err(format!("'{other}' is not one of auto, off, regions")),
+        }
+    }
+}
+
+/// Instruction that makes a grounding-capable model return each block with
+/// its location. A model without grounding answers with plain Markdown, which
+/// is then taken as the reading of the page.
+pub const DEFAULT_LAYOUT_PROMPT: &str = "<|grounding|>Convert the document to markdown.";
 
 /// Which pages go to the OCR model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,14 +101,20 @@ pub struct ConvertOptions {
     pub ocr: OcrMode,
     /// 1-based selection such as `1-3,7`; empty selects every page.
     pub pages: String,
-    /// Model requests in flight at once. This is client concurrency, not the
-    /// server's batch size.
+    /// Most model requests in flight at once per endpoint. The window starts
+    /// here and shrinks while the server pushes back (429/503, timeouts). This
+    /// is client concurrency, not the server's batch size.
     pub concurrency: usize,
     /// Pages rendered at once.
     pub render_workers: usize,
     pub dpi: f32,
     pub max_tokens: u32,
     pub prompt: String,
+    pub layout: LayoutMode,
+    /// Instruction for the layout pass.
+    pub layout_prompt: String,
+    /// Resolution blocks are read at in the layout pass.
+    pub region_dpi: f32,
     /// Attempts per page; each retry renders at a higher resolution.
     pub max_attempts: u32,
     pub request_timeout: Duration,
@@ -100,6 +136,9 @@ impl Default for ConvertOptions {
             dpi: 150.0,
             max_tokens: 4096,
             prompt: DEFAULT_PROMPT.to_string(),
+            layout: LayoutMode::Auto,
+            layout_prompt: DEFAULT_LAYOUT_PROMPT.to_string(),
+            region_dpi: 300.0,
             max_attempts: 3,
             request_timeout: Duration::from_secs(900),
             page_markers: false,
@@ -127,6 +166,12 @@ pub struct Report {
     pub pages_failed: usize,
     pub warnings: Vec<String>,
     pub elapsed_ms: u64,
+    /// Most model requests in flight at once.
+    pub max_in_flight: usize,
+    /// Time with no request in flight although OCR pages remained.
+    pub backend_idle_ms: u64,
+    /// Requests answered by each endpoint.
+    pub requests_per_endpoint: Vec<u64>,
 }
 
 /// Called after each page settles with `(done, total, record)`.
@@ -227,21 +272,49 @@ impl Converter {
                 None => todo.push(work),
             }
         }
-        let done = Arc::new(Mutex::new(reused));
+        let workers = options.concurrency.max(1) * self.providers.len().max(1);
+        let ocr_pages = todo.iter().filter(|w| w.method == Method::Ocr).count();
+        let limiter = Limiter::new(self.providers.len(), options.concurrency, ocr_pages);
         let ctx = Arc::new(PageContext {
             doc,
             providers: self.providers.clone(),
-            next: std::sync::atomic::AtomicUsize::new(0),
+            limiter: Arc::clone(&limiter),
             options: options.clone(),
             render_slots: Semaphore::new(options.render_workers.max(1)),
+            parser: Arc::new(DeepseekGrounding),
         });
+        let done = Arc::new(Mutex::new(reused));
+        // Stage one renders up to `workers` pages ahead of the model; stage
+        // two keeps `workers` pages at the model. A finished render waits
+        // only while stage two is full, so at most 2 x workers page images
+        // exist at any time, however long the document is.
         let mut results = futures::stream::iter(todo)
             .map(|work| {
                 let ctx = Arc::clone(&ctx);
                 let native = native[work.page - 1].clone();
-                async move { process_page(&ctx, work, native).await }
+                async move {
+                    let prepared = if work.method == Method::Ocr {
+                        let (image, render_ms) = render(&ctx, work.page - 1, ctx.options.dpi).await;
+                        Some(Prepared { image, render_ms })
+                    } else {
+                        None
+                    };
+                    (work, native, prepared)
+                }
             })
-            .buffer_unordered(options.concurrency.max(1));
+            .buffer_unordered(workers)
+            .map(|(work, native, prepared)| {
+                let ctx = Arc::clone(&ctx);
+                async move {
+                    let is_ocr = work.method == Method::Ocr;
+                    let record = process_page(&ctx, work, native, prepared).await;
+                    if is_ocr {
+                        ctx.limiter.page_done();
+                    }
+                    record
+                }
+            })
+            .buffer_unordered(workers);
         while let Some(record) = results.next().await {
             let n = {
                 let mut d = done.lock().unwrap();
@@ -254,6 +327,7 @@ impl Converter {
             state.lock().unwrap().push(record, true);
         }
         drop(results);
+        let stats = limiter.stats();
 
         let mut pages = state.lock().unwrap().manifest.pages.clone();
         pages.sort_by_key(|p| p.page);
@@ -271,7 +345,14 @@ impl Converter {
             cp.flush()?;
         }
         write_atomic(destination, markdown.as_bytes())?;
-        Ok(summarise(destination, &pages, output_sha, reused, started))
+        Ok(summarise(
+            destination,
+            &pages,
+            output_sha,
+            reused,
+            started,
+            stats,
+        ))
     }
 }
 
@@ -281,6 +362,7 @@ fn summarise(
     sha256: String,
     reused: usize,
     started: Instant,
+    stats: LimiterStats,
 ) -> Report {
     let count = |m: Method| pages.iter().filter(|p| p.method == m).count();
     let by_status = |s: Status| pages.iter().filter(|p| p.status == s).count();
@@ -305,6 +387,9 @@ fn summarise(
         pages_failed: by_status(Status::Failed),
         warnings,
         elapsed_ms: started.elapsed().as_millis() as u64,
+        max_in_flight: stats.peak_in_flight,
+        backend_idle_ms: stats.idle_ms,
+        requests_per_endpoint: stats.requests_per_endpoint,
     }
 }
 
@@ -317,15 +402,6 @@ async fn blocking<T: Send + 'static>(
 }
 
 // ── Planning ────────────────────────────────────────────────────────────────
-
-struct PageWork {
-    /// 1-based.
-    page: usize,
-    method: Method,
-    key: String,
-    /// Native text when it is good enough to compare an OCR answer against.
-    reference: bool,
-}
 
 fn plan_pages(
     selected: &[usize],
@@ -353,6 +429,9 @@ fn plan_pages(
                     &options.model_spec,
                     &options.prompt,
                     &options.max_tokens.to_string(),
+                    &format!("{:?}", options.layout),
+                    &options.layout_prompt,
+                    &options.region_dpi.to_string(),
                 ]),
                 _ => page_key(&[source_sha, &page.to_string(), "native"]),
             };
@@ -364,252 +443,4 @@ fn plan_pages(
             }
         })
         .collect()
-}
-
-// ── One page ────────────────────────────────────────────────────────────────
-
-struct PageContext {
-    doc: Arc<dyn PdfSource>,
-    providers: Vec<Arc<dyn ModelProvider>>,
-    next: std::sync::atomic::AtomicUsize,
-    options: ConvertOptions,
-    render_slots: Semaphore,
-}
-
-async fn process_page(ctx: &PageContext, work: PageWork, native: Option<String>) -> PageRecord {
-    let mut record = PageRecord {
-        page: work.page,
-        key: work.key.clone(),
-        method: work.method,
-        status: Status::Ok,
-        model: None,
-        attempts: 0,
-        dpi: None,
-        sha256: String::new(),
-        text: String::new(),
-        warnings: Vec::new(),
-        render_ms: 0,
-        ocr_ms: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-    };
-    match work.method {
-        Method::Ocr => recognise(ctx, &work, native.as_deref(), &mut record).await,
-        _ => {
-            record.text = native.as_deref().unwrap_or_default().trim().to_string();
-            if record.text.is_empty() {
-                record.status = Status::Warning;
-                record.warnings = vec!["the page has no native text".into()];
-            } else if !work.reference {
-                record.status = Status::Warning;
-                record.warnings = vec!["the native text layer looks unreliable".into()];
-            }
-        }
-    }
-    record.sha256 = sha256_hex(record.text.as_bytes());
-    record
-}
-
-/// Fills `record` for an OCR page: render, ask, validate, and retry at a
-/// higher resolution while the budget lasts.
-async fn recognise(
-    ctx: &PageContext,
-    work: &PageWork,
-    native: Option<&str>,
-    record: &mut PageRecord,
-) {
-    let opts = &ctx.options;
-    record.model = Some(opts.model_spec.clone());
-    let mut best: Option<(Vec<Problem>, String, f32)> = None;
-    let mut last_error = None;
-    for attempt in 1..=opts.max_attempts.max(1) {
-        record.attempts = attempt;
-        let dpi = opts.dpi * (1.0 + 0.5 * (attempt - 1) as f32);
-        let rendered = match render(ctx, work.page - 1, dpi, &mut record.render_ms).await {
-            Ok(r) => r,
-            Err(e) => {
-                last_error = Some(format!("render failed: {e}"));
-                break;
-            }
-        };
-        if rendered.blank {
-            record.method = Method::Blank;
-            record.dpi = Some(dpi);
-            return;
-        }
-        let started = Instant::now();
-        let outcome = ask(ctx, &rendered).await;
-        record.ocr_ms += started.elapsed().as_millis() as u64;
-        match outcome {
-            Ok(answer) => {
-                record.input_tokens += answer.input_tokens;
-                record.output_tokens += answer.output_tokens;
-                let text = clean(&answer.text);
-                let problems = check(&text, answer.cutoff, native.filter(|_| work.reference));
-                if problems.is_empty() {
-                    record.text = text;
-                    record.dpi = Some(dpi);
-                    return;
-                }
-                let better = best.as_ref().is_none_or(|(p, t, _)| {
-                    (problems.len(), std::cmp::Reverse(text.len()))
-                        < (p.len(), std::cmp::Reverse(t.len()))
-                });
-                if better {
-                    best = Some((problems, text, dpi));
-                }
-                last_error = None;
-            }
-            Err(e) => {
-                last_error = Some(e);
-                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempt))).await;
-            }
-        }
-    }
-    match best {
-        Some((problems, text, dpi)) if !text.is_empty() => {
-            record.warnings = problems.iter().map(|p| p.describe().to_string()).collect();
-            record.text = text;
-            record.dpi = Some(dpi);
-            record.status = Status::Warning;
-        }
-        Some((problems, _, _)) => {
-            // Only an empty answer came back every time: a blank page is the
-            // plausible reading when the page has no native text either.
-            record.warnings = problems.iter().map(|p| p.describe().to_string()).collect();
-            record.status = Status::Warning;
-        }
-        None => {
-            record.warnings = vec![last_error.unwrap_or_else(|| "no answer".into())];
-            record.status = Status::Failed;
-        }
-    }
-}
-
-async fn render(
-    ctx: &PageContext,
-    index: usize,
-    dpi: f32,
-    spent_ms: &mut u64,
-) -> Result<RenderedPage, DocumentError> {
-    let _slot = ctx
-        .render_slots
-        .acquire()
-        .await
-        .expect("semaphore is never closed");
-    let doc = Arc::clone(&ctx.doc);
-    let started = Instant::now();
-    let rendered = blocking(move || doc.render(index, dpi)).await?;
-    *spent_ms += started.elapsed().as_millis() as u64;
-    rendered
-}
-
-struct Answer {
-    text: String,
-    cutoff: bool,
-    input_tokens: u64,
-    output_tokens: u64,
-}
-
-async fn ask(ctx: &PageContext, page: &RenderedPage) -> Result<Answer, String> {
-    let url = format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(&page.png)
-    );
-    let request = CompletionRequest {
-        messages: vec![Message::user_with_parts(vec![
-            ContentPart::image(url),
-            ContentPart::text(ctx.options.prompt.clone()),
-        ])],
-        stream: true,
-        max_output_tokens_override: Some(ctx.options.max_tokens),
-        sampling: SamplingParams {
-            temperature: Some(0.0),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let exchange = async {
-        let provider = &ctx.providers
-            [ctx.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % ctx.providers.len()];
-        let mut stream = provider
-            .complete(request)
-            .await
-            .map_err(|e| format!("model request failed: {e}"))?;
-        let mut answer = Answer {
-            text: String::new(),
-            cutoff: false,
-            input_tokens: 0,
-            output_tokens: 0,
-        };
-        while let Some(event) = stream.next().await {
-            match event.map_err(|e| format!("model stream failed: {e}"))? {
-                ResponseEvent::TextDelta(t) => answer.text.push_str(&t),
-                ResponseEvent::MaxTokens => answer.cutoff = true,
-                ResponseEvent::Usage {
-                    input_tokens,
-                    output_tokens,
-                    ..
-                } => {
-                    answer.input_tokens += u64::from(input_tokens);
-                    answer.output_tokens += u64::from(output_tokens);
-                }
-                ResponseEvent::Error(e) => return Err(format!("model error: {e}")),
-                _ => {}
-            }
-        }
-        Ok(answer)
-    };
-    tokio::time::timeout(ctx.options.request_timeout, exchange)
-        .await
-        .map_err(|_| "model request timed out".to_string())?
-}
-
-// ── Manifest checkpointing ──────────────────────────────────────────────────
-
-/// Longest time a finished page may exist only in memory.
-const CHECKPOINT_EVERY: Duration = Duration::from_secs(2);
-
-struct Checkpoint {
-    destination: PathBuf,
-    manifest: Manifest,
-    last: Instant,
-}
-
-impl Checkpoint {
-    fn new(destination: &Path, manifest: Manifest) -> Self {
-        Self {
-            destination: destination.to_path_buf(),
-            manifest,
-            last: Instant::now(),
-        }
-    }
-
-    fn push(&mut self, record: PageRecord, checkpoint: bool) {
-        self.manifest.pages.retain(|p| p.page != record.page);
-        self.manifest.pages.push(record);
-        if checkpoint && self.last.elapsed() >= CHECKPOINT_EVERY {
-            if let Err(e) = self.flush() {
-                tracing::warn!(error = %e, "manifest checkpoint failed");
-            }
-        }
-    }
-
-    fn flush(&mut self) -> Result<(), DocumentError> {
-        self.last = Instant::now();
-        self.manifest.pages.sort_by_key(|p| p.page);
-        self.manifest.write(&self.destination)
-    }
-}
-
-struct FlushOnDrop(Arc<Mutex<Checkpoint>>);
-
-impl Drop for FlushOnDrop {
-    fn drop(&mut self) {
-        if let Ok(mut cp) = self.0.lock() {
-            if !cp.manifest.pages.is_empty() {
-                let _ = cp.flush();
-            }
-        }
-    }
 }

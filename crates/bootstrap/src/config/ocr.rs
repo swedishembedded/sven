@@ -51,6 +51,10 @@ pub struct OcrConfig {
     /// Output-token limit per page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// `auto`, `off` or `regions`: whether pages are read block by block from
+    /// their layout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
     /// The instruction sent with each page image.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
@@ -60,8 +64,15 @@ impl OcrConfig {
     /// The keys of the `ocr` section.
     #[must_use]
     pub fn schema() -> Schema {
-        Schema::keys(&["model", "concurrency", "dpi", "max_tokens", "prompt"])
-            .with("models", Schema::entries(Schema::value()))
+        Schema::keys(&[
+            "model",
+            "concurrency",
+            "dpi",
+            "max_tokens",
+            "layout",
+            "prompt",
+        ])
+        .with("models", Schema::entries(Schema::value()))
     }
 }
 

@@ -49,7 +49,19 @@ pub struct ConvertArgs {
     /// Which pages go to the OCR model.
     #[arg(long, value_parser = ["auto", "always", "never"], default_value = "auto")]
     pub ocr: String,
-    /// Model requests in flight at once (not the server's batch size).
+    /// How pages are read: `auto` reads a page block by block from its layout
+    /// (the model locates columns and articles, each block is read from a crop)
+    /// when it looks like columns or its whole-page reading failed; `regions`
+    /// does so for every OCR page; `off` reads every page whole.
+    #[arg(long, value_parser = ["auto", "off", "regions"])]
+    pub layout: Option<String>,
+    /// Instruction for the layout pass.
+    #[arg(long)]
+    pub layout_prompt: Option<String>,
+    /// Resolution the layout pass reads blocks at.
+    #[arg(long)]
+    pub region_dpi: Option<f32>,
+    /// Model requests in flight at once per endpoint (not the server's batch size).
     #[arg(long)]
     pub concurrency: Option<usize>,
     /// Render resolution in dots per inch.

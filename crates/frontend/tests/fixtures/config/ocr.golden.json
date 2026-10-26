@@ -96,6 +96,7 @@
     "ocr": {
       "concurrency": 24,
       "dpi": 200.0,
+      "layout": "regions",
       "model": "brain/deepseek-ai/DeepSeek-OCR-2",
       "models": {
         "fast": "brain/deepseek-ai/DeepSeek-OCR",

@@ -1092,6 +1092,7 @@ The OCR model behind `document_convert` and `sven document convert`. See
 | `concurrency` | `16` | Page requests in flight at once |
 | `dpi` | `150` | Render resolution; retries render larger |
 | `max_tokens` | `4096` | Output-token limit per page |
+| `layout` | `auto` | `auto`, `off` or `regions`: whether pages are read block by block from their layout (newspapers, columns) |
 | `prompt` | `Convert the document to markdown.` | Instruction sent with each page image |
 
 ---

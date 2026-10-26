@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use common::{build_pdf, FixturePage, Reply, ScriptedOcr, PROSE};
 use sven_document::{
-    manifest_path, ConvertOptions, Converter, DocumentError, HayroBackend, Manifest, OcrMode,
+    manifest_path, ConvertOptions, Converter, DocumentError, HayroBackend, LayoutMode, Manifest,
+    OcrMode,
 };
 
 fn converter(model: ScriptedOcr) -> (Converter, Arc<std::sync::atomic::AtomicUsize>) {
@@ -276,4 +277,261 @@ async fn blank_pages_cost_no_request() {
     let r = conv.convert(&src, &out, &options()).await.unwrap();
     assert_eq!((r.pages_blank, r.pages_ocr), (1, 1));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+fn scans(n: u8) -> Vec<FixturePage> {
+    (0..n).map(|i| FixturePage::Scan(60 + i * 10)).collect()
+}
+
+#[tokio::test]
+async fn the_backend_stays_saturated_and_replicas_share_the_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &scans(12));
+    let out = dir.path().join("out.md");
+    let slow = |seen: &common::Seen, _| Reply {
+        delay: Duration::from_millis(120),
+        ..Reply::text(page_of(seen.gray))
+    };
+    let (a, b) = (ScriptedOcr::new(slow), ScriptedOcr::new(slow));
+    let conv = Converter::new(Arc::new(HayroBackend), vec![Arc::new(a), Arc::new(b)]);
+    let opts = ConvertOptions {
+        concurrency: 3,
+        ..options()
+    };
+    let r = conv.convert(&src, &out, &opts).await.unwrap();
+
+    assert_eq!(r.pages_ocr, 12);
+    assert_eq!(r.max_in_flight, 6, "3 slots on each of the 2 endpoints");
+    assert_eq!(r.requests_per_endpoint.iter().sum::<u64>(), 12);
+    assert!(
+        r.requests_per_endpoint.iter().all(|n| *n >= 4),
+        "{:?}",
+        r.requests_per_endpoint
+    );
+    assert!(
+        r.backend_idle_ms < 200,
+        "the backend sat idle for {} ms while pages remained",
+        r.backend_idle_ms
+    );
+}
+
+#[tokio::test]
+async fn pushback_from_the_server_is_waited_out_not_counted_as_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &scans(4));
+    let out = dir.path().join("out.md");
+    let (conv, calls) = converter(ScriptedOcr::new(|seen, call| {
+        if call < 3 {
+            Reply {
+                error: Some("brain error 429 Too Many Requests".into()),
+                ..Reply::text("")
+            }
+        } else {
+            Reply::text(page_of(seen.gray))
+        }
+    }));
+    let opts = ConvertOptions {
+        concurrency: 4,
+        max_attempts: 1,
+        ..options()
+    };
+    let r = conv.convert(&src, &out, &opts).await.unwrap();
+    assert_eq!((r.pages_ocr, r.pages_failed, r.pages_warning), (4, 0, 0));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        7,
+        "three pushbacks, then every page once"
+    );
+}
+
+/// A grounded answer in the order the model happened to list the blocks:
+/// the right-hand column first.
+const GROUNDED: &str = "<|ref|>text<|/ref|><|det|>[[500, 100, 900, 400]]<|/det|>\nright column (layout pass)\n\n\
+                        <|ref|>title<|/ref|><|det|>[[100, 50, 300, 90]]<|/det|>\nHEADLINE\n\n\
+                        <|ref|>text<|/ref|><|det|>[[100, 100, 400, 400]]<|/det|>\nleft column (layout pass)\n\n\
+                        <|ref|>text<|/ref|><|det|>[[100, 420, 400, 500]]<|/det|>\nleft column, second block\n\n\
+                        <|ref|>text<|/ref|><|det|>[[500, 420, 900, 500]]<|/det|>\nright column, second block\n";
+
+/// Crops are told apart by width: the left column is narrower than the right.
+fn layout_model() -> ScriptedOcr {
+    ScriptedOcr::new(|seen, _| {
+        if seen.prompt.contains("<|grounding|>") {
+            return Reply::text(GROUNDED);
+        }
+        // Region crops at 72 dpi are 612 px x fraction of the page wide.
+        match seen.width {
+            w if w < 150 => Reply::text("Headline from its crop"),
+            w if w < 230 => Reply::text("left column from its crop"),
+            w if w < 300 => Reply::text("right column from its crop"),
+            _ => Reply::text("plain whole-page reading"),
+        }
+    })
+}
+
+fn layout_options(layout: LayoutMode) -> ConvertOptions {
+    ConvertOptions {
+        layout,
+        region_dpi: 72.0,
+        dpi: 40.0,
+        ..options()
+    }
+}
+
+#[tokio::test]
+async fn regions_are_read_from_crops_in_reading_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &[FixturePage::Scan(100)]);
+    let out = dir.path().join("out.md");
+    let (conv, calls) = converter(layout_model());
+    let r = conv
+        .convert(&src, &out, &layout_options(LayoutMode::Regions))
+        .await
+        .unwrap();
+    assert_eq!(
+        (r.pages_warning, r.pages_failed),
+        (0, 0),
+        "{:?}",
+        r.warnings
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        6,
+        "one layout pass and five blocks"
+    );
+    let md = std::fs::read_to_string(&out).unwrap();
+    let at = |s: &str| md.find(s).unwrap_or_else(|| panic!("{s} in {md}"));
+    assert!(at("# Headline from its crop") < at("left column from its crop"));
+    assert!(at("left column from its crop") < at("right column from its crop"));
+    assert!(
+        !md.contains("layout pass"),
+        "crops replace the layout pass's own text: {md}"
+    );
+    let m: Manifest = serde_json::from_slice(&std::fs::read(manifest_path(&out)).unwrap()).unwrap();
+    let info = m.pages[0].layout.as_ref().expect("layout recorded");
+    assert_eq!((info.regions, info.columns, info.degraded), (5, 2, 0));
+}
+
+#[tokio::test]
+async fn a_model_that_does_not_ground_reads_the_page_whole_with_a_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &[FixturePage::Scan(100)]);
+    let out = dir.path().join("out.md");
+    let (conv, calls) = converter(ScriptedOcr::new(|_, _| {
+        Reply::text("just markdown, no boxes")
+    }));
+    let r = conv
+        .convert(&src, &out, &layout_options(LayoutMode::Regions))
+        .await
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!((r.pages_failed, r.pages_warning), (0, 0));
+    assert!(
+        r.warnings
+            .iter()
+            .any(|w| w.contains("does not locate blocks")),
+        "{:?}",
+        r.warnings
+    );
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap().trim(),
+        "just markdown, no boxes"
+    );
+}
+
+#[tokio::test]
+async fn auto_falls_back_to_the_layout_pass_when_the_whole_page_reading_is_cut_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &[FixturePage::Scan(100)]);
+    let out = dir.path().join("out.md");
+    let model = ScriptedOcr::new(|seen, _| {
+        if seen.prompt.contains("<|grounding|>") {
+            Reply::text(GROUNDED)
+        } else if seen.width > 300 {
+            Reply {
+                cutoff: true,
+                ..Reply::text("column one column two column one")
+            }
+        } else if seen.width < 230 {
+            Reply::text("left column from its crop")
+        } else {
+            Reply::text("right column from its crop")
+        }
+    });
+    let (conv, _) = converter(model);
+    let opts = ConvertOptions {
+        max_attempts: 1,
+        ..layout_options(LayoutMode::Auto)
+    };
+    let r = conv.convert(&src, &out, &opts).await.unwrap();
+    assert_eq!(r.pages_failed, 0);
+    let md = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        md.contains("left column from its crop") && !md.contains("column one"),
+        "{md}"
+    );
+}
+
+#[tokio::test]
+async fn a_crop_the_model_invented_text_for_falls_back_to_the_layout_pass_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &[FixturePage::Scan(100)]);
+    let out = dir.path().join("out.md");
+    let model = ScriptedOcr::new(|seen, _| {
+        if seen.prompt.contains("<|grounding|>") {
+            Reply::text(GROUNDED)
+        } else if (230..300).contains(&seen.width) {
+            // The right column is a photograph; the model loops on it.
+            Reply::text("same line again\n".repeat(12))
+        } else {
+            Reply::text("read from the crop")
+        }
+    });
+    let (conv, _) = converter(model);
+    let opts = ConvertOptions {
+        max_attempts: 1,
+        ..layout_options(LayoutMode::Regions)
+    };
+    let r = conv.convert(&src, &out, &opts).await.unwrap();
+    let md = std::fs::read_to_string(&out).unwrap();
+    assert!(!md.contains("same line again"), "{md}");
+    assert!(md.contains("right column (layout pass)"), "{md}");
+    assert_eq!(r.pages_warning, 1);
+    assert!(
+        r.warnings.iter().any(|w| w.contains("2 of 5 blocks")),
+        "{:?}",
+        r.warnings
+    );
+}
+
+#[tokio::test]
+async fn a_line_on_the_seam_between_two_blocks_is_kept_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &[FixturePage::Scan(100)]);
+    let out = dir.path().join("out.md");
+    let model = ScriptedOcr::new(|seen, _| {
+        if seen.prompt.contains("<|grounding|>") {
+            Reply::text(GROUNDED)
+        } else if seen.width < 150 {
+            Reply::text("Headline")
+        } else if seen.width < 230 {
+            // The last line of the left column is also the top of the next block.
+            Reply::text("first paragraph\nthe shared line on the seam")
+        } else {
+            Reply::text("the shared line on the seam\nrest of the right column")
+        }
+    });
+    let (conv, _) = converter(model);
+    conv.convert(&src, &out, &layout_options(LayoutMode::Regions))
+        .await
+        .unwrap();
+    let md = std::fs::read_to_string(&out).unwrap();
+    let lines: Vec<&str> = md
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert!(
+        lines.windows(2).all(|w| w[0] != w[1]),
+        "a line on a seam appears twice in a row: {md}"
+    );
 }
