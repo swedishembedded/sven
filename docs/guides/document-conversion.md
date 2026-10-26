@@ -54,8 +54,9 @@ text is read by pure-Rust libraries.
    does not return locations simply reads the page whole, with a note. `--layout regions` does this for every OCR
    page, `--layout off` never.
 4. **Validate and retry.** An answer is checked for a cut-off (token limit),
-   emptiness, degenerate repetition, leaked model control tokens and, where the
-   page has a good native layer, coverage of its words. A page that fails is
+   emptiness, degenerate repetition, leaked model control tokens, and against the page's own text layer: coverage
+   of its words where the layer is good, and the numbers and codes (register
+   values, bit patterns, amounts) wherever the layer has enough of them. A page that fails is
    rendered again at a higher resolution, up to `--max-attempts`. A page that
    never validates keeps its best text with a warning; a page that never
    produced text is marked failed in the output.

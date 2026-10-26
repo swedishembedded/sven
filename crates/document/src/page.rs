@@ -174,6 +174,7 @@ async fn recognise(
             target: Target::Page(work.page - 1),
             prompt: &opts.prompt,
             reference,
+            numbers_from: native,
             grounded: false,
         },
         image,
@@ -258,6 +259,7 @@ async fn read_by_layout(
             target: Target::Page(index),
             prompt: &opts.layout_prompt,
             reference: None,
+            numbers_from: None,
             grounded: true,
         },
         Some(image),
@@ -301,6 +303,7 @@ async fn read_by_layout(
                     target: Target::Block(index, region.bbox),
                     prompt: &opts.prompt,
                     reference: None,
+                    numbers_from: None,
                     grounded: false,
                 },
                 Some(crop),
@@ -445,8 +448,11 @@ fn heading(label: &str, body: String) -> String {
 struct Request<'a> {
     target: Target,
     prompt: &'a str,
-    /// Native text to compare the answer with.
+    /// Native text to compare the answer with, when it is trustworthy.
     reference: Option<&'a str>,
+    /// Native text whose numbers the answer should reproduce, trustworthy or
+    /// not: digits survive in a text layer that is wrong in its letters.
+    numbers_from: Option<&'a str>,
     /// The answer is expected to carry layout markers.
     grounded: bool,
 }
@@ -548,7 +554,12 @@ async fn read(
                 reading.input_tokens += answer.input_tokens;
                 reading.output_tokens += answer.output_tokens;
                 let text = clean(&answer.text);
-                let mut problems = check(&text, answer.cutoff, request.reference);
+                let mut problems = check(
+                    &text,
+                    answer.cutoff,
+                    request.reference,
+                    request.numbers_from,
+                );
                 if request.grounded {
                     problems.retain(|p| *p != Problem::SpecialTokens);
                 }
