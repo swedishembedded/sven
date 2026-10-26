@@ -27,8 +27,26 @@ went. This file keeps only what is still open, and what the live runs taught.
    about 13 days on one 27B server, one file at a time; this rests on n = 2
    files and is not a measured rate. The levers:
    - decode speed (brain's serving work; ~55 tok/s single-stream on int8 KV);
-   - items that run concurrently (a `for_each` is serial today; it would need
-     one clone per lane and a merge step);
+   - items that run concurrently (a `for_each` is serial today). Not feasible
+     inside one machine, for two reasons. The machine has one walk cursor and
+     one in-flight slot (`current`, `inflight`, `agent`, `awaiting`), and every
+     body task writes run-wide facts and step results (`tasks.<t>.output`,
+     stop and pool facts, the item facts), so overlapping items would overwrite
+     each other. And the kernel awaits each effect in turn, with one turn
+     executor and one cancel handle, so two model turns of one run never
+     overlap whatever the machine emits. The seam that already runs
+     concurrently is the child run (`ChildSpawner`, `delegate`). The design
+     that fits is `for_each: {concurrency: N}` over a body that is a single
+     `use:` task: the iterate step keeps up to N children in flight (a set of
+     `ChildRun`s instead of one), settles each item from its child's envelope
+     in index order, and runs `on_item_failure` checks in the parent as each
+     child fails. What it needs first: a budget split, because a child is
+     capped by what its parent has left and N children would each be offered
+     all of it (reserve a share per child, return the unspent share); a
+     checkpoint that records the children in flight (a resume starts them
+     again); and the body's context passed as the child's inputs. A host can
+     get the same server utilisation today by running several `sven harness
+     run` processes over disjoint item lists;
    - a cheaper check than the project's full `make test` per file.
 
 3. **An agent cannot author and run a harness.** A harness is a reusable,
