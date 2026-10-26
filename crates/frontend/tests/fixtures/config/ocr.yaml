@@ -1,0 +1,7 @@
+ocr:
+  model: brain/deepseek-ai/DeepSeek-OCR-2
+  models:
+    fast: brain/deepseek-ai/DeepSeek-OCR
+    pool: [gpu0/deepseek-ai/DeepSeek-OCR-2, gpu1/deepseek-ai/DeepSeek-OCR-2]
+  concurrency: 24
+  dpi: 200

@@ -58,6 +58,7 @@ the rest ([Core and deferred disclosure](#core-and-deferred-disclosure)).
 | [`todo`](#todo) | read | all | core |
 | [`tools`](#tools) | read | all | core |
 | [`attach_file`](#attach_file) | read | all | deferred |
+| [`document_convert`](#document_convert) | write | `agent` | deferred |
 | [`web_fetch`](#web_fetch) | network | all | deferred |
 | [`web_search`](#web_search) | network | all | deferred |
 | [`task`](#task) | read | `agent` | deferred |
@@ -207,6 +208,19 @@ feature `asr`, Linux), and refused without that.
 | `path` (required) | Image or audio file |
 | `note` | Note recorded with the attachment |
 | `force_transcribe` | Audio: transcribe even when the model accepts audio (offered only in builds with `asr` on Linux) |
+
+### `document_convert`
+
+Convert a PDF to a Markdown file with an OCR model; the result is a control
+record, never the text. See [Converting PDFs to Markdown](../guides/document-conversion.md).
+
+| Parameter | Description |
+|-----------|-------------|
+| `source` (required) | PDF file |
+| `destination` (required) | Markdown file to write; a manifest is written beside it |
+| `model` | OCR model: a spec, an `ocr.models` alias or a loose name ("deepseek ocr v2"); default `ocr.model` |
+| `pages` | 1-based selection such as `1-5,9` |
+| `ocr` | `auto` (native text where good, default), `always`, `never` |
 
 ### `web_fetch`
 

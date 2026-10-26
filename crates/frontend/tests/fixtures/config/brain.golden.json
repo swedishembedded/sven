@@ -93,6 +93,9 @@
       "provider": "brain",
       "temperature": 0.20000000298023224
     },
+    "ocr": {
+      "models": {}
+    },
     "providers": {
       "brain_dbus": {
         "driver_options": {

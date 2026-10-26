@@ -69,6 +69,7 @@ sven-model-drivers = "services"
 sven-model-mock    = "services"
 sven-decision      = "services"
 sven-cost          = "services"
+sven-document      = "services"
 
 # domain
 sven-memory        = "domain"
@@ -81,6 +82,7 @@ sven-tools-ctx     = "domain"
 sven-tools-agent   = "domain"
 sven-tools-web     = "domain"
 sven-tools-gdb     = "domain"
+sven-tools-document = "domain"
 
 # machines
 sven-machines  = "machines"

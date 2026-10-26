@@ -13,8 +13,11 @@ mod auth;
 mod config;
 mod decisions;
 mod disclosure;
+#[cfg(feature = "document")]
+mod document;
 mod harness;
 mod index;
+mod output_format;
 mod questions;
 mod task;
 #[cfg(feature = "network")]
@@ -31,8 +34,11 @@ pub use agent::AgentCommands;
 pub use auth::AuthCommands;
 pub use config::ConfigCommands;
 pub use decisions::{DecisionsCommands, DoctorCommands};
+#[cfg(feature = "document")]
+pub use document::{ConvertArgs, DocumentCommands};
 pub use harness::{ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, PlanFormatArg};
 pub use index::IndexCommands;
+pub use output_format::OutputFormatArg;
 pub use questions::QuestionsCommands;
 #[cfg(feature = "network")]
 pub use sven_acp::cli::AcpCommands;
@@ -43,36 +49,10 @@ pub use task::TaskCommands;
 pub use team::TeamCommands;
 pub use tool::ToolCommands;
 
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use std::path::PathBuf;
 use sven_vocab::{AgentMode, ApprovalMode};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
-pub enum OutputFormatArg {
-    /// Full conversation format (## User / ## Sven / ## Tool / ## Tool Result).
-    /// Output is valid sven conversation markdown and fully pipeable.
-    #[default]
-    Conversation,
-    /// Structured JSON: the run's full ATIF trajectory document (schema
-    /// version, agent profile, and every step), pretty-printed to stdout.
-    /// Not designed for piping between sven instances; use --output-format
-    /// jsonl for that, or --output-trace/--trace to write the same
-    /// document to a file.
-    Json,
-    /// Compact plain text: only the final agent response for each step.
-    /// Matches the legacy pre-enhancement behaviour.
-    Compact,
-    /// Full-fidelity JSONL: one ATIF trajectory step (TraceStep) JSON object
-    /// per line, streamed as each step is known complete (messages,
-    /// thinking, tool calls all folded into their turn-shaped step).
-    /// Designed for piping between sven instances:
-    ///   sven 'task 1' --output-format jsonl | sven --stdin 'task 2'
-    /// The receiving sven instance automatically detects and loads the
-    /// history. See --output-trace/--trace to persist the equivalent full
-    /// trajectory document to a file instead of streaming step-by-step.
-    Jsonl,
-}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -495,6 +475,13 @@ pub enum Commands {
         #[arg(long, short = 'f', required = true)]
         file: PathBuf,
     },
+    /// Convert PDFs to Markdown with an OCR model (`convert`, `score`).
+    #[cfg(feature = "document")]
+    Document {
+        #[command(subcommand)]
+        command: DocumentCommands,
+    },
+
     /// Build and query a repository context index.
     ///
     /// The index captures the file tree, public API symbols, and import graph.

@@ -33,6 +33,8 @@ members = [
     "crates/tools-agent",
     "crates/tools-web",
     "crates/tools-gdb",
+    "crates/document",
+    "crates/tools-document",
     "crates/turn",
     "crates/machines",
     "crates/workspace",
@@ -156,6 +158,8 @@ sven-session-store = { path = "crates/session-store" }
 sven-tool-api    = { path = "crates/tool-api" }
 sven-tool-registry = { path = "crates/tool-registry" }
 sven-bootstrap   = { path = "crates/bootstrap", default-features = false }
+sven-document    = { path = "crates/document", optional = true }
+sven-tools-document = { path = "crates/tools-document", optional = true }
 # `sven questions`: QuestionId, for parsing/printing the ids the parked-question
 # ledger (sven-session-store) uses.
 sven-hsm         = { path = "crates/hsm" }
@@ -219,7 +223,9 @@ gdb = ["sven-bootstrap/gdb"]
 memory = ["sven-bootstrap/memory"]
 # Tool presets (sven-bootstrap's and sven-sdk's own): `coding` attaches images
 # and audio and transcribes speech, `research` reads images.
-coding = ["sven-bootstrap/coding", "sven-sdk/coding"]
+coding = ["sven-bootstrap/coding", "sven-sdk/coding", "document"]
+# PDF to Markdown (`sven document`, the `document_convert` tool).
+document = ["sven-bootstrap/document", "dep:sven-document", "dep:sven-tools-document"]
 research = ["sven-bootstrap/research", "sven-sdk/research"]
 # `provider: dbus`, brain's D-Bus model transport (Unix only).
 dbus = ["sven-bootstrap/dbus", "sven-sdk/dbus"]

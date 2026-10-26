@@ -1,0 +1,59 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 7 0 R ] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+5 0 obj
+<< /Length 323 >>
+stream
+BT /F1 12 Tf 72 720 Td 16 TL
+(Page one of the fixture document describes the committee budget review in plain words.) Tj T*
+(Funding will come from the regional grant, which was increased by three percent this year.) Tj T*
+(Construction is expected to begin in the spring and finish before the end of next autumn.) Tj T*
+ET
+endstream
+endobj
+6 0 obj
+null
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+8 0 obj
+<< /Length 326 >>
+stream
+BT /F1 12 Tf 72 720 Td 16 TL
+(Page two continues with the schedule for the new library and the staff who will run it.) Tj T*
+(Volunteers will help with the opening week, and visitors can borrow books without any fee.) Tj T*
+(The reading room will stay open late on weekdays so that students can study in the evening.) Tj T*
+ET
+endstream
+endobj
+9 0 obj
+null
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000122 00000 n 
+0000000192 00000 n 
+0000000318 00000 n 
+0000000692 00000 n 
+0000000712 00000 n 
+0000000838 00000 n 
+0000001215 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+1235
+%%EOF

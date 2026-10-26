@@ -96,6 +96,9 @@
       "provider": "openai",
       "temperature": 0.0
     },
+    "ocr": {
+      "models": {}
+    },
     "providers": {},
     "skills": {
       "disclosure": "deferred"

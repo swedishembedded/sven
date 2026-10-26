@@ -1,0 +1,173 @@
+{
+  "config": {
+    "agent": {
+      "child_run_timeout_secs": 3600,
+      "compaction_output_reserve": 0.019999999552965164,
+      "compaction_overhead_reserve": 0.0,
+      "compaction_summary_tokens": 10000,
+      "compaction_threshold": 0.9800000190734863,
+      "default_mode": "agent",
+      "max_run_timeout_secs": 14400,
+      "max_step_timeout_secs": 0,
+      "max_tool_rounds": 200,
+      "note_repeated_results": true,
+      "system_prompt": null,
+      "tool_result_token_cap": 4000
+    },
+    "context": {
+      "assembly": {
+        "budget_tokens": 12000,
+        "keep_recent_rounds": 2,
+        "min_demote_tokens": 64,
+        "mode": "off",
+        "resident_bytes": 16777216
+      }
+    },
+    "cost": {
+      "cache_aware": "off",
+      "prices": {},
+      "remaining_requests": null
+    },
+    "decision": {
+      "brain": {
+        "cache_entries": 256,
+        "max_concurrent_requests": 2,
+        "url": "http://127.0.0.1:8788"
+      },
+      "enabled": false,
+      "features": {
+        "cache_routing": true,
+        "context_selection": true,
+        "delegation": true,
+        "model_routing": false,
+        "permission_advisory": false,
+        "skill_selection": true,
+        "tool_routing": true
+      },
+      "mode": "auto",
+      "model": "auto",
+      "policy": {
+        "minimum_model_quality": "validated",
+        "mode": "apply"
+      },
+      "provider": "brain",
+      "timeout_ms": 500,
+      "warn_if_unavailable": true
+    },
+    "delegation": {
+      "assumed_parent_context_tokens": 8000,
+      "child_overhead_tokens": 4000,
+      "context_window_tokens": 128000,
+      "min_samples": 2,
+      "parallel_credit_tokens": 1500,
+      "policy": "off",
+      "replay_rounds": 3,
+      "report_tokens": 400,
+      "unknown_work_tokens": 6000,
+      "write_surcharge_tokens": 1000
+    },
+    "knowledge": {
+      "disclosure": "deferred"
+    },
+    "mcp_servers": {},
+    "model": {
+      "api_key": null,
+      "api_key_file": null,
+      "aws_region": null,
+      "azure_api_version": null,
+      "azure_deployment": null,
+      "azure_resource": null,
+      "base_url": null,
+      "cache_conversation": true,
+      "cache_images": true,
+      "cache_system_prompt": true,
+      "cache_tool_results": true,
+      "cache_tools": true,
+      "driver_options": null,
+      "extended_cache_time": false,
+      "max_input_tokens": null,
+      "max_output_tokens": null,
+      "max_tokens": null,
+      "mock_responses_file": null,
+      "name": "openrouter/auto",
+      "provider": "openrouter",
+      "temperature": 0.20000000298023224
+    },
+    "ocr": {
+      "concurrency": 24,
+      "dpi": 200.0,
+      "model": "brain/deepseek-ai/DeepSeek-OCR-2",
+      "models": {
+        "fast": "brain/deepseek-ai/DeepSeek-OCR",
+        "pool": [
+          "gpu0/deepseek-ai/DeepSeek-OCR-2",
+          "gpu1/deepseek-ai/DeepSeek-OCR-2"
+        ]
+      }
+    },
+    "providers": {},
+    "skills": {
+      "disclosure": "deferred"
+    },
+    "subagents": {
+      "disclosure": "deferred"
+    },
+    "tools": {
+      "asr": {
+        "model": "brain/nemotronasr",
+        "timeout_secs": 120
+      },
+      "auto_approve_patterns": [
+        "cat *",
+        "ls *",
+        "find *",
+        "rg *",
+        "grep *"
+      ],
+      "context": {
+        "default_chunk_lines": 500,
+        "max_parallel": 4,
+        "sub_query_max_chars": 120000,
+        "sub_query_timeout_secs": 120
+      },
+      "deny_patterns": [
+        "rm -rf /*",
+        "dd if=*"
+      ],
+      "disabled": [],
+      "disclosure": {
+        "mode": "deferred"
+      },
+      "gdb": {
+        "command_timeout_secs": 10,
+        "connect_timeout_secs": 30,
+        "gdb_path": "gdb-multiarch",
+        "server_startup_wait_ms": 500
+      },
+      "lints": {
+        "python_command": null,
+        "rust_command": null,
+        "typescript_command": null
+      },
+      "max_timeout_secs": 1800,
+      "memory": {
+        "memory_file": null
+      },
+      "timeout_secs": 30,
+      "web": {
+        "fetch_max_chars": 20000,
+        "search": {
+          "api_key": null
+        }
+      }
+    },
+    "tui": {
+      "ascii_borders": false,
+      "code_line_numbers": false,
+      "show_thinking": false,
+      "theme": "dark",
+      "wrap_width": 0
+    }
+  },
+  "warnings": []
+}

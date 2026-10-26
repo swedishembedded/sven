@@ -1,0 +1,25 @@
+[package]
+name        = "sven-tools-document"
+version.workspace = true
+edition     = "2021"
+description = "The document_convert tool: PDF to Markdown through an OCR model, returning a control record and never the text. Domain tier."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-tool-api = { path = "../tool-api" }
+sven-hsm      = { path = "../hsm" }
+sven-vocab    = { path = "../vocab" }
+sven-model    = { path = "../model" }
+sven-workspace = { path = "../workspace" }
+sven-document = { path = "../document" }
+async-trait   = { workspace = true }
+serde_json    = { workspace = true }
+tokio         = { workspace = true }
+tracing       = { workspace = true }
+
+[dev-dependencies]
+tempfile   = { workspace = true }
+tokio      = { workspace = true, features = ["test-util", "macros", "rt"] }
+sven-document = { path = "../document", features = ["test-support"] }
+sven-model-mock = { path = "../model-mock" }
+anyhow = { workspace = true }

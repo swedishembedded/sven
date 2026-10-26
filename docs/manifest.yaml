@@ -22,6 +22,7 @@ navigation:
       - docs/guides/debugging.md
       - docs/guides/skills.md
       - docs/guides/large-content.md
+      - docs/guides/document-conversion.md
       - docs/guides/harnesses.md
       - docs/guides/ide-integration.md
       - docs/guides/troubleshooting.md

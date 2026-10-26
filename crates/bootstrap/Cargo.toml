@@ -16,6 +16,8 @@ sven-tools-exec    = { path = "../tools-exec" }
 sven-tools-ctx     = { path = "../tools-ctx" }
 sven-tools-agent   = { path = "../tools-agent" }
 sven-tools-web     = { path = "../tools-web" }
+sven-tools-document = { path = "../tools-document", optional = true }
+sven-document      = { path = "../document", optional = true }
 sven-tools-android = { path = "../tools-android", optional = true }
 sven-machines          = { path = "../machines" }
 sven-turn              = { path = "../turn" }
@@ -60,11 +62,14 @@ default = ["coding", "research", "dbus", "android", "gdb", "memory"]
 # ── Presets: what the matching `BuiltinTools` profile uses ──────────────────
 # `coding`: attach images and audio (`attach_file`), read images, transcribe
 # audio for a model that cannot hear.
-coding = ["media", "asr"]
+coding = ["media", "asr", "document"]
 # `research`: read images and diagrams.
 research = ["media"]
 
 # ── Capabilities ────────────────────────────────────────────────────────────
+# PDF to Markdown through an OCR model (`document_convert`). Pure Rust, but it
+# links an image codec, which the minimal SDK excludes.
+document = ["dep:sven-document", "dep:sven-tools-document"]
 # Image and audio decoding: `attach_file` and images in `read_file`.
 media = ["sven-tools-fs/media"]
 # Speech-to-text over brain's D-Bus action surface (Linux only).

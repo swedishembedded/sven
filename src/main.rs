@@ -16,6 +16,8 @@ use run::chats::{print_chats, run_migrate_sessions_command};
 use run::ci::run_ci;
 use run::config::{run_config_command, run_init};
 use run::decisions::{run_decisions_models, run_doctor_decisions};
+#[cfg(feature = "document")]
+use run::document::run_document_command;
 use run::harness::run_harness_command;
 use run::index::run_index_command;
 use run::ledger::run_ledger_command;
@@ -178,6 +180,15 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(feature = "network")]
             Commands::Team { command } => {
                 return run_team_command(command);
+            }
+            #[cfg(feature = "document")]
+            Commands::Document { command } => {
+                let config = Settings::load(cli.config.as_deref())?.runtime;
+                let code = run_document_command(command, &config).await?;
+                if code != 0 {
+                    std::process::exit(code);
+                }
+                return Ok(());
             }
             Commands::Index { command } => {
                 return run_index_command(command);

@@ -1080,6 +1080,22 @@ model that cannot take it, naming the model, and its `attach_file` offers no
 
 ---
 
+### `ocr`
+
+The OCR model behind `document_convert` and `sven document convert`. See
+[Converting PDFs to Markdown](../guides/document-conversion.md).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `model` | DeepSeek-OCR-2 on a provider that serves it | An image-capable model spec, an alias of `models` or a loose name |
+| `models` | none | Aliases: name to a spec, or to a list of specs that serve the same model on several endpoints |
+| `concurrency` | `16` | Page requests in flight at once |
+| `dpi` | `150` | Render resolution; retries render larger |
+| `max_tokens` | `4096` | Output-token limit per page |
+| `prompt` | `Convert the document to markdown.` | Instruction sent with each page image |
+
+---
+
 ### `tools.lints`
 
 These let you override the command sven runs when you ask it to check for lint

@@ -29,6 +29,8 @@ use sven_tool_api::events::{TodoItem, ToolEvent};
 use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool, TodoTool};
 use sven_tools_ctx::{ChunkExpandTool, ChunkExpander, ContextStore};
+#[cfg(feature = "document")]
+use sven_tools_document::DocumentConvertTool;
 use sven_tools_exec::ShellTool;
 #[cfg(feature = "media")]
 use sven_tools_fs::AttachFileTool;
@@ -580,6 +582,15 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     reg.register(WriteTool::new(paths.clone()));
     reg.register_with_display(EditFileTool::new(paths.clone()));
 
+    // ── PDF to Markdown ───────────────────────────────────────────────────────
+    // Page text goes from the OCR model to the file; the model gets a record.
+    #[cfg(feature = "document")]
+    reg.register_with_display(DocumentConvertTool::new(
+        paths.clone(),
+        Arc::new(crate::ConfigOcrModels::new(cfg.clone())),
+        crate::convert_options(&cfg.ocr),
+    ));
+
     // ── Multimodal attachments ───────────────────────────────────────────────
     // attach_file needs the live model to decide whether audio can be sent
     // natively or must be transcribed, so clone the Arc before `model` is
@@ -921,6 +932,9 @@ mod tests {
         // Compiled-in tools are offered; compiled-out ones are not.
         if cfg!(feature = "media") {
             expected.push("attach_file");
+        }
+        if cfg!(feature = "document") {
+            expected.push("document_convert");
         }
         if cfg!(all(unix, feature = "gdb")) {
             expected.push("gdb");

@@ -190,7 +190,8 @@ fn bins_available(bins: &[String]) -> bool {
     bins.iter().all(|bin| which_available(bin))
 }
 
-fn which_available(name: &str) -> bool {
+/// Whether an executable called `name` is in a directory of `PATH`.
+pub fn which_available(name: &str) -> bool {
     if let Ok(path_var) = std::env::var("PATH") {
         for dir in path_var.split(':') {
             if PathBuf::from(dir).join(name).exists() {

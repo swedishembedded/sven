@@ -30,7 +30,7 @@ per-tool table with `--nocapture`:
 cargo test -p sven-sdk --test tool_footprint -- --nocapture
 ```
 
-The test fails when the total exceeds its ceiling: `CODING_CEILING` (3,055
+The test fails when the total exceeds its ceiling: `CODING_CEILING` (3,195
 estimated tokens) and `RESEARCH_CEILING` (2,390). The ceilings sit just above
 the totals of the default build, which has the most tool text (image-capable
 `read_file` and `attach_file`); a build with fewer features is smaller. A
@@ -70,6 +70,7 @@ its paths through the scope and refuses anything outside the root.
 | tool | in `coding()` | files | network and other processes |
 |------|---------------|-------|------------------------------|
 | `read_file`, `find_file`, `write_file`, `edit_file`, `grep` | yes | jailed | none |
+| `document_convert` | yes | jailed (source and destination) | sends page images to the configured OCR model; reads the PDF, writes the Markdown file and its manifest |
 | `attach_file` | yes (`media` feature) | jailed | audio the model cannot take is sent to a speech-to-text service over D-Bus, and only in a build with the `asr` feature |
 | `shell` | yes | starts in the root, and a `workdir` must stay inside it; the command itself is not confined | anything the process can do |
 | `web_fetch`, `web_search` | yes | none | any http(s) URL; no private-address filter |

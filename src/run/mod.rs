@@ -12,6 +12,8 @@ pub(crate) mod chats;
 pub(crate) mod ci;
 pub(crate) mod config;
 pub(crate) mod decisions;
+#[cfg(feature = "document")]
+pub(crate) mod document;
 pub(crate) mod harness;
 pub(crate) mod index;
 pub(crate) mod ledger;

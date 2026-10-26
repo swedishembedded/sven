@@ -93,6 +93,9 @@
       "provider": "openai",
       "temperature": 0.20000000298023224
     },
+    "ocr": {
+      "models": {}
+    },
     "providers": {
       "small": {
         "max_tokens": 500,

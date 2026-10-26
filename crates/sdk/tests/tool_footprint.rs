@@ -25,7 +25,7 @@ use sven_sdk::{Engine, Toolset};
 use sven_turn::ledger::schema_tokens;
 
 /// Estimated tokens of every definition `Toolset::coding()` offers.
-const CODING_CEILING: u32 = 3_055;
+const CODING_CEILING: u32 = 3_195;
 /// Estimated tokens of every definition `Toolset::research()` offers.
 const RESEARCH_CEILING: u32 = 2_390;
 

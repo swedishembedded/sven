@@ -1247,3 +1247,22 @@ models:
     max_output_tokens: 128000
     description: OpenAI GPT-5.2 via Vercel AI Gateway
     input_modalities: [text, image]
+
+  # ── Brain: OCR models ─────────────────────────────────────────────────────────
+  # Served by `brain serve`; the server advertises no input modalities, so the
+  # catalog declares the image input that `document_convert` requires.
+  - id: deepseek-ai/DeepSeek-OCR
+    name: DeepSeek-OCR (brain)
+    provider: brain
+    context_window: 8192
+    max_output_tokens: 8192
+    description: Document OCR to Markdown, served by brain
+    input_modalities: [text, image]
+
+  - id: deepseek-ai/DeepSeek-OCR-2
+    name: DeepSeek-OCR-2 (brain)
+    provider: brain
+    context_window: 8192
+    max_output_tokens: 8192
+    description: Document OCR to Markdown, second generation, served by brain
+    input_modalities: [text, image]

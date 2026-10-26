@@ -99,6 +99,9 @@
       "provider": "openai",
       "temperature": 0.4000000059604645
     },
+    "ocr": {
+      "models": {}
+    },
     "providers": {
       "my_ollama": {
         "api_key_file": "~/.config/keys/ollama",

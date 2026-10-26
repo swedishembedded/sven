@@ -95,6 +95,9 @@
       "provider": "portkey",
       "temperature": 0.20000000298023224
     },
+    "ocr": {
+      "models": {}
+    },
     "providers": {},
     "skills": {
       "disclosure": "deferred"

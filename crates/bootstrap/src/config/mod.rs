@@ -25,6 +25,7 @@ mod cost;
 mod delegation;
 mod disclosure;
 mod listing;
+mod ocr;
 mod tools;
 
 use std::path::Path;
@@ -41,6 +42,7 @@ pub use cost::CostSettings;
 pub use delegation::{DelegationConfig, DelegationPolicy};
 pub use disclosure::DisclosureConfig;
 pub use listing::ListingConfig;
+pub use ocr::{OcrConfig, Specs};
 pub use tools::ToolsConfig;
 
 /// Everything a session is configured by.
@@ -91,6 +93,9 @@ pub struct Config {
     pub subagents: ListingConfig,
     /// How much of each knowledge document the system prompt carries.
     pub knowledge: ListingConfig,
+    /// The OCR model `document_convert` uses and how it is run. See
+    /// `docs/guides/document-conversion.md`.
+    pub ocr: OcrConfig,
 }
 
 impl Config {
@@ -110,6 +115,7 @@ impl Config {
             ("skills", ListingConfig::schema()),
             ("subagents", ListingConfig::schema()),
             ("knowledge", ListingConfig::schema()),
+            ("ocr", OcrConfig::schema()),
         ])
     }
 

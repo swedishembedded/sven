@@ -155,6 +155,8 @@ Everything a subcommand prints on failure goes to stderr and the exit code is
 |---------|-------------|
 | `sven tool list` | List the built-in tools with their descriptions. |
 | `sven tool call [TOOL] [key=value ...] [--json OBJECT]` | Without arguments, print every tool's parameter schema. `sven tool call TOOL` (or `TOOL --help`) prints that tool's schema. With arguments, run the tool: `key=value` pairs are strings, booleans (`true`/`false`) or integers; `--json '{"k":"v"}'` passes a raw object and overrides the pairs. See [Tools](tools.md). |
+| `sven document convert IN.pdf OUT.md [--model SPEC] [--pages SEL] [--ocr auto\|always\|never] [--concurrency N] [--dpi N] [--max-tokens N] [--prompt TEXT] [--max-attempts N] [--page-markers] [--dedupe-headers] [--no-resume] [--json] [-q]` | Convert a PDF to Markdown with an OCR model, resuming from the manifest beside OUT. Exit 2 when pages failed, 3 when no OCR model is available. See [Converting PDFs](../guides/document-conversion.md). |
+| `sven document score REFERENCE HYPOTHESIS` | Character error rate of a text file against a reference, whitespace-normalised. |
 | `sven index build [--quiet]` | Build the repository context index (file tree, public symbols, import graph) into `.sven/index/index.json` under the project root. |
 | `sven index query QUERY [--limit N]` | Case-insensitive substring search over symbol names and signatures (default 20 results). |
 | `sven index stats` | Print statistics of the current index. |
