@@ -86,6 +86,11 @@ pub struct OpenAICompatProvider {
     /// `None` when constructed via `with_full_chat_url` (no derivable root).
     /// Used by `probe_context_window()` to query `GET {server_root}/props`.
     server_root: Option<String>,
+    /// Set once the server answered 400 to a request carrying
+    /// `response_format` (it has no constrained decoding): later requests
+    /// leave the field out. The caller post-parses a structured answer
+    /// either way, so the constraint is an optimisation, not the contract.
+    response_format_refused: std::sync::atomic::AtomicBool,
 }
 
 impl OpenAICompatProvider {
@@ -128,6 +133,7 @@ impl OpenAICompatProvider {
             auth_style,
             extra_body,
             server_root: Some(derive_server_root(base)),
+            response_format_refused: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -165,6 +171,7 @@ impl OpenAICompatProvider {
             auth_style,
             extra_body,
             server_root: None,
+            response_format_refused: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -530,7 +537,10 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         // The `brain` server answers 400 to any `response_format` that is
         // not plain text (it has no constrained decoding), so it is not sent
         // there: the caller's post-parse and retry carry the contract.
-        let server_refuses_response_format = self.driver_name == "brain";
+        let server_refuses_response_format = self.driver_name == "brain"
+            || self
+                .response_format_refused
+                .load(std::sync::atomic::Ordering::Relaxed);
         if let Some(rf) = req
             .response_format
             .as_ref()
@@ -657,35 +667,37 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         // Log full request body at trace level for debugging schema issues
         tracing::trace!(request_body = ?body, "full completion request");
 
-        let mut http_req = self.client.post(&self.chat_url).json(&body);
-        http_req = match self.auth_style {
-            AuthStyle::Bearer => {
-                let key = self
+        let request = |body: &Value| -> anyhow::Result<reqwest::RequestBuilder> {
+            let mut http_req = self.client.post(&self.chat_url).json(body);
+            http_req = match self.auth_style {
+                AuthStyle::Bearer => {
+                    let key = self
                     .api_key
                     .as_deref()
                     .context("API key not set; store one with `sven auth set <provider>`, or give api_key or api_key_file in config")?;
-                http_req.bearer_auth(key)
-            }
-            AuthStyle::ApiKeyHeader => {
-                let key = self
+                    http_req.bearer_auth(key)
+                }
+                AuthStyle::ApiKeyHeader => {
+                    let key = self
                     .api_key
                     .as_deref()
                     .context("API key not set; store one with `sven auth set <provider>`, or give api_key or api_key_file in config")?;
-                http_req.header("api-key", key)
+                    http_req.header("api-key", key)
+                }
+                AuthStyle::None => http_req,
+            };
+            for (name, val) in &self.extra_headers {
+                http_req = http_req.header(name.as_str(), val.as_str());
             }
-            AuthStyle::None => http_req,
+            // For Anthropic models via OpenRouter, opt in to the prompt-caching
+            // beta so that the cache_control markers we added above are honoured.
+            // Gemini does not require this header; the markers are always active.
+            if use_anthropic_cache {
+                http_req = http_req.header("anthropic-beta", "prompt-caching-2024-07-31");
+            }
+            Ok(http_req)
         };
-        for (name, val) in &self.extra_headers {
-            http_req = http_req.header(name.as_str(), val.as_str());
-        }
-        // For Anthropic models via OpenRouter, opt in to the prompt-caching
-        // beta so that the cache_control markers we added above are honoured.
-        // Gemini does not require this header; the markers are always active.
-        if use_anthropic_cache {
-            http_req = http_req.header("anthropic-beta", "prompt-caching-2024-07-31");
-        }
-
-        let resp = http_req
+        let mut resp = request(&body)?
             .send()
             .await
             .with_context(|| format!("{} request failed", self.driver_name))?;
@@ -693,7 +705,28 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            bail!("{} error {status}: {text}", self.driver_name);
+            // A server without constrained decoding refuses the optional
+            // `response_format`; ask once more without it and remember.
+            let refused_format = status == reqwest::StatusCode::BAD_REQUEST
+                && text.contains("response_format")
+                && body.get("response_format").is_some();
+            if !refused_format {
+                bail!("{} error {status}: {text}", self.driver_name);
+            }
+            self.response_format_refused
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(fields) = body.as_object_mut() {
+                fields.remove("response_format");
+            }
+            resp = request(&body)?
+                .send()
+                .await
+                .with_context(|| format!("{} request failed", self.driver_name))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                bail!("{} error {status}: {text}", self.driver_name);
+            }
         }
 
         // SSE events can be split across TCP packets, and a body that ends
