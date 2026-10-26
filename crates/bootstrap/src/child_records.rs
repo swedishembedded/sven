@@ -99,6 +99,7 @@ pub(crate) fn record_child(
                     memory_retrievals: store.memory_retrievals(),
                     call_timings: &call_timings,
                     origins: &[],
+                    reasonings: &store.transcript_reasonings(thread),
                     system_steps: false,
                 },
                 &|message| {

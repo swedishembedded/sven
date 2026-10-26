@@ -31,6 +31,7 @@ use crate::engine::Engine;
 /// task opened (`harness.<name>.<conversation>`).
 struct Conversation {
     origins: Vec<(usize, String)>,
+    reasonings: Vec<(usize, String)>,
     messages: Vec<Message>,
     compactions: Vec<(usize, sven_vocab::CompactionRecord)>,
     requests: Vec<(usize, sven_vocab::RequestRecord)>,
@@ -44,6 +45,7 @@ pub(super) struct Evidence {
     compactions: Vec<(usize, sven_vocab::CompactionRecord)>,
     requests: Vec<(usize, sven_vocab::RequestRecord)>,
     origins: Vec<(usize, String)>,
+    reasonings: Vec<(usize, String)>,
     gate_decisions: Vec<atif::GateDecision>,
     memory_retrievals: Vec<atif::MemoryRetrieval>,
     call_timings: Vec<atif::CallTiming>,
@@ -82,6 +84,7 @@ impl Evidence {
             compactions,
             requests,
             origins,
+            reasonings,
             gate_decisions,
             memory_retrievals,
             call_timings,
@@ -95,6 +98,7 @@ impl Evidence {
                     store.transcript_compactions(&thread),
                     store.transcript_requests(&thread),
                     store.transcript_origins(&thread),
+                    store.transcript_reasonings(&thread),
                     store.gate_decisions(),
                     store.memory_retrievals().to_vec(),
                     store.call_timings(),
@@ -122,6 +126,7 @@ impl Evidence {
                                 compactions: store.transcript_compactions(&thread),
                                 requests: store.transcript_requests(&thread),
                                 origins: store.transcript_origins(&thread),
+                                reasonings: store.transcript_reasonings(&thread),
                             },
                         )
                     })
@@ -154,6 +159,7 @@ impl Evidence {
             compactions,
             requests,
             origins,
+            reasonings,
             gate_decisions,
             memory_retrievals,
             call_timings,
@@ -226,6 +232,7 @@ pub(super) fn build_trajectory(
                 compactions: &evidence.compactions,
                 requests: &evidence.requests,
                 origins: &evidence.origins,
+                reasonings: &evidence.reasonings,
                 gate_decisions: &evidence.gate_decisions,
                 memory_retrievals: &evidence.memory_retrievals,
                 call_timings: &evidence.call_timings,
@@ -248,6 +255,7 @@ pub(super) fn build_trajectory(
                         compactions: &conversation.compactions,
                         requests: &conversation.requests,
                         origins: &conversation.origins,
+                        reasonings: &conversation.reasonings,
                         gate_decisions: &[],
                         memory_retrievals: &[],
                         call_timings: &[],

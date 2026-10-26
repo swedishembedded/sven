@@ -19,6 +19,7 @@ mod assembly_focus;
 mod assembly_supersede;
 mod compact;
 mod fork;
+mod inline_markup;
 pub mod instruction_index;
 pub mod instructions;
 pub mod ledger;

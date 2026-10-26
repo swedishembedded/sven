@@ -391,6 +391,23 @@ impl StepAssembler {
         self.pending_or_new().reasoning_content = Some(content.to_string());
     }
 
+    /// Files the reasoning of a response whose request account may already be
+    /// pending: it joins an open step that holds nothing but that account,
+    /// and otherwise opens a step of its own like [`Self::push_thinking`].
+    pub fn push_reasoning(&mut self, content: &str) {
+        let only_metrics = self.pending.as_ref().is_some_and(|p| {
+            p.reasoning_content.is_none()
+                && p.message_text.is_none()
+                && p.tool_calls.is_empty()
+                && p.observation_results.is_empty()
+        });
+        if only_metrics {
+            self.pending_or_new().reasoning_content = Some(content.to_string());
+        } else {
+            self.push_thinking(content);
+        }
+    }
+
     /// Feed a context-compaction marker into the assembler. Always closes
     /// any currently-open agent step and is pushed immediately as its own
     /// `System` step, with the Section VII `context_management` convention

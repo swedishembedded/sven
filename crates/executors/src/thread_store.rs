@@ -63,6 +63,10 @@ pub struct ThreadStore {
     /// instruction a harness step sent (`task`, `follow_up`, `repair`,
     /// `correction`).
     origins: Vec<(ThreadId, usize, String)>,
+    /// What the model reasoned before the assistant message at a transcript
+    /// position. Kept beside the transcript, not in the messages: a message
+    /// is replayed to providers and reasoning is never sent back.
+    reasonings: Vec<(ThreadId, usize, String)>,
     /// The thread's transcript length at each entry of `compactions`.
     compaction_positions: Vec<usize>,
     /// Each model request's account, with the thread and the transcript
@@ -143,6 +147,27 @@ impl ThreadStore {
             .iter()
             .filter(|(thread, _, _)| thread == id)
             .map(|(_, position, origin)| (*position, origin.clone()))
+            .collect()
+    }
+
+    /// Files the reasoning of the response whose messages are appended next.
+    /// An empty `reasoning` files nothing.
+    pub fn record_reasoning(&mut self, id: &str, reasoning: String) {
+        if reasoning.is_empty() {
+            return;
+        }
+        let position = self.transcript_len(id);
+        self.reasonings.push((id.to_string(), position, reasoning));
+    }
+
+    /// The reasoning filed for `id`, each with the transcript position of the
+    /// message it preceded.
+    #[must_use]
+    pub fn transcript_reasonings(&self, id: &str) -> Vec<(usize, String)> {
+        self.reasonings
+            .iter()
+            .filter(|(thread, _, _)| thread == id)
+            .map(|(_, position, text)| (*position, text.clone()))
             .collect()
     }
 

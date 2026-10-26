@@ -35,6 +35,9 @@ pub struct ConversationFacts<'a> {
     pub memory_retrievals: &'a [MemoryRetrieval],
     /// How long tool calls ran.
     pub call_timings: &'a [CallTiming],
+    /// What the model reasoned before the assistant message at each position
+    /// in `messages`. Becomes the step's `reasoning_content`.
+    pub reasonings: &'a [(usize, String)],
     /// Where user turns came from, each with its position in `messages`.
     pub origins: &'a [(usize, String)],
     /// File each system message as a `system` step. Off for a conversation
@@ -79,6 +82,9 @@ pub fn conversation_steps(
     for (position, message) in facts.messages.iter().enumerate() {
         if position > 0 {
             marks(&mut assembler, position);
+        }
+        for (_, reasoning) in facts.reasonings.iter().filter(|(at, _)| *at == position) {
+            assembler.push_reasoning(reasoning);
         }
         match (&message.role, message.as_text()) {
             (sven_model::Role::System, Some(text)) if facts.system_steps => {

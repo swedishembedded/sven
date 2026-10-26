@@ -509,7 +509,8 @@ as its own embedded trajectory, starting with its system message as a `system`
 step (`extra.harness.conversation` names it, and `extra.harness.conversations`
 lists them in the order each began), so no task's exchange is mixed into
 another's; `HarnessRun::conversations()` returns them as `(name, trajectory)`
-pairs.
+pairs. A response's reasoning is the `reasoning_content` of its step; it is
+recorded only, and no later request carries it.
 
 **Workspace per run, tools on every host.** `HarnessRun::in_workspace(dir)` roots
 one run's file, search and shell tools, its gates and its snapshot reads in

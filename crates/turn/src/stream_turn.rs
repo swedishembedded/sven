@@ -45,6 +45,9 @@ pub fn to_model_schemas(schemas: Vec<sven_tool_registry::ToolSchema>) -> Vec<Too
         .collect()
 }
 
+use crate::inline_markup::{
+    extract_inline_invoke_tool_calls, extract_inline_think_block, strip_think_wrappers,
+};
 use crate::ledger_recorder::LedgerRecorder;
 use crate::repetition::RepetitionWatch;
 use crate::stall::{StallLimits, StallWatch};
@@ -363,6 +366,10 @@ pub struct StreamedTurn {
     pub truncated: bool,
     /// Estimated tokens the model spent thinking in this reply (chars/4).
     pub thinking_tokens: u32,
+    /// What the model reasoned before and while answering, with the
+    /// `<think>` wrappers some servers leave in removed; empty when it did
+    /// not reason. For the record only: it is never sent back to a model.
+    pub reasoning: String,
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -441,6 +448,7 @@ pub async fn stream_turn(
 
     let mut full_text = String::new();
     let mut thinking_buf = String::new();
+    let mut reasoning = String::new();
     let mut repetition = RepetitionWatch::default();
     let mut thinking_token_estimate: u32 = 0;
     // Set on the first ThinkingDelta of an uninterrupted reasoning stretch;
@@ -529,10 +537,9 @@ pub async fn stream_turn(
                 thinking_stall_started = None; // forward progress resets the stall clock
                 repetition.reset();
                 if !thinking_buf.is_empty() {
-                    let content = std::mem::take(&mut thinking_buf);
-                    let _ = tx
-                        .send(AgentEvent::ThinkingComplete(strip_think_wrappers(content)))
-                        .await;
+                    let content = strip_think_wrappers(std::mem::take(&mut thinking_buf));
+                    keep_reasoning(&mut reasoning, &content);
+                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
                 }
                 full_text.push_str(&delta);
                 let _ = tx.send(AgentEvent::TextDelta(delta)).await;
@@ -605,10 +612,9 @@ pub async fn stream_turn(
             }
             ResponseEvent::Done => {
                 if !thinking_buf.is_empty() {
-                    let content = std::mem::take(&mut thinking_buf);
-                    let _ = tx
-                        .send(AgentEvent::ThinkingComplete(strip_think_wrappers(content)))
-                        .await;
+                    let content = strip_think_wrappers(std::mem::take(&mut thinking_buf));
+                    keep_reasoning(&mut reasoning, &content);
+                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
                 }
                 break;
             }
@@ -623,6 +629,7 @@ pub async fn stream_turn(
     // reasoning_content (e.g. local GGUF without reasoning_format: deepseek).
     if !full_text.is_empty() && thinking_buf.is_empty() {
         if let Some(inline_think) = extract_inline_think_block(&full_text) {
+            keep_reasoning(&mut reasoning, &inline_think);
             let _ = tx.send(AgentEvent::ThinkingComplete(inline_think)).await;
             full_text.clear();
         }
@@ -691,108 +698,20 @@ pub async fn stream_turn(
         unparsed_arguments,
         truncated,
         thinking_tokens: thinking_token_estimate,
+        reasoning,
     })
 }
 
-/// Strip `<think>` / `</think>` wrapper tags from accumulated thinking content.
-///
-/// Some model servers (llama.cpp without `reasoning_format: deepseek`,
-/// certain OpenAI-compat proxies) forget to strip these tags before placing
-/// the text in `reasoning_content`.  The result is that the thinking buffer
-/// contains the raw markup, e.g. `<think>\nStep 1: ...\n</think>`, instead of
-/// the clean inner text.  Stripping them here keeps the thinking log readable
-/// and prevents the `<think>` noise from leaking into conversation history.
-pub(crate) fn strip_think_wrappers(s: String) -> String {
-    let trimmed = s.trim();
-    let inner = trimmed.strip_prefix("<think>").unwrap_or(trimmed);
-    let inner = inner.strip_suffix("</think>").unwrap_or(inner);
-    inner.trim().to_string()
-}
-
-/// Detect a `<think>...</think>` block occupying the *entire* text.
-///
-/// Some models emit thinking as plain text deltas (no `reasoning_content`)
-/// when the serving layer isn't configured for reasoning extraction.  If the
-/// whole text response is a `<think>` block - with or without a closing tag
-/// (the model may have been cut off) - the "response" carries no useful
-/// content.  Return the extracted inner text so the caller can reclassify
-/// it as thinking and clear `full_text`, which causes the turn to be treated
-/// as thinking-only and apply the empty-turn retry nudge.
-///
-/// Returns `None` when the text contains content outside the `<think>` block.
-pub(crate) fn extract_inline_think_block(text: &str) -> Option<String> {
-    let trimmed = text.trim();
-    // Must start with <think>
-    let inner = trimmed.strip_prefix("<think>")?;
-    // Strip an optional closing tag; an unclosed block (model truncated) is
-    // still all-thinking if there is nothing after the last </think>.
-    let inner = inner.strip_suffix("</think>").unwrap_or(inner);
-    // Reject if there's a *second* </think> inside, which would mean there's
-    // real content after the first block.
-    if inner.contains("</think>") {
-        return None;
+/// Adds one finished reasoning block to the turn's reasoning, blocks apart by
+/// a blank line.
+fn keep_reasoning(reasoning: &mut String, block: &str) {
+    if block.is_empty() {
+        return;
     }
-    Some(inner.trim().to_string())
-}
-
-/// Extract Anthropic-style `<invoke>` tool calls written inline in the text
-/// stream by models (e.g. MiniMax) that fall back to the old XML
-/// function-call format instead of using the structured tool-call protocol.
-///
-/// Format:
-/// ```text
-/// <invoke name="tool_name">
-/// <parameter name="param1">value1</parameter>
-/// <parameter name="param2">value2</parameter>
-/// </invoke>
-/// ```
-///
-/// Returns the text with all `<invoke>...</invoke>` blocks removed and the
-/// extracted [`ToolCall`] objects.  Parameter values that parse as valid JSON
-/// are stored as JSON; otherwise they are stored as plain strings.
-pub(crate) fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolCall>) {
-    use std::sync::LazyLock;
-
-    use regex::Regex;
-
-    // Compiled once. This runs on every assistant message, and regex
-    // compilation is orders of magnitude more expensive than the match.
-    static INVOKE_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?s)<invoke\s+name="([^"]+)">(.*?)</invoke>"#)
-            .expect("literal invoke pattern is valid")
-    });
-    static PARAM_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?s)<parameter\s+name="([^"]+)">(.*?)</parameter>"#)
-            .expect("literal parameter pattern is valid")
-    });
-    let (invoke_re, param_re) = (&*INVOKE_RE, &*PARAM_RE);
-
-    let mut tool_calls = Vec::new();
-
-    for cap in invoke_re.captures_iter(text) {
-        let name = cap[1].to_string();
-        let body = &cap[2];
-
-        let mut args = serde_json::Map::new();
-        for param in param_re.captures_iter(body) {
-            let key = param[1].to_string();
-            let raw = param[2].trim().to_string();
-            // Try to decode as JSON (for nested objects/arrays); fall back to
-            // a plain string value.
-            let val = serde_json::from_str::<serde_json::Value>(&raw)
-                .unwrap_or(serde_json::Value::String(raw));
-            args.insert(key, val);
-        }
-
-        tool_calls.push(ToolCall {
-            id: format!("invoke_{}", uuid::Uuid::new_v4().simple()),
-            name,
-            args: serde_json::Value::Object(args),
-        });
+    if !reasoning.is_empty() {
+        reasoning.push_str("\n\n");
     }
-
-    let cleaned = invoke_re.replace_all(text, "").trim().to_string();
-    (cleaned, tool_calls)
+    reasoning.push_str(block);
 }
 
 #[cfg(test)]

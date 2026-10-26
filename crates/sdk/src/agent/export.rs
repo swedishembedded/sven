@@ -88,6 +88,7 @@ impl Agent {
                 memory_retrievals: &self.state.memory_retrievals,
                 call_timings: &self.state.call_timings,
                 origins: &[],
+                reasonings: &[],
                 system_steps: false,
             },
             &|message| self.state.as_sent(message),

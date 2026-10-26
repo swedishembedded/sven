@@ -72,12 +72,13 @@ use async_trait::async_trait;
 use sven_decision::telemetry::DecisionTelemetry;
 use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, UiEvent};
 use sven_kernel::{EffectExecutor, EventSink};
-use sven_model::{FunctionCall, Message, MessageContent, ResponseFormat, Role};
+use sven_model::{Message, ResponseFormat, Role};
 use sven_tool_registry::ToolRegistry;
 use sven_turn::{to_model_schemas, AbortedError, ModelResolver};
 use sven_vocab::TurnRequest;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 mod compaction;
+mod conclude;
 mod context_view;
 mod cost_gate;
 
@@ -89,11 +90,11 @@ mod replies;
 
 pub use limits::CompactionConfig;
 
+use conclude::ConcludedTurn;
+
 use crate::chunks::ContextAssembler;
 use crate::notices;
-use crate::thread_store::{
-    append_messages, machine_answers, register_calls, snapshot_thread, ThreadStore,
-};
+use crate::thread_store::{append_messages, machine_answers, snapshot_thread, ThreadStore};
 
 /// Executes single-turn `CallLlm { kind: "turn" }` effects.
 ///
@@ -667,14 +668,8 @@ impl EffectExecutor for TurnExecutor {
             return self.execute(retry, sink, obs).await;
         }
 
-        let (text, tool_calls, unparsed, truncated) = match result {
-            Ok(turn) => {
-                let unparsed = turn.unparsed_arguments.clone();
-                if let Ok(mut store) = self.store.lock() {
-                    store.record_unparsed_arguments(turn.unparsed_arguments);
-                }
-                (turn.text, turn.tool_calls, unparsed, turn.truncated)
-            }
+        let turn = match result {
+            Ok(turn) => turn,
             Err(e) => {
                 let msg = replies::failure_text(&format!("{e:#}"));
                 obs.emit(UiEvent::Error(msg.clone()));
@@ -683,111 +678,17 @@ impl EffectExecutor for TurnExecutor {
                 return;
             }
         };
-
-        // Track consecutive empty turns (no tool calls, and no text beyond
-        // whitespace) per thread. One is tolerated - the machine's
-        // `GeneratingAction::EmptyTurn` nudges the model to try again - but a
-        // thread that keeps returning nothing must fail loudly, not end as a
-        // silent success.
-        let is_empty_turn = text.trim().is_empty() && tool_calls.is_empty();
-        let empty_turn_count = {
-            let mut counts = self
-                .empty_turns
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if is_empty_turn && judged_by_harness {
-                0
-            } else if is_empty_turn {
-                let count = counts.entry(thread_id.clone()).or_insert(0);
-                *count += 1;
-                *count
-            } else {
-                counts.remove(&thread_id);
-                0
-            }
-        };
-
-        if is_empty_turn && empty_turn_count >= EMPTY_TURN_FAILURE_THRESHOLD {
-            let msg = format!(
-                "model returned no content and no tool calls after \
-                 {empty_turn_count} consecutive attempts"
-            );
-            obs.emit(UiEvent::Error(msg.clone()));
-            let _ = sink.emit(Event::LlmFailed { error: msg }).await;
-            obs.emit(UiEvent::TurnComplete);
-            return;
-        }
-
-        // Append the assistant turn to the thread (append-only, cache-safe).
-        // Build the messages list first, then call the non-async helper.
-        {
-            let mut msgs_to_append = Vec::new();
-            if !text.is_empty() {
-                msgs_to_append.push(Message::assistant(&text));
-            }
-            for tc in &tool_calls {
-                msgs_to_append.push(Message {
-                    role: Role::Assistant,
-                    content: MessageContent::ToolCall {
-                        tool_call_id: tc.id.clone(),
-                        function: FunctionCall {
-                            name: tc.name.clone(),
-                            arguments: tc.args.to_string(),
-                        },
-                    },
-                });
-            }
-            append_messages(&self.store, &thread_id, msgs_to_append);
-        }
-
-        // Annotate each tool call with its capability and register call_id → thread.
-        // Uses the non-async helper to avoid holding any guard across an await.
-        let proposed = register_calls(
-            &self.call_id_to_thread,
-            &thread_id,
-            &tool_calls,
-            &self.tools,
-        );
-
-        // A call to a tool the model was never given the definition of is
-        // still proposed, gated and audited like any other; the tool executor
-        // then answers it with an instruction to load the tool.
-        for call in proposed.iter().filter(|c| withheld_tools.contains(&c.name)) {
-            self.tools.hold_back(call.call_id);
-        }
-
-        // A call whose arguments the model garbled beyond repair carries `{}`;
-        // it is refused with the reason rather than run on those arguments.
-        for (tc, call) in tool_calls.iter().zip(&proposed) {
-            if let Some(raw) = unparsed.get(&tc.id) {
-                self.tools.refuse_unparsed(call.call_id, &tc.name, raw);
-            }
-        }
-
-        let has_tool_calls = !proposed.is_empty();
-        if truncated {
-            replies::tell_truncated(sink).await;
-        }
-        let _ = sink
-            .emit(Event::LlmTurnComplete {
-                thread: thread_id,
-                text,
-                tool_calls: proposed,
-            })
-            .await;
-
-        // Only mark the turn complete when the LLM returned tool calls or a
-        // real final answer. When tool calls are pending the machine stays in
-        // Generating and will trigger another LLM turn after the tools
-        // finish; emitting TurnComplete here would cause headless mode to
-        // exit prematurely. An under-threshold empty turn must likewise NOT
-        // report TurnComplete: `GeneratingAction::EmptyTurn` needs to run its
-        // nudge effect and trigger another LLM call, and headless mode
-        // treats TurnComplete as "the run is over" - emitting it here would
-        // exit with a false success instead of giving the nudge a chance.
-        if !has_tool_calls && !is_empty_turn {
-            obs.emit(UiEvent::TurnComplete);
-        }
+        self.conclude_turn(
+            turn,
+            ConcludedTurn {
+                thread_id,
+                judged_by_harness,
+                withheld_tools,
+            },
+            sink,
+            obs,
+        )
+        .await;
     }
 }
 
