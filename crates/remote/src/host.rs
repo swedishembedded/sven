@@ -33,6 +33,7 @@ use sven_vocab::AgentMode;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::approvals::{PendingApprovals, RemoteApprovals, APPROVAL_TIMEOUT};
 use crate::client::{RemoteClient, TokenRefused};
 use crate::login::RemoteLogin;
 use crate::sessions::{opening_history, SessionStore};
@@ -79,6 +80,20 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
 
     let (uploads, upload_rx) = mpsc::channel(UPLOAD_QUEUE);
     tokio::spawn(upload_loop(client.clone(), upload_rx));
+    // Permission requests travel with the sessions' events, in order.
+    let (asks, mut asks_rx) = mpsc::channel::<ControlEvent>(SESSION_QUEUE);
+    let ask_uploads = uploads.clone();
+    tokio::spawn(async move {
+        while let Some(ask) = asks_rx.recv().await {
+            if ask_uploads
+                .send(Upload::Event(Box::new(ask)))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
     let context = Arc::new(SessionContext {
         config: options.config,
         working_dir: options.working_dir,
@@ -86,6 +101,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
         token: options.login.token,
         uploads: uploads.clone(),
         sessions: options.sessions,
+        asks,
     });
 
     let (routed, routed_rx) = mpsc::channel(SESSION_QUEUE);
@@ -231,6 +247,27 @@ async fn route(
         }
         ControlCommand::SendInput { session_id, text } => (session_id, SessionCommand::Input(text)),
         ControlCommand::CancelSession { session_id } => (session_id, SessionCommand::Cancel),
+        ControlCommand::ApproveTool {
+            session_id,
+            call_id,
+        } => (
+            session_id,
+            SessionCommand::Decide {
+                call_id,
+                approved: true,
+            },
+        ),
+        ControlCommand::DenyTool {
+            session_id,
+            call_id,
+            ..
+        } => (
+            session_id,
+            SessionCommand::Decide {
+                call_id,
+                approved: false,
+            },
+        ),
         other => {
             tracing::debug!("rc ignores {other:?}");
             return;
@@ -255,6 +292,8 @@ struct SessionContext {
     uploads: mpsc::Sender<Upload>,
     /// Where each session's own conversation is kept between turns.
     sessions: SessionStore,
+    /// Where a session's tool calls that need permission are asked about.
+    asks: mpsc::Sender<ControlEvent>,
 }
 
 enum SessionCommand {
@@ -266,6 +305,11 @@ enum SessionCommand {
     Input(String),
     /// A line typed at this host's terminal for this session.
     Terminal(String),
+    /// The server's answer to a tool call waiting for permission.
+    Decide {
+        call_id: String,
+        approved: bool,
+    },
     Cancel,
 }
 
@@ -280,6 +324,8 @@ struct SessionActor {
     controller: Option<SessionController>,
     /// An answer is being written; terminal input waits for it.
     answering: bool,
+    /// This session's tool calls waiting for the server's permission.
+    approvals: PendingApprovals,
     events_tx: mpsc::Sender<AgentEvent>,
     events_rx: mpsc::Receiver<AgentEvent>,
 }
@@ -295,6 +341,7 @@ impl SessionActor {
             history: Vec::new(),
             controller: None,
             answering: false,
+            approvals: PendingApprovals::default(),
             events_tx,
             events_rx,
         }
@@ -352,6 +399,14 @@ impl SessionActor {
                     .await;
                 self.answer(text).await;
             }
+            SessionCommand::Decide { call_id, approved } => {
+                if !self.approvals.decide(&call_id, approved) {
+                    tracing::debug!(
+                        "session {}: no call {call_id} waits for permission",
+                        self.id
+                    );
+                }
+            }
             SessionCommand::Cancel => {
                 if let Some(controller) = &self.controller {
                     controller.cancel().await;
@@ -391,11 +446,18 @@ impl SessionActor {
                 let mut runtime =
                     RuntimeContext::auto_detect_at(Some(self.context.working_dir.clone()));
                 runtime.project_root = Some(self.context.working_dir.clone());
-                let options = SessionOptions::new(
+                let mut options = SessionOptions::new(
                     Arc::clone(&self.context.config),
                     runtime,
                     self.events_tx.clone(),
                 );
+                // A tool that asks first asks the person at the server.
+                options.permission_requester = Some(Arc::new(RemoteApprovals {
+                    session_id: self.id,
+                    pending: self.approvals.clone(),
+                    ask: self.context.asks.clone(),
+                    timeout: APPROVAL_TIMEOUT,
+                }));
                 let spec = SessionSpec::for_mode(self.mode, model);
                 let history = std::mem::take(&mut self.history);
                 let (controller, _mcp_events) =

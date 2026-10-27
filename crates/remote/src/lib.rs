@@ -19,6 +19,7 @@
 //! commands, and runs them through the same session controller every other
 //! surface uses, under the same permission policy.
 
+pub mod approvals;
 pub mod client;
 pub mod host;
 pub mod login;

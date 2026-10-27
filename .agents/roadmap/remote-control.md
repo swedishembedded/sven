@@ -14,9 +14,9 @@ event; proven against a real server end to end.
    a restart (`sven_remote::sessions`). Left: keep the kernel snapshot too
    (`AgentState`), so a turn interrupted by the restart resumes mid-run
    instead of from its last finished turn.
-2. **Approvals through the server.** Sessions run under auto approval. Send
-   `ToolNeedsApproval` up and take `ApproveTool`/`DenyTool` down, with a
-   per-session timeout.
+2. **Approvals through the server.** Done: a tool that asks first asks
+   the server (`ToolNeedsApproval`) and waits for `ApproveTool`/`DenyTool`,
+   denied after ten minutes of silence (`sven_remote::approvals`).
 3. **Terminal input.** A line typed at `sven rc` is the conversation's next
    message (`ControlEvent::UserInput`, recorded by the server before its
    answer). Left: a full TUI attached to an rc session (sharing it, not a

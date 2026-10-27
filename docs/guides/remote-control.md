@@ -46,8 +46,7 @@ full conversation is on the server. Ctrl-C stops `sven rc` and any answer in
 progress.
 
 Each session calls models through the server, with the token, so the
-server's model list and its billing apply. Sessions run under automatic
-approval, as headless sessions do.
+server's model list and its billing apply.
 
 Each session's conversation, tool calls included, is kept after every
 finished answer in `~/.local/share/sven/remote/sessions/` (mode 0600; the
@@ -62,6 +61,9 @@ start of its id: `@6f1c run the tests`. It is taken only while that
 conversation is not answering, and it appears in the server's interface
 with its answer, as if it had been sent there.
 
-## What it does not do yet
+## Tool approvals
 
-- Tool approvals are not forwarded to the server.
+A tool whose policy is to ask before it runs asks the person at the server:
+the call waits until it is approved or denied there, and a call nobody
+answers within ten minutes is denied. The terminal prints which tool is
+waiting.

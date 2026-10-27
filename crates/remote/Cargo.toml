@@ -13,10 +13,13 @@ sven-bootstrap     = { path = "../bootstrap", default-features = false }
 sven-control       = { path = "../control" }
 sven-executors     = { path = "../executors" }
 sven-frontend      = { path = "../frontend" }
+sven-hsm           = { path = "../hsm" }
 sven-machines      = { path = "../machines" }
 sven-model         = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
+sven-tool-api      = { path = "../tool-api" }
 sven-vocab         = { path = "../vocab" }
+async-trait        = { workspace = true }
 anyhow     = { workspace = true }
 dirs       = { workspace = true }
 futures    = { workspace = true }
@@ -30,4 +33,4 @@ tracing    = { workspace = true }
 uuid       = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
