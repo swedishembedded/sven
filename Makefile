@@ -293,13 +293,13 @@ check/features:
 
 ## check/wasm - the browser-portable core builds for wasm32-unknown-unknown: the
 ##   event vocabulary, the HSM kernel and its runtime, the machines, the
-##   control protocol, the model interface and the turn that streams a model
-##   call.
+##   control protocol, the model interface and its HTTP drivers, and the turn
+##   that streams a model call.
 ##   A browser session runs this same code, so a dependency that cannot reach
 ##   a browser (an OS thread, a socket, OS randomness) fails here, not later.
 ##   Needs `rustup target add wasm32-unknown-unknown`. Its own target dir:
 ##   the wasm build must not invalidate the native one.
-WASM_PACKAGES = sven-vocab sven-hsm sven-machines sven-control sven-kernel sven-model sven-turn
+WASM_PACKAGES = sven-rt sven-vocab sven-hsm sven-machines sven-control sven-kernel sven-model sven-model-drivers sven-turn
 check/wasm:
 	@if ! $(RUSTUP_RUN) rustc --print sysroot | xargs -I{} test -d {}/lib/rustlib/wasm32-unknown-unknown; then \
 		echo "check/wasm: the wasm32-unknown-unknown target is not installed; run: rustup target add wasm32-unknown-unknown" >&2; exit 1; \

@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name        = "sven-rt"
+version.workspace = true
+edition     = "2021"
+description = "Portable runtime primitives (spawn, sleep, timeout, Instant, MaybeSend) that agent code uses so it runs natively on tokio and in a browser on the page's own event loop."
+license     = "Apache-2.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", default-features = false, features = ["rt", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures              = { workspace = true }
+wasm-bindgen-futures = "0.4"
+gloo-timers          = { version = "0.3", features = ["futures"] }
+web-time             = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true }

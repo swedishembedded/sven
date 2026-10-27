@@ -14,11 +14,11 @@ thiserror   = { workspace = true }
 # so the kernel's pure core also builds for a browser (wasm32).
 tokio       = { version = "1", default-features = false, features = ["sync"] }
 sven-vocab  = { path = "../vocab" }
+sven-rt     = { path = "../rt" }
 
 # A browser has no OS randomness; ids come from its crypto API.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid        = { workspace = true, features = ["js"] }
-web-time    = "1"
 
 [dev-dependencies]
 tokio       = { workspace = true }

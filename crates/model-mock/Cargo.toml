@@ -15,6 +15,8 @@ serde_json  = { workspace = true }
 serde_yaml  = { workspace = true }
 regex       = { workspace = true }
 tracing     = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio       = { workspace = true, features = ["time"] }
 
 [dev-dependencies]

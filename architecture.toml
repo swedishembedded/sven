@@ -43,6 +43,7 @@ sven-chain       = "foundation"
 sven-config      = "foundation"
 sven-harness-spec = "foundation"
 sven-hsm         = "foundation"
+sven-rt          = "foundation"
 sven-image       = "foundation"
 sven-tui-nvim    = "foundation"
 sven-workspace   = "foundation"
@@ -306,6 +307,16 @@ Both are leaf "foundation" crates. sven-hsm's outward observation plane
 sven-machines re-exports as AgentEvent -- rather than a kernel-local
 opaque-payload enum, since SessionEvent's typed payloads
 (ToolCall, TodoItem, ...) live in sven-vocab. sven-vocab has zero
+dependencies of its own, so this can never become a cycle.
+"""
+
+[[same_layer]]
+from = "sven-hsm"
+to   = "sven-rt"
+why  = """
+Both are leaf "foundation" crates. sven-hsm's child-run contracts carry
+deadlines, and a deadline is sven-rt's portable Instant (std's natively, the
+browser's clock in a browser, where std's panics). sven-rt has no sven
 dependencies of its own, so this can never become a cycle.
 """
 

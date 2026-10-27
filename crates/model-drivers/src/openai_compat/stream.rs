@@ -193,9 +193,9 @@ impl SseDecoder {
 /// Decode a response body into events, failing on a body that ends before
 /// the generation did and on transport errors.
 pub(crate) fn decode_events<B, E>(
-    body: impl Stream<Item = Result<B, E>> + Unpin + Send + 'static,
+    body: impl Stream<Item = Result<B, E>> + Unpin + sven_rt::MaybeSend + 'static,
     seed: Option<u64>,
-) -> impl Stream<Item = anyhow::Result<ResponseEvent>> + Send
+) -> impl Stream<Item = anyhow::Result<ResponseEvent>> + sven_rt::MaybeSend
 where
     B: AsRef<[u8]>,
     E: Into<anyhow::Error>,

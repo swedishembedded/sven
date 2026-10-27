@@ -5,6 +5,7 @@
 //! the request shape the API expects, and the background refresh of its model
 //! catalog cache.
 
+#[cfg(not(target_arch = "wasm32"))]
 use sven_model::catalog;
 
 use crate::ModelConfig;
@@ -50,6 +51,12 @@ pub(crate) fn transform_openrouter_options(cfg: &ModelConfig) -> serde_json::Val
 ///
 /// Errors in the background task are silently discarded - cache refresh is a
 /// best-effort optimisation, not a critical path.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn maybe_spawn_openrouter_cache_refresh(_api_key: Option<String>, _base_url: String) {
+    // A browser has no on-disk catalog to refresh.
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn maybe_spawn_openrouter_cache_refresh(api_key: Option<String>, base_url: String) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         return; // No runtime active - skip (e.g. unit tests, sync callers).

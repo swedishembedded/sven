@@ -19,7 +19,9 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use sven_rt::Instant;
 
 use serde_json::Value;
 use sven_model::{registry, AdapterRef, ModelChange, ModelProvider, ServedModel, ServedModels};
@@ -277,14 +279,14 @@ impl LiveState {
     /// and log an adapter change. A failed probe keeps what was known. Returns
     /// what the server served, when it answered.
     pub(crate) async fn refresh(&self, inner: &dyn ModelProvider) -> Option<ServedModels> {
-        let window = tokio::time::timeout(DISCOVERY_TIMEOUT, inner.probe_context_window())
+        let window = sven_rt::timeout(DISCOVERY_TIMEOUT, inner.probe_context_window())
             .await
             .ok()
             .flatten();
         // Hosted providers list hundreds of models and have no adapters to
         // swap; only a local server is asked what it serves.
         let served = if self.refreshable {
-            tokio::time::timeout(DISCOVERY_TIMEOUT, inner.discover())
+            sven_rt::timeout(DISCOVERY_TIMEOUT, inner.discover())
                 .await
                 .ok()
                 .flatten()
@@ -349,7 +351,7 @@ impl LiveState {
             return;
         }
         let (state, inner) = (Arc::clone(self), Arc::clone(inner));
-        tokio::spawn(async move {
+        sven_rt::spawn(async move {
             state.refresh(&*inner).await;
             state.in_flight.store(false, Ordering::Release);
         });

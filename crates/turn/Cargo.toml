@@ -23,11 +23,11 @@ uuid        = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio       = { workspace = true }
 
-# In a browser a turn runs on the kernel's portable runtime (the page's event
-# loop and timers); tokio only for its channels and select!.
+# In a browser a turn runs on sven-rt (the page's event loop and timers);
+# tokio only for its channels and select!.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio       = { version = "1", default-features = false, features = ["sync", "macros"] }
-sven-kernel = { path = "../kernel" }
+sven-rt     = { path = "../rt" }
 
 [dev-dependencies]
 # Paused time, so the idle-timeout test does not wait in real time.

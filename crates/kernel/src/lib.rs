@@ -28,9 +28,9 @@
 //! no benefit.
 
 mod abort_on_drop;
-pub mod rt;
 use rt::{Instant, MaybeSend};
 use std::collections::{HashMap, HashSet};
+pub use sven_rt as rt;
 
 use async_trait::async_trait;
 use tokio::sync::{mpsc, watch};

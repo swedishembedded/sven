@@ -8,6 +8,7 @@ description = "Concrete ModelProvider driver implementations (every provider in 
 sven-config      = { path = "../config" }
 sven-model       = { path = "../model" }
 sven-vocab = { path = "../vocab" }
+sven-rt    = { path = "../rt" }
 sven-memory-api = { path = "../memory-api" }
 sven-model-mock  = { path = "../model-mock" }
 anyhow      = { workspace = true }
@@ -15,7 +16,6 @@ async-trait = { workspace = true }
 futures     = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
-tokio       = { workspace = true }
 reqwest     = { workspace = true }
 tracing     = { workspace = true }
 sha2        = { workspace = true }
@@ -35,6 +35,14 @@ sven-audio = { path = "../sven-audio", optional = true }
 
 # memfd_create and fcntl seals (the blob wire format) exist on Linux only.
 # Who owns a local server's connection record, and whether its process lives.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio       = { workspace = true }
+
+# In a browser the drivers speak HTTP through reqwest's fetch backend; tokio
+# only for its channels, sven-rt for tasks and time.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio       = { version = "1", default-features = false, features = ["sync", "macros"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 

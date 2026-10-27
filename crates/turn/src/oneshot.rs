@@ -79,7 +79,8 @@ mod tests {
     /// Replays fixed events, as a driver that reports usage up front does.
     struct Scripted(Vec<ResponseEvent>);
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl ModelProvider for Scripted {
         fn name(&self) -> &str {
             "scripted"

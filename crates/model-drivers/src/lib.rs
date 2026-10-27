@@ -33,6 +33,8 @@ pub mod config;
 pub mod credentials;
 pub mod dbus;
 mod discovery;
+// Semantic memory's embedder: a native feature (its index is SQLite).
+#[cfg(not(target_arch = "wasm32"))]
 mod embedding;
 mod google;
 mod openai;
@@ -46,6 +48,7 @@ mod thinking;
 
 pub use anthropic::AnthropicProvider;
 pub use config::{providers_schema, ModelConfig, ModelParams, ProviderEntry, Providers};
+#[cfg(not(target_arch = "wasm32"))]
 pub use embedding::OpenAiEmbedder;
 pub use openai::OpenAiProvider;
 pub use provider_check::{check_provider, ProviderCheck, ProviderReport, Verdict};
@@ -54,11 +57,8 @@ pub use resolve::{resolve_model_cfg, resolve_model_from_config, ModelResolver};
 use anyhow::bail;
 use api_key::resolve_api_key;
 use async_trait::async_trait;
-use futures::Stream;
 use openai_compat::{AuthStyle, OpenAICompatProvider};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
 use sven_model::{catalog, registry, ModelProvider};
 use sven_model_mock::{MockProvider, YamlMockProvider};
 
@@ -79,11 +79,15 @@ use sven_model_mock::{MockProvider, YamlMockProvider};
 /// run for minutes (or hours for long agentic tasks).  The per-chunk idle
 /// timeout is enforced separately in the agent's streaming loop.
 pub(crate) fn build_http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .tcp_keepalive(Duration::from_secs(30))
-        .connect_timeout(Duration::from_secs(30))
-        .build()
-        .expect("failed to build HTTP client")
+    // In a browser the request is the page's own `fetch`, which owns its
+    // connections and their timeouts.
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = reqwest::Client::builder()
+        .tcp_keepalive(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(30));
+    #[cfg(target_arch = "wasm32")]
+    let builder = reqwest::Client::builder();
+    builder.build().expect("failed to build HTTP client")
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -198,7 +202,8 @@ pub(crate) fn url_host(url: &str) -> Option<String> {
     })
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl ModelProvider for ConfigBoundedProvider {
     fn name(&self) -> &str {
         self.inner.name()
@@ -226,8 +231,7 @@ impl ModelProvider for ConfigBoundedProvider {
     async fn complete(
         &self,
         req: sven_model::CompletionRequest,
-    ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>>>
-    {
+    ) -> anyhow::Result<sven_model::ResponseStream> {
         let Some(live) = self.live.as_ref().filter(|l| l.is_refreshable()) else {
             return self.inner.complete(req).await;
         };

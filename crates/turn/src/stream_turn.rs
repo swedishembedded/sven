@@ -773,7 +773,8 @@ mod thinking_watchdog_tests {
         words_per_delta: usize,
     }
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl ModelProvider for EndlessThinkingProvider {
         fn name(&self) -> &str {
             "endless-thinking"
@@ -801,7 +802,8 @@ mod thinking_watchdog_tests {
     /// A provider that connects and then never sends a chunk.
     struct SilentProvider;
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl ModelProvider for SilentProvider {
         fn name(&self) -> &str {
             "silent"
@@ -1026,7 +1028,8 @@ mod thinking_watchdog_tests {
 
         struct AlternatingProvider;
 
-        #[async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl ModelProvider for AlternatingProvider {
             fn name(&self) -> &str {
                 "alternating"
@@ -1222,7 +1225,8 @@ mod max_tokens_tests {
     /// a stream error: the turn should still complete normally.
     struct TruncatedProvider;
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl ModelProvider for TruncatedProvider {
         fn name(&self) -> &str {
             "truncated"

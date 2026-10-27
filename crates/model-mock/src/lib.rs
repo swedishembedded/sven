@@ -21,11 +21,14 @@
 mod callback;
 mod mock;
 mod recovery;
+// Goes quiet on tokio's clock, which tests pause; native only.
+#[cfg(not(target_arch = "wasm32"))]
 mod stalling;
 mod yaml_mock;
 
 pub use callback::CallbackProvider;
 pub use mock::{FailingMockProvider, MockProvider, ScriptedMockProvider};
 pub use recovery::{RecoverCall, RecoverRule};
+#[cfg(not(target_arch = "wasm32"))]
 pub use stalling::{StallMode, StallingMockProvider};
 pub use yaml_mock::YamlMockProvider;

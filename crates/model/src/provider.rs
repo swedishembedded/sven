@@ -12,7 +12,14 @@ use crate::{
     CompletionRequest, ResponseEvent,
 };
 
+/// A model's streamed answer. `Send` natively; in a browser, where the
+/// stream is the page's own `fetch`, it is not.
+#[cfg(not(target_arch = "wasm32"))]
 pub type ResponseStream = Pin<Box<dyn Stream<Item = anyhow::Result<ResponseEvent>> + Send>>;
+/// A model's streamed answer. `Send` natively; in a browser, where the
+/// stream is the page's own `fetch`, it is not.
+#[cfg(target_arch = "wasm32")]
+pub type ResponseStream = Pin<Box<dyn Stream<Item = anyhow::Result<ResponseEvent>>>>;
 
 /// A change the live server made under a running session: another adapter was
 /// applied (or removed) for the bound model.
@@ -50,8 +57,9 @@ pub struct ServedModel {
 /// What a server reports it is serving, in the order it reported it.
 pub type ServedModels = Vec<ServedModel>;
 
-#[async_trait]
-pub trait ModelProvider: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
     /// Human-readable provider name for status display.
     fn name(&self) -> &str;
 

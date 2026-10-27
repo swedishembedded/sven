@@ -270,7 +270,8 @@ fn derive_server_root(base_url: &str) -> String {
     b.to_string()
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl sven_model::ModelProvider for OpenAICompatProvider {
     fn name(&self) -> &str {
         self.driver_name

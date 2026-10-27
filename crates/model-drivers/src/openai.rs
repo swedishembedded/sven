@@ -41,7 +41,8 @@ impl OpenAiProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl sven_model::ModelProvider for OpenAiProvider {
     fn name(&self) -> &str {
         self.inner.name()

@@ -1,19 +1,27 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The few services the kernel needs from whatever runs it: start a task,
-//! wait, read a monotonic clock. Everything else in the kernel is the same
+//
+// Swedish Embedded AB implements solutions for running the same agent code
+// on servers, laptops and in the browser for its clients. If your team needs
+// expertise in portable Rust runtimes then you can procure our services by
+// sending an email to info@swedishembedded.com.
+//! The few services agent code needs from whatever runs it: start a task,
+//! wait, time out, read a monotonic clock. Everything above it is the same
 //! code on every host.
 //!
-//! * Native: tokio (`spawn`, `time::sleep`) and `std::time::Instant`.
+//! * Native: tokio (`spawn`, `time::sleep`, `time::timeout`) and
+//!   `std::time::Instant`.
 //! * Browser (`wasm32`): the page's or worker's own event loop through
 //!   `wasm-bindgen-futures`, its timers, and `web-time`'s `Instant` (a
 //!   browser has no `std::time::Instant`; calling it panics).
 //!
 //! A browser is single-threaded and its futures hold JavaScript values, so
-//! nothing there is `Send`. [`MaybeSend`] and [`MaybeSync`] are `Send` and
-//! `Sync` natively and nothing in a browser: a trait bounded by them keeps
-//! its native guarantees without a second copy for the browser.
+//! nothing there is `Send` or `Sync`. [`MaybeSend`] and [`MaybeSync`] are
+//! `Send` and `Sync` natively (as supertraits, so the compiler still knows a
+//! bounded type is `Send`) and satisfied by everything in a browser: a trait
+//! bounded by them keeps its native guarantees without a second copy of it
+//! for the browser.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -42,7 +50,12 @@ pub trait MaybeSync {}
 #[cfg(target_arch = "wasm32")]
 impl<T: ?Sized> MaybeSync for T {}
 
-pub use sven_hsm::Instant;
+/// A monotonic instant that works on every host.
+#[cfg(not(target_arch = "wasm32"))]
+pub use std::time::Instant;
+/// A monotonic instant that works on every host.
+#[cfg(target_arch = "wasm32")]
+pub use web_time::Instant;
 
 /// Waits `duration`.
 pub async fn sleep(duration: Duration) {
@@ -57,6 +70,37 @@ pub async fn sleep_until(deadline: Instant) {
     let now = Instant::now();
     if deadline > now {
         sleep(deadline - now).await;
+    }
+}
+
+/// A future that did not finish in time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Elapsed;
+
+impl std::fmt::Display for Elapsed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("deadline has elapsed")
+    }
+}
+
+impl std::error::Error for Elapsed {}
+
+/// `future`'s output, or [`Elapsed`] when `duration` passes first. Natively
+/// this is tokio's timeout, so a test that pauses tokio's clock pauses it.
+pub async fn timeout<F: Future>(duration: Duration, future: F) -> Result<F::Output, Elapsed> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return tokio::time::timeout(duration, future)
+        .await
+        .map_err(|_| Elapsed);
+    #[cfg(target_arch = "wasm32")]
+    {
+        use futures::future::{select, Either};
+        let future = std::pin::pin!(future);
+        let deadline = std::pin::pin!(sleep(duration));
+        match select(future, deadline).await {
+            Either::Left((output, _)) => Ok(output),
+            Either::Right(_) => Err(Elapsed),
+        }
     }
 }
 
@@ -160,5 +204,10 @@ mod tests {
         forever.abort();
         assert!(forever.await.is_err());
         sleep_until(Instant::now()).await;
+        assert_eq!(timeout(Duration::from_secs(5), async { 1 }).await, Ok(1));
+        assert_eq!(
+            timeout(Duration::from_millis(1), sleep(Duration::from_secs(5))).await,
+            Err(Elapsed)
+        );
     }
 }

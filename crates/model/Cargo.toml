@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 sven-model-catalog = { path = "../model-catalog" }
 sven-vocab  = { path = "../vocab" }
+sven-rt     = { path = "../rt" }
 anyhow      = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }

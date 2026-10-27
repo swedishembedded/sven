@@ -19,13 +19,12 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sven_model::{CompletionRequest, ModelProvider, ResponseEvent};
 
@@ -218,9 +217,10 @@ impl RecordingProvider {
     }
 }
 
-type EventStream = Pin<Box<dyn Stream<Item = Result<ResponseEvent>> + Send>>;
+type EventStream = sven_model::ResponseStream;
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl ModelProvider for RecordingProvider {
     fn name(&self) -> &str {
         self.inner.name()
@@ -342,7 +342,8 @@ mod tests {
 
     struct Canned;
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl ModelProvider for Canned {
         fn name(&self) -> &str {
             "canned"
