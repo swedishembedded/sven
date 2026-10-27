@@ -63,7 +63,7 @@ pub use ui_state::FocusPane;
 
 // ── Public types (re-exported from sven-frontend for cross-frontend sharing) ───
 
-pub use sven_frontend::{ModelDirective, NodeBackend, QueuedMessage};
+pub use sven_frontend::{ModelDirective, QueuedMessage};
 
 /// Options passed when constructing the TUI app.
 pub struct AppOptions {
@@ -82,9 +82,6 @@ pub struct AppOptions {
     /// Load-only ATIF trace path (`--load-trace`).
     pub load_trace_path: Option<PathBuf>,
     pub initial_queue: Vec<QueuedMessage>,
-    /// When `Some`, connect the TUI to a running node instead of running a
-    /// local agent.  Gives the TUI full access to the node's P2P tools.
-    pub node_backend: Option<NodeBackend>,
     /// Open the `/resume` session picker at startup (bare `--resume`, no id).
     pub open_resume_picker: bool,
     /// Whether the agent's tool calls wait for the user's approval
@@ -102,30 +99,16 @@ pub struct App {
     pub(crate) tui_config: TuiConfig,
     /// Whether tool calls wait for the user's approval (`--approval`).
     pub(crate) approval: ApprovalMode,
-    /// Node-proxy backend, consumed once in `run()`.
-    pub(crate) node_backend: Option<NodeBackend>,
-    /// True when the TUI is connected to a running sven node over WebSocket.
-    /// In this mode the node owns model/mode selection; the TUI is a dumb
-    /// terminal that only forwards text and renders streamed responses.
-    pub(crate) is_node_proxy: bool,
-    /// Node URL retained after `run()` consumes `node_backend`, so the
-    /// inspector can query the node for its tool list via `/tools`.
-    pub(crate) node_url: Option<String>,
-    /// Node bearer token, retained alongside `node_url`.
-    pub(crate) node_token: Option<String>,
-    /// Whether the node connection should skip TLS verification.
-    pub(crate) node_insecure: bool,
     pub(crate) session: crate::state::SessionState,
     pub(crate) command_registry: Arc<CommandRegistry>,
     pub(crate) completion_manager: CompletionManager,
     pub(crate) shared_skills: sven_workspace::SharedSkills,
     pub(crate) shared_agents: sven_workspace::SharedAgents,
     /// Shared tool snapshot - populated by the runtime builder after the local
-    /// tool registry is built.  Empty in node-proxy mode (tools are fetched live
-    /// from the node when `/tools` is opened).
+    /// tool registry is built.
     pub(crate) shared_tools: sven_tool_registry::SharedTools,
-    /// MCP manager - populated in local mode after the agent is built.
-    /// `None` in node-proxy mode.  Used by `/mcp` to display server status.
+    /// MCP manager - populated after the agent is built; `None` until then.
+    /// Used by `/mcp` to display server status.
     pub(crate) mcp_manager: Option<Arc<McpManager>>,
     /// MCP prompt slash commands, keyed by command name.
     ///

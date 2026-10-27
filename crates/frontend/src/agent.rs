@@ -55,8 +55,6 @@ pub enum AgentRequest {
     /// Generate a short chat title from the first user message (LLM, low
     /// max_tokens, no tools). Result is sent as `AgentEvent::TitleGenerated`.
     GenerateTitle { user_text: String },
-    /// Request peer list (node-proxy mode); handled by the mux, not the agent task.
-    ListPeers,
     /// Refresh MCP tools from the manager (e.g. when ToolsChanged fires).
     RefreshMcpTools,
 }
@@ -292,10 +290,6 @@ pub(crate) async fn run_kernel_session_task(
                     Some(source) => session.tool_registry().replace_mcp_tools(source()),
                     None => session.refresh_mcp_tools().await,
                 }
-            }
-
-            AgentRequest::ListPeers => {
-                // Peer discovery is a node-only concern; not applicable here.
             }
         }
     }

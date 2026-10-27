@@ -7,7 +7,7 @@ use anyhow::Context;
 use crate::cli::Cli;
 use sven_frontend::Settings;
 use sven_session_store::{parse_frontmatter, parse_workflow};
-use sven_tui::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
+use sven_tui::{App, AppOptions, ModelDirective, QueuedMessage};
 use sven_vocab::AgentMode;
 
 /// Whether the Kitty keyboard-enhancement flags were actually pushed for this
@@ -30,37 +30,6 @@ pub(crate) async fn run_tui(mut cli: Cli, settings: Settings) -> anyhow::Result<
         },
         execute,
     };
-
-    // Auto-detect node-proxy mode: when SVEN_NODE_URL and SVEN_NODE_TOKEN
-    // are present (injected by the node into web PTY sessions), connect the
-    // TUI to the running node so the agent has full P2P peer access.
-    let node_backend = {
-        let url = std::env::var("SVEN_NODE_URL")
-            .or_else(|_| std::env::var("SVEN_GATEWAY_URL"))
-            .ok();
-        let token = std::env::var("SVEN_NODE_TOKEN")
-            .or_else(|_| std::env::var("SVEN_GATEWAY_TOKEN"))
-            .ok();
-        let insecure = std::env::var("SVEN_NODE_INSECURE")
-            .or_else(|_| std::env::var("SVEN_GATEWAY_INSECURE"))
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        match (url, token) {
-            (Some(url), Some(token)) => Some(NodeBackend {
-                url,
-                token,
-                insecure,
-            }),
-            _ => None,
-        }
-    };
-
-    if cli.approval == sven_vocab::ApprovalMode::Manual && node_backend.is_some() {
-        anyhow::bail!(
-            "--approval manual needs a local session: in node-proxy mode \
-             (SVEN_NODE_URL) the node answers its own approvals"
-        );
-    }
 
     // `--resume <id>` resolves to the same `--trace PATH` semantics as an
     // explicit `--trace` flag (both load source and sync-after-every-turn
@@ -285,7 +254,6 @@ pub(crate) async fn run_tui(mut cli: Cli, settings: Settings) -> anyhow::Result<
         trace_path: trace_save_path,
         load_trace_path: trace_load_path,
         initial_queue,
-        node_backend,
         open_resume_picker,
     };
 

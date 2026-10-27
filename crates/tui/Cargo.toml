@@ -36,9 +36,6 @@ chrono      = { workspace = true }
 uuid        = { workspace = true }
 base64      = { workspace = true }
 rand        = "0.8"
-rustls      = { workspace = true }
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
-tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
 notify       = { workspace = true }
 
 [dev-dependencies]

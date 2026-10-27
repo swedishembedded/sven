@@ -22,8 +22,6 @@ sven-hsm         = { path = "../hsm" }
 sven-bootstrap   = { path = "../bootstrap", default-features = false }
 sven-mcp-client  = { path = "../mcp-client" }
 sven-workspace     = { path = "../workspace" }
-# Transport-agnostic control protocol + kernel mappings (no transport deps).
-sven-control     = { path = "../control" }
 anyhow           = { workspace = true }
 tokio            = { workspace = true }
 futures          = { workspace = true }
@@ -34,11 +32,8 @@ uuid             = { workspace = true }
 base64           = { workspace = true }
 chrono           = { workspace = true }
 unicode-width    = { workspace = true }
-rustls           = { workspace = true }
 rand             = "0.8"
 pulldown-cmark   = { workspace = true }
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
-tungstenite       = { version = "0.24", features = ["rustls-tls-native-roots"] }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

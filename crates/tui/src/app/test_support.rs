@@ -21,7 +21,6 @@ impl App {
             trace_path: None,
             load_trace_path: None,
             initial_queue: Vec::new(),
-            node_backend: None,
             open_resume_picker: false,
             approval: sven_vocab::ApprovalMode::Auto,
         };

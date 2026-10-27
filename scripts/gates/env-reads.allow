@@ -76,10 +76,4 @@ src/run/ci.rs	SVEN_MODE
 src/run/logging.rs	<SUBAGENT_DEPTH_ENV>
 src/run/logging.rs	SVEN_LOG_FILE
 src/run/oauth.rs	SVEN_OAUTH_CALLBACK_PORT
-src/run/tui.rs	SVEN_GATEWAY_INSECURE
-src/run/tui.rs	SVEN_GATEWAY_TOKEN
-src/run/tui.rs	SVEN_GATEWAY_URL
 src/run/tui.rs	SVEN_LOG_FILE
-src/run/tui.rs	SVEN_NODE_INSECURE
-src/run/tui.rs	SVEN_NODE_TOKEN
-src/run/tui.rs	SVEN_NODE_URL

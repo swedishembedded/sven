@@ -108,12 +108,7 @@ impl App {
         self.ui.prune_toasts();
 
         // ── Status bar ────────────────────────────────────────────────────────
-        // In node-proxy mode the node owns model/mode; show "node" as model label.
-        let status_model_name: &str = if self.is_node_proxy {
-            "node"
-        } else {
-            &self.session.model_display
-        };
+        let status_model_name: &str = &self.session.model_display;
         let in_edit = self.edit.active();
 
         frame.render_widget(

@@ -276,31 +276,6 @@ impl App {
             }
             AgentEvent::TurnComplete => {
                 tracing::info!("TUI: TurnComplete received");
-                // Fallback only in node-proxy mode (we never send GenerateTitle there).
-                // Local agent always gets TitleGenerated from the title task (LLM or heuristic).
-                if self.is_node_proxy
-                    && (self.chat_title == "New chat" || self.chat_title.is_empty())
-                {
-                    let first_user_text = self.chat.segments().iter().find_map(|seg| {
-                        use crate::chat::segment::ChatSegment;
-                        use sven_model::{MessageContent, Role};
-                        if let ChatSegment::Message(m) = seg {
-                            if m.role == Role::User {
-                                if let MessageContent::Text(t) = &m.content {
-                                    return Some(t.clone());
-                                }
-                            }
-                        }
-                        None
-                    });
-                    if let Some(user_text) = first_user_text {
-                        let title = sven_session_store::make_title(&user_text);
-                        self.chat_title = title.clone();
-                        let active_id = self.sessions.active_id.clone();
-                        self.sessions.set_title(&active_id, title);
-                    }
-                }
-
                 self.agent.busy = false;
                 self.agent.current_tool = None;
                 self.agent.model_waiting = None;

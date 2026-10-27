@@ -93,12 +93,6 @@ impl App {
         let mut chat = ChatState::new();
         chat.set_segments(initial_segments);
 
-        let is_node_proxy = opts.node_backend.is_some();
-        let (node_url, node_token, node_insecure) = opts
-            .node_backend
-            .as_ref()
-            .map(|nb| (Some(nb.url.clone()), Some(nb.token.clone()), nb.insecure))
-            .unwrap_or((None, None, false));
         let buffer_store = Arc::new(tokio::sync::Mutex::new(OutputBufferStore::new()));
         let shared_tools = sven_tool_registry::SharedTools::empty();
         let shared_tool_displays = sven_tool_registry::SharedToolDisplays::new();
@@ -155,11 +149,6 @@ impl App {
             config,
             tui_config,
             approval: opts.approval,
-            node_backend: opts.node_backend,
-            is_node_proxy,
-            node_url,
-            node_token,
-            node_insecure,
             session: crate::state::SessionState::new(initial_model_cfg, opts.mode),
             command_registry: registry,
             completion_manager,

@@ -48,22 +48,6 @@ impl QueuedMessage {
     }
 }
 
-/// Node-proxy backend configuration for Sven frontends.
-///
-/// When set, the frontend forwards all agent interactions to a running sven
-/// node over WebSocket instead of running a local agent. The node's agent has
-/// a live `P2pHandle`, so peer tools (`list_peers`, `delegate_task`, ...) are
-/// available.
-#[derive(Debug, Clone)]
-pub struct NodeBackend {
-    /// WebSocket URL of the running node (e.g. `wss://127.0.0.1:18790/ws`).
-    pub url: String,
-    /// Bearer token for the node's HTTP API.
-    pub token: String,
-    /// Skip TLS certificate verification (safe on loopback).
-    pub insecure: bool,
-}
-
 /// Options for launching any Sven frontend.
 pub struct FrontendOptions {
     pub mode: AgentMode,
@@ -76,8 +60,6 @@ pub struct FrontendOptions {
     /// Load-only ATIF trace path (`--load-trace`).
     pub load_trace_path: Option<PathBuf>,
     pub initial_queue: Vec<QueuedMessage>,
-    /// When `Some`, connect the frontend to a running node.
-    pub node_backend: Option<NodeBackend>,
     /// Load an existing YAML chat document to resume the conversation.
     pub chat_path: Option<PathBuf>,
     /// Save the chat to this YAML path after each turn.
@@ -94,7 +76,6 @@ impl Default for FrontendOptions {
             trace_path: None,
             load_trace_path: None,
             initial_queue: vec![],
-            node_backend: None,
             chat_path: None,
             output_chat_path: None,
         }

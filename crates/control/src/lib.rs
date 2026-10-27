@@ -19,8 +19,8 @@
 //! * [`control_command_to_kernel_event`] — an inbound [`ControlCommand`] →
 //!   the [`Event`](sven_hsm::Event) posted onto the kernel queue.
 //!
-//! The crate depends only on `sven-hsm` + `sven-config` + `sven-vocab` (plus
-//! serde / uuid / ciborium) — **not** on `sven-tool-registry` or any transport stack.
+//! The crate depends only on `sven-hsm` + `sven-vocab` (plus serde / uuid) —
+//! **not** on `sven-tool-registry` or any transport stack.
 //! That is what lets `sven-frontend` reuse the protocol and mappings without
 //! bloating the interactive binaries.
 
@@ -100,49 +100,6 @@ pub enum ControlCommand {
     ///
     /// The node responds with a [`ControlEvent::ToolList`] broadcast.
     ListTools,
-
-    /// Execute a single tool directly on the node's tool registry.
-    ///
-    /// No LLM session is created; the tool runs immediately and the result is
-    /// broadcast as [`ControlEvent::ToolCallOutput`] with the same `call_id`.
-    CallTool {
-        /// Client-supplied correlation ID echoed back in the response.
-        call_id: String,
-        name: String,
-        args: serde_json::Value,
-    },
-
-    // ── Web device management ─────────────────────────────────────────────────
-    /// Approve a pending web browser device.
-    ///
-    /// The device transitions from `Pending` → `Approved`, the waiting SSE
-    /// stream in the browser fires, and the node starts a PTY session.
-    WebDeviceApprove { device_id: Uuid },
-
-    /// Revoke an approved web browser device.
-    ///
-    /// The device transitions to `Revoked`, any open PTY session is killed,
-    /// and the session cookie is effectively invalidated.
-    WebDeviceRevoke { device_id: Uuid },
-
-    /// List registered web browser devices.
-    WebDeviceList { filter: WebDeviceFilter },
-
-    /// Request the current list of connected peers.
-    ///
-    /// The node responds with a [`ControlEvent::PeerList`] broadcast.
-    ListPeers,
-
-    /// Redeem a one-time pairing token to escalate an unpaired connection.
-    ///
-    /// This is the ONLY command a `Pending` (unpaired) connection may send. The
-    /// transport authenticates the peer's key (Noise/TLS) but authorizes
-    /// nothing until this succeeds: the node validates the token, auto-approves
-    /// the peer's authenticated identity into its persistent allowlist as
-    /// Operator, consumes the token (first-use-wins), and escalates the live
-    /// connection. Thereafter the peer reconnects without a token. Handled
-    /// entirely at the transport/auth layer — it yields no kernel event.
-    Pair { token: String },
 }
 
 // ── Agent → Operator events ───────────────────────────────────────────────────
@@ -193,31 +150,6 @@ pub enum ControlEvent {
     /// Response to a [`ControlCommand::ListTools`] request.
     ToolList { tools: Vec<ToolSchemaInfo> },
 
-    /// Response to a [`ControlCommand::CallTool`] request.
-    ToolCallOutput {
-        call_id: String,
-        output: String,
-        is_error: bool,
-    },
-
-    // ── Web device management events ──────────────────────────────────────────
-    /// Response to [`ControlCommand::WebDeviceList`].
-    WebDeviceList { devices: Vec<WebDeviceSummary> },
-
-    /// Confirmation that a device was approved or revoked.
-    WebDeviceUpdated {
-        device_id: Uuid,
-        /// New status string (`"approved"` or `"revoked"`).
-        status: String,
-    },
-
-    /// Error response for a web device management command.
-    WebDeviceError { message: String },
-
-    // ── Peer management events ────────────────────────────────────────────────
-    /// Response to [`ControlCommand::ListPeers`].
-    PeerList { peers: Vec<PeerListEntry> },
-
     /// Reply to [`ControlCommand::Attach`]: the conversation transcript so far.
     ///
     /// Sent once, directly to the attaching client (not broadcast to everyone),
@@ -266,19 +198,6 @@ pub struct HistoryEntry {
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────
-
-/// A connected peer entry returned in [`ControlEvent::PeerList`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerListEntry {
-    /// Human-readable name from the peer's agent card.
-    pub name: String,
-    /// Stable peer id as a string.
-    pub peer_id: String,
-    /// Whether the peer is currently connected.
-    pub connected: bool,
-    /// Whether the peer can accept delegated tasks.
-    pub can_delegate: bool,
-}
 
 /// Lifecycle state of an agent session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -347,34 +266,6 @@ pub struct SessionInfo {
     pub created_at: String,
 }
 
-// ── Web device types ──────────────────────────────────────────────────────────
-
-/// Filter for `WebDeviceList`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum WebDeviceFilter {
-    /// All devices regardless of status.
-    #[default]
-    All,
-    /// Only devices awaiting approval.
-    Pending,
-    /// Only approved devices.
-    Approved,
-    /// Only revoked devices.
-    Revoked,
-}
-
-/// Compact device summary returned by `WebDeviceList`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebDeviceSummary {
-    pub id: Uuid,
-    pub display_name: String,
-    pub status: String,
-    pub created_at: String,
-    pub approved_at: Option<String>,
-    pub last_seen: Option<String>,
-}
-
 // ── Kernel mappings ───────────────────────────────────────────────────────────
 
 /// Wraps a kernel [`UiEvent`](sven_hsm::UiEvent) from the observation bus as
@@ -408,7 +299,7 @@ pub fn ui_event_to_control(ev: sven_hsm::UiEvent, session_id: Uuid) -> ControlEv
 /// The `call_id` in an approve/deny command is parsed as a UUID (the kernel's
 /// approval-flow identifier); a non-UUID value falls back to a fresh UUID so
 /// the resulting kernel event is always well-formed. All other commands
-/// (session/tool/peer management, web devices) are handled by a service layer,
+/// (session and tool management) are handled by a service layer,
 /// not the kernel queue, and yield `None`.
 pub fn control_command_to_kernel_event(cmd: &ControlCommand) -> Option<sven_hsm::Event> {
     use sven_hsm::{ApprovalId, Event};
@@ -455,69 +346,9 @@ pub fn control_command_session_id(cmd: &ControlCommand) -> Option<Uuid> {
     }
 }
 
-// ── CBOR codec helpers ────────────────────────────────────────────────────────
-
-/// Encode a `ControlCommand` to CBOR bytes.
-pub fn encode_command(cmd: &ControlCommand) -> Result<Vec<u8>, String> {
-    let mut buf = Vec::new();
-    ciborium::into_writer(cmd, &mut buf).map_err(|e| format!("CBOR encode: {e}"))?;
-    Ok(buf)
-}
-
-/// Decode a `ControlCommand` from CBOR bytes.
-pub fn decode_command(bytes: &[u8]) -> Result<ControlCommand, String> {
-    ciborium::from_reader(bytes).map_err(|e| format!("CBOR decode: {e}"))
-}
-
-/// Encode a `ControlEvent` to CBOR bytes.
-pub fn encode_event(ev: &ControlEvent) -> Result<Vec<u8>, String> {
-    let mut buf = Vec::new();
-    ciborium::into_writer(ev, &mut buf).map_err(|e| format!("CBOR encode: {e}"))?;
-    Ok(buf)
-}
-
-/// Decode a `ControlEvent` from CBOR bytes.
-pub fn decode_event(bytes: &[u8]) -> Result<ControlEvent, String> {
-    ciborium::from_reader(bytes).map_err(|e| format!("CBOR decode: {e}"))
-}
-
-// ── Unit tests ────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn send_input_cbor_round_trip() {
-        let cmd = ControlCommand::SendInput {
-            session_id: Uuid::new_v4(),
-            text: "hello world".to_string(),
-        };
-        let bytes = encode_command(&cmd).unwrap();
-        let back = decode_command(&bytes).unwrap();
-        match back {
-            ControlCommand::SendInput { text, .. } => assert_eq!(text, "hello world"),
-            _ => panic!("wrong variant"),
-        }
-    }
-
-    #[test]
-    fn session_event_cbor_round_trip() {
-        let id = Uuid::new_v4();
-        let ev = ControlEvent::Session {
-            session_id: id,
-            event: sven_vocab::SessionEvent::TextDelta("chunk".to_string()),
-        };
-        let bytes = encode_event(&ev).unwrap();
-        let back = decode_event(&bytes).unwrap();
-        match back {
-            ControlEvent::Session { session_id, event } => {
-                assert_eq!(session_id, id);
-                assert!(matches!(event, sven_vocab::SessionEvent::TextDelta(d) if d == "chunk"));
-            }
-            _ => panic!("wrong variant"),
-        }
-    }
 
     #[test]
     fn control_command_json_round_trip() {
@@ -595,9 +426,9 @@ mod tests {
     fn attach_command_and_history_event_round_trip() {
         let sid = Uuid::new_v4();
 
-        // Attach travels over the CBOR transport.
         let cmd = ControlCommand::Attach { session_id: sid };
-        let back = decode_command(&encode_command(&cmd).unwrap()).unwrap();
+        let back: ControlCommand =
+            serde_json::from_str(&serde_json::to_string(&cmd).unwrap()).unwrap();
         assert!(matches!(back, ControlCommand::Attach { session_id } if session_id == sid));
 
         // History carries the replayed conversation to the attaching client.
@@ -614,7 +445,8 @@ mod tests {
                 },
             ],
         };
-        let back = decode_event(&encode_event(&ev).unwrap()).unwrap();
+        let back: ControlEvent =
+            serde_json::from_str(&serde_json::to_string(&ev).unwrap()).unwrap();
         match back {
             ControlEvent::History {
                 session_id,
@@ -627,20 +459,6 @@ mod tests {
             }
             other => panic!("expected History, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn pair_command_round_trips_and_has_no_kernel_event() {
-        let cmd = ControlCommand::Pair {
-            token: "one-time-secret".into(),
-        };
-        // CBOR transport round-trip.
-        let back = decode_command(&encode_command(&cmd).unwrap()).unwrap();
-        assert!(matches!(back, ControlCommand::Pair { token } if token == "one-time-secret"));
-        // Pairing is a transport-layer concern, never a kernel event, and has
-        // no session target.
-        assert!(control_command_to_kernel_event(&cmd).is_none());
-        assert_eq!(control_command_session_id(&cmd), None);
     }
 
     #[test]

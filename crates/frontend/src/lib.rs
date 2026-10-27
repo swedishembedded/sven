@@ -16,10 +16,8 @@
 //!   interactive UI's own `tui:` section included
 //! - `AgentRequest` / `kernel_session_task` - the background task that drives
 //!   a controller session for the TUI and forwards its `AgentEvent` stream
-//! - `node_agent_task` - WebSocket bridge to a remote agent session, speaking
-//!   the canonical control protocol from [`sven_control`]
 //! - `ChatSegment` - the display-layer chat data model
-//! - `ModelDirective`, `QueuedMessage`, `NodeBackend` - shared config types
+//! - `ModelDirective`, `QueuedMessage` - shared config types
 //!
 //! ## Architecture
 //!
@@ -41,7 +39,6 @@
 pub mod agent;
 pub mod controller;
 pub mod markdown;
-pub mod node_agent;
 pub mod projection;
 pub mod queue;
 pub mod segment;
@@ -62,7 +59,6 @@ pub use agent::{kernel_session_task, AgentRequest};
 pub use controller::{
     machine_for, AbortSlot, Gates, SessionController, SessionOptions, SessionSpec, SubmitError,
 };
-pub use node_agent::{fetch_node_tools, node_agent_task};
 pub use projection::{
     projection_channel, projection_to_session_state, MachineProjection, ProjectionRx, ProjectionTx,
 };
@@ -73,4 +69,4 @@ pub use segment::{
 };
 pub use settings::{Settings, TuiConfig};
 pub use sven_session_model::{SubagentActivity, SubagentState};
-pub use types::{FrontendOptions, ModelDirective, NodeBackend, QueuedMessage, SessionMeta};
+pub use types::{FrontendOptions, ModelDirective, QueuedMessage, SessionMeta};

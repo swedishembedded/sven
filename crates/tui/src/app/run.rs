@@ -23,7 +23,6 @@ use crate::{
     app::{ui_state, App, FocusPane},
     chat::segment::ChatSegment,
     keys::Action,
-    node_agent::node_agent_task,
     overlay::question::{watch_withdrawal, QuestionModal},
 };
 
@@ -64,23 +63,7 @@ impl App {
             }
         });
 
-        if let Some(nb) = self.node_backend.take() {
-            // Node-proxy mode: forward all agent interactions to the running
-            // node over WebSocket.  The node's agent has a live
-            // P2pHandle, so peer tools are available.
-            let cancel_handle_task = self.agent.cancel.clone();
-            tokio::spawn(async move {
-                node_agent_task(
-                    nb.url,
-                    nb.token,
-                    nb.insecure,
-                    submit_rx,
-                    event_tx,
-                    cancel_handle_task,
-                )
-                .await;
-            });
-        } else {
+        {
             let (mcp_refresh_tx, _) = tokio::sync::broadcast::channel(16);
             self.mcp_refresh_tx = Some(mcp_refresh_tx.clone());
 
@@ -127,14 +110,6 @@ impl App {
                         mcp_event_consumer(mcp_event_rx, toast_tx, mcp_refresh_tx, mgr_clone).await;
                     });
                 }
-            }
-        }
-
-        // In node-proxy mode, request the initial peer list.
-        if self.is_node_proxy {
-            let submit_tx = self.agent.tx.clone();
-            if let Some(ref tx) = submit_tx {
-                let _ = tx.try_send(AgentRequest::ListPeers);
             }
         }
 
@@ -303,7 +278,7 @@ impl App {
                 // cell diff) emits nothing for a stable view — no cursor flicker,
                 // and the user can select/copy terminal text. It follows that
                 // every path which sets a busy flag MUST have a path that clears
-                // it (see node_agent's turn-exit guard for the remote case);
+                // it (the turn-exit guard);
                 // a stuck busy flag would repaint the screen at 12fps forever.
                 _ = anim_tick.tick(), if self.agent.busy || self.sessions.any_background_busy() => {
                     // Advance the clock-driven animation frame. This branch also

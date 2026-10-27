@@ -236,7 +236,7 @@ impl App {
                             }
                         } else {
                             self.ui.push_toast(crate::app::ui_state::Toast::error(
-                                "MCP auth is not available in node-proxy mode",
+                                "MCP auth is not available: the session has not started yet",
                             ));
                         }
                         return false;
@@ -251,38 +251,22 @@ impl App {
                         let agents = self.shared_agents.get();
                         let buffer_store = std::sync::Arc::clone(&self.buffer_store);
                         let project_root = sven_workspace::find_project_root().ok();
-                        let is_node = self.is_node_proxy;
                         let inspector = match kind {
-                            InspectorKind::Skills => {
-                                InspectorOverlay::for_skills(&skills, is_node, ascii)
-                            }
+                            InspectorKind::Skills => InspectorOverlay::for_skills(&skills, ascii),
                             InspectorKind::Subagents => {
-                                InspectorOverlay::for_subagents(&agents, is_node, ascii)
+                                InspectorOverlay::for_subagents(&agents, ascii)
                             }
-                            InspectorKind::Peers => InspectorOverlay::for_peers(
-                                &agents,
-                                Some(buffer_store),
-                                is_node,
-                                ascii,
-                            ),
+                            InspectorKind::Peers => {
+                                InspectorOverlay::for_peers(&agents, Some(buffer_store), ascii)
+                            }
                             InspectorKind::Context => InspectorOverlay::for_context(
                                 project_root.as_deref(),
                                 Some(buffer_store),
-                                is_node,
                                 ascii,
                             ),
                             InspectorKind::Tools => {
-                                let tools = if is_node {
-                                    // Fetch live from the node.
-                                    let url = self.node_url.clone().unwrap_or_default();
-                                    let token = self.node_token.clone().unwrap_or_default();
-                                    let insecure = self.node_insecure;
-                                    crate::node_agent::fetch_node_tools(&url, &token, insecure)
-                                        .await
-                                } else {
-                                    self.shared_tools.get().to_vec()
-                                };
-                                InspectorOverlay::for_tools(&tools, is_node, ascii)
+                                let tools = self.shared_tools.get().to_vec();
+                                InspectorOverlay::for_tools(&tools, ascii)
                             }
                             InspectorKind::Mcp => {
                                 let statuses = if let Some(ref mgr) = self.mcp_manager {
@@ -328,18 +312,12 @@ impl App {
                         return false;
                     }
 
-                    // `/model` is staged in BOTH modes: locally it rebuilds the
-                    // in-process kernel; in node-proxy mode it is forwarded to
-                    // the remote as a `SetModel` so a remote `/model` re-points
-                    // the server-side provider (the node still owns `/mode`).
                     if let Some(model_str) = result.model_override {
                         let resolved = self.config.resolve_model(&model_str);
                         self.session.stage_model(resolved);
                     }
-                    if !self.is_node_proxy {
-                        if let Some(mode) = result.mode_override {
-                            self.session.stage_mode(mode);
-                        }
+                    if let Some(mode) = result.mode_override {
+                        self.session.stage_mode(mode);
                     }
 
                     match result.message_to_send {
@@ -393,14 +371,12 @@ impl App {
             if matches!(result.immediate_action, Some(ImmediateAction::Quit)) {
                 return true;
             }
-            if !self.is_node_proxy {
-                if let Some(model_str) = result.model_override {
-                    let resolved = self.config.resolve_model(&model_str);
-                    self.session.apply_model(resolved);
-                }
-                if let Some(mode) = result.mode_override {
-                    self.session.apply_mode(mode);
-                }
+            if let Some(model_str) = result.model_override {
+                let resolved = self.config.resolve_model(&model_str);
+                self.session.apply_model(resolved);
+            }
+            if let Some(mode) = result.mode_override {
+                self.session.apply_mode(mode);
             }
         }
         false
@@ -408,19 +384,8 @@ impl App {
 
     pub(crate) async fn send_to_agent(&mut self, qm: QueuedMessage) {
         if let Some(tx) = &self.agent.tx {
-            // The model IS forwarded in node-proxy mode (the remote turns it into
-            // a SetModel); mode stays local-only (the node owns /mode).
-            let (model_override, mode_override) = if self.is_node_proxy {
-                (
-                    qm.model_transition.map(ModelDirective::into_model_config),
-                    None,
-                )
-            } else {
-                (
-                    qm.model_transition.map(ModelDirective::into_model_config),
-                    qm.mode_transition,
-                )
-            };
+            let model_override = qm.model_transition.map(ModelDirective::into_model_config);
+            let mode_override = qm.mode_transition;
             let send_result = tx
                 .send(AgentRequest::Submit {
                     content: qm.content.clone(),
@@ -445,7 +410,6 @@ impl App {
             // First message in chat: request LLM-generated title (local agent only).
             if self.chat.segments().len() == 1
                 && (self.chat_title == "New chat" || self.chat_title.is_empty())
-                && !self.is_node_proxy
             {
                 if let Some(tx) = &self.agent.tx {
                     let _ = tx
@@ -464,22 +428,10 @@ impl App {
         qm: QueuedMessage,
     ) {
         if let Some(tx) = &self.agent.tx {
-            // The model IS forwarded in node-proxy mode (the remote turns it into
-            // a SetModel); mode stays local-only (the node owns /mode).
-            let (model_override, mode_override) = if self.is_node_proxy {
-                (
-                    qm.model_transition.map(ModelDirective::into_model_config),
-                    None,
-                )
-            } else {
-                (
-                    qm.model_transition.map(ModelDirective::into_model_config),
-                    qm.mode_transition,
-                )
-            };
+            let model_override = qm.model_transition.map(ModelDirective::into_model_config);
+            let mode_override = qm.mode_transition;
             let is_first_message = messages.is_empty()
-                && (self.chat_title == "New chat" || self.chat_title.is_empty())
-                && !self.is_node_proxy;
+                && (self.chat_title == "New chat" || self.chat_title.is_empty());
             let send_result = tx
                 .send(AgentRequest::Resubmit {
                     messages,

@@ -10,14 +10,13 @@ mod input_wrap;
 mod keys;
 mod layout;
 mod markdown;
-pub mod node_agent;
 mod overlay;
 mod pager;
 mod state;
 mod submit;
 mod ui;
 
-pub use app::{App, AppOptions, ModelDirective, NodeBackend, QueuedMessage};
+pub use app::{App, AppOptions, ModelDirective, QueuedMessage};
 pub use chat::segment::ChatSegment;
 // Re-export sven-frontend types for downstream crates that depend on sven-tui.
 pub use sven_frontend::{AgentRequest, FrontendOptions, SessionMeta};

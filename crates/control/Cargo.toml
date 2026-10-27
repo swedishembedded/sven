@@ -19,8 +19,6 @@ sven-vocab  = { path = "../vocab" }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 uuid       = { workspace = true, features = ["serde", "v4"] }
-# CBOR codec for the P2P transport (JSON is used over WebSocket).
-ciborium   = "0.2"
 
 [dev-dependencies]
 serde_json = { workspace = true }
