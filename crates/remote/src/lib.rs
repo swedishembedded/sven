@@ -14,8 +14,9 @@
 //!   whoami, the command stream and event uploads.
 //! * [`host`] - `sven rc`: one process that runs any number of sessions for
 //!   the server, each an actor owning its own session controller.
-//! * [`transcript`] - `sven rc show`: a conversation the server keeps, synced
-//!   as a replica of its shared document and read in the terminal.
+//! * [`transcript`] - `sven rc show` and `sven rc attach`: a conversation the
+//!   server keeps, synced as a replica of its shared document and read (and,
+//!   attached, written to through the server) in the terminal.
 //!
 //! The server never reaches into the machine. The host connects out, takes
 //! commands, and runs them through the same session controller every other
@@ -29,7 +30,7 @@ pub mod sessions;
 mod sse;
 pub mod transcript;
 
-pub use client::{normalize_server, ConversationNotFound, RemoteClient};
+pub use client::{normalize_server, Busy, ConversationNotFound, RemoteClient};
 pub use host::{run_host, HostOptions};
 pub use login::RemoteLogin;
 pub use sessions::SessionStore;

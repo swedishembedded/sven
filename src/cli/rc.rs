@@ -31,4 +31,13 @@ pub enum RcAction {
         #[arg(long)]
         follow: bool,
     },
+    /// Attach this terminal to a conversation that runs on this machine:
+    /// print it as it changes, and send each line typed as the next
+    /// message, as if typed in the server's interface. Ctrl-C or end of
+    /// input detaches; the conversation goes on.
+    ///   sven rc attach 6f1c...e2
+    Attach {
+        /// The conversation's id (the session id `sven rc` logs).
+        conversation: Uuid,
+    },
 }

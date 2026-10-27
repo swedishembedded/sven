@@ -37,6 +37,11 @@
 //!    empty replica) up to the server's copy of the conversation's shared
 //!    document. Only a conversation that runs on this host is found
 //!    ([`conversation_doc_endpoint`]).
+//! 6. **Attached terminals.** `POST {control_url}/conversations/{id}/messages`
+//!    with `{"text": ...}` adds a message to a conversation that runs on
+//!    this host, exactly as one sent from the server's own interface: the
+//!    server stores it, then asks this host to answer it. `409` while an
+//!    answer is being written ([`conversation_messages_endpoint`]).
 //!
 //! The server is trusted with the conversation and nothing else: it can ask
 //! a session to do work, and the session's own permission policy still
@@ -119,6 +124,13 @@ pub fn control_endpoint(control_url: &str, endpoint: &str) -> String {
         control_url.trim_end_matches('/'),
         endpoint.trim_start_matches('/')
     )
+}
+
+/// The endpoint, relative to `control_url`, that adds a message to
+/// conversation `id`.
+#[must_use]
+pub fn conversation_messages_endpoint(id: Uuid) -> String {
+    format!("conversations/{id}/messages")
 }
 
 /// The endpoint, relative to `control_url`, of conversation `id`'s shared

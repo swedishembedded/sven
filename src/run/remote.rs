@@ -43,6 +43,43 @@ pub(crate) async fn show_remote_conversation(
     }
 }
 
+/// `sven rc attach`: prints the conversation as it changes and sends each
+/// line typed as its next message, until Ctrl-C or end of input.
+pub(crate) async fn attach_remote_conversation(conversation: uuid::Uuid) -> anyhow::Result<()> {
+    use sven_remote::transcript::{Reader, FOLLOW_INTERVAL};
+    use tokio::io::AsyncBufReadExt as _;
+
+    let login = signed_in()?;
+    let client = sven_remote::RemoteClient::new(&login.control_url, &login.token)?;
+    let mut reader = Reader::new(conversation);
+    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    let mut poll = tokio::time::interval(FOLLOW_INTERVAL);
+    println!("attached; type a message and press Enter, Ctrl-C to detach");
+    loop {
+        tokio::select! {
+            _ = poll.tick() => {
+                for line in reader.read(&client).await? {
+                    println!("{line}");
+                }
+            }
+            line = lines.next_line() => {
+                let Some(text) = line? else { return Ok(()) };
+                if text.trim().is_empty() {
+                    continue;
+                }
+                match client.send_to_conversation(conversation, &text).await {
+                    Ok(()) => {}
+                    Err(e) if e.downcast_ref::<sven_remote::Busy>().is_some() => {
+                        println!("({e}; send it when the answer is done)");
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            _ = tokio::signal::ctrl_c() => return Ok(()),
+        }
+    }
+}
+
 pub(crate) async fn run_remote_host(
     config: Config,
     working_dir: Option<PathBuf>,

@@ -20,8 +20,11 @@ event; proven against a real server end to end.
    denied after ten minutes of silence (`sven_remote::approvals`).
 3. **Terminal input.** A line typed at `sven rc` is the conversation's next
    message (`ControlEvent::UserInput`, recorded by the server before its
-   answer). Left: a full TUI attached to an rc session (sharing it, not a
-   copy), and a multi-writer conversation document (item 5).
+   answer). `sven rc attach` is a terminal on a conversation from
+   anywhere: it reads the shared document live and writes through the
+   server (`{control_url}/conversations/{id}/messages`), so every client
+   writes through the same authorized path. Left: the full-screen TUI as
+   an attach client (today attach is line-based).
 4. **Browser sessions.** A whole agent turn runs as wasm with the same
    observable sequence as natively, and `sven-wasm` exposes a session to
    JavaScript (`make build/wasm`, `make test/wasm`). A page gives its

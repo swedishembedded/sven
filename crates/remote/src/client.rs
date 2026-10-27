@@ -9,8 +9,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use futures::{Stream, StreamExt};
 use sven_control::remote::{
-    control_endpoint, conversation_doc_endpoint, CommandEnvelope, EventBatch, RemoteDiscovery,
-    WhoAmI, DISCOVERY_PATH, REMOTE_PROTOCOL_VERSION,
+    control_endpoint, conversation_doc_endpoint, conversation_messages_endpoint, CommandEnvelope,
+    EventBatch, RemoteDiscovery, WhoAmI, DISCOVERY_PATH, REMOTE_PROTOCOL_VERSION,
 };
 use uuid::Uuid;
 
@@ -42,6 +42,19 @@ impl std::fmt::Display for ConversationNotFound {
 }
 
 impl std::error::Error for ConversationNotFound {}
+
+/// The server did not take the message now (an answer is being written);
+/// the reason is the server's.
+#[derive(Debug)]
+pub struct Busy(pub String);
+
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Busy {}
 
 /// How long a request that is not the command stream may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -231,6 +244,45 @@ impl RemoteClient {
             response.status()
         );
         Ok(response.bytes().await?.to_vec())
+    }
+
+    /// Adds `text` to conversation `id` as the person's next message; the
+    /// server then asks this host to answer it.
+    ///
+    /// # Errors
+    ///
+    /// The token is refused, the conversation does not run on this host
+    /// ([`ConversationNotFound`]), it is answering already ([`Busy`]), or
+    /// the server cannot be asked.
+    pub async fn send_to_conversation(&self, id: Uuid, text: &str) -> anyhow::Result<()> {
+        let response = self
+            .http
+            .post(self.url(&conversation_messages_endpoint(id)))
+            .bearer_auth(&self.token)
+            .timeout(REQUEST_TIMEOUT)
+            .json(&serde_json::json!({ "text": text }))
+            .send()
+            .await?;
+        match response.status().as_u16() {
+            401 | 403 => return Err(TokenRefused.into()),
+            404 => return Err(ConversationNotFound(id).into()),
+            409 => {
+                let reason = response
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .and_then(|body| body.get("error")?.as_str().map(str::to_string))
+                    .unwrap_or_else(|| "the conversation is busy".into());
+                return Err(Busy(reason).into());
+            }
+            _ => {}
+        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "sending the message answered {}",
+            response.status()
+        );
+        Ok(())
     }
 
     /// Uploads `batch`.

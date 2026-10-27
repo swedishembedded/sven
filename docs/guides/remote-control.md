@@ -79,8 +79,19 @@ sven rc show 6f1c...e2 --follow   # and what is added, from anywhere, until Ctrl
 this machine - written here, in a browser, or in another terminal - and a
 note while the agent is answering. It keeps a replica of the conversation's
 shared document and asks the server only for what the replica lacks, so
-following a long conversation costs a few bytes a second. It only reads;
-type into `sven rc` (above) to add to the conversation.
+following a long conversation costs a few bytes a second. It only reads.
+
+```sh
+sven rc attach 6f1c...e2          # read it live and write to it
+```
+
+`sven rc attach` shows the conversation the same way and sends each line
+you type as its next message, through the server, exactly as if it were
+typed in the server's interface: it is stored there, answered on the
+machine the conversation runs on, and appears in every attached terminal
+and browser. A line typed while an answer is being written is refused with
+a note; send it again when the answer is done. Ctrl-C or end of input
+detaches; the conversation goes on.
 
 ## Tool approvals
 
