@@ -130,7 +130,11 @@ with DeepSeek-OCR-2: the default (up to 6 tiles) gave a character error rate of
 model loop to the token limit, `max_tiles: 0` ended after 193 tokens.
 
 **No OCR model.** When none is configured or discovered, or the configured one
-is unreachable or cannot take images, nothing falls back silently. The CLI exits
+is unreachable or cannot take images, nothing falls back silently. Pages with a
+good text layer still convert; every page that needs OCR fails with that cause
+and is marked in the output, so the result is `partial` (CLI exit 2, the tool
+record adds `no_ocr_model` with the reason). When no page could convert, or
+`--ocr always` was asked for, nothing is converted: the CLI exits
 with status 3 and says so; the tool returns `status: no_ocr_model` whose text
 tells the chat model to report this to the user and to ask whether to try
 command-line converters that may be installed (`pdftotext`, `mutool`, `pandoc`,
@@ -148,7 +152,7 @@ sven document score reference.txt out.md
 
 Progress goes to stderr, one line per page. Exit status: 0 success, 2 when
 some pages failed (the output is still written, failed pages marked), 3 when no
-OCR model is available. `score` prints the character error rate of a text
+OCR model is available and no page could convert without one. `score` prints the character error rate of a text
 against a reference after whitespace normalisation, for checking a conversion
 against ground truth.
 

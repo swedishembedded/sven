@@ -107,13 +107,7 @@ async fn convert(args: &ConvertArgs, config: &Config) -> anyhow::Result<i32> {
     {
         Ok(report) => report,
         Err(DocumentError::NoModel) => {
-            eprintln!(
-                "sven: no OCR model is available ({}).\n\
-                 Add a provider that serves one (for example a brain server with \
-                 DeepSeek-OCR-2, or another OpenAI-compatible service) and set `ocr.model`, \
-                 or pass --model. `sven list-models` shows what can be used now.",
-                unavailable.unwrap_or_default()
-            );
+            eprintln!("{}", no_model_text(&unavailable.unwrap_or_default()));
             return Ok(EXIT_NO_MODEL);
         }
         Err(e) => return Err(e.into()),
@@ -142,9 +136,21 @@ async fn convert(args: &ConvertArgs, config: &Config) -> anyhow::Result<i32> {
             eprintln!("warning: {w}");
         }
     }
+    if let (Some(reason), true) = (&unavailable, report.pages_failed > 0) {
+        eprintln!("{}", no_model_text(reason));
+    }
     Ok(if report.pages_failed > 0 {
         EXIT_PARTIAL
     } else {
         0
     })
+}
+
+fn no_model_text(reason: &str) -> String {
+    format!(
+        "sven: no OCR model is available ({reason}).\n\
+         Add a provider that serves one (for example a brain server with \
+         DeepSeek-OCR-2, or another OpenAI-compatible service) and set `ocr.model`, \
+         or pass --model. `sven list-models` shows what can be used now."
+    )
 }

@@ -124,7 +124,7 @@ impl Tool for DocumentConvertTool {
         };
         let converter = Converter::new(Arc::new(HayroBackend), providers);
         match converter.convert(&source, &destination, &options).await {
-            Ok(report) => ToolOutput::ok(&call.id, record(&report, &spec)),
+            Ok(report) => ToolOutput::ok(&call.id, record(&report, &spec, unavailable.as_deref())),
             Err(DocumentError::NoModel) => ToolOutput::ok(
                 &call.id,
                 no_ocr_model_record(&unavailable.unwrap_or_default()),
@@ -135,7 +135,8 @@ impl Tool for DocumentConvertTool {
 }
 
 /// The control record: counts, hashes and paths, never page text.
-fn record(report: &Report, model: &str) -> String {
+/// `no_model` is why no OCR model was available, when none was.
+fn record(report: &Report, model: &str, no_model: Option<&str>) -> String {
     let status = if report.pages_failed == report.pages_total {
         "failed"
     } else if report.pages_failed > 0 {
@@ -172,6 +173,12 @@ fn record(report: &Report, model: &str) -> String {
     if report.pages_failed > 0 {
         record["failures"] = json!(report.failures);
         record["instruction_for_assistant"] = json!(failed_pages_instruction(report, status));
+        if let Some(reason) = no_model {
+            record["no_ocr_model"] = json!(format!(
+                "{reason}. Pages without a usable text layer need one: a provider that serves an \
+                 OCR model (for example a brain server with DeepSeek-OCR-2), set as `ocr.model`."
+            ));
+        }
     }
     record.to_string()
 }
@@ -348,6 +355,37 @@ mod tests {
             ))
             .await;
         assert!(out.is_error && out.content.contains("Available: brain/a"));
+    }
+
+    #[tokio::test]
+    async fn without_an_ocr_model_text_pages_convert_and_scans_are_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.pdf"),
+            build_pdf(&[FixturePage::Text(PROSE.to_vec()), FixturePage::Scan(100)]),
+        )
+        .unwrap();
+        let t = tool(
+            dir.path(),
+            Err(NoOcrModel::Unavailable {
+                reason: "no provider lists one".into(),
+            }),
+        );
+        let out = t
+            .execute(&call(json!({"source": "a.pdf", "destination": "b.md"})))
+            .await;
+        let record: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(record["status"], "partial", "{record}");
+        assert_eq!(record["pages"]["native"], 1);
+        assert!(record["failures"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("pages 2: "));
+        assert!(record["no_ocr_model"]
+            .as_str()
+            .unwrap()
+            .contains("no provider lists one"));
+        assert!(dir.path().join("b.md").exists());
     }
 
     #[tokio::test]

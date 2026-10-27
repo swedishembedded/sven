@@ -235,7 +235,11 @@ impl Converter {
             .flatten();
         let plan = plan_pages(&selected, &native, options, &source_sha);
         let needs_ocr = plan.iter().any(|p| p.method == Method::Ocr);
-        if needs_ocr && self.providers.is_empty() {
+        // Without a model the pages that have a good text layer still
+        // convert and the rest fail with that cause; refused only when no
+        // page could convert, or when OCR was asked for outright.
+        let only_ocr = plan.iter().all(|p| p.method == Method::Ocr);
+        if needs_ocr && self.providers.is_empty() && (only_ocr || options.ocr == OcrMode::Always) {
             return Err(DocumentError::NoModel);
         }
         if needs_ocr && self.providers.iter().any(|p| !p.supports_images()) {
@@ -295,7 +299,7 @@ impl Converter {
                 let ctx = Arc::clone(&ctx);
                 let native = native[work.page - 1].clone();
                 async move {
-                    let prepared = if work.method == Method::Ocr {
+                    let prepared = if work.method == Method::Ocr && !ctx.providers.is_empty() {
                         let (image, render_ms) = render(&ctx, work.page - 1, ctx.options.dpi).await;
                         Some(Prepared { image, render_ms })
                     } else {
@@ -308,7 +312,7 @@ impl Converter {
             .map(|(work, native, prepared)| {
                 let ctx = Arc::clone(&ctx);
                 async move {
-                    let is_ocr = work.method == Method::Ocr;
+                    let is_ocr = prepared.is_some();
                     let record = process_page(&ctx, work, native, prepared).await;
                     if is_ocr {
                         ctx.limiter.page_done();

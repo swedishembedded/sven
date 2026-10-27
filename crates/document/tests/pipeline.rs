@@ -269,6 +269,38 @@ async fn unusable_requests_fail_before_any_output_exists() {
 }
 
 #[tokio::test]
+async fn without_a_model_text_pages_convert_and_scans_fail_with_the_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &mixed());
+    let out = dir.path().join("out.md");
+    let conv = Converter::new(Arc::new(HayroBackend), Vec::new());
+    let r = conv.convert(&src, &out, &options()).await.unwrap();
+    assert_eq!((r.pages_native, r.pages_failed), (2, 2));
+    assert_eq!(r.failures.len(), 1, "{:?}", r.failures);
+    assert!(
+        r.failures[0].starts_with("pages 2, 4: "),
+        "{:?}",
+        r.failures
+    );
+    assert!(r.failures[0].contains("no OCR model"), "{:?}", r.failures);
+    assert!(std::fs::read_to_string(&out).unwrap().contains(PROSE[0]));
+
+    // Nothing to convert natively, or OCR forced: no conversion at all.
+    let scan_only = write_pdf(dir.path(), &scans(2));
+    let err = conv
+        .convert(&scan_only, &out, &options())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, DocumentError::NoModel), "{err}");
+    let always = ConvertOptions {
+        ocr: OcrMode::Always,
+        ..options()
+    };
+    let err = conv.convert(&src, &out, &always).await.unwrap_err();
+    assert!(matches!(err, DocumentError::NoModel), "{err}");
+}
+
+#[tokio::test]
 async fn blank_pages_cost_no_request() {
     let dir = tempfile::tempdir().unwrap();
     let src = write_pdf(dir.path(), &[FixturePage::Blank, FixturePage::Scan(100)]);

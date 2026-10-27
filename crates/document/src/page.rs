@@ -140,6 +140,12 @@ pub(crate) async fn process_page(
             record.render_ms = prepared.render_ms;
             recognise(ctx, &work, native.as_deref(), prepared, &mut record).await;
         }
+        (Method::Ocr, None) => {
+            record.status = Status::Failed;
+            record.warnings = vec![
+                "the page needs OCR (no usable text layer) and no OCR model is available".into(),
+            ];
+        }
         _ => {
             record.text = native.as_deref().unwrap_or_default().trim().to_string();
             if record.text.is_empty() {
