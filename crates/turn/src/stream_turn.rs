@@ -1313,6 +1313,9 @@ mod default_thinking_cap_tests {
             max_thinking_tokens: Some(100),
             thinking_timeout_secs: Some(5),
         };
-        assert_eq!(explicit.resolve(), (Some(100), Some(Duration::from_secs(5))));
+        assert_eq!(
+            explicit.resolve(),
+            (Some(100), Some(Duration::from_secs(5)))
+        );
     }
 }
