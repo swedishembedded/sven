@@ -65,6 +65,7 @@ configuration file; see [Configuration](configuration.md#toolsdisclosure).
 | `--trace PATH` | - | `--load-trace PATH` plus `--output-trace PATH`: the one session-persistence flag for headless and TUI runs. A missing file starts a new session and is created on the first write; the TUI rewrites it after every turn. |
 | `--rerun-toolcalls` | off | Replay the tool calls recorded in the loaded trajectory with fresh results before the model sees them. Needs `--load-trace` or `--trace`. |
 | `--token-ledger` | off | Print one `[sven:ledger]` JSON line per model request on stderr. The ledger is stored in the trajectory either way; `sven ledger FILE` summarises it. |
+| `--record-requests FILE` | off | Append every model request this process sends (sub-agents included), exactly as sent, and a summary of what came back to FILE, one JSON object per line. `sven replay FILE` sends one again. |
 | `-v, --verbose` | warn | `-v` debug logging and tool output snippets on stderr, `-vv` trace logging. `RUST_LOG` overrides the log filter. |
 
 ### Limits and workflow control
@@ -145,6 +146,7 @@ Everything a subcommand prints on failure goes to stderr and the exit code is
 |---------|-------------|
 | `sven chats [-n, --limit N]` | List saved sessions (default 20): ID to pass to `--resume`, update time, status and title. |
 | `sven ledger FILE [--json]` | Summarise the [token ledger](../internals/token-ledger.md) of a saved trajectory, sub-agents included, as a table or one JSON object. |
+| `sven replay FILE [--list] [--request N] [--repeat K] [--seed S \| --reported-seed] [--json]` | Send request N (default: the last) of a `--record-requests` log again, K times, to the model `-M`/`-c` select, and print each response (seed, input/cached/output tokens, tool calls, text) beside the recorded one. No tool runs, so the request just before a fault can be reproduced as often as needed while the server or drivers change. `--list` numbers the requests. |
 | `sven migrate-sessions [--dry-run]` | Convert every saved `.yaml` chat to an ATIF `.json` trajectory in one pass. Never overwrites an existing `.json` and never touches the `.yaml` files. Exits `1` if any conversion fails. |
 | `sven validate -f FILE` | Parse a workflow file and print its title, frontmatter, preamble size and each step with its mode, provider, model and timeout. Exits `1` only when the file cannot be read; see [Workflows](../guides/workflows.md#validation-and-dry-run). |
 | `sven oauth-callback URL` | Forward an `sven://` OAuth redirect to the local callback server (port `5598`, or `SVEN_OAUTH_CALLBACK_PORT`). Invoked by the OS protocol handler; call it by hand only to test. |

@@ -43,6 +43,7 @@ nix        = { version = "0.29", features = ["mman", "fs", "socket", "uio"], opt
 
 [dev-dependencies]
 base64 = { workspace = true }
+tempfile = { workspace = true }
 serde_yaml = { workspace = true }
 # `p2p` lets the D-Bus provider test serve a fake Brain1.Manager over a plain
 # UnixStream pair, with no dbus-daemon and no well-known name involved.

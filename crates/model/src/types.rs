@@ -468,7 +468,7 @@ pub struct FunctionCall {
 /// `response_format`).  Providers that do not support it ignore the field; the
 /// caller is expected to *also* describe the schema in the prompt and always
 /// post-parse the result, so structured output works uniformly across drivers.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ResponseFormat {
     /// Constrain output to a syntactically valid JSON object (no schema).
     JsonObject,
@@ -518,7 +518,7 @@ pub struct SamplingParams {
 }
 
 /// Whether the model may call the tools a request offers.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolChoice {
     /// The model decides (the providers' default).
     #[default]
@@ -529,7 +529,10 @@ pub enum ToolChoice {
 }
 
 /// Request sent to a model provider.
-#[derive(Debug, Clone, Default)]
+///
+/// Serializable so a request can be recorded exactly as sent and replayed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CompletionRequest {
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSchema>,

@@ -33,6 +33,7 @@ pub(crate) mod openai_compat;
 mod openrouter;
 mod provider_check;
 pub mod reachable;
+pub mod request_log;
 mod resolve;
 mod thinking;
 
@@ -633,7 +634,7 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
 /// server for its actual context window, see [`from_config_probed`].
 pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
     let (inner, context_window, max_output_tokens) = build_inner(cfg)?;
-    Ok(Box::new(ConfigBoundedProvider {
+    Ok(request_log::wrap(Box::new(ConfigBoundedProvider {
         inner: Arc::from(inner),
         config_context_window: context_window,
         max_output_tokens,
@@ -642,7 +643,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             .as_deref()
             .and_then(parse_input_modalities),
         live: None,
-    }))
+    })))
 }
 
 /// Like [`from_config`], but additionally asks the live server what it is
@@ -680,7 +681,7 @@ pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn Mod
         discovery::effective_base_url(cfg).is_some_and(|u| discovery::is_local_endpoint(&u));
     let live = discovery::LiveState::new(&cfg.name, local);
     live.refresh(&*inner).await;
-    Ok(Box::new(ConfigBoundedProvider {
+    Ok(request_log::wrap(Box::new(ConfigBoundedProvider {
         inner,
         config_context_window,
         max_output_tokens,
@@ -689,7 +690,7 @@ pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn Mod
             .as_deref()
             .and_then(parse_input_modalities),
         live: Some(live),
-    }))
+    })))
 }
 
 /// Steps 0-2 of [`from_config_probed`]: the configuration a session actually

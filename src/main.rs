@@ -67,6 +67,9 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(not(feature = "network"))]
     let is_server = false;
     init_logging(cli.verbose, is_interactive, is_server);
+    if let Some(path) = &cli.record_requests {
+        sven_model_drivers::request_log::install(path)?;
+    }
 
     // Handle subcommands first (before loading config)
     if let Some(cmd) = &cli.command {
@@ -126,6 +129,29 @@ async fn main() -> anyhow::Result<()> {
             Commands::Chats { limit } => {
                 print_chats(*limit);
                 return Ok(());
+            }
+            Commands::Replay(cli::ReplayArgs {
+                file,
+                list,
+                request,
+                repeat,
+                seed,
+                reported_seed,
+                json,
+            }) => {
+                let mut config = Settings::load(cli.config.as_deref())?.runtime;
+                if let Some(m) = &cli.model {
+                    config.model = config.resolve_model(m);
+                }
+                let seed = match (seed, reported_seed) {
+                    (Some(s), _) => run::replay::ReplaySeed::Fixed(*s),
+                    (None, true) => run::replay::ReplaySeed::Reported,
+                    (None, false) => run::replay::ReplaySeed::AsRecorded,
+                };
+                return run::replay::run_replay_command(
+                    file, *list, *request, *repeat, seed, *json, &config,
+                )
+                .await;
             }
             Commands::Ledger { file, json } => {
                 return run_ledger_command(file, *json);

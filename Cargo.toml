@@ -190,6 +190,7 @@ sven-acp         = { path = "crates/acp", optional = true }
 anyhow      = { workspace = true }
 humantime   = { workspace = true }
 tokio       = { workspace = true }
+futures     = { workspace = true }
 clap        = { workspace = true }
 rustls      = { workspace = true }
 clap_complete = { workspace = true }

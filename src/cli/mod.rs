@@ -23,6 +23,7 @@ mod harness;
 mod index;
 mod output_format;
 mod questions;
+mod replay;
 mod task;
 #[cfg(feature = "network")]
 mod team;
@@ -44,6 +45,7 @@ pub use harness::{ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, PlanF
 pub use index::IndexCommands;
 pub use output_format::OutputFormatArg;
 pub use questions::QuestionsCommands;
+pub use replay::ReplayArgs;
 #[cfg(feature = "network")]
 pub use sven_acp::cli::AcpCommands;
 #[cfg(feature = "network")]
@@ -281,6 +283,11 @@ pub struct Cli {
     #[arg(long)]
     pub token_ledger: bool,
 
+    /// Append every model request this process sends, exactly as sent, and
+    /// what came back to FILE (JSONL). `sven replay FILE` sends one again.
+    #[arg(long, value_name = "FILE")]
+    pub record_requests: Option<PathBuf>,
+
     /// Increase verbosity (-v = debug, -vv = trace)
     #[arg(long, short = 'v', action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -441,6 +448,10 @@ pub enum Commands {
         #[arg(long, short = 'n', default_value = "20")]
         limit: usize,
     },
+    /// Send a recorded model request (`--record-requests`) again, to
+    /// reproduce what the model did there; no tool runs.
+    ///   sven replay run.requests.jsonl --request 14 --repeat 5 --seed 7
+    Replay(ReplayArgs),
     /// Summarize the token ledger of a saved trajectory.
     ///
     /// A run made with `--token-ledger` (or any run, since the ledger is
