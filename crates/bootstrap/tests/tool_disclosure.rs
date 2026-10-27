@@ -118,6 +118,16 @@ async fn the_deferred_core_is_a_fraction_of_the_full_listing() {
 }
 
 #[tokio::test]
+async fn the_index_tells_the_model_to_prefer_a_built_in_tool_over_installing_one() {
+    let registry = registry(Disclosure::Deferred).await;
+    let index = index_section(&registry, AgentMode::Agent).expect("an index");
+    assert!(
+        index.contains("prefer it over a skill or a script that installs packages"),
+        "{index}"
+    );
+}
+
+#[tokio::test]
 async fn the_system_prompt_index_names_every_deferred_tool_once() {
     let registry = registry(Disclosure::Deferred).await;
     let index = index_section(&registry, AgentMode::Agent).expect("an index");

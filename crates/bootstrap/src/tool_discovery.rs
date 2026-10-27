@@ -408,8 +408,14 @@ pub fn index_section(registry: &ToolRegistry, mode: AgentMode) -> Option<String>
          These tools exist but are not in your tool list. Load a tool before you call it: call \
          `tools` with action=load and names; from your next step it is in your tool list and you \
          call it directly. action=search (query) finds tools, action=list pages through all of \
-         them, action=help shows a definition without loading it.\n\n",
+         them, action=help shows a definition without loading it. A built-in tool does its job \
+         with nothing to install: when one fits the task, prefer it over a skill or a script \
+         that installs packages.",
     );
+    if tools.iter().any(|t| t.name == "document_locate") {
+        out.push_str(" For PDF files that is document_locate (which pages) and document_convert.");
+    }
+    out.push_str("\n\n");
     if tools.len() <= INLINE_INDEX_LIMIT {
         out.push_str("Not loaded:\n");
         for tool in &tools {
