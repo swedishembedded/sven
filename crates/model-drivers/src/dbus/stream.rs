@@ -263,6 +263,11 @@ impl Translator {
                 .into_iter()
                 .filter(|e| want_logprobs || !matches!(e, ResponseEvent::Tokens { .. })),
         );
+        // The output budget cut the reply (possibly mid-reasoning or
+        // mid-call): the agent handles a truncated turn, not a finished one.
+        if result.get("finish_reason").and_then(Value::as_str) == Some("length") {
+            events.push(ResponseEvent::MaxTokens);
+        }
         let anomalies = scan_anomalies(&json);
         if !anomalies.is_empty() {
             tracing::warn!(
@@ -299,6 +304,34 @@ mod tests {
             delta: None,
             event: Some(e),
         }
+    }
+
+    /// brain's `finish_reason: "length"` is a reply its output budget cut;
+    /// the agent must hear it, as from every other driver.
+    #[test]
+    fn a_reply_cut_by_the_output_budget_reports_max_tokens() {
+        let mut t = Translator::default();
+        let events = t
+            .events(
+                Frame::Done {
+                    result: serde_json::json!({"finish_reason": "length", "text": ""}),
+                },
+                false,
+            )
+            .unwrap();
+        assert!(
+            events.iter().any(|e| matches!(e, ResponseEvent::MaxTokens)),
+            "{events:?}"
+        );
+        let done = t
+            .events(
+                Frame::Done {
+                    result: serde_json::json!({"finish_reason": "stop", "text": "hi"}),
+                },
+                false,
+            )
+            .unwrap();
+        assert!(!done.iter().any(|e| matches!(e, ResponseEvent::MaxTokens)));
     }
 
     #[test]
