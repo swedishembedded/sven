@@ -19,11 +19,12 @@ use crate::{
     OBSERVATION_CAPACITY,
 };
 
-/// A handle to a running kernel backed by a `Box<dyn ErasedMachine>`.
-///
-/// Analogous to [`Runtime<M>`](crate::Runtime) but without the generic type parameter. Use
-/// this when the concrete machine type is selected at runtime (e.g. via
-/// `sven_machines::ModeRegistry`).
+/// A handle to a running kernel backed by a `Box<dyn ErasedMachine>`: the one
+/// runtime. A machine known at compile time runs as
+/// `Box::new(Hsm::new(machine))`; one selected at run time (e.g. via
+/// `sven_machines::ModeRegistry`) arrives already boxed. Either way there is
+/// one consumer loop, so one set of run-to-completion and effect-gating
+/// semantics.
 pub struct ErasedRuntime {
     sink: EventSink,
     obs: ObservationSink,

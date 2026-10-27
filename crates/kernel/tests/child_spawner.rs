@@ -17,7 +17,7 @@ use sven_hsm::{
     Context, Effect, Event, Hsm, Machine, MachineId, ObservationSink, PermissionPolicy, Reaction,
     ToolCapability,
 };
-use sven_kernel::{ChildRun, ChildSpawner, EffectExecutor, EventSink, Runtime};
+use sven_kernel::{ChildRun, ChildSpawner, EffectExecutor, ErasedRuntime, EventSink};
 
 // ── A trivial child machine: doubles the `task` fact it was seeded with ───────
 
@@ -84,9 +84,9 @@ impl Machine for ChildMachine {
     }
 }
 
-// ── A spawner that runs each child as its own real `Runtime` ──────────────────
+// ── A spawner that runs each child as its own real `ErasedRuntime` ──────────────────
 
-/// Spawns a fully-isolated child `Runtime` per descriptor, drives it to its
+/// Spawns a fully-isolated child `ErasedRuntime` per descriptor, drives it to its
 /// terminal state, then reports the harvested result up to the parent. Tracks
 /// the peak number of simultaneously-live children to prove real parallelism:
 /// every child waits on a shared [`tokio::sync::Barrier`] sized to the fan-out
@@ -127,8 +127,8 @@ impl ChildSpawner for RealChildSpawner {
             let mut child_ctx = Context::new();
             child_ctx.set_fact("task", descriptor.clone());
 
-            let rt = Runtime::spawn(
-                Hsm::new(ChildMachine::new()),
+            let rt = ErasedRuntime::spawn(
+                Box::new(Hsm::new(ChildMachine::new())),
                 child_ctx,
                 PermissionPolicy::builder().build(),
                 NoopExec,
@@ -253,8 +253,8 @@ async fn instantiate_submachine_fans_out_children_and_aggregates_results() {
         rendezvous: Arc::new(tokio::sync::Barrier::new(3)),
     });
 
-    let rt = Runtime::spawn_with_children(
-        Hsm::new(FanOutMachine::new(3)),
+    let rt = ErasedRuntime::spawn_with_children(
+        Box::new(Hsm::new(FanOutMachine::new(3))),
         Context::new(),
         PermissionPolicy::builder()
             .allow_in(PState::FanOut, [ToolCapability::SpawnChild])
@@ -288,8 +288,8 @@ async fn instantiate_submachine_fans_out_children_and_aggregates_results() {
 async fn no_spawner_leaves_instantiate_effects_for_the_executor() {
     // Without a ChildSpawner the InstantiateSubmachine effect falls through to
     // the executor (historical no-op), so the machine simply never completes.
-    let rt = Runtime::spawn(
-        Hsm::new(FanOutMachine::new(2)),
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(FanOutMachine::new(2))),
         Context::new(),
         PermissionPolicy::builder()
             .allow_in(PState::FanOut, [ToolCapability::SpawnChild])

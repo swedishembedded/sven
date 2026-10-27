@@ -417,7 +417,7 @@ mod tests {
         ApprovalId, Context, Effect, Event, Hsm, MachineId, ObservationSink, PermissionPolicy,
         Reaction, ToolCapability,
     };
-    use sven_kernel::{EffectExecutor, EventSink, Runtime};
+    use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink};
     use tokio::sync::mpsc;
 
     use super::{ApprovalMode, ApprovalRequest, UserExecutor, UserQuestion};
@@ -480,8 +480,8 @@ mod tests {
     }
 
     async fn run_user_effect(exec: &mut UserExecutor, effect: Effect) -> String {
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             NoOpExec,
@@ -506,8 +506,8 @@ mod tests {
     /// since a real absence-of-event is indistinguishable from "still
     /// pending" without one.
     async fn assert_no_kernel_event(exec: &mut UserExecutor, effect: Effect) {
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             NoOpExec,
@@ -558,8 +558,8 @@ mod tests {
             let question = q_rx.recv().await.unwrap();
             drop(question);
         });
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             NoOpExec,
@@ -726,8 +726,8 @@ mod tests {
             let (qtx, mut qrx) = mpsc::channel(4);
             let (atx, mut arx) = mpsc::channel(4);
             let mut exec = UserExecutor::new(qtx, atx).with_approval_mode(ApprovalMode::Manual);
-            let rt = Runtime::spawn(
-                Hsm::new(OneShotMachine::new()),
+            let rt = ErasedRuntime::spawn(
+                Box::new(Hsm::new(OneShotMachine::new())),
                 Context::new(),
                 PermissionPolicy::builder().build(),
                 NoOpExec,

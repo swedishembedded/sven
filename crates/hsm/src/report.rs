@@ -11,8 +11,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::audit::{AuditRecord, ToolAuditRecord};
 use crate::context::Context;
-use crate::machine::Machine;
-use crate::Hsm;
 
 /// An observable snapshot of the running machine, published after every
 /// dispatch.
@@ -28,17 +26,8 @@ pub struct RuntimeStatus {
     pub processed: u64,
 }
 
-/// What the consumer task returns when it stops: the final machine and context.
-pub struct RuntimeReport<M: Machine> {
-    /// The machine in its final state.
-    pub hsm: Hsm<M>,
-    /// The final extended state (including the full audit trail).
-    pub ctx: Context,
-}
-
-/// Like [`RuntimeReport`] but for type-erased machines. Returns the final
-/// state label and extended context; the machine itself is consumed by the
-/// loop.
+/// What the consumer task returns when it stops: the final state label and
+/// extended context; the machine itself is consumed by the loop.
 pub struct ErasedReport {
     /// State label of the machine when it stopped.
     pub state_label: String,

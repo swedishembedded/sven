@@ -169,7 +169,7 @@ mod tests {
         ObservationSink, PermissionPolicy, Principal, Reaction, ToolAuditRecord, ToolCallId,
         ToolCapability,
     };
-    use sven_kernel::{EffectExecutor, EventSink, Runtime};
+    use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink};
 
     use super::{verify_chain, AuditExecutor, ChainedLine, GENESIS_HASH};
 
@@ -230,9 +230,9 @@ mod tests {
     }
 
     /// Spawns a throwaway runtime just to obtain a live `EventSink`.
-    fn sink_fixture() -> (Runtime<TinyMachine>, EventSink) {
-        let rt = Runtime::spawn(
-            Hsm::new(TinyMachine::new()),
+    fn sink_fixture() -> (ErasedRuntime, EventSink) {
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(TinyMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             NoOpExec,

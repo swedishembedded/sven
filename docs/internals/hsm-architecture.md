@@ -247,15 +247,12 @@ Executors run their work on separate tasks and post result events back through
 a cloned `EventSink`. All async I/O is therefore outside the machine; the
 machine itself is always synchronous.
 
-There are two runtime flavours:
+There is one runtime, `ErasedRuntime`, and one consumer loop. It drives a
+`Box<dyn ErasedMachine>`: a machine selected at run time from the
+`ModeRegistry` arrives boxed, and one known at compile time runs as
+`Box::new(Hsm::new(machine))`.
 
-- `Runtime<M>` - generic over a concrete `Machine` type. Used in tests and
-  wherever the machine type is known at compile time.
-- `ErasedRuntime` - drives a `Box<dyn ErasedMachine>` whose state type is erased.
-  Used in production where the machine is selected at runtime from the
-  `ModeRegistry`.
-
-Both expose `spawn` and `spawn_with_children` (the latter installs an optional
+It exposes `spawn` and `spawn_with_children` (the latter installs an optional
 `ChildSpawner`), plus `post`, `status`/`status_watch`, `subscribe_observations`,
 `wait_for_state`, `wait_done`, `audit_snapshot`, `abort`, `cancel`/`cancel_scope`
 and `join`. `ErasedRuntime` also offers `capture()`, which returns a `Snapshot`
@@ -671,7 +668,7 @@ E2E bats tests use `--model mock` so no real API key is required.
 | Crate | Role |
 |-------|------|
 | `sven-hsm` | HSM kernel vocabulary and pure dispatch: `Machine` trait, `Hsm`, permissions, audit/replay, snapshots, `Submachine`, `ObservationSink`/`UiEvent` |
-| `sven-kernel` | Active Object runtime: `Runtime`/`ErasedRuntime`, `EffectExecutor`, `EventSink`, `ChildSpawner`, `Clock`/timers |
+| `sven-kernel` | Active Object runtime: `ErasedRuntime`, `EffectExecutor`, `EventSink`, `ChildSpawner`, `Clock`/timers |
 | `sven-vocab` | Shared wire types with no behaviour: `TurnRequest`, `SessionEvent` (re-exported as `UiEvent` / `AgentEvent`), `AgentMode`, `ApprovalMode`, verifier specs |
 | `sven-model` | Stateless provider abstraction: `ModelProvider`, `CompletionRequest` (incl. `response_format`), `Message`, `ResponseEvent`, `ResponseFormat` |
 | `sven-tool-api` | `Tool` trait, `ToolCall` / `ToolOutput`, approval policy / `PermissionRequester`, tool events and display |

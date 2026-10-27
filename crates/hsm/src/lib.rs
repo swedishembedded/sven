@@ -45,7 +45,7 @@
 //! # Building a machine
 //!
 //! Implement [`Machine`] for your state enum, then drive it with [`Hsm`] (pure,
-//! synchronous, perfect for tests) or `sven_kernel::Runtime`/`ErasedRuntime`
+//! synchronous, perfect for tests) or `sven_kernel::ErasedRuntime`
 //! (async, with real effect execution, in the separate `sven-kernel` crate).
 //! See that crate's integration tests for a worked 3-level example.
 
@@ -91,7 +91,7 @@ pub use permissions::{
     validate_effects_are_allowed, EffectDisposition, PermissionPolicy, PermissionPolicyBuilder,
     ToolCapability,
 };
-pub use report::{AuditTrailHandle, ErasedReport, RuntimeReport, RuntimeStatus, StateLabel};
+pub use report::{AuditTrailHandle, ErasedReport, RuntimeStatus, StateLabel};
 pub use snapshot::{RestoreError, Snapshot};
 pub use status::Reaction;
 pub use submachine::{ErasedMachine, Submachine, SubmachineOutcome};

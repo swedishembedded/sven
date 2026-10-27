@@ -50,7 +50,7 @@ mod tests {
     use sven_hsm::{
         Context, Effect, Event, Hsm, MachineId, ObservationSink, PermissionPolicy, Reaction,
     };
-    use sven_kernel::{EffectExecutor, EventSink, Runtime};
+    use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink};
 
     use super::InternalExecutor;
 
@@ -112,8 +112,8 @@ mod tests {
     }
 
     async fn run_internal_effect(exec: &mut InternalExecutor, effect: Effect) -> String {
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             NoOpExec,
@@ -148,8 +148,8 @@ mod tests {
         // PersistAudit should be silently ignored.
         let effect = Effect::PersistAudit;
 
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             NoOpExec,

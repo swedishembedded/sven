@@ -542,7 +542,7 @@ mod tests {
     /// transition's `Entry` handler - and, since `Entry` handlers may never
     /// transition themselves (`Retrying` bounces to `Attempting` via a
     /// self-addressed `EmitInternal`/`Custom` round trip instead), simulates
-    /// that one round trip too. A real `Runtime` does this via
+    /// that one round trip too. A real `ErasedRuntime` does this via
     /// `InternalExecutor`; this direct `dispatch_state` unit test has no
     /// executor, so it plays that one part by hand.
     fn drive(

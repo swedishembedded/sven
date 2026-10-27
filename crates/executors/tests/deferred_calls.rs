@@ -23,7 +23,7 @@ use sven_hsm::{
     Context, Effect, Event, Hsm, Machine, MachineId, PermissionPolicy, Reaction, ToolAuditOutcome,
     ToolCallId, ToolCapability,
 };
-use sven_kernel::Runtime;
+use sven_kernel::ErasedRuntime;
 use sven_tool_registry::{
     ApprovalPolicy, Disclosure, Tool, ToolCall, ToolOutput, ToolRegistry, DISCOVERY_TOOL,
 };
@@ -163,11 +163,11 @@ async fn call_web_fetch(
     let policy = PermissionPolicy::builder()
         .allow_globally(allowed.iter().copied())
         .build();
-    let runtime = Runtime::spawn(
-        Hsm::new(Caller {
+    let runtime = ErasedRuntime::spawn(
+        Box::new(Hsm::new(Caller {
             id: MachineId::new(),
             call,
-        }),
+        })),
         Context::new(),
         policy,
         ToolExecutor::unrestricted(Arc::clone(&registry)),

@@ -20,7 +20,7 @@ The kernel already supports an *in-process* child (`Submachine<P>`), but that
 runs the child synchronously inside the parent's dispatch - fine for a single
 nested workflow, wrong for parallelism. To run N tasks at once without blocking
 the parent's single run-to-completion consumer loop, each task gets its **own
-`Runtime`**: its own event queue, its own consumer task, and its own `Context`
+`ErasedRuntime`**: its own event queue, its own consumer task, and its own `Context`
 and conversation store. The parent stays responsive and the tasks make progress
 simultaneously.
 
@@ -88,7 +88,7 @@ again.
 
 ### `spawn_with_children` and the child registry
 
-Both `Runtime<M>` and `ErasedRuntime` expose `spawn_with_children`, which takes an
+`ErasedRuntime` exposes `spawn_with_children`, which takes an
 optional `Arc<dyn ChildSpawner>`. Inside the consumer loop:
 
 - After each dispatch, the effect batch is validated as usual; each allowed

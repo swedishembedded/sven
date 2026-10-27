@@ -808,8 +808,8 @@ mod tests {
     }
 
     async fn run_verify_effect(exec: &mut VerifyExecutor, spec: VerifierSpec) -> VerifierVerdict {
-        let rt = sven_kernel::Runtime::spawn(
-            sven_hsm::Hsm::new(OneShotMachine::new()),
+        let rt = sven_kernel::ErasedRuntime::spawn(
+            Box::new(sven_hsm::Hsm::new(OneShotMachine::new())),
             sven_hsm::Context::new(),
             sven_hsm::PermissionPolicy::builder().build(),
             NoOpExec,
@@ -865,8 +865,8 @@ mod tests {
     async fn verify_executor_ignores_non_verify_effects() {
         let dir = tempdir();
         let mut exec = VerifyExecutor::new(dir.path());
-        let rt = sven_kernel::Runtime::spawn(
-            sven_hsm::Hsm::new(OneShotMachine::new()),
+        let rt = sven_kernel::ErasedRuntime::spawn(
+            Box::new(sven_hsm::Hsm::new(OneShotMachine::new())),
             sven_hsm::Context::new(),
             sven_hsm::PermissionPolicy::builder().build(),
             NoOpExec,

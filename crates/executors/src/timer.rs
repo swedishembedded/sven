@@ -59,7 +59,7 @@ mod tests {
     use std::time::Duration;
 
     use sven_hsm::{Context, Effect, Event, Hsm, MachineId, PermissionPolicy, Reaction, TimerId};
-    use sven_kernel::{EffectExecutor, Runtime, VirtualClock};
+    use sven_kernel::{EffectExecutor, ErasedRuntime, VirtualClock};
 
     use super::TimerExecutor;
 
@@ -123,8 +123,8 @@ mod tests {
         let clock = VirtualClock::new();
         let timer_exec = TimerExecutor::new(Arc::new(clock.clone()));
 
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             timer_exec,
@@ -156,8 +156,8 @@ mod tests {
         let clock = VirtualClock::new();
         let timer_exec = TimerExecutor::new(Arc::new(clock.clone()));
 
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             timer_exec,
@@ -197,8 +197,8 @@ mod tests {
             // Dummy sink pointing to a dropped channel - we only care that
             // cancel aborts the task.
             {
-                let rt = Runtime::spawn(
-                    Hsm::new(OneShotMachine::new()),
+                let rt = ErasedRuntime::spawn(
+                    Box::new(Hsm::new(OneShotMachine::new())),
                     Context::new(),
                     PermissionPolicy::builder().build(),
                     super::TimerExecutor::new(Arc::new(VirtualClock::new())),

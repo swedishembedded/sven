@@ -592,7 +592,7 @@ mod tests {
         Context, Effect, Event, Hsm, MachineId, ObservationSink, PermissionPolicy, Reaction,
         ToolCallId, ToolCapability,
     };
-    use sven_kernel::{EffectExecutor, EventSink, Runtime};
+    use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink};
     use sven_tool_registry::ToolRegistry;
 
     use super::ToolExecutor;
@@ -658,8 +658,8 @@ mod tests {
     }
 
     pub(super) async fn run_tool_effect(exec: &mut ToolExecutor, effect: Effect) -> String {
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             NoOpExec,
@@ -929,8 +929,8 @@ mod tests {
             .insert(call_id, (thread_id.to_string(), orig_id));
         exec.store = Arc::clone(&store);
 
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             NoOpExec,
@@ -1297,8 +1297,8 @@ mod watchdog_tests {
         let cancel = sven_kernel::CancelScope::new();
         let mut exec =
             ToolExecutor::new(Arc::new(registry), HashSet::new()).with_cancel(cancel.clone());
-        let rt = sven_kernel::Runtime::spawn(
-            sven_hsm::Hsm::new(super::tests::OneShotMachine::new()),
+        let rt = sven_kernel::ErasedRuntime::spawn(
+            Box::new(sven_hsm::Hsm::new(super::tests::OneShotMachine::new())),
             sven_hsm::Context::new(),
             sven_hsm::PermissionPolicy::builder().build(),
             super::tests::NoOpExec,

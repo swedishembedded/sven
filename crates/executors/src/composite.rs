@@ -16,7 +16,7 @@
 //!     .with_audit("/var/log/sven/audit.jsonl")
 //!     .build();
 //!
-//! let runtime = Runtime::spawn(Hsm::new(machine), ctx, policy, executor, 64);
+//! let runtime = ErasedRuntime::spawn(Box::new(Hsm::new(machine)), ctx, policy, executor, 64);
 //! ```
 
 use std::collections::HashSet;
@@ -347,7 +347,7 @@ mod tests {
 
     use serde_json::json;
     use sven_hsm::{Context, Effect, Event, Hsm, MachineId, PermissionPolicy, Reaction};
-    use sven_kernel::{EffectExecutor, Runtime};
+    use sven_kernel::{EffectExecutor, ErasedRuntime};
     use sven_tool_registry::ToolRegistry;
 
     use super::{CompositeExecutor, CompositeExecutorBuilder};
@@ -405,8 +405,8 @@ mod tests {
     }
 
     async fn run_composite_effect(exec: &mut CompositeExecutor, effect: Effect) -> String {
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             super::CompositeExecutor::builder().build(),
@@ -519,8 +519,8 @@ mod tests {
             capability: sven_hsm::ToolCapability::ReadFile,
         };
 
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             CompositeExecutorBuilder::default().build(),
@@ -561,8 +561,8 @@ mod tests {
             .with_tools(Arc::new(ToolRegistry::new()), Default::default())
             .build();
 
-        let rt = Runtime::spawn(
-            Hsm::new(OneShotMachine::new()),
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
             Context::new(),
             PermissionPolicy::builder().build(),
             super::CompositeExecutorBuilder::default().build(),

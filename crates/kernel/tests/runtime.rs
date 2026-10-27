@@ -8,15 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use common::{AgentMachine, GuardMachine, TState, TimerMachine};
+use common::{AgentMachine, GuardMachine, TimerMachine};
 use serde_json::Value;
 use sven_hsm::{
     Context, Effect, Event, Hsm, ObservationSink, PermissionPolicy, ToolAuditOutcome,
     ToolCapability,
 };
-use sven_kernel::{
-    Clock, EffectExecutor, ErasedRuntime, EventSink, Runtime, TimerService, VirtualClock,
-};
+use sven_kernel::{Clock, EffectExecutor, ErasedRuntime, EventSink, TimerService, VirtualClock};
 
 /// Executor that turns `ScheduleTimeout`/`CancelTimeout` into real timer tasks
 /// via a [`TimerService`] backed by the injected clock.
@@ -47,8 +45,8 @@ async fn virtual_time_timeout_drives_machine_to_terminal() {
         timer: None,
     };
 
-    let rt = Runtime::spawn(
-        Hsm::new(TimerMachine::new()),
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(TimerMachine::new())),
         Context::new(),
         PermissionPolicy::builder().build(),
         exec,
@@ -66,7 +64,7 @@ async fn virtual_time_timeout_drives_machine_to_terminal() {
     rt.wait_done().await;
 
     let report = rt.join().await.expect("runtime task joined");
-    assert_eq!(report.hsm.state(), TState::Fired);
+    assert_eq!(report.state_label, "Fired");
 }
 
 /// No-op executor that simply records the effects it was handed.
@@ -77,7 +75,11 @@ struct RecordingExec {
 #[async_trait]
 impl EffectExecutor for RecordingExec {
     async fn execute(&mut self, effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {
-        self.seen.lock().unwrap().push(effect.kind());
+        // The runtime's own audit flush after every dispatch is not an effect
+        // the machine asked for; only those are recorded.
+        if !matches!(effect, Effect::PersistAudit) {
+            self.seen.lock().unwrap().push(effect.kind());
+        }
     }
 }
 
@@ -89,8 +91,8 @@ async fn runtime_rejects_forbidden_effects_before_executing_them() {
     };
 
     // Empty policy: the GuardMachine's entry CallTool(ExecuteShell) is forbidden.
-    let rt = Runtime::spawn(
-        Hsm::new(GuardMachine::new()),
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(GuardMachine::new())),
         Context::new(),
         PermissionPolicy::builder().build(),
         exec,
@@ -350,8 +352,8 @@ async fn executor_results_re_enter_the_queue_as_events() {
         calls: Arc::clone(&calls),
     };
 
-    let rt = Runtime::spawn(
-        Hsm::new(AgentMachine::new()),
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(AgentMachine::new())),
         Context::new(),
         PermissionPolicy::builder().build(),
         exec,
@@ -391,7 +393,7 @@ impl EffectExecutor for SentinelExec {
     async fn execute(&mut self, _effect: Effect, _sink: &EventSink, _obs: &ObservationSink) {}
 }
 
-/// Dropping a `Runtime` must tear down its consumer task.
+/// Dropping an `ErasedRuntime` must tear down its consumer task.
 ///
 /// The loop is handed an owning clone of the event sink, so `rx.recv()` never
 /// returns `None`; for a machine that never reports done, nothing ends the task
@@ -401,8 +403,8 @@ impl EffectExecutor for SentinelExec {
 #[tokio::test]
 async fn dropping_a_runtime_aborts_its_consumer_task() {
     let torn_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let rt = Runtime::spawn(
-        Hsm::new(AgentMachine::default()),
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(AgentMachine::default())),
         Context::new(),
         PermissionPolicy::builder().build(),
         SentinelExec {
@@ -435,8 +437,8 @@ async fn dropping_a_runtime_aborts_its_consumer_task() {
 #[tokio::test]
 async fn joining_a_runtime_still_returns_its_report() {
     let torn_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let rt = Runtime::spawn(
-        Hsm::new(AgentMachine::default()),
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(AgentMachine::default())),
         Context::new(),
         PermissionPolicy::builder().build(),
         SentinelExec {

@@ -19,7 +19,7 @@ use sven_hsm::{
     Context, Effect, Event, Hsm, MachineId, ObservationSink, PermissionPolicy, Reaction,
     ToolCallId, ToolCapability, UiEvent,
 };
-use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink, Runtime};
+use sven_kernel::{EffectExecutor, ErasedRuntime, EventSink};
 use sven_tool_registry::ToolRegistry;
 use tokio::sync::Mutex as TokioMutex;
 
@@ -80,9 +80,9 @@ impl EffectExecutor for NoOpExec {
 }
 
 /// Spawns an `OneShotMachine` runtime and returns it along with its sink.
-fn one_shot_runtime() -> (Runtime<OneShotMachine>, EventSink) {
-    let rt = Runtime::spawn(
-        Hsm::new(OneShotMachine::new()),
+fn one_shot_runtime() -> (ErasedRuntime, EventSink) {
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(OneShotMachine::new())),
         Context::new(),
         PermissionPolicy::builder().build(),
         NoOpExec,

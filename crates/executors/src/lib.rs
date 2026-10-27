@@ -26,7 +26,7 @@
 //! use std::sync::Arc;
 //! use sven_executors::composite::CompositeExecutor;
 //! use sven_hsm::{Hsm, Context, PermissionPolicy};
-//! use sven_kernel::Runtime;
+//! use sven_kernel::ErasedRuntime;
 //!
 //! let executor = CompositeExecutor::builder()
 //!     .with_turn(turn_executor)
@@ -36,7 +36,7 @@
 //!     .with_audit("/var/log/sven/audit.jsonl")
 //!     .build();
 //!
-//! let runtime = Runtime::spawn(Hsm::new(machine), ctx, policy, executor, 64);
+//! let runtime = ErasedRuntime::spawn(Box::new(Hsm::new(machine)), ctx, policy, executor, 64);
 //! ```
 
 mod argument_check;

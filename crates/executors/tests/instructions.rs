@@ -25,7 +25,7 @@ use sven_hsm::{
     dispatch::Hsm, submachine::ErasedMachine, Context, Effect, Event, Machine, MachineId,
     PermissionPolicy, Reaction, ToolCallId, ToolCapability,
 };
-use sven_kernel::{ErasedRuntime, Runtime};
+use sven_kernel::ErasedRuntime;
 use sven_machines::ReactiveAgentMachine;
 use sven_tool_registry::{ApprovalPolicy, Tool, ToolCall, ToolOutput, ToolRegistry};
 use sven_turn::instructions::{Activator, InstructionCatalog};
@@ -145,10 +145,10 @@ impl Machine for Reading {
 async fn read(path: &str) -> Vec<String> {
     let mut registry = ToolRegistry::new();
     registry.register(Reader);
-    let runtime = Runtime::spawn(
-        Hsm::new(Reading {
+    let runtime = ErasedRuntime::spawn(
+        Box::new(Hsm::new(Reading {
             id: MachineId::new(),
-        }),
+        })),
         Context::new(),
         PermissionPolicy::builder()
             .allow_globally([ToolCapability::ReadFile])

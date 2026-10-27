@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 /// The kernel consumer loop is handed an owning clone of the event `EventSink`,
 /// so its `rx.recv()` never returns `None` and the loop cannot end on its own
 /// unless the machine reports done — which `ReactiveAgentMachine` never does.
-/// Without this, dropping a `Runtime`/`ErasedRuntime` left a parked task
+/// Without this, dropping an `ErasedRuntime` left a parked task
 /// pinning the whole object graph behind it: the `Context` (both audit
 /// vectors), the boxed machine, the executor's conversation store, the tool
 /// registry including live MCP handles, and the provider's HTTP pool. Every
