@@ -65,6 +65,33 @@ told it was interrupted and may or may not have taken effect. Retrying the
 answer at the server continues it from where it stopped instead of starting
 over.
 
+## Hosted
+
+```bash
+sven rc --hosted --sandbox /srv/hosted/<account>
+```
+
+A server that answers conversations nobody's machine runs starts `sven rc
+--hosted` for them, one per account, each with a sandbox directory of its
+own that it never shares. Two walls keep a hosted host to itself:
+
+- **Its tools.** Its sessions have only tools that never touch the machine
+  the host runs on - web search, web fetch and finding skills. It is an
+  allow list: any other tool, including one added to sven later, is never
+  offered.
+- **The kernel.** Before it starts anything, the host confines itself with
+  Linux Landlock to its sandbox: it can read, write and create only inside
+  that directory, plus read what any program needs to run and reach the
+  network (TLS roots, name resolution, time zones, system libraries), and
+  so can every process it starts. Another account's sandbox, home
+  directories and the rest of the machine are refused by the kernel. The
+  host does not start unless the kernel enforces all of it, and on other
+  systems a hosted host does not start at all.
+
+Everything it keeps is in the sandbox: its sign-in (`remote.yaml`, written
+there by the server that starts it), its kept sessions (`sessions/`) and
+where its sessions work (`work/`).
+
 ## Read a conversation
 
 ```sh

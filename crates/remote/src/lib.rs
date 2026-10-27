@@ -16,6 +16,8 @@
 //!   the server, each an actor owning its own session controller.
 //! * [`attach`] - `sven rc attach --tui`: a conversation the server keeps, as
 //!   the agent session the full-screen UI shows.
+//! * [`sandbox`] - `sven rc --hosted`: the kernel confines a hosted host to
+//!   its own directory.
 //! * [`transcript`] - `sven rc show` and `sven rc attach`: a conversation the
 //!   server keeps, synced as a replica of its shared document and read (and,
 //!   attached, written to through the server) in the terminal.
@@ -29,11 +31,12 @@ pub mod attach;
 pub mod client;
 pub mod host;
 pub mod login;
+pub mod sandbox;
 pub mod sessions;
 mod sse;
 pub mod transcript;
 
 pub use client::{normalize_server, Busy, ConversationNotFound, RemoteClient};
-pub use host::{run_host, HostOptions};
+pub use host::{run_host, HostOptions, HOSTED_TOOLS};
 pub use login::RemoteLogin;
 pub use sessions::SessionStore;

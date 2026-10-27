@@ -43,7 +43,16 @@ pub fn path() -> Option<PathBuf> {
 /// The file exists but cannot be read or is not a login.
 pub fn load() -> anyhow::Result<Option<RemoteLogin>> {
     let Some(file) = path() else { return Ok(None) };
-    match std::fs::read_to_string(&file) {
+    load_from(&file)
+}
+
+/// The login stored in `file`, if there is one.
+///
+/// # Errors
+///
+/// The file exists but cannot be read or is not a login.
+pub fn load_from(file: &std::path::Path) -> anyhow::Result<Option<RemoteLogin>> {
+    match std::fs::read_to_string(file) {
         Ok(text) => serde_yaml::from_str(&text)
             .map(Some)
             .map_err(|e| anyhow::anyhow!("{}: {e}", file.display())),

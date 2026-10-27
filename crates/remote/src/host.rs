@@ -62,6 +62,10 @@ pub struct HostOptions {
     pub sessions: SessionStore,
 }
 
+/// The only tools a hosted host's sessions have (`sven rc --hosted`): none
+/// of them reads, writes or runs anything on the machine the host runs on.
+pub const HOSTED_TOOLS: &[&str] = &["web_search", "web_fetch", "skill"];
+
 /// Runs until interrupted, or until the server stops accepting the token.
 ///
 /// # Errors
@@ -542,6 +546,33 @@ async fn upload_loop(client: RemoteClient, mut rx: mpsc::Receiver<Upload>) {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn a_hosted_session_offers_only_tools_that_never_touch_the_machine() {
+        let mut config = sven_bootstrap::Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+        config.tools.only = Some(
+            HOSTED_TOOLS
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        );
+        let (runtime, handle, ..) =
+            sven_bootstrap::RuntimeBuilder::new(std::sync::Arc::new(config), "agent")
+                .with_builtin_tools(sven_bootstrap::BuiltinTools::Coding)
+                .build()
+                .await
+                .expect("runtime builds");
+        let mut names = handle.tool_registry().names();
+        runtime.abort();
+        names.sort();
+        assert_eq!(
+            names,
+            ["skill", "web_fetch", "web_search"],
+            "every hosted tool is a real one, and nothing else is offered"
+        );
+    }
+
     use super::*;
 
     #[test]

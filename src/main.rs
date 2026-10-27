@@ -30,7 +30,7 @@ use run::task::run_task_command;
 // verbatim with the standalone binaries.
 use run::oauth::run_oauth_callback;
 use run::pipeline::{run_map_command, run_reduce_command, run_tee_command};
-#[cfg(feature = "tui")]
+#[cfg(all(feature = "tui", feature = "network"))]
 use run::remote::attached_agent;
 #[cfg(feature = "network")]
 use run::remote::{attach_remote_conversation, run_remote_host, show_remote_conversation};
@@ -46,14 +46,34 @@ use sven_frontend::Settings;
 #[cfg(feature = "network")]
 use sven_mcp::cli::run_mcp_command;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     // Install the ring crypto provider for rustls before any TLS code runs.
     // Several crates (reqwest and friends) all pull in rustls 0.23 and
     // without an explicit process-level provider rustls panics.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let cli = Cli::parse();
+    // A hosted host is confined to its sandbox here, while this process has
+    // one thread: the confinement covers only threads and processes started
+    // after it, and every runtime thread must be one of them.
+    #[cfg(feature = "network")]
+    let hosted = run::remote::confine_hosted(&cli)?;
+    #[cfg(not(feature = "network"))]
+    let hosted = ();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_cli(cli, hosted))
+}
+
+#[cfg(feature = "network")]
+type Hosted = Option<run::remote::HostedStart>;
+#[cfg(not(feature = "network"))]
+type Hosted = ();
+
+async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
+    #[cfg(not(feature = "network"))]
+    let () = hosted;
     // Before anything runs: manual approval without a person to ask fails
     // here, never by hanging at the first prompt.
     cli.check_approval()?;
@@ -120,6 +140,9 @@ async fn main() -> anyhow::Result<()> {
             }
             #[cfg(feature = "network")]
             Commands::Rc(args) => {
+                if let Some(hosted) = hosted {
+                    return run::remote::run_hosted_host(hosted).await;
+                }
                 match &args.action {
                     Some(cli::RcAction::Show {
                         conversation,

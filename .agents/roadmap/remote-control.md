@@ -14,7 +14,11 @@ event; proven against a real server end to end.
    person's: the same host and session actors, with a fixed safe tool set
    (web search, finding skills; no shell, no file tools) and a scratch
    working directory. Browsers and attached terminals only view and send
-   input. Needed here: the `--hosted` tool allowlist and its tests.
+   input. Done here: `sven rc --hosted --sandbox DIR` (`HOSTED_TOOLS`,
+   enforced by the `tools.only` allow list; the process confined to `DIR`
+   by Landlock before any thread starts, `sven_remote::sandbox`, failing
+   closed). The server side (one per account, started on demand, its own
+   sandbox each) is the consuming application's.
 
 1. **Durable sessions.** Done: each session's own conversation (tool calls
    included) is kept after every finished tool call and turn, and reopened

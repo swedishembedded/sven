@@ -15,6 +15,18 @@ pub struct RcArgs {
     #[arg(long)]
     pub working_dir: Option<PathBuf>,
 
+    /// Run as a server's hosted host: sessions get only tools that never
+    /// touch this machine (web search, web fetch, finding skills), and the
+    /// kernel confines the whole process to --sandbox.
+    #[arg(long, requires = "sandbox")]
+    pub hosted: bool,
+
+    /// A hosted host's own directory, and the only one it can reach: its
+    /// sign-in (`remote.yaml`), its kept sessions (`sessions/`) and where
+    /// its sessions work (`work/`). One per hosted host; never shared.
+    #[arg(long, requires = "hosted", conflicts_with = "working_dir")]
+    pub sandbox: Option<PathBuf>,
+
     #[command(subcommand)]
     pub action: Option<RcAction>,
 }
