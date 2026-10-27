@@ -88,9 +88,25 @@ own that it never shares. Two walls keep a hosted host to itself:
   host does not start unless the kernel enforces all of it, and on other
   systems a hosted host does not start at all.
 
-Everything it keeps is in the sandbox: its sign-in (`remote.yaml`, written
-there by the server that starts it), its kept sessions (`sessions/`) and
+- **The network.** `web_fetch` reaches only the public internet: never the
+  server itself, its private networks or a cloud metadata service, checked
+  on the addresses a name resolves to and on every redirect
+  (`tools.web.public_only`, which any `sven` can set).
+- **The key.** The server writes the sign-in to the host's standard input,
+  read before the confinement; it is never in a file.
+
+Everything it keeps is in the sandbox: its kept sessions (`sessions/`) and
 where its sessions work (`work/`).
+
+Only one `sven rc` serves a directory (or a hosted account) at a time. A
+second is refused while the first is connected. A host checks in every 15 s
+(and at once when it takes a message); one silent for 45 s counts as gone,
+its directory can be taken by the next `sven rc`, and if it comes back after
+another took its place, the server refuses it and it stops.
+
+Starting `sven rc` again in the same directory of the same machine
+reconnects every conversation that ran there, even after `sven auth login`
+signed the machine in again.
 
 ## Read a conversation
 

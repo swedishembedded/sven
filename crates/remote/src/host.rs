@@ -34,7 +34,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::approvals::{PendingApprovals, RemoteApprovals, APPROVAL_TIMEOUT};
-use crate::client::{RemoteClient, TokenRefused};
+use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused};
 use crate::login::RemoteLogin;
 use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
 
@@ -45,9 +45,11 @@ const UPLOAD_QUEUE: usize = 4096;
 const BATCH_EVENTS: usize = 256;
 /// How long the uploader collects before sending what it has.
 const BATCH_WINDOW: Duration = Duration::from_millis(150);
-/// An empty upload while a session runs: the server's sign that the host
-/// is alive and the answer it is waiting for is still coming.
-const HEARTBEAT: Duration = Duration::from_secs(10);
+/// The longest the host goes without an upload: the server's sign that it is
+/// alive (and, with `working`, which answers are still coming). Rare, so
+/// thousands of idle hosts cost the server little; anything the host has to
+/// say (a command it took, an event) goes at once and counts too.
+const HEARTBEAT: Duration = Duration::from_secs(15);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Commands queued for one session while it works.
 const SESSION_QUEUE: usize = 64;
@@ -60,11 +62,29 @@ pub struct HostOptions {
     pub login: RemoteLogin,
     /// Where sessions are kept between turns and across restarts.
     pub sessions: SessionStore,
+    /// A server's hosted host: attaches as the `hosted` environment, not as
+    /// a directory of a person's machine.
+    pub hosted: bool,
 }
 
 /// The only tools a hosted host's sessions have (`sven rc --hosted`): none
 /// of them reads, writes or runs anything on the machine the host runs on.
 pub const HOSTED_TOOLS: &[&str] = &["web_search", "web_fetch", "skill"];
+
+/// What a hosted host's sessions may do, applied to its configuration: only
+/// [`HOSTED_TOOLS`] (an allow list, so a tool added later is never offered
+/// unless named there), and `web_fetch` reaching only the public internet,
+/// never the server's own network (its services, its database, a cloud
+/// metadata service).
+pub fn restrict_to_hosted(config: &mut Config) {
+    config.tools.only = Some(
+        HOSTED_TOOLS
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect(),
+    );
+    config.tools.web.public_only = true;
+}
 
 /// Runs until interrupted, or until the server stops accepting the token.
 ///
@@ -72,8 +92,17 @@ pub const HOSTED_TOOLS: &[&str] = &["web_search", "web_fetch", "skill"];
 ///
 /// The token is refused, at start or later.
 pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
-    let client = RemoteClient::new(&options.login.control_url, &options.login.token)?;
+    let mut client = RemoteClient::new(&options.login.control_url, &options.login.token)?;
     let who = client.whoami().await?;
+    // This run, which the environment is held for and the uploads are
+    // numbered in.
+    let run = Uuid::new_v4();
+    let path = if options.hosted {
+        sven_control::remote::HOSTED_ENVIRONMENT.to_string()
+    } else {
+        options.working_dir.display().to_string()
+    };
+    client.attach_environment(&path, run).await?;
     println!(
         "Connected to {} as \"{}\" for {}. Sessions work in {}. Ctrl-C stops.",
         options.login.server,
@@ -83,7 +112,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
     );
 
     let (uploads, upload_rx) = mpsc::channel(UPLOAD_QUEUE);
-    tokio::spawn(upload_loop(client.clone(), upload_rx));
+    tokio::spawn(upload_loop(client.clone(), upload_rx, run));
     // Permission requests travel with the sessions' events, in order.
     let (asks, mut asks_rx) = mpsc::channel::<ControlEvent>(SESSION_QUEUE);
     let ask_uploads = uploads.clone();
@@ -116,6 +145,9 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
         result = command_loop(&client, &routed, &uploads) => result,
         _ = tokio::signal::ctrl_c() => {
             println!("Stopping. Sessions in progress end here.");
+            if let Err(e) = client.detach_environment().await {
+                tracing::warn!("could not tell the server this host stopped: {e:#}");
+            }
             Ok(())
         }
     }
@@ -151,7 +183,14 @@ async fn command_loop(
                     let _ = uploads.send(Upload::Ack(taken)).await;
                 }
             }
-            Err(e) if e.downcast_ref::<TokenRefused>().is_some() => return Err(e),
+            // Signed out, or replaced by another `sven rc` here: retrying
+            // cannot help, and two hosts must never run one environment.
+            Err(e)
+                if e.downcast_ref::<TokenRefused>().is_some()
+                    || e.downcast_ref::<EnvironmentTaken>().is_some() =>
+            {
+                return Err(e)
+            }
             Err(e) => tracing::warn!("command stream: {e:#}"),
         }
         tokio::time::sleep(backoff).await;
@@ -486,10 +525,9 @@ enum Upload {
 /// Numbers, batches and uploads events in order. A batch is sent again until
 /// the server stores it, so nothing is lost while the server is away; the
 /// server drops a `(run, seq)` it already has, so nothing is stored twice.
-async fn upload_loop(client: RemoteClient, mut rx: mpsc::Receiver<Upload>) {
+async fn upload_loop(client: RemoteClient, mut rx: mpsc::Receiver<Upload>, run: Uuid) {
     // Numbered from 1 within this run; the server tells runs apart by `run`,
     // so a restarted host is never taken for one replaying old events.
-    let run = Uuid::new_v4();
     let mut next_seq = 1u64;
     let mut running: HashMap<Uuid, bool> = HashMap::new();
     let mut last_upload = Instant::now();
@@ -498,6 +536,7 @@ async fn upload_loop(client: RemoteClient, mut rx: mpsc::Receiver<Upload>) {
             run,
             events: Vec::new(),
             acked_through: None,
+            working: Vec::new(),
         };
         let first = tokio::time::timeout(HEARTBEAT, rx.recv()).await;
         let mut take = |upload: Upload, batch: &mut EventBatch| match upload {
@@ -530,12 +569,26 @@ async fn upload_loop(client: RemoteClient, mut rx: mpsc::Receiver<Upload>) {
                 () = &mut window => break,
             }
         }
-        let heartbeat_due = running.values().any(|on| *on) && last_upload.elapsed() >= HEARTBEAT;
+        // An upload at least every HEARTBEAT, idle or not, is how the server
+        // knows this host is alive: a host that froze or lost its network
+        // stops sending them, and its environment is let go.
+        let heartbeat_due = last_upload.elapsed() >= HEARTBEAT;
         if batch.events.is_empty() && batch.acked_through.is_none() && !heartbeat_due {
             continue;
         }
+        batch.working = running
+            .iter()
+            .filter(|(_, on)| **on)
+            .map(|(id, _)| *id)
+            .collect();
         let mut backoff = Duration::from_millis(500);
         while let Err(e) = client.post_events(&batch).await {
+            // Replaced: nothing more from this run is taken; the command
+            // stream is refused too, and that stops the host.
+            if e.downcast_ref::<EnvironmentTaken>().is_some() {
+                tracing::warn!("event upload: {e:#}");
+                return;
+            }
             tracing::warn!("event upload: {e:#}");
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(MAX_BACKOFF);
@@ -551,11 +604,10 @@ mod tests {
         let mut config = sven_bootstrap::Config::default();
         config.model.provider = "mock".into();
         config.model.name = "mock-model".into();
-        config.tools.only = Some(
-            HOSTED_TOOLS
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect(),
+        restrict_to_hosted(&mut config);
+        assert!(
+            config.tools.web.public_only,
+            "web_fetch never reaches the server's network"
         );
         let (runtime, handle, ..) =
             sven_bootstrap::RuntimeBuilder::new(std::sync::Arc::new(config), "agent")

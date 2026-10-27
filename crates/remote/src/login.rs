@@ -61,6 +61,15 @@ pub fn load_from(file: &std::path::Path) -> anyhow::Result<Option<RemoteLogin>> 
     }
 }
 
+/// The login in `text`, read from `origin` (named in the error).
+///
+/// # Errors
+///
+/// `text` is not a login.
+pub fn parse(text: &str, origin: &str) -> anyhow::Result<RemoteLogin> {
+    serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("{origin}: {e}"))
+}
+
 /// Stores `login`, replacing any other.
 ///
 /// # Errors

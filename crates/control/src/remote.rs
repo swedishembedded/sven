@@ -19,25 +19,41 @@
 //!    and the OpenAI-compatible endpoint its sessions call models through.
 //! 2. **Identity.** `GET {control_url}/whoami` with the token answers a
 //!    [`WhoAmI`]; `401` means the token is not (or no longer) valid.
-//! 3. **Commands.** `GET {control_url}/commands?after=N` is a server-sent
+//! 3. **Environment.** `POST {control_url}/environment` with
+//!    `{"path", "run"}` attaches the host to the environment of the directory
+//!    it works in (`path`, canonical; `hosted` for a server's hosted host)
+//!    and answers `{"environment_id"}`. Starting again in the same directory
+//!    attaches to the same environment, so its conversations are connected
+//!    again; `409` while another live host (another `run`) holds it. Every
+//!    command and event request below names both as `?environment=ID&run=RUN`
+//!    and is refused with `409` once the run is no longer the environment's
+//!    (another host took over, or this one let it go): that host stops. A
+//!    stopping host lets it go:
+//!    `DELETE {control_url}/environment?environment=ID&run=RUN`.
+//!    ([`AttachRequest`], [`Attached`])
+//! 4. **Commands.** `GET {control_url}/commands?after=N` is a server-sent
 //!    event stream. Each `data:` line is one [`CommandEnvelope`] with a
 //!    `seq` above `N`, in order; comment lines are keep-alives. A command
 //!    the host has not acknowledged is sent again on the next connection, so
 //!    delivery is at least once and the host drops a `seq` it already took.
-//! 4. **Events.** `POST {control_url}/events` with an [`EventBatch`]: the
+//! 5. **Events.** `POST {control_url}/events` with an [`EventBatch`]: the
 //!    host's events in order, numbered from 1 within the host's `run` (a
 //!    fresh id each time the host starts), plus the highest command `seq` it
 //!    has taken. The server drops an event whose `(run, seq)` it already
 //!    stored, so a batch sent twice is stored once and a restarted host is
 //!    never mistaken for one replaying old events. Numbers stay small enough
-//!    to be exact in any JSON reader.
-//! 5. **Conversations.** `GET {control_url}/conversations/{id}/doc?sv=S`
+//!    to be exact in any JSON reader. A host uploads at least every 15 s,
+//!    even with nothing to say, and at once when it takes a command: that is
+//!    how the server knows it is alive (a host silent for 45 s counts as
+//!    gone), and `working` names the sessions mid-turn, whose answers are
+//!    still coming.
+//! 6. **Conversations.** `GET {control_url}/conversations/{id}/doc?sv=S`
 //!    answers, as bytes, the update (`sven-session-sync`'s v1 encoding) that
 //!    brings a replica whose state vector is `S` (base64url, empty for an
 //!    empty replica) up to the server's copy of the conversation's shared
 //!    document. Only a conversation that runs on this host is found
 //!    ([`conversation_doc_endpoint`]).
-//! 6. **Attached terminals.** `POST {control_url}/conversations/{id}/messages`
+//! 7. **Attached terminals.** `POST {control_url}/conversations/{id}/messages`
 //!    with `{"text": ...}` adds a message to a conversation that runs on
 //!    this host, exactly as one sent from the server's own interface: the
 //!    server stores it, then asks this host to answer it. `409` while an
@@ -118,6 +134,11 @@ pub struct EventBatch {
     /// the last upload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acked_through: Option<u64>,
+    /// The sessions mid-turn as this batch is sent: the server keeps their
+    /// answers alive, and ends any other answer it waits on from this host
+    /// once it has been silent too long.
+    #[serde(default)]
+    pub working: Vec<Uuid>,
 }
 
 /// `control_url` joined with one of its endpoints, without a doubled slash.
@@ -129,6 +150,25 @@ pub fn control_endpoint(control_url: &str, endpoint: &str) -> String {
         endpoint.trim_start_matches('/')
     )
 }
+
+/// What a host sends to attach to its environment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachRequest {
+    /// The directory the host works in, canonical; `hosted` for a server's
+    /// hosted host.
+    pub path: String,
+    /// This run of the host.
+    pub run: Uuid,
+}
+
+/// The environment a host attached to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Attached {
+    pub environment_id: Uuid,
+}
+
+/// The path a hosted host attaches with.
+pub const HOSTED_ENVIRONMENT: &str = "hosted";
 
 /// The endpoint, relative to `control_url`, that decides a tool call
 /// waiting in conversation `id`.
@@ -278,6 +318,7 @@ mod tests {
                 },
             ],
             acked_through: Some(11),
+            working: vec![session],
         };
         assert_eq!(
             serde_json::to_value(&batch).unwrap(),
@@ -293,7 +334,8 @@ mod tests {
                     {"seq": 4, "event": {"type": "session", "session_id": SESSION, "event": "TurnComplete"}},
                     {"seq": 5, "event": {"type": "session_state", "session_id": SESSION, "state": "idle"}}
                 ],
-                "acked_through": 11
+                "acked_through": 11,
+                "working": [SESSION]
             })
         );
     }

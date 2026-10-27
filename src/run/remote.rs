@@ -29,8 +29,16 @@ pub(crate) async fn show_remote_conversation(
     let login = signed_in()?;
     let client = sven_remote::RemoteClient::new(&login.control_url, &login.token)?;
     let mut reader = Reader::new(conversation);
+    // One listener for the whole run: a Ctrl-C that arrives while a sync is
+    // in flight is otherwise caught by the handler and seen by no one.
+    let interrupted = tokio::signal::ctrl_c();
+    tokio::pin!(interrupted);
     loop {
-        for line in reader.read(&client).await? {
+        let lines = tokio::select! {
+            lines = reader.read(&client) => lines?,
+            _ = &mut interrupted => return Ok(()),
+        };
+        for line in lines {
             println!("{line}");
         }
         if !follow {
@@ -38,7 +46,7 @@ pub(crate) async fn show_remote_conversation(
         }
         tokio::select! {
             () = tokio::time::sleep(FOLLOW_INTERVAL) => {}
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+            _ = &mut interrupted => return Ok(()),
         }
     }
 }
@@ -55,6 +63,9 @@ pub(crate) async fn attach_remote_conversation(conversation: uuid::Uuid) -> anyh
     let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
     let mut poll = tokio::time::interval(FOLLOW_INTERVAL);
     println!("attached; type a message and press Enter, Ctrl-C to detach");
+    // One listener for the whole run (see `show_remote_conversation`).
+    let interrupted = tokio::signal::ctrl_c();
+    tokio::pin!(interrupted);
     loop {
         tokio::select! {
             _ = poll.tick() => {
@@ -75,7 +86,7 @@ pub(crate) async fn attach_remote_conversation(conversation: uuid::Uuid) -> anyh
                     Err(e) => return Err(e),
                 }
             }
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+            _ = &mut interrupted => return Ok(()),
         }
     }
 }
@@ -101,12 +112,16 @@ pub(crate) fn attached_agent(conversation: uuid::Uuid) -> anyhow::Result<sven_tu
 /// confinement, and its sandbox.
 pub(crate) struct HostedStart {
     config: Config,
+    login: sven_remote::login::RemoteLogin,
     sandbox: PathBuf,
 }
 
-/// For `sven rc --hosted --sandbox DIR`: reads the configuration, then
-/// confines this process to `DIR` (`sven_remote::sandbox`). Must run before
-/// any thread is started. None for every other command.
+/// The most a hosted host reads of its sign-in.
+const MAX_HOSTED_LOGIN: u64 = 64 * 1024;
+
+/// For `sven rc --hosted --sandbox DIR`: reads the configuration and the
+/// sign-in, then confines this process to `DIR` (`sven_remote::sandbox`).
+/// Must run before any thread is started. None for every other command.
 pub(crate) fn confine_hosted(cli: &crate::cli::Cli) -> anyhow::Result<Option<HostedStart>> {
     let Some(crate::cli::Commands::Rc(args)) = &cli.command else {
         return Ok(None);
@@ -118,28 +133,32 @@ pub(crate) fn confine_hosted(cli: &crate::cli::Cli) -> anyhow::Result<Option<Hos
         .canonicalize()
         .with_context(|| format!("the sandbox {}", sandbox.display()))?;
     let mut config = sven_frontend::Settings::load(cli.config.as_deref())?.runtime;
-    // An allow list, not a deny list: a tool added later is never offered
-    // to a hosted session unless named in HOSTED_TOOLS.
-    config.tools.only = Some(
-        sven_remote::HOSTED_TOOLS
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect(),
-    );
+    sven_remote::restrict_to_hosted(&mut config);
+    // The server that starts it writes the sign-in to its standard input,
+    // so the key is never in a file anything it runs could read.
+    let mut login = String::new();
+    std::io::Read::read_to_string(
+        &mut std::io::Read::take(std::io::stdin(), MAX_HOSTED_LOGIN),
+        &mut login,
+    )
+    .context("reading the sign-in from standard input")?;
+    let login = sven_remote::login::parse(&login, "the sign-in on standard input")?;
     sven_remote::sandbox::confine(&sandbox)?;
-    Ok(Some(HostedStart { config, sandbox }))
+    Ok(Some(HostedStart {
+        config,
+        login,
+        sandbox,
+    }))
 }
 
 /// Runs a hosted host confined by [`confine_hosted`]: everything it keeps is
 /// in its sandbox.
 pub(crate) async fn run_hosted_host(start: HostedStart) -> anyhow::Result<()> {
-    let HostedStart { config, sandbox } = start;
-    let login = sven_remote::login::load_from(&sandbox.join("remote.yaml"))?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "no sign-in in {}; the server that starts a hosted host writes it",
-            sandbox.join("remote.yaml").display()
-        )
-    })?;
+    let HostedStart {
+        config,
+        login,
+        sandbox,
+    } = start;
     let working_dir = sandbox.join("work");
     std::fs::create_dir_all(&working_dir).with_context(|| format!("{}", working_dir.display()))?;
     sven_remote::run_host(sven_remote::HostOptions {
@@ -147,6 +166,7 @@ pub(crate) async fn run_hosted_host(start: HostedStart) -> anyhow::Result<()> {
         working_dir,
         login,
         sessions: sven_remote::SessionStore::new(sandbox.join("sessions")),
+        hosted: true,
     })
     .await
 }
@@ -173,6 +193,7 @@ pub(crate) async fn run_remote_host(
         working_dir,
         login,
         sessions: sven_remote::SessionStore::new(sessions),
+        hosted: false,
     })
     .await
 }

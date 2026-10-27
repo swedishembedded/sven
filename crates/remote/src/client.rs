@@ -10,8 +10,8 @@ use base64::Engine as _;
 use futures::{Stream, StreamExt};
 use sven_control::remote::{
     control_endpoint, conversation_approvals_endpoint, conversation_doc_endpoint,
-    conversation_messages_endpoint, CommandEnvelope, EventBatch, RemoteDiscovery, WhoAmI,
-    DISCOVERY_PATH, REMOTE_PROTOCOL_VERSION,
+    conversation_messages_endpoint, AttachRequest, Attached, CommandEnvelope, EventBatch,
+    RemoteDiscovery, WhoAmI, DISCOVERY_PATH, REMOTE_PROTOCOL_VERSION,
 };
 use uuid::Uuid;
 
@@ -31,6 +31,32 @@ impl std::fmt::Display for TokenRefused {
 }
 
 impl std::error::Error for TokenRefused {}
+
+/// Another live `sven rc` holds the environment of this directory, or took
+/// it over from this one, which must stop; the reason is the server's.
+#[derive(Debug)]
+pub struct EnvironmentTaken(pub String);
+
+impl std::fmt::Display for EnvironmentTaken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for EnvironmentTaken {}
+
+/// The server's reason for a 409 on a host's request: another run holds, or
+/// took over, the environment.
+async fn superseded(response: reqwest::Response) -> EnvironmentTaken {
+    EnvironmentTaken(
+        response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| body.get("error")?.as_str().map(str::to_string))
+            .unwrap_or_else(|| "another sven rc holds this environment".into()),
+    )
+}
 
 /// The server knows no conversation by this id that runs on this host.
 #[derive(Debug)]
@@ -127,6 +153,10 @@ pub struct RemoteClient {
     http: reqwest::Client,
     control_url: String,
     token: String,
+    /// The environment this host attached to and the run it attached with;
+    /// both named on its command stream and uploads, which the server
+    /// refuses once another run holds the environment.
+    attached: Option<(Uuid, Uuid)>,
 }
 
 impl RemoteClient {
@@ -138,7 +168,81 @@ impl RemoteClient {
             http: http()?,
             control_url: control_url.to_string(),
             token: token.to_string(),
+            attached: None,
         })
+    }
+
+    /// Attaches this host to the environment of `path` for `run`, and from
+    /// then on names it on the command stream and uploads.
+    ///
+    /// # Errors
+    ///
+    /// The token is refused, another live host holds the environment
+    /// ([`EnvironmentTaken`]), or the server cannot be asked.
+    pub async fn attach_environment(&mut self, path: &str, run: Uuid) -> anyhow::Result<Uuid> {
+        let response = self
+            .http
+            .post(self.url("environment"))
+            .bearer_auth(&self.token)
+            .timeout(REQUEST_TIMEOUT)
+            .json(&AttachRequest {
+                path: path.to_string(),
+                run,
+            })
+            .send()
+            .await?;
+        match response.status().as_u16() {
+            401 | 403 => return Err(TokenRefused.into()),
+            409 => return Err(superseded(response).await.into()),
+            _ => {}
+        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "attaching the environment answered {}",
+            response.status()
+        );
+        let attached: Attached = response.json().await?;
+        self.attached = Some((attached.environment_id, run));
+        Ok(attached.environment_id)
+    }
+
+    /// Lets the environment go as this host stops, so `sven rc` started
+    /// there again attaches at once. Best effort: a host that cannot say so
+    /// is let go once it has been silent for a while.
+    ///
+    /// # Errors
+    ///
+    /// The server could not be told.
+    pub async fn detach_environment(&self) -> anyhow::Result<()> {
+        if self.attached.is_none() {
+            return Ok(());
+        }
+        let response = self
+            .http
+            .delete(self.url("environment"))
+            .query(&self.environment_query())
+            .bearer_auth(&self.token)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "detaching the environment answered {}",
+            response.status()
+        );
+        Ok(())
+    }
+
+    /// `?environment=&run=` for the host's own requests, once attached.
+    fn environment_query(&self) -> Vec<(&'static str, String)> {
+        self.attached
+            .map(|(environment, run)| {
+                vec![
+                    ("environment", environment.to_string()),
+                    ("run", run.to_string()),
+                ]
+            })
+            .unwrap_or_default()
     }
 
     fn url(&self, endpoint: &str) -> String {
@@ -183,12 +287,15 @@ impl RemoteClient {
             .http
             .get(self.url("commands"))
             .query(&[("after", after)])
+            .query(&self.environment_query())
             .bearer_auth(&self.token)
             .header("accept", "text/event-stream")
             .send()
             .await?;
-        if matches!(response.status().as_u16(), 401 | 403) {
-            return Err(TokenRefused.into());
+        match response.status().as_u16() {
+            401 | 403 => return Err(TokenRefused.into()),
+            409 => return Err(superseded(response).await.into()),
+            _ => {}
         }
         anyhow::ensure!(
             response.status().is_success(),
@@ -324,11 +431,15 @@ impl RemoteClient {
         let response = self
             .http
             .post(self.url("events"))
+            .query(&self.environment_query())
             .bearer_auth(&self.token)
             .timeout(REQUEST_TIMEOUT)
             .json(batch)
             .send()
             .await?;
+        if response.status().as_u16() == 409 {
+            return Err(superseded(response).await.into());
+        }
         anyhow::ensure!(
             response.status().is_success(),
             "the event upload answered {}",
