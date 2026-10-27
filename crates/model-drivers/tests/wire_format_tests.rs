@@ -971,6 +971,7 @@ async fn anthropic_cache_tool_results_marks_large_result() {
         .complete(CompletionRequest {
             messages: vec![
                 Message::user("run ls"),
+                Message::tool_call("call_abc", "shell", r#"{"command":"ls"}"#),
                 Message::tool_result("call_abc", &large_content),
             ],
             tools: vec![],
@@ -984,8 +985,8 @@ async fn anthropic_cache_tool_results_marks_large_result() {
     let req = req_rx.await.unwrap();
     let msgs = req.body["messages"].as_array().unwrap();
 
-    // Second message is the tool result.
-    let block = &msgs[1]["content"][0];
+    // Third message is the tool result.
+    let block = &msgs[2]["content"][0];
     assert_eq!(block["type"], "tool_result");
     assert_eq!(
         block["cache_control"]["type"], "ephemeral",
@@ -1012,6 +1013,7 @@ async fn anthropic_cache_tool_results_skips_small_result() {
         .complete(CompletionRequest {
             messages: vec![
                 Message::user("run ls"),
+                Message::tool_call("call_abc", "shell", r#"{"command":"ls"}"#),
                 Message::tool_result("call_abc", "file.txt"), // tiny result
             ],
             tools: vec![],
@@ -1024,7 +1026,7 @@ async fn anthropic_cache_tool_results_skips_small_result() {
 
     let req = req_rx.await.unwrap();
     let msgs = req.body["messages"].as_array().unwrap();
-    let block = &msgs[1]["content"][0];
+    let block = &msgs[2]["content"][0];
     assert!(
         block.get("cache_control").is_none(),
         "small tool result must NOT be cached"
@@ -1157,6 +1159,7 @@ async fn anthropic_tool_result_message_mapped_to_user_role() {
         .complete(CompletionRequest {
             messages: vec![
                 Message::user("run ls"),
+                Message::tool_call("call_123", "shell", r#"{"command":"ls"}"#),
                 // Simulated tool result turn
                 Message::tool_result("call_123", "file.txt\nother.txt"),
             ],
@@ -1170,11 +1173,11 @@ async fn anthropic_tool_result_message_mapped_to_user_role() {
 
     let req = req_rx.await.unwrap();
     let msgs = req.body["messages"].as_array().unwrap();
-    // Both messages should be in the messages array (system prompt is absent)
-    assert_eq!(msgs.len(), 2);
+    // Every turn is in the messages array (system prompt is absent)
+    assert_eq!(msgs.len(), 3);
     // Tool result must be sent as role=user with a tool_result content block
-    assert_eq!(msgs[1]["role"], "user");
-    let content = &msgs[1]["content"][0];
+    assert_eq!(msgs[2]["role"], "user");
+    let content = &msgs[2]["content"][0];
     assert_eq!(content["type"], "tool_result");
     assert_eq!(content["tool_use_id"], "call_123");
 }

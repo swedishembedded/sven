@@ -290,6 +290,24 @@ impl Message {
         }
     }
 
+    /// The assistant's call `id` of tool `name` with JSON `arguments`.
+    pub fn tool_call(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: impl Into<String>,
+    ) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: id.into(),
+                function: FunctionCall {
+                    name: name.into(),
+                    arguments: arguments.into(),
+                },
+            },
+        }
+    }
+
     pub fn tool_result(id: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: Role::Tool,
