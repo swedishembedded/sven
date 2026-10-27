@@ -33,8 +33,8 @@ pub struct RenderedPage {
     pub blank: bool,
     /// Text columns the page looks to have (1 for ordinary text).
     pub columns: usize,
-    /// Share of dark pixels over the strips holding text (see
-    /// [`crate::columns::column_profile`]).
+    /// Share of dark pixels over the strips holding text, as the column
+    /// profile measures it.
     pub ink: f32,
 }
 

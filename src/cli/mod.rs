@@ -6,6 +6,10 @@
 //!
 //! This mirrors `src/run/` (see `src/main.rs`), which holds the *handler*
 //! for each of these groups — this module only declares the clap grammar.
+//!
+//! Doc comments here are clap's `--help` text, printed verbatim, so their
+//! `<NAME>` placeholders are usage syntax, not HTML; rustdoc is told so.
+#![allow(rustdoc::invalid_html_tags)]
 
 mod agent;
 mod assembly;
