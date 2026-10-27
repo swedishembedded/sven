@@ -677,6 +677,18 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     reg.register(WriteTool::default());
     reg.register_with_display(EditFileTool::default());
 
+    // ── PDF to Markdown ───────────────────────────────────────────────────────
+    #[cfg(feature = "document")]
+    reg.register_with_display(DocumentLocateTool::new(
+        sven_tool_api::PathScope::unconfined(),
+    ));
+    #[cfg(feature = "document")]
+    reg.register_with_display(DocumentConvertTool::new(
+        sven_tool_api::PathScope::unconfined(),
+        Arc::new(crate::ConfigOcrModels::new(cfg.clone())),
+        crate::convert_options(&cfg.ocr),
+    ));
+
     // ── Multimodal attachments ───────────────────────────────────────────────
     // No live model in the CLI registry, so audio is always transcribed —
     // the only answer that is correct for every possible target model.
