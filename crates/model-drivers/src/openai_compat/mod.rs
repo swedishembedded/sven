@@ -25,6 +25,8 @@ pub(crate) use models::parse_models_response;
 
 pub(crate) use request::{build_openai_messages, function_tool};
 use stream::decode_events;
+/// Read by the D-Bus driver, which decodes the same reply fields.
+#[cfg(all(target_os = "linux", feature = "dbus"))]
 pub(crate) use stream::served_identity;
 
 #[cfg(test)]
