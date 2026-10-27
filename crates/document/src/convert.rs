@@ -165,6 +165,8 @@ pub struct Report {
     pub pages_warning: usize,
     pub pages_failed: usize,
     pub warnings: Vec<String>,
+    /// Why pages failed: one entry per distinct cause with the pages it hit.
+    pub failures: Vec<String>,
     pub elapsed_ms: u64,
     /// Most model requests in flight at once.
     pub max_in_flight: usize,
@@ -386,11 +388,36 @@ fn summarise(
         pages_warning: by_status(Status::Warning),
         pages_failed: by_status(Status::Failed),
         warnings,
+        failures: failure_causes(pages),
         elapsed_ms: started.elapsed().as_millis() as u64,
         max_in_flight: stats.peak_in_flight,
         backend_idle_ms: stats.idle_ms,
         requests_per_endpoint: stats.requests_per_endpoint,
     }
+}
+
+/// The distinct causes of failed pages, each with the pages it hit.
+fn failure_causes(pages: &[PageRecord]) -> Vec<String> {
+    let mut causes: Vec<(String, Vec<usize>)> = Vec::new();
+    for page in pages.iter().filter(|p| p.status == Status::Failed) {
+        let cause = page
+            .warnings
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "no answer".into());
+        match causes.iter_mut().find(|(c, _)| *c == cause) {
+            Some((_, hit)) => hit.push(page.page),
+            None => causes.push((cause, vec![page.page])),
+        }
+    }
+    causes
+        .into_iter()
+        .map(|(cause, hit)| {
+            let list: Vec<String> = hit.iter().take(8).map(usize::to_string).collect();
+            let more = if hit.len() > 8 { ", ..." } else { "" };
+            format!("pages {}{more}: {cause}", list.join(", "))
+        })
+        .collect()
 }
 
 async fn blocking<T: Send + 'static>(

@@ -128,14 +128,16 @@ impl Tool for DocumentConvertTool {
                 &call.id,
                 no_ocr_model_record(&unavailable.unwrap_or_default()),
             ),
-            Err(e) => ToolOutput::err(&call.id, e.to_string()),
+            Err(e) => ToolOutput::err(&call.id, failure_text(&e.to_string())),
         }
     }
 }
 
 /// The control record: counts, hashes and paths, never page text.
 fn record(report: &Report, model: &str) -> String {
-    let status = if report.pages_failed > 0 {
+    let status = if report.pages_failed == report.pages_total {
+        "failed"
+    } else if report.pages_failed > 0 {
         "partial"
     } else if report.pages_warning > 0 {
         "ok_with_warnings"
@@ -147,7 +149,7 @@ fn record(report: &Report, model: &str) -> String {
         .iter()
         .take(MAX_WARNINGS)
         .collect::<Vec<_>>();
-    json!({
+    let mut record = json!({
         "status": status,
         "output": report.output,
         "sha256": report.sha256,
@@ -165,8 +167,44 @@ fn record(report: &Report, model: &str) -> String {
         "warnings_not_shown": report.warnings.len().saturating_sub(MAX_WARNINGS),
         "manifest": report.manifest,
         "seconds": report.elapsed_ms / 1000,
-    })
-    .to_string()
+    });
+    if report.pages_failed > 0 {
+        record["failures"] = json!(report.failures);
+        record["instruction_for_assistant"] = json!(failed_pages_instruction(report, status));
+    }
+    record.to_string()
+}
+
+/// What the chat model is told after pages failed: say so, give the cause,
+/// stop. A model left to itself tries to repair the environment.
+fn failed_pages_instruction(report: &Report, status: &str) -> String {
+    let outcome = if status == "failed" {
+        "No page was converted".to_string()
+    } else {
+        format!(
+            "{} of {} pages were not converted; {} holds the rest, with those pages marked",
+            report.pages_failed,
+            report.pages_total,
+            report.output.display()
+        )
+    };
+    format!(
+        "The conversion did not complete. {outcome}. Tell the user exactly this and then stop: \
+         the cause(s) are in `failures` ({}). Do not retry, do not install software, do not \
+         write scripts and do not run shell commands to work around it. Ask the user how they \
+         want to proceed.",
+        report.failures.join("; ")
+    )
+}
+
+/// An error that ends a conversion, worded so that the chat model reports it
+/// and stops instead of improvising.
+fn failure_text(cause: &str) -> String {
+    format!(
+        "The conversion failed: {cause}. Tell the user this cause and then stop. Do not retry, \
+         do not install software, do not write scripts and do not run shell commands to work \
+         around it. Ask the user how they want to proceed."
+    )
 }
 
 /// Command-line converters worth offering when no OCR model exists.
@@ -342,6 +380,71 @@ mod tests {
             assert!(say.contains(needed), "{needed} missing from: {say}");
         }
         assert!(!dir.path().join("b.md").exists());
+    }
+
+    /// A model that accepts images and refuses every request, as a server does
+    /// when the page does not fit its budget.
+    struct Refusing;
+
+    #[async_trait]
+    impl sven_model::ModelProvider for Refusing {
+        fn name(&self) -> &str {
+            "refusing"
+        }
+        fn model_name(&self) -> &str {
+            "refusing-ocr"
+        }
+        fn input_modalities(&self) -> Vec<sven_model::catalog::InputModality> {
+            vec![sven_model::catalog::InputModality::Image]
+        }
+        async fn complete(
+            &self,
+            _req: sven_model::CompletionRequest,
+        ) -> anyhow::Result<sven_model::ResponseStream> {
+            anyhow::bail!("brain error 400: the page is too large for that device's budget")
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_conversion_tells_the_assistant_the_cause_and_to_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.pdf"),
+            build_pdf(&[FixturePage::Scan(100)]),
+        )
+        .unwrap();
+        let models = Ok(OcrModel {
+            spec: "refusing/ocr".into(),
+            providers: vec![Arc::new(Refusing)],
+        });
+        let out = tool(dir.path(), models)
+            .execute(&call(json!({"source": "a.pdf", "destination": "b.md"})))
+            .await;
+        assert!(!out.is_error, "a defined outcome: {}", out.content);
+        let record: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(record["status"], "failed");
+        assert_eq!(record["pages"]["failed"], 1);
+        let say = record["instruction_for_assistant"].as_str().unwrap();
+        assert!(say.contains("too large for that device's budget"), "{say}");
+        for forbidden in ["Do not retry", "do not install", "shell commands"] {
+            assert!(say.contains(forbidden), "{forbidden} missing from: {say}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_source_is_reported_with_the_same_instruction() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = tool(dir.path(), model())
+            .execute(&call(
+                json!({"source": "missing.pdf", "destination": "b.md"}),
+            ))
+            .await;
+        assert!(out.is_error);
+        assert!(
+            out.content.contains("cannot read") && out.content.contains("then stop"),
+            "{}",
+            out.content
+        );
     }
 
     #[test]
