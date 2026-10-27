@@ -65,7 +65,7 @@ impl App {
 
         if let Some(task) = self.agent_task.take() {
             // A conversation running elsewhere: its agent is not started here.
-            tokio::spawn(task(submit_rx, event_tx));
+            tokio::spawn(task(submit_rx, event_tx, question_tx.clone()));
         } else {
             let (mcp_refresh_tx, _) = tokio::sync::broadcast::channel(16);
             self.mcp_refresh_tx = Some(mcp_refresh_tx.clone());

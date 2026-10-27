@@ -9,8 +9,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use futures::{Stream, StreamExt};
 use sven_control::remote::{
-    control_endpoint, conversation_doc_endpoint, conversation_messages_endpoint, CommandEnvelope,
-    EventBatch, RemoteDiscovery, WhoAmI, DISCOVERY_PATH, REMOTE_PROTOCOL_VERSION,
+    control_endpoint, conversation_approvals_endpoint, conversation_doc_endpoint,
+    conversation_messages_endpoint, CommandEnvelope, EventBatch, RemoteDiscovery, WhoAmI,
+    DISCOVERY_PATH, REMOTE_PROTOCOL_VERSION,
 };
 use uuid::Uuid;
 
@@ -283,6 +284,35 @@ impl RemoteClient {
             response.status()
         );
         Ok(())
+    }
+
+    /// Allows (`approve`) or refuses tool call `call_id` waiting in
+    /// conversation `id`. False when nothing waits for that decision any
+    /// more (it was decided elsewhere, or the answer ended).
+    ///
+    /// # Errors
+    ///
+    /// The token is refused, or the server cannot be asked.
+    pub async fn decide_approval(
+        &self,
+        id: Uuid,
+        call_id: &str,
+        approve: bool,
+    ) -> anyhow::Result<bool> {
+        let response = self
+            .http
+            .post(self.url(&conversation_approvals_endpoint(id)))
+            .bearer_auth(&self.token)
+            .timeout(REQUEST_TIMEOUT)
+            .json(&serde_json::json!({ "callId": call_id, "approve": approve }))
+            .send()
+            .await?;
+        match response.status().as_u16() {
+            401 | 403 => Err(TokenRefused.into()),
+            404 => Ok(false),
+            _ if response.status().is_success() => Ok(true),
+            _ => anyhow::bail!("deciding the call answered {}", response.status()),
+        }
     }
 
     /// Uploads `batch`.

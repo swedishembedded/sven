@@ -358,6 +358,17 @@ impl JsConversationDoc {
         self.inner.update_message(id, state, parts);
     }
 
+    /// Sets `key` of what is known about the conversation (`model`, ...).
+    #[wasm_bindgen(js_name = setMeta)]
+    pub fn set_meta(&self, key: &str, value: &str) {
+        self.inner.set_meta(key, value);
+    }
+
+    /// `key` of what is known about the conversation, if set.
+    pub fn meta(&self, key: &str) -> Option<String> {
+        self.inner.meta(key)
+    }
+
     /// The conversation in order, as a JSON array of messages.
     #[must_use]
     pub fn messages(&self) -> String {

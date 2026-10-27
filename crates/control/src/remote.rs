@@ -42,6 +42,10 @@
 //!    this host, exactly as one sent from the server's own interface: the
 //!    server stores it, then asks this host to answer it. `409` while an
 //!    answer is being written ([`conversation_messages_endpoint`]).
+//!    `POST {control_url}/conversations/{id}/approvals` with
+//!    `{"callId": ..., "approve": bool}` allows or refuses a tool call that
+//!    waits there, as the server's own interface does; `404` when nothing
+//!    waits for it ([`conversation_approvals_endpoint`]).
 //!
 //! The server is trusted with the conversation and nothing else: it can ask
 //! a session to do work, and the session's own permission policy still
@@ -124,6 +128,13 @@ pub fn control_endpoint(control_url: &str, endpoint: &str) -> String {
         control_url.trim_end_matches('/'),
         endpoint.trim_start_matches('/')
     )
+}
+
+/// The endpoint, relative to `control_url`, that decides a tool call
+/// waiting in conversation `id`.
+#[must_use]
+pub fn conversation_approvals_endpoint(id: Uuid) -> String {
+    format!("conversations/{id}/approvals")
 }
 
 /// The endpoint, relative to `control_url`, that adds a message to

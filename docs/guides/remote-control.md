@@ -98,9 +98,11 @@ With `--tui` the conversation opens in the full-screen UI as if it ran
 here: the answer streams in with its tool calls, and a message sent from a
 browser or another terminal appears as yours. Nothing runs on this machine
 and nothing is saved to its session history; the model, tools and
-permissions are the ones of the machine the conversation runs on, and a
-tool waiting for permission is allowed or refused where the conversation
-is open in the server's interface.
+permissions are the ones of the machine the conversation runs on, and the
+status bar shows that model. A tool call waiting for permission is asked
+about here as in a local session; answer it here or wherever else the
+conversation is open, and the first answer counts (the other question is
+withdrawn).
 
 ## Tool approvals
 

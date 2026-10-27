@@ -19,6 +19,7 @@ sven-model         = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-session-sync  = { path = "../session-sync" }
 sven-tool-api      = { path = "../tool-api" }
+sven-tools-agent   = { path = "../tools-agent" }
 sven-vocab         = { path = "../vocab" }
 async-trait        = { workspace = true }
 anyhow     = { workspace = true }

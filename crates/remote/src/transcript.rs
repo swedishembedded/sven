@@ -135,6 +135,12 @@ impl Reader {
         Ok(self.transcript.changes(&messages))
     }
 
+    /// The model the conversation answers with, as last synced.
+    #[must_use]
+    pub fn model(&self) -> Option<String> {
+        self.replica.meta("model").filter(|model| !model.is_empty())
+    }
+
     /// Syncs the replica from the server and returns the whole conversation.
     ///
     /// # Errors
@@ -244,13 +250,44 @@ pub(crate) mod over_http {
         server: std::sync::Arc<ConversationDoc>,
         requests: usize,
     ) -> String {
+        serve_recording(id, server, requests).await.0
+    }
+
+    /// [`serve`], also taking decisions on the conversation's waiting tool
+    /// calls (`204`), whose bodies it returns in order.
+    pub(crate) async fn serve_recording(
+        id: Uuid,
+        server: std::sync::Arc<ConversationDoc>,
+        requests: usize,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let decisions = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = std::sync::Arc::clone(&decisions);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
             for _ in 0..requests {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = vec![0u8; 8192];
-                let read = socket.read(&mut request).await.unwrap();
+                let mut read = socket.read(&mut request).await.unwrap();
+                // The body may follow the head in a later packet.
+                loop {
+                    let text = String::from_utf8_lossy(&request[..read]).to_string();
+                    let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                        break;
+                    };
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length: ")
+                                .and_then(|n| n.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if body.len() >= length {
+                        break;
+                    }
+                    read += socket.read(&mut request[read..]).await.unwrap();
+                }
                 let request = String::from_utf8_lossy(&request[..read]).to_string();
                 let target = request
                     .split_whitespace()
@@ -273,6 +310,15 @@ pub(crate) mod over_http {
                     .into_bytes();
                     head.extend(body);
                     head
+                } else if authorized
+                    && path == format!("/api/workspace/conversations/{id}/approvals")
+                {
+                    let body = request
+                        .split_once("\r\n\r\n")
+                        .map(|(_, b)| b)
+                        .unwrap_or_default();
+                    recorded.lock().unwrap().push(body.to_string());
+                    b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n".to_vec()
                 } else {
                     b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
                         .to_vec()
@@ -280,7 +326,7 @@ pub(crate) mod over_http {
                 socket.write_all(&response).await.unwrap();
             }
         });
-        format!("http://{address}/api/workspace")
+        (format!("http://{address}/api/workspace"), decisions)
     }
 
     fn message(id: &str, role: &str, state: &str, text: &str) -> DocMessage {

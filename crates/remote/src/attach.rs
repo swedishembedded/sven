@@ -15,8 +15,13 @@
 //! The document's messages carry their content as parts, a JSON array of
 //! objects with a `type`: `text` (`text`), `reasoning` (`text`), `tool_call`
 //! (`callId`, `name`, `arguments`), `tool_result` (`callId`, `result`,
-//! `isError`), `approval` (`callId`, `name`, `status`) and `error`
-//! (`message`). Any other type is not shown.
+//! `isError`), `approval` (`callId`, `name`, `arguments`, `status`) and
+//! `error` (`message`). Any other type is not shown.
+//!
+//! A tool call that waits for permission is asked about in the UI the way a
+//! local session asks (a yes/no question); the answer goes to the server,
+//! which tells the machine. Decided elsewhere first, the question is
+//! withdrawn.
 
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -25,8 +30,9 @@ use serde_json::Value;
 use sven_frontend::agent::AgentRequest;
 use sven_machines::AgentEvent;
 use sven_session_sync::DocMessage;
+use sven_tools_agent::{Question, QuestionRequest};
 use sven_vocab::ToolCall;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::client::RemoteClient;
@@ -57,12 +63,54 @@ pub struct EventTranslator {
     /// Messages this UI sent, not yet seen in the conversation: shown by the
     /// UI when sent, so never shown again when they arrive.
     own: VecDeque<String>,
+    /// Tool calls waiting for permission, by call id.
+    waiting: HashMap<String, ()>,
+    /// What changed about waiting calls since [`Self::take_approvals`].
+    approvals: Approvals,
+}
+
+/// A tool call that waits for the person's permission.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Waiting {
+    pub call_id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+/// Calls that started waiting, and calls no longer waiting (decided here or
+/// elsewhere, or their answer ended).
+#[derive(Debug, Default, PartialEq)]
+pub struct Approvals {
+    pub asked: Vec<Waiting>,
+    pub settled: Vec<String>,
 }
 
 impl EventTranslator {
     /// `text` was sent from this UI.
     pub fn sent(&mut self, text: &str) {
         self.own.push_back(text.trim().to_string());
+    }
+
+    /// The calls that started or stopped waiting since the last time.
+    pub fn take_approvals(&mut self) -> Approvals {
+        std::mem::take(&mut self.approvals)
+    }
+
+    /// Notes which tool calls of `parts` wait for permission now.
+    fn note_approvals(&mut self, parts: &[Value], streaming: bool) {
+        for part in parts.iter().filter(|p| field(p, "type") == "approval") {
+            let call_id = field(part, "callId").to_string();
+            let pending = streaming && field(part, "status") == "pending";
+            if pending && self.waiting.insert(call_id.clone(), ()).is_none() {
+                self.approvals.asked.push(Waiting {
+                    call_id,
+                    name: field(part, "name").to_string(),
+                    arguments: part.get("arguments").cloned().unwrap_or(Value::Null),
+                });
+            } else if !pending && self.waiting.remove(&call_id).is_some() {
+                self.approvals.settled.push(call_id);
+            }
+        }
     }
 
     /// The events `messages` add to what was shown.
@@ -87,8 +135,9 @@ impl EventTranslator {
             if message.role != "assistant" {
                 continue;
             }
-            let shown = self.answers.entry(message.id.clone()).or_default();
             let streaming = message.state == "streaming";
+            self.note_approvals(&parts, streaming);
+            let shown = self.answers.entry(message.id.clone()).or_default();
             show_parts(shown, &parts, streaming, &mut events);
             if !streaming && !shown.ended {
                 shown.ended = true;
@@ -163,12 +212,6 @@ fn show_parts(shown: &mut Shown, parts: &[Value], streaming: bool, events: &mut 
                         .unwrap_or(false),
                 });
             }
-            "approval" if field(part, "status") == "pending" => {
-                events.push(AgentEvent::Warning(format!(
-                    "{} waits for permission; allow or refuse it where the conversation is open",
-                    field(part, "name")
-                )));
-            }
             "error" => events.push(AgentEvent::Error(field(part, "message").to_string())),
             _ => {}
         }
@@ -188,18 +231,45 @@ pub async fn remote_agent_task(
     conversation: Uuid,
     mut requests: mpsc::Receiver<AgentRequest>,
     events: mpsc::Sender<AgentEvent>,
+    questions: mpsc::Sender<QuestionRequest>,
 ) {
     let mut reader = Reader::new(conversation);
     let mut translator = EventTranslator::default();
+    // One question per waiting call; aborting it withdraws it from the UI.
+    let mut asking: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
     let mut tick = tokio::time::interval(ATTACH_INTERVAL);
     let mut failing: Option<String> = None;
+    let mut model: Option<String> = None;
     loop {
         let mut out = Vec::new();
         tokio::select! {
             _ = tick.tick() => match reader.sync(&client).await {
                 Ok(messages) => {
                     failing = None;
-                    out = translator.events(&messages);
+                    // The status bar shows the model the conversation answers
+                    // with, not this machine's default.
+                    if let Some(now) = reader.model().filter(|now| model.as_ref() != Some(now)) {
+                        out.push(AgentEvent::ModelChanged(now.clone()));
+                        model = Some(now);
+                    }
+                    out.extend(translator.events(&messages));
+                    let approvals = translator.take_approvals();
+                    for call_id in approvals.settled {
+                        if let Some(question) = asking.remove(&call_id) {
+                            question.abort();
+                        }
+                    }
+                    for waiting in approvals.asked {
+                        let call_id = waiting.call_id.clone();
+                        let question = tokio::spawn(ask(
+                            client.clone(),
+                            conversation,
+                            waiting,
+                            questions.clone(),
+                            events.clone(),
+                        ));
+                        asking.insert(call_id, question);
+                    }
                 }
                 Err(e) => {
                     let message = format!("{e:#}");
@@ -233,6 +303,47 @@ pub async fn remote_agent_task(
             }
         }
     }
+}
+
+/// Asks the person whether `waiting` may run and tells the server. A
+/// question the UI drops unanswered decides nothing.
+async fn ask(
+    client: RemoteClient,
+    conversation: Uuid,
+    waiting: Waiting,
+    questions: mpsc::Sender<QuestionRequest>,
+    events: mpsc::Sender<AgentEvent>,
+) {
+    let (answer_tx, answer_rx) = oneshot::channel();
+    let request = QuestionRequest {
+        id: waiting.call_id.clone(),
+        questions: vec![Question {
+            prompt: format!(
+                "Allow {}?\n\nArguments: {}",
+                waiting.name, waiting.arguments
+            ),
+            options: vec!["yes".to_string(), "no".to_string()],
+            allow_multiple: false,
+        }],
+        answer_tx,
+    };
+    if questions.send(request).await.is_err() {
+        return;
+    }
+    let Ok(answer) = answer_rx.await else { return };
+    let approve = answer.trim().eq_ignore_ascii_case("yes");
+    let report = match client
+        .decide_approval(conversation, &waiting.call_id, approve)
+        .await
+    {
+        Ok(true) => return,
+        Ok(false) => AgentEvent::Warning(format!(
+            "{} was already decided, or its answer ended",
+            waiting.name
+        )),
+        Err(e) => AgentEvent::Error(format!("could not decide {}: {e:#}", waiting.name)),
+    };
+    let _ = events.send(report).await;
 }
 
 #[cfg(test)]
@@ -336,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_answer_reports_its_error_and_a_pending_approval_is_named() {
+    fn a_failed_answer_reports_its_error() {
         let mut translator = EventTranslator::default();
         let failed = message(
             "m1",
@@ -348,12 +459,18 @@ mod tests {
             ]),
         );
         let events = translator.events(&[failed]);
-        assert!(matches!(&events[0], AgentEvent::Warning(text) if text.contains("shell")));
         assert_eq!(
-            events[1],
-            AgentEvent::Error("the machine went offline".into())
+            events,
+            vec![
+                AgentEvent::Error("the machine went offline".into()),
+                AgentEvent::TurnComplete
+            ]
         );
-        assert_eq!(events[2], AgentEvent::TurnComplete);
+        assert_eq!(
+            translator.take_approvals(),
+            Approvals::default(),
+            "an ended answer waits for nothing"
+        );
     }
 
     #[tokio::test]
@@ -373,11 +490,19 @@ mod tests {
             "complete",
             serde_json::json!([{"type": "text", "text": "Hello."}]),
         ));
+        server.set_meta("model", "some/model");
         let control = crate::transcript::over_http::serve(id, server, 8).await;
         let client = RemoteClient::new(&control, "k").unwrap();
         let (_requests, requests_rx) = mpsc::channel(4);
         let (events_tx, mut events) = mpsc::channel(16);
-        let task = tokio::spawn(remote_agent_task(client, id, requests_rx, events_tx));
+        let (questions, _questions_rx) = mpsc::channel(4);
+        let task = tokio::spawn(remote_agent_task(
+            client,
+            id,
+            requests_rx,
+            events_tx,
+            questions,
+        ));
         let mut seen = Vec::new();
         while seen.last() != Some(&AgentEvent::TurnComplete) {
             seen.push(
@@ -391,11 +516,105 @@ mod tests {
         assert_eq!(
             seen,
             vec![
+                AgentEvent::ModelChanged("some/model".into()),
                 AgentEvent::UserMessage("hi".into()),
                 AgentEvent::TextDelta("Hello.".into()),
                 AgentEvent::TextComplete("Hello.".into()),
                 AgentEvent::TurnComplete,
             ]
+        );
+    }
+
+    #[test]
+    fn a_call_is_asked_about_once_while_it_waits_and_settled_when_it_stops() {
+        let mut translator = EventTranslator::default();
+        let approval = |status: &str| {
+            serde_json::json!([{"type": "approval", "callId": "c1", "name": "shell",
+                                "arguments": {"command": "make deploy"}, "status": status}])
+        };
+        translator.events(&[message("m1", "assistant", "streaming", approval("pending"))]);
+        assert_eq!(
+            translator.take_approvals(),
+            Approvals {
+                asked: vec![Waiting {
+                    call_id: "c1".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({"command": "make deploy"})
+                }],
+                settled: vec![]
+            }
+        );
+        translator.events(&[message("m1", "assistant", "streaming", approval("pending"))]);
+        assert_eq!(
+            translator.take_approvals(),
+            Approvals::default(),
+            "asked once"
+        );
+        translator.events(&[message(
+            "m1",
+            "assistant",
+            "streaming",
+            approval("approved"),
+        )]);
+        assert_eq!(
+            translator.take_approvals(),
+            Approvals {
+                asked: vec![],
+                settled: vec!["c1".into()]
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_waiting_call_is_asked_in_the_ui_and_the_answer_reaches_the_server() {
+        use sven_session_sync::ConversationDoc;
+        let id = Uuid::new_v4();
+        let server = std::sync::Arc::new(ConversationDoc::with_client_id(1));
+        server.add_message(&message(
+            "m1",
+            "assistant",
+            "streaming",
+            serde_json::json!([{"type": "approval", "callId": "c1", "name": "shell",
+                                "arguments": {"command": "make deploy"}, "status": "pending"}]),
+        ));
+        let (control, decisions) =
+            crate::transcript::over_http::serve_recording(id, server, 64).await;
+        let client = RemoteClient::new(&control, "k").unwrap();
+        let (_requests, requests_rx) = mpsc::channel(4);
+        let (events_tx, _events) = mpsc::channel(64);
+        let (questions_tx, mut questions) = mpsc::channel(4);
+        let task = tokio::spawn(remote_agent_task(
+            client,
+            id,
+            requests_rx,
+            events_tx,
+            questions_tx,
+        ));
+
+        let question = tokio::time::timeout(Duration::from_secs(5), questions.recv())
+            .await
+            .expect("the UI is asked")
+            .expect("the task is running");
+        assert!(question.questions[0].prompt.contains("shell"));
+        assert!(question.questions[0].prompt.contains("make deploy"));
+        assert_eq!(question.questions[0].options, vec!["yes", "no"]);
+        question.answer_tx.send("yes".into()).unwrap();
+        for _ in 0..50 {
+            if !decisions.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        task.abort();
+        let decided: Vec<Value> = decisions
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|body| serde_json::from_str(body).unwrap())
+            .collect();
+        assert_eq!(
+            decided,
+            vec![serde_json::json!({"callId": "c1", "approve": true})]
         );
     }
 }

@@ -25,6 +25,8 @@
 //! * `messages`: a map of message id to a map of `role`, `author`, `state`
 //!   and `parts` (the message's content as JSON, in whatever part vocabulary
 //!   the application uses).
+//! * `meta`: a map of string to string, about the conversation as a whole;
+//!   `model` is the model it answers with.
 //!
 //! A message's content is written whole, at checkpoints (an answer when it
 //! ends, or every so often while it streams), never per token: per-token
@@ -46,6 +48,7 @@ use yrs::{
 
 const ORDER: &str = "order";
 const MESSAGES: &str = "messages";
+const META: &str = "meta";
 
 /// A replica's view of one message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +74,7 @@ pub struct ConversationDoc {
     doc: Doc,
     order: ArrayRef,
     messages: MapRef,
+    meta: MapRef,
 }
 
 impl Default for ConversationDoc {
@@ -96,10 +100,12 @@ impl ConversationDoc {
     fn from_doc(doc: Doc) -> Self {
         let order = doc.get_or_insert_array(ORDER);
         let messages = doc.get_or_insert_map(MESSAGES);
+        let meta = doc.get_or_insert_map(META);
         Self {
             doc,
             order,
             messages,
+            meta,
         }
     }
 
@@ -132,6 +138,21 @@ impl ConversationDoc {
         if let Some(Out::YMap(message)) = self.messages.get(&txn, id) {
             message.insert(&mut txn, "state", state);
             message.insert(&mut txn, "parts", parts);
+        }
+    }
+
+    /// Sets `key` of the conversation's `meta` to `value`.
+    pub fn set_meta(&self, key: &str, value: &str) {
+        let mut txn = self.doc.transact_mut();
+        self.meta.insert(&mut txn, key, value);
+    }
+
+    /// `key` of the conversation's `meta`, if set.
+    #[must_use]
+    pub fn meta(&self, key: &str) -> Option<String> {
+        match self.meta.get(&self.doc.transact(), key) {
+            Some(Out::Any(yrs::Any::String(value))) => Some(value.to_string()),
+            _ => None,
         }
     }
 
@@ -321,5 +342,18 @@ mod tests {
             doc.diff(&[]).unwrap(),
             doc.diff(&ConversationDoc::new().state_vector()).unwrap()
         );
+    }
+
+    #[test]
+    fn what_is_known_about_the_conversation_reaches_every_replica() {
+        let server = ConversationDoc::with_client_id(1);
+        let tab = ConversationDoc::with_client_id(2);
+        assert_eq!(server.meta("model"), None);
+        server.set_meta("model", "some/model");
+        sync(&server, &tab);
+        assert_eq!(tab.meta("model").as_deref(), Some("some/model"));
+        server.set_meta("model", "other/model");
+        sync(&server, &tab);
+        assert_eq!(tab.meta("model").as_deref(), Some("other/model"));
     }
 }

@@ -68,13 +68,15 @@ pub use ui_state::FocusPane;
 pub use sven_frontend::{ModelDirective, QueuedMessage};
 
 /// The agent the UI talks to, in place of the local session it starts by
-/// default: given the UI's requests and a sender for its events, it runs
-/// until the requests end. How a conversation running elsewhere is shown
-/// (`sven rc attach --tui`).
+/// default: given the UI's requests, a sender for its events and one for the
+/// questions it asks the person (a tool call's permission among them), it
+/// runs until the requests end. How a conversation running elsewhere is
+/// shown (`sven rc attach --tui`).
 pub type AgentTask = Box<
     dyn FnOnce(
             mpsc::Receiver<crate::agent::AgentRequest>,
             mpsc::Sender<sven_machines::AgentEvent>,
+            mpsc::Sender<QuestionRequest>,
         ) -> futures::future::BoxFuture<'static, ()>
         + Send,
 >;

@@ -39,6 +39,11 @@ async fn a_message_sent_elsewhere_and_its_answer_are_drawn_as_if_they_ran_here()
     let (mut app, _rx) = App::for_testing();
     event(
         &mut app,
+        AgentEvent::ModelChanged("deepseek/deepseek-v4.1-flash".into()),
+    )
+    .await;
+    event(
+        &mut app,
         AgentEvent::UserMessage("which files are here?".into()),
     )
     .await;
@@ -72,6 +77,11 @@ async fn a_message_sent_elsewhere_and_its_answer_are_drawn_as_if_they_ran_here()
     event(&mut app, AgentEvent::TurnComplete).await;
 
     let drawn = screen(&mut app);
+    let status = drawn.lines().next().unwrap_or_default();
+    assert!(
+        status.contains("deepseek-v4.1-flash"),
+        "the status bar shows the conversation's model: {status}"
+    );
     for expected in [
         "which files are here?",
         "Looking.",

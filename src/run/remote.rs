@@ -86,12 +86,13 @@ pub(crate) async fn attach_remote_conversation(conversation: uuid::Uuid) -> anyh
 pub(crate) fn attached_agent(conversation: uuid::Uuid) -> anyhow::Result<sven_tui::AgentTask> {
     let login = signed_in()?;
     let client = sven_remote::RemoteClient::new(&login.control_url, &login.token)?;
-    Ok(Box::new(move |requests, events| {
+    Ok(Box::new(move |requests, events, questions| {
         Box::pin(sven_remote::attach::remote_agent_task(
             client,
             conversation,
             requests,
             events,
+            questions,
         ))
     }))
 }
