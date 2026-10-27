@@ -91,7 +91,7 @@
       "mock_responses_file": null,
       "name": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
       "provider": "aws",
-      "temperature": 0.20000000298023224
+      "temperature": null
     },
     "ocr": {
       "models": {}

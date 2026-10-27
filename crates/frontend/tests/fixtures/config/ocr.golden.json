@@ -91,7 +91,7 @@
       "mock_responses_file": null,
       "name": "openrouter/auto",
       "provider": "openrouter",
-      "temperature": 0.20000000298023224
+      "temperature": null
     },
     "ocr": {
       "concurrency": 24,

@@ -93,7 +93,7 @@
       "mock_responses_file": null,
       "name": "gpt-4o",
       "provider": "portkey",
-      "temperature": 0.20000000298023224
+      "temperature": null
     },
     "ocr": {
       "models": {}
