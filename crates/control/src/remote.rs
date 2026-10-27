@@ -25,9 +25,12 @@
 //!    the host has not acknowledged is sent again on the next connection, so
 //!    delivery is at least once and the host drops a `seq` it already took.
 //! 4. **Events.** `POST {control_url}/events` with an [`EventBatch`]: the
-//!    host's events in order, each with the host's own `seq`, plus the
-//!    highest command `seq` it has taken. The server drops an event `seq` it
-//!    already stored, so a batch sent twice is stored once.
+//!    host's events in order, numbered from 1 within the host's `run` (a
+//!    fresh id each time the host starts), plus the highest command `seq` it
+//!    has taken. The server drops an event whose `(run, seq)` it already
+//!    stored, so a batch sent twice is stored once and a restarted host is
+//!    never mistaken for one replaying old events. Numbers stay small enough
+//!    to be exact in any JSON reader.
 //!
 //! The server is trusted with the conversation and nothing else: it can ask
 //! a session to do work, and the session's own permission policy still
@@ -82,15 +85,18 @@ pub struct CommandEnvelope {
 /// One event the host uploads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventEnvelope {
-    /// Strictly increasing per session, from 1. The deduplication key.
+    /// Strictly increasing within the batch's `run`, from 1. With `run`, the
+    /// deduplication key.
     pub seq: u64,
     pub event: ControlEvent,
 }
 
 /// One upload: events in the order they happened, and how far the host has
 /// taken the command stream.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventBatch {
+    /// This run of the host: a fresh id each time it starts.
+    pub run: Uuid,
     #[serde(default)]
     pub events: Vec<EventEnvelope>,
     /// The highest command `seq` the host has taken, when it took any since
@@ -186,7 +192,9 @@ mod tests {
     #[test]
     fn an_event_batch_has_the_shape_a_server_reads() {
         let session = Uuid::parse_str(SESSION).unwrap();
+        let run = Uuid::parse_str("0b5f3c2e-1d4a-4e8b-9f10-2a3b4c5d6e7f").unwrap();
         let batch = EventBatch {
+            run,
             events: vec![
                 EventEnvelope {
                     seq: 1,
@@ -238,6 +246,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&batch).unwrap(),
             serde_json::json!({
+                "run": "0b5f3c2e-1d4a-4e8b-9f10-2a3b4c5d6e7f",
                 "events": [
                     {"seq": 1, "event": {"type": "session", "session_id": SESSION, "event": {"TextDelta": "Hel"}}},
                     {"seq": 2, "event": {"type": "session", "session_id": SESSION,
