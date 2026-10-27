@@ -30,8 +30,13 @@ event; proven against a real server end to end.
    JavaScript (`make build/wasm`, `make test/wasm`). A page gives its
    agent tools (declared in the options, run by one JavaScript handler,
    allowed exactly their declared effects; `crates/wasm/tests/session.mjs`
-   proves the round trip). Left: running `test/wasm` in a real browser
-   worker once a WebDriver is available in CI.
+   proves the round trip). This is also how an agent served from a site
+   gets its tools: they run in the browser, where the agent runs, and
+   reach the site's backend only through its API as the signed-in person;
+   there is no server-side agent. A consuming application runs the package
+   and its page tools in a real browser worker in its own end-to-end
+   suite. Left: running `test/wasm` itself in a real browser once a
+   WebDriver is available in CI.
 5. **Shared conversation document.** `sven-session-sync` is the CRDT
    (yrs) document every replica of a conversation merges alike: Rust tests
    prove convergence under any delivery order and duplication, and
