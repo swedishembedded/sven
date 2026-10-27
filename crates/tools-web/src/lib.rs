@@ -12,6 +12,7 @@
 mod config;
 pub mod grep;
 mod provenance;
+pub mod public_net;
 pub mod read_lints;
 pub mod web_fetch;
 pub mod web_search;

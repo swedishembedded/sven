@@ -11,6 +11,7 @@ use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 use crate::provenance::{attach_web_provenance, now_unix};
+use crate::public_net;
 
 /// Default character ceiling for fetched page content.
 /// 20 K chars ≈ 5,000 tokens - fits comfortably within a 40 K-token context window.
@@ -20,13 +21,26 @@ pub struct WebFetchTool {
     /// Cap applied when the caller does not pass `max_chars`, from
     /// `tools.web.fetch_max_chars`.
     default_max_chars: usize,
+    /// Only the public internet is reachable (`tools.web.public_only`; see
+    /// [`crate::public_net`]).
+    public_only: bool,
 }
 
 impl WebFetchTool {
     /// A tool whose default cap comes from config.
     #[must_use]
     pub fn new(default_max_chars: usize) -> Self {
-        Self { default_max_chars }
+        Self {
+            default_max_chars,
+            public_only: false,
+        }
+    }
+
+    /// The same tool, reaching only the public internet.
+    #[must_use]
+    pub fn public_only(mut self) -> Self {
+        self.public_only = true;
+        self
     }
 }
 
@@ -89,7 +103,7 @@ impl Tool for WebFetchTool {
 
         debug!(url = %url, "web_fetch tool");
 
-        match fetch_url(&url, max_chars).await {
+        match fetch_url(&url, max_chars, self.public_only).await {
             // Provenance names exactly what was fetched: this tool never
             // writes memory itself - it only attaches the provenance of what
             // it returned.
@@ -101,14 +115,36 @@ impl Tool for WebFetchTool {
     }
 }
 
-async fn fetch_url(url: &str, max_chars: usize) -> anyhow::Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::limited(3))
-        .user_agent("sven-agent/0.1")
-        .build()?;
+/// Redirects followed before giving up.
+const MAX_REDIRECTS: usize = 3;
 
-    let response = client.get(url).send().await?;
+async fn fetch_url(url: &str, max_chars: usize, public_only: bool) -> anyhow::Result<String> {
+    let builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("sven-agent/0.1");
+    let client = if public_only {
+        builder
+            .no_proxy()
+            .dns_resolver(std::sync::Arc::new(public_net::PublicOnly))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() > MAX_REDIRECTS {
+                    return attempt.error("too many redirects");
+                }
+                match public_net::refuse_literal(attempt.url()) {
+                    Ok(()) => attempt.follow(),
+                    Err(why) => attempt.error(why),
+                }
+            }))
+    } else {
+        builder.redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
+    }
+    .build()?;
+
+    let parsed = reqwest::Url::parse(url)?;
+    if public_only {
+        public_net::refuse_literal(&parsed).map_err(|why| anyhow::anyhow!(why))?;
+    }
+    let response = client.get(parsed).send().await?;
     let content_type = response
         .headers()
         .get("content-type")

@@ -32,6 +32,10 @@ pub struct WebConfig {
     pub search: WebSearchConfig,
     /// Default maximum characters for web_fetch (default 20000)
     pub fetch_max_chars: usize,
+    /// `web_fetch` reaches only the public internet: never this machine,
+    /// its private networks or a cloud metadata service (default false; a
+    /// hosted host always sets it).
+    pub public_only: bool,
 }
 
 impl Default for WebConfig {
@@ -39,6 +43,7 @@ impl Default for WebConfig {
         Self {
             search: WebSearchConfig::default(),
             fetch_max_chars: DEFAULT_MAX_CHARS,
+            public_only: false,
         }
     }
 }
@@ -50,6 +55,7 @@ impl WebConfig {
         Schema::fields([
             ("search", Schema::keys(&["api_key"])),
             ("fetch_max_chars", Schema::value()),
+            ("public_only", Schema::value()),
         ])
     }
 
@@ -57,7 +63,12 @@ impl WebConfig {
     /// caller asks for another length.
     #[must_use]
     pub fn fetch_tool(&self) -> WebFetchTool {
-        WebFetchTool::new(self.fetch_max_chars)
+        let tool = WebFetchTool::new(self.fetch_max_chars);
+        if self.public_only {
+            tool.public_only()
+        } else {
+            tool
+        }
     }
 
     /// The `web_search` tool, with the configured API key.
