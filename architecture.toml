@@ -104,6 +104,7 @@ sven-sdk = "sdk"
 sven-ci  = "surface"
 sven-mcp = "surface"
 sven-remote = "surface"
+sven-wasm = "surface"
 sven-tui = "surface"
 
 # composite

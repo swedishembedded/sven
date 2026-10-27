@@ -53,6 +53,7 @@ members = [
     "crates/mcp-client",
     "crates/acp",
     "crates/remote",
+    "crates/wasm",
     "crates/team",
     "crates/memory",
     "crates/executors",

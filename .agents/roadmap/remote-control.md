@@ -19,14 +19,12 @@ event; proven against a real server end to end.
 3. **Attach from a terminal.** `sven rc` prints a line per event; a TUI
    attached to one of its sessions (sharing the same session, not a copy)
    needs the host to fan events out locally as well as to the server.
-4. **Browser core (WASM).** The vocabulary, kernel, its runtime, the
-   machines and the control protocol build for wasm32 (`make check/wasm`),
-   and the kernel's portable tests pass on a JavaScript event loop with the
-   same transition trace as natively (`make test/wasm`). Left: a browser
-   model executor (the OpenAI wire over `fetch`, from `sven-turn` without
-   its native tool registry), browser tools, the JS bindings crate and the
-   page's Web Worker; and running `test/wasm` in a real browser worker once
-   a WebDriver is available in CI.
+4. **Browser sessions.** A whole agent turn runs as wasm with the same
+   observable sequence as natively, and `sven-wasm` exposes a session to
+   JavaScript (`make build/wasm`, `make test/wasm`). Left: tools a page can
+   register (the `Tool` trait is still `Send`), wiring the package into an
+   application's Web Worker, and running `test/wasm` in a real browser
+   worker once a WebDriver is available in CI.
 5. **Shared conversation document.** A CRDT document of the conversation
    (one implementation for Rust and the browser) so a terminal and a
    browser can both write to it; execution order stays the host's.

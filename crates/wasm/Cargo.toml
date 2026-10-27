@@ -1,0 +1,28 @@
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name        = "sven-wasm"
+version.workspace = true
+edition     = "2021"
+description = "JavaScript bindings for running a sven agent session in a browser (or any JavaScript runtime): the same kernel, machine and executors as native sven, with the model reached over the page's own fetch."
+license     = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sven-executors     = { path = "../executors" }
+sven-hsm           = { path = "../hsm" }
+sven-kernel        = { path = "../kernel" }
+sven-machines      = { path = "../machines" }
+sven-model         = { path = "../model" }
+sven-model-drivers = { path = "../model-drivers" }
+sven-rt            = { path = "../rt" }
+sven-tool-registry = { path = "../tool-registry" }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+wasm-bindgen       = "0.2"
+js-sys             = "0.3"
+wasm-bindgen-futures = "0.4"
+tokio              = { version = "1", default-features = false, features = ["sync"] }

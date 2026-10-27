@@ -68,6 +68,23 @@ build/debug:
 build/release:
 	$(CARGO) build --release $(CARGO_FLAGS)
 
+## build/wasm - the browser build of a sven session (sven-wasm), as a versioned
+##   package in target/wasm-pkg: web/ for a page or Web Worker, node/ for
+##   Node, each with a package.json naming the sven version, commit and
+##   remote-control protocol it was built from. An embedding application
+##   installs it from there, never from a copy. Needs the wasm32 target and
+##   wasm-bindgen-cli matching the locked wasm-bindgen; RUSTUP_RUN as for
+##   check/wasm.
+build/wasm:
+	$(RUSTUP_RUN) $(CARGO) build -p sven-wasm --release --target wasm32-unknown-unknown --target-dir target/wasm
+	@for flavour in web nodejs; do \
+		dir=target/wasm-pkg/$$( [ $$flavour = nodejs ] && echo node || echo web ); \
+		rm -rf $$dir && wasm-bindgen target/wasm/wasm32-unknown-unknown/release/sven_wasm.wasm \
+			--out-dir $$dir --target $$flavour || exit 1; \
+		python3 scripts/wasm-package.py $$dir $$flavour || exit 1; \
+	done
+	@echo "built target/wasm-pkg/web and target/wasm-pkg/node"
+
 ## build/crate - lists the per-package build targets; builds nothing
 build/crate:
 	@bash scripts/make-help.sh build/crate
@@ -158,13 +175,17 @@ test/package:
 ##   event loop (Node, through wasm-bindgen-test-runner): the kernel's
 ##   (sven-kernel tests/portable.rs) and a whole agent turn with a tool call
 ##   (sven-executors tests/portable_session.rs). The same bodies run natively
-##   under `cargo test`, so a pass on both is parity. Needs the wasm32 target and wasm-bindgen-cli
+##   under `cargo test`, so a pass on both is parity. Then the JavaScript
+##   face: build/wasm's Node build driving a session against a fake
+##   OpenAI-compatible server (crates/wasm/tests/session.mjs). Needs the wasm32 target and wasm-bindgen-cli
 ##   matching the locked wasm-bindgen; RUSTUP_RUN as for check/wasm.
 test/wasm:
 	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
 		$(RUSTUP_RUN) $(CARGO) test -p sven-kernel --test portable --target wasm32-unknown-unknown --target-dir target/wasm
 	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
 		$(RUSTUP_RUN) $(CARGO) test -p sven-executors --test portable_session --target wasm32-unknown-unknown --target-dir target/wasm
+	$(MAKE) --no-print-directory build/wasm
+	SVEN_WASM_PKG=target/wasm-pkg/node node --test crates/wasm/tests/session.mjs
 
 ## test/crate - lists the per-package test targets; tests nothing
 test/crate:
@@ -302,7 +323,7 @@ check/features:
 ##   a browser (an OS thread, a socket, OS randomness) fails here, not later.
 ##   Needs `rustup target add wasm32-unknown-unknown`. Its own target dir:
 ##   the wasm build must not invalidate the native one.
-WASM_PACKAGES = sven-rt sven-vocab sven-hsm sven-machines sven-control sven-kernel sven-model sven-model-drivers sven-turn sven-decision sven-executors
+WASM_PACKAGES = sven-rt sven-vocab sven-hsm sven-machines sven-control sven-kernel sven-model sven-model-drivers sven-turn sven-decision sven-executors sven-wasm
 check/wasm:
 	@if ! $(RUSTUP_RUN) rustc --print sysroot | xargs -I{} test -d {}/lib/rustlib/wasm32-unknown-unknown; then \
 		echo "check/wasm: the wasm32-unknown-unknown target is not installed; run: rustup target add wasm32-unknown-unknown" >&2; exit 1; \
@@ -683,7 +704,7 @@ generate/roadmap/index:
         test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness $(HARNESS_TARGETS) \
         generate \
         generate/config generate/config/golden generate/roadmap generate/roadmap/index \
-        test/crate $(TEST_CRATE_TARGETS) test/formal test/wasm \
+        test/crate $(TEST_CRATE_TARGETS) test/formal test/wasm build/wasm \
         check check/fmt check/features check/wasm check/clippy check/doc check/arch \
         check/gates $(GATE_TARGETS) \
         fmt clean help \
