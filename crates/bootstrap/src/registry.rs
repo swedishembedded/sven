@@ -937,7 +937,7 @@ mod tests {
             expected.push("attach_file");
         }
         if cfg!(feature = "document") {
-            expected.push("document_convert");
+            expected.extend(["document_convert", "document_locate"]);
         }
         if cfg!(all(unix, feature = "gdb")) {
             expected.push("gdb");

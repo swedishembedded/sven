@@ -413,7 +413,9 @@ pub fn index_section(registry: &ToolRegistry, mode: AgentMode) -> Option<String>
          that installs packages.",
     );
     if tools.iter().any(|t| t.name == "document_locate") {
-        out.push_str(" For PDF files that is document_locate (which pages) and document_convert.");
+        out.push_str(
+            " For PDF files that is document_locate (search: which pages) and document_convert.",
+        );
     }
     out.push_str("\n\n");
     if tools.len() <= INLINE_INDEX_LIMIT {

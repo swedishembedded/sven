@@ -25,6 +25,7 @@ mod names;
 mod page;
 mod pages;
 mod quality;
+mod query;
 mod score;
 mod validate;
 
@@ -45,5 +46,6 @@ pub use manifest::{manifest_path, LayoutInfo, Manifest, Method, PageRecord, Stat
 pub use names::{match_model, Candidate, MatchError};
 pub use pages::parse_selection;
 pub use quality::{assess as assess_native_text, TextQuality};
+pub use query::{normalize as normalize_whitespace, Hit, Query, Syntax};
 pub use score::character_error_rate;
 pub use validate::Problem;

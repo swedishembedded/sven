@@ -23,6 +23,8 @@ pub enum DocumentError {
     Empty,
     #[error("invalid page selection '{0}': {1}")]
     PageSelection(String, String),
+    #[error("invalid query '{0}': {1}")]
+    Query(String, String),
     #[error("{0}")]
     Model(String),
     #[error("pages need OCR but no OCR model was given")]

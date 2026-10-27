@@ -211,14 +211,27 @@ feature `asr`, Linux), and refused without that.
 
 ### `document_locate`
 
-Find which pages of a PDF hold a chapter, section or term, from the outline and
-the native text layer; returns titles, page ranges and short snippets, never
-page text. Read-only. See [Converting one chapter](../guides/document-conversion.md#converting-one-chapter).
+Search a PDF without reading it: the outline (chapters and sections, each with
+the pages it covers) and the native text layer. Returns titles, page ranges,
+per-page match counts and short snippets, never page text. Read-only. For text
+files use `grep` or the shell; this tool is for PDFs, which they cannot search.
+See [Converting one chapter](../guides/document-conversion.md#converting-one-chapter).
 
 | Parameter | Description |
 |-----------|-------------|
 | `source` (required) | PDF file |
-| `query` | chapter/section title or term; omit for the outline's top levels |
+| `query` | what to find; omit to list the outline |
+| `syntax` | `literal` (default), `regex` (Rust `regex`; `(?-i)` for case-sensitive), or `fzf` (extended search: `abc` fuzzy, `'abc` exact, `^abc` prefix, `abc$` suffix, `!abc` excludes, `a \| b` either, `\ ` a literal space; terms must all match one line; ranked best first) |
+| `pages` | search only these pages, e.g. `600-700` or `1-5,9` |
+| `depth` | outline levels listed (default 2 without a query, all with one) |
+| `limit` | entries per list, 1–1000 (default 30) |
+| `offset` | entries to skip, from a previous `next_offset` |
+| `context` | snippet characters each side of a match, 0–1000 (default 60) |
+
+Matching ignores case and treats line breaks as spaces. An unknown parameter,
+an out-of-range value, an unparsable regex, or a query that matches the empty
+string or only excludes is refused with the reason. Pages without a usable
+text layer are listed in a `warning`: their text was not searched.
 
 ### `document_convert`
 

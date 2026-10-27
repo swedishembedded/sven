@@ -28,6 +28,7 @@ hayro       = { version = "0.8", features = ["embed-fonts"] }
 pdf-extract = "0.12"
 # Outline (bookmarks) of a PDF; the parser pdf-extract is built on (MIT).
 lopdf       = "0.42"
+regex       = { workspace = true }
 
 [dev-dependencies]
 tempfile        = { workspace = true }

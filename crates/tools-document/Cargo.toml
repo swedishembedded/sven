@@ -2,7 +2,7 @@
 name        = "sven-tools-document"
 version.workspace = true
 edition     = "2021"
-description = "The document_convert tool: PDF to Markdown through an OCR model, returning a control record and never the text. Domain tier."
+description = "The document_convert and document_locate tools: PDF to Markdown through an OCR model, and PDF search (literal, regex, fzf) returning page numbers and snippets; never the text. Domain tier."
 license     = "Apache-2.0"
 
 [dependencies]

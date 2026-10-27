@@ -180,11 +180,16 @@ manifest consistent.
 ### Converting one chapter
 
 `document_locate(source, query?)` finds where something is without reading it.
-It is read-only and runs in every mode. With a `query` (a chapter or section
-title, or a term such as a register name) it returns the outline entries whose
-title matches, each with the pages it covers, and the pages whose native text
-contains the query, with a short snippet; without one it returns the outline's
-top two levels:
+It is read-only and runs in every mode. With a `query` it returns the outline
+entries whose title matches, each with the pages it covers, and the pages whose
+native text matches, each with a match count and a short snippet; without one
+it lists the outline's top two levels. The query is literal by default;
+`syntax: "regex"` takes a regular expression (`USART_(SR|BRR)`) and
+`syntax: "fzf"` takes fzf's extended search (`^25 usart`, `baud 'register`),
+ranked best first. `pages` narrows the search, and results come `limit` at a
+time with a `next_offset` for the rest, so a small context window can page
+through a large result. All parameters are in the
+[tools reference](../reference/tools.md#document_locate).
 
 From a `document_locate(source: "manual.pdf", query: "USART")` on the STM32F10x
 reference manual (RM0008, 995 pages), shortened:
@@ -193,7 +198,8 @@ reference manual (RM0008, 995 pages), shortened:
 {"query":"USART","outline_matches":[
   {"level":1,"title":"25 Universal synchronous asynchronous receiver transmitter (USART)","pages":"653-693"},
   {"level":2,"title":"25.3 USART functional description","pages":"654-680"}, …],
- "text_hits":[…],"text_hit_pages":…,"page_count":995}
+ "outline_match_count":…,"text_hits":[{"page":653,"count":…,"snippet":"…"}, …],
+ "text_hit_pages":…,"searched_pages":995,"page_count":995,"next_offset":30}
 ```
 
 So "extract the USART chapter of manual.pdf into usart.md" is one

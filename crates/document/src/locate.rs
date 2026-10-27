@@ -15,6 +15,7 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+use crate::query::{normalize, Hit, Query};
 use crate::DocumentError;
 
 /// Outline entries as `(level, title, first page)`, and the page count.
@@ -90,66 +91,103 @@ fn with_ranges(toc: Vec<(usize, String, usize)>, pages: usize) -> Vec<OutlineEnt
         .collect()
 }
 
-/// Outline entries whose title contains `query` (case and spacing ignored).
-pub fn outline_matches<'a>(entries: &'a [OutlineEntry], query: &str) -> Vec<&'a OutlineEntry> {
-    let needle = normalize(query);
-    entries
+/// Outline entries whose title matches `query`, with the match: in reading
+/// order, or best first for a query that scores (fzf).
+pub fn outline_matches<'a>(
+    entries: &'a [OutlineEntry],
+    query: &Query,
+) -> Vec<(&'a OutlineEntry, Hit)> {
+    let mut found: Vec<_> = entries
         .iter()
-        .filter(|e| normalize(&e.title).contains(&needle))
-        .collect()
+        .filter_map(|e| query.best(&normalize(&e.title)).map(|h| (e, h)))
+        .collect();
+    // Stable: equal scores keep reading order.
+    found.sort_by_key(|(_, h)| h.score);
+    found
 }
 
-/// A page whose text contains the query, with the text around the first hit.
+/// A page that matches a query, with the text around its best match.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageHit {
     /// 1-based page.
     pub page: usize,
+    /// Matches on the page: occurrences for a literal or regex query,
+    /// matching lines for an fzf one.
+    pub count: usize,
+    /// The best match with up to `context` characters on each side, its
+    /// whitespace collapsed.
     pub snippet: String,
+    /// The best match's score; lower is better.
+    pub score: usize,
 }
 
-/// Pages of `native_text` (one entry per page) containing `query`, case and
-/// spacing ignored, at most `limit`, with the total number of matching pages.
-pub fn find(native_text: &[Option<String>], query: &str, limit: usize) -> (Vec<PageHit>, usize) {
-    let needle = normalize(query);
-    let mut hits = Vec::new();
-    let mut total = 0;
-    for (i, text) in native_text.iter().enumerate() {
-        let Some(text) = text else { continue };
+/// The pages among `pages` (0-based indices into `native_text`, one entry
+/// per page) that match `query`, in page order, or best first for a query
+/// that scores (fzf).
+pub fn find(
+    native_text: &[Option<String>],
+    query: &Query,
+    pages: &[usize],
+    context: usize,
+) -> Vec<PageHit> {
+    let mut hits: Vec<PageHit> = pages
+        .iter()
+        .filter_map(|&i| {
+            let text = native_text.get(i)?.as_deref()?;
+            page_hit(text, query, context).map(|(count, snippet, score)| PageHit {
+                page: i + 1,
+                count,
+                snippet,
+                score,
+            })
+        })
+        .collect();
+    hits.sort_by_key(|h| h.score);
+    hits
+}
+
+/// The match count, snippet and score of `text`, if it matches.
+fn page_hit(text: &str, query: &Query, context: usize) -> Option<(usize, String, usize)> {
+    if !query.by_line() {
         let flat = normalize(text);
-        let Some(at) = flat.find(&needle) else {
+        let hit = query.best(&flat)?;
+        return Some((query.count(&flat), snippet(&flat, &hit, context), hit.score));
+    }
+    let mut count = 0;
+    let mut best: Option<(String, Hit)> = None;
+    for line in text.lines() {
+        let flat = normalize(line);
+        let Some(hit) = query.best(&flat) else {
             continue;
         };
-        total += 1;
-        if hits.len() < limit {
-            let start = flat[..at]
-                .char_indices()
-                .rev()
-                .nth(60)
-                .map_or(0, |(i, _)| i);
-            let end = flat[at..]
-                .char_indices()
-                .nth(needle.len() + 60)
-                .map_or(flat.len(), |(i, _)| at + i);
-            hits.push(PageHit {
-                page: i + 1,
-                snippet: flat[start..end].to_string(),
-            });
+        count += 1;
+        if best.as_ref().is_none_or(|(_, b)| hit.score < b.score) {
+            best = Some((flat, hit));
         }
     }
-    (hits, total)
+    let (line, hit) = best?;
+    Some((count, snippet(&line, &hit, context), hit.score))
 }
 
-/// Lower case, every run of whitespace one space.
-fn normalize(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+/// The match with up to `context` characters on each side.
+fn snippet(text: &str, hit: &Hit, context: usize) -> String {
+    let start = text[..hit.span.start]
+        .char_indices()
+        .rev()
+        .nth(context.saturating_sub(1))
+        .map_or(0, |(i, _)| i);
+    let end = text[hit.span.end..]
+        .char_indices()
+        .nth(context)
+        .map_or(text.len(), |(i, _)| hit.span.end + i);
+    let start = if context == 0 { hit.span.start } else { start };
+    text[start..end].to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::Syntax;
     use crate::testing::{build_pdf_with_outline, FixturePage};
 
     fn manual() -> Vec<u8> {
@@ -189,9 +227,9 @@ mod tests {
     #[test]
     fn a_chapter_is_found_by_part_of_its_title() {
         let entries = outline(&manual()).unwrap();
-        let hits = outline_matches(&entries, "usart");
+        let hits = outline_matches(&entries, &Query::new("usart", Syntax::Literal).unwrap());
         assert_eq!(hits.len(), 2);
-        assert_eq!((hits[0].first_page, hits[0].last_page), (3, 4));
+        assert_eq!((hits[0].0.first_page, hits[0].0.last_page), (3, 4));
     }
 
     #[test]
@@ -201,15 +239,32 @@ mod tests {
     }
 
     #[test]
-    fn text_search_reports_pages_and_a_snippet() {
+    fn text_search_reports_pages_counts_and_a_snippet_in_the_documents_spelling() {
         let text = [
             Some("Intro".to_string()),
             None,
-            Some("The USART  Status register (USART_SR)".to_string()),
+            Some("The USART  Status register (USART_SR)\nUSART_SR again".to_string()),
         ];
-        let (hits, total) = find(&text, "usart_sr", 10);
-        assert_eq!(total, 1);
-        assert_eq!(hits[0].page, 3);
-        assert!(hits[0].snippet.contains("(usart_sr)"));
+        let query = Query::new("usart_sr", Syntax::Literal).unwrap();
+        let hits = find(&text, &query, &[0, 1, 2], 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!((hits[0].page, hits[0].count), (3, 2));
+        assert_eq!(hits[0].snippet, "register (USART_SR) USART_SR");
+        assert!(
+            find(&text, &query, &[0, 1], 10).is_empty(),
+            "only the selected pages"
+        );
+    }
+
+    #[test]
+    fn an_fzf_search_ranks_pages_by_their_best_line() {
+        let text = [
+            Some("bus access unit disable".to_string()),
+            Some("Baud rate register\nother".to_string()),
+        ];
+        let query = Query::new("baud", Syntax::Fzf).unwrap();
+        let hits = find(&text, &query, &[0, 1], 40);
+        assert_eq!(hits.iter().map(|h| h.page).collect::<Vec<_>>(), [2, 1]);
+        assert_eq!(hits[0].snippet, "Baud rate register");
     }
 }
