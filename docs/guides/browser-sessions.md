@@ -11,6 +11,8 @@ JavaScript runtime. It is not a second implementation: the session is the
 same reactive agent machine, kernel loop, turn executor and tool executor
 the `sven` binary runs, compiled to WebAssembly. `make test/wasm` runs the
 same tests natively and as WebAssembly and requires the same results.
+`make test/wasm/browser CHROME=/path/to/chrome` runs a session, and a tool
+of its own, in a module Web Worker of a real headless Chrome.
 
 ## Build
 

@@ -187,6 +187,16 @@ test/wasm:
 	$(MAKE) --no-print-directory build/wasm
 	SVEN_WASM_PKG=target/wasm-pkg/node node --test crates/wasm/tests/session.mjs crates/wasm/tests/conversation-doc.mjs
 
+## test/wasm/browser - the web build in a real browser: a module Web Worker
+##   runs a session, and a tool of its own, against a fake model on the same
+##   origin (crates/wasm/tests/browser.mjs, which drives Chrome over its
+##   DevTools protocol; no package needed). CHROME names a Chrome or
+##   Chromium binary; RUSTUP_RUN as for check/wasm.
+test/wasm/browser:
+	@test -n "$(CHROME)" || { echo "CHROME names a Chrome or Chromium binary" >&2; exit 1; }
+	$(MAKE) --no-print-directory build/wasm
+	CHROME="$(CHROME)" SVEN_WASM_PKG=target/wasm-pkg/web node --test crates/wasm/tests/browser.mjs
+
 ## test/crate - lists the per-package test targets; tests nothing
 test/crate:
 	@bash scripts/make-help.sh test/crate
@@ -704,7 +714,7 @@ generate/roadmap/index:
         test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness $(HARNESS_TARGETS) \
         generate \
         generate/config generate/config/golden generate/roadmap generate/roadmap/index \
-        test/crate $(TEST_CRATE_TARGETS) test/formal test/wasm build/wasm \
+        test/crate $(TEST_CRATE_TARGETS) test/formal test/wasm test/wasm/browser build/wasm \
         check check/fmt check/features check/wasm check/clippy check/doc check/arch \
         check/gates $(GATE_TARGETS) \
         fmt clean help \

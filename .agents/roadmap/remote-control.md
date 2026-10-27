@@ -35,8 +35,8 @@ event; proven against a real server end to end.
    reach the site's backend only through its API as the signed-in person;
    there is no server-side agent. A consuming application runs the package
    and its page tools in a real browser worker in its own end-to-end
-   suite. Left: running `test/wasm` itself in a real browser once a
-   WebDriver is available in CI.
+   suite, and `make test/wasm/browser` proves the same in a real headless
+   Chrome from this repository (a module worker, a page tool, a fake model).
 5. **Shared conversation document.** `sven-session-sync` is the CRDT
    (yrs) document every replica of a conversation merges alike: Rust tests
    prove convergence under any delivery order and duplication, and
