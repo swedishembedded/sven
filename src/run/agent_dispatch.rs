@@ -41,6 +41,8 @@ use sven_bootstrap::Config;
 /// (`sven_bootstrap::ui_test_dispatch`) for why the two are never
 /// conflated.
 #[derive(Debug, Deserialize)]
+// Only the `ui-test` mode reads a device and its parameters.
+#[cfg_attr(not(feature = "android"), allow(dead_code))]
 struct DispatchRequest {
     mode: String,
     device: Option<DispatchDevice>,
