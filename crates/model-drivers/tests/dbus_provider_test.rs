@@ -128,14 +128,13 @@ fn test_wav(rate: u32, n: usize) -> Vec<u8> {
 
 // ─── Fake Brain1.Manager ──────────────────────────────────────────────────────
 
-/// Everything the fake server observed during one `Run` call.
+/// Everything the fake server observed during one `Subscribe` call.
 #[derive(Debug, Clone, Default)]
 struct Seen {
     model: String,
     action: String,
     params: String,
     in_meta: String,
-    transport: String,
     /// Blob name → byte length actually readable through the fd.
     blob_lens: HashMap<String, usize>,
     /// Blob name → the bytes themselves.
@@ -179,18 +178,34 @@ fn read_fd_via_mmap(fd: &OwnedFd) -> Vec<u8> {
     }
 }
 
+/// Write one frame on the stream socket, with `fd` attached when given.
+fn send_frame(sock: &std::os::fd::OwnedFd, frame: &Value, fd: Option<&dyn std::os::fd::AsRawFd>) {
+    use nix::sys::socket::{sendmsg, ControlMessage, MsgFlags};
+    use std::os::fd::AsRawFd;
+    let bytes = frame.to_string();
+    let iov = [std::io::IoSlice::new(bytes.as_bytes())];
+    let raw = fd.map(|f| [f.as_raw_fd()]);
+    let cmsgs: Vec<ControlMessage<'_>> = raw
+        .as_ref()
+        .map(|r| ControlMessage::ScmRights(r))
+        .into_iter()
+        .collect();
+    sendmsg::<()>(sock.as_raw_fd(), &iov, &cmsgs, MsgFlags::empty(), None).expect("send a frame");
+}
+
 #[zbus::interface(name = "com.swedishembedded.Brain1.Manager")]
 impl FakeManager {
-    #[allow(clippy::too_many_arguments)]
-    async fn run(
+    /// Brain's streaming call: record what arrived, then answer on a
+    /// SOCK_SEQPACKET stream with the reply text as a blob and a `done`.
+    async fn subscribe(
         &self,
         model: String,
         action: String,
         params: String,
         in_fds: HashMap<String, OwnedFd>,
         in_meta: String,
-        transport: String,
-    ) -> zbus::fdo::Result<(String, HashMap<String, OwnedFd>, String)> {
+    ) -> zbus::fdo::Result<(u64, OwnedFd)> {
+        use nix::sys::socket::{socketpair, AddressFamily, SockFlag, SockType};
         let mut blob_lens = HashMap::new();
         let mut blobs = HashMap::new();
         for (name, fd) in &in_fds {
@@ -207,28 +222,43 @@ impl FakeManager {
             action,
             params,
             in_meta,
-            transport,
             blob_lens,
             blobs,
         });
 
+        let (server, client) = socketpair(
+            AddressFamily::Unix,
+            SockType::SeqPacket,
+            None,
+            SockFlag::SOCK_NONBLOCK | SockFlag::SOCK_CLOEXEC,
+        )
+        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
         let text_fd = blob::memfd_with_bytes("text", FAKE_REPLY.as_bytes())
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
-        let mut out_fds = HashMap::new();
-        out_fds.insert("text".to_string(), text_fd);
+        send_frame(
+            &server,
+            &serde_json::json!({"type": "blob", "name": "text"}),
+            Some(&text_fd as &dyn std::os::fd::AsRawFd),
+        );
+        // A server that was asked for token-level capture reports it in the
+        // result beside the usage.
+        let mut result = serde_json::json!({"usage": {"input_tokens": 11, "output_tokens": 5}});
+        if wants_logprobs {
+            result["seed"] = 7.into();
+            result["completion_token_ids"] = serde_json::json!([5, 6, 7]);
+            result["completion_logprobs"] = serde_json::json!([-0.5, -0.25, -1.0]);
+        }
+        send_frame(
+            &server,
+            &serde_json::json!({"type": "done", "result": result}),
+            None,
+        );
+        drop(server);
+        Ok((1, OwnedFd::from(client)))
+    }
 
-        // A server that was asked for token-level capture reports it in
-        // `out_meta` beside the per-output media metadata.
-        let out_meta = if wants_logprobs {
-            r#"{"text": {"media": "text"}, "generation": {"model": "brain/omni@r3", "seed": 7, "token_ids": [5, 6, 7], "logprobs": [-0.5, -0.25, -1.0]}}"#
-        } else {
-            r#"{"text": {"media": "text"}}"#
-        };
-        Ok((
-            r#"{"usage": {"input_tokens": 11, "output_tokens": 5}}"#.to_string(),
-            out_fds,
-            out_meta.to_string(),
-        ))
+    async fn cancel(&self, _job: u64) -> bool {
+        false
     }
 
     async fn list_models(&self) -> Vec<String> {
@@ -330,10 +360,9 @@ async fn run_sends_flattened_messages_as_a_double_encoded_param() {
     )
     .await;
 
-    let seen = seen.lock().unwrap().clone().expect("Run was called");
+    let seen = seen.lock().unwrap().clone().expect("Subscribe was called");
     assert_eq!(seen.model, "brain/omni");
     assert_eq!(seen.action, "generate");
-    assert_eq!(seen.transport, "memfd");
 
     let params: Value = serde_json::from_str(&seen.params).expect("params is a JSON object");
     let messages_str = params["messages"]
@@ -365,7 +394,7 @@ async fn image_meta_and_byte_length_match_the_raw_pixel_contract() {
     )
     .await;
 
-    let seen = seen.lock().unwrap().clone().expect("Run was called");
+    let seen = seen.lock().unwrap().clone().expect("Subscribe was called");
     let meta: Value = serde_json::from_str(&seen.in_meta).expect("in_meta is JSON");
 
     // The fixture is a 2×1 RGB PNG.
@@ -592,7 +621,7 @@ async fn sampling_fields_travel_in_params_and_generation_meta_is_read_back() {
 
     let params: Value =
         serde_json::from_str(&seen.lock().unwrap().clone().unwrap().params).unwrap();
-    assert_eq!(params["temperature"].as_f64(), Some(0.25));
+    assert_eq!(params["temp"].as_f64(), Some(0.25));
     assert_eq!(params["top_p"].as_f64(), Some(0.9));
     assert_eq!(params["top_k"], 40);
     assert_eq!(params["seed"], 7);
@@ -609,7 +638,7 @@ async fn sampling_fields_travel_in_params_and_generation_meta_is_read_back() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            ResponseEvent::Served { model, seed } if model == "brain/omni@r3" && *seed == Some(7)
+            ResponseEvent::Identity(identity) if identity.seed == Some(7)
         )),
         "{events:?}"
     );
