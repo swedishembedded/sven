@@ -12,6 +12,7 @@ license     = "Apache-2.0"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+sven-control       = { path = "../control" }
 sven-executors     = { path = "../executors" }
 sven-hsm           = { path = "../hsm" }
 sven-kernel        = { path = "../kernel" }

@@ -62,7 +62,7 @@ pub use audit::{
 pub use chunks::{Assembled, CacheContext, ChunkSession, ContextAssembler};
 pub use composite::{CompositeExecutor, CompositeExecutorBuilder};
 pub use internal::InternalExecutor;
-pub use thread_store::{GateJournal, GateVerdict, ThreadId, ThreadStore};
+pub use thread_store::{history_messages, GateJournal, GateVerdict, ThreadId, ThreadStore};
 pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
 pub use turn::{CompactionConfig, CostPolicy, TurnExecutor};

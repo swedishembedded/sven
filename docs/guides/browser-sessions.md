@@ -42,7 +42,9 @@ await session.send("What can you do?");
 
 - `new SvenSession(options)` starts a session. `options` is JSON with
   `base_url` (an OpenAI-compatible API ending in `/v1`), `model`, and
-  optionally `api_key`. Prefer an endpoint of the page's own origin that the
+  optionally `api_key` and `history`: the conversation so far as
+  `[{"role": "user" | "assistant", "text": "..."}]`, oldest first, so a
+  reopened conversation continues where it stopped. Prefer an endpoint of the page's own origin that the
   page's session cookie authenticates: then no key is ever in the page.
 - `onEvent(callback)` delivers every event from then on: sven's own
   `SessionEvent` as a JSON string (`{"TextDelta":"..."}`,

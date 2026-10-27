@@ -7,6 +7,7 @@ license      = "Apache-2.0"
 
 [dependencies]
 sven-chunks   = { path = "../chunks" }
+sven-control  = { path = "../control" }
 sven-cost     = { path = "../cost" }
 sven-model-catalog = { path = "../model-catalog" }
 sven-decision = { path = "../decision" }

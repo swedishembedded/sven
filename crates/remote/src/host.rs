@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use sven_bootstrap::{Config, RuntimeContext};
 use sven_control::remote::{EventBatch, EventEnvelope};
-use sven_control::{ControlCommand, ControlEvent, HistoryEntry, HistoryRole, SessionState};
+use sven_control::{ControlCommand, ControlEvent, HistoryEntry, SessionState};
 use sven_frontend::{SessionController, SessionOptions, SessionSpec};
 use sven_machines::AgentEvent;
 use sven_model::Message;
@@ -232,7 +232,7 @@ impl SessionActor {
                 // Idempotent: a running session keeps its own conversation.
                 if self.controller.is_none() {
                     self.mode = mode;
-                    self.history = history.into_iter().filter_map(message_of).collect();
+                    self.history = sven_executors::history_messages(history);
                 }
             }
             SessionCommand::Model(model) => self.model = Some(model),
@@ -345,16 +345,6 @@ impl SessionActor {
     }
 }
 
-fn message_of(entry: HistoryEntry) -> Option<Message> {
-    match entry.role {
-        HistoryRole::User => Some(Message::user(entry.text)),
-        HistoryRole::Assistant => Some(Message::assistant(entry.text)),
-        // A tool turn is only meaningful next to the call that made it, which
-        // a flat history cannot carry; the answer that used it says enough.
-        HistoryRole::Tool | HistoryRole::System => None,
-    }
-}
-
 fn first_line(text: &str) -> &str {
     let line = text.lines().next().unwrap_or_default();
     match line.char_indices().nth(100) {
@@ -433,28 +423,6 @@ async fn upload_loop(client: RemoteClient, mut rx: mpsc::Receiver<Upload>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_flat_history_becomes_the_turns_a_session_can_continue() {
-        let history = vec![
-            HistoryEntry {
-                role: HistoryRole::User,
-                text: "hi".into(),
-            },
-            HistoryEntry {
-                role: HistoryRole::Tool,
-                text: "ls output".into(),
-            },
-            HistoryEntry {
-                role: HistoryRole::Assistant,
-                text: "hello".into(),
-            },
-        ];
-        let messages: Vec<Message> = history.into_iter().filter_map(message_of).collect();
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].as_text(), Some("hi"));
-        assert_eq!(messages[1].as_text(), Some("hello"));
-    }
 
     #[test]
     fn a_long_prompt_prints_as_its_first_line_cut_at_a_character() {

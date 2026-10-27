@@ -32,11 +32,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
-use sven_executors::{CompositeExecutorBuilder, ThreadStore, ToolExecutor, TurnExecutor};
+use sven_executors::{
+    history_messages, CompositeExecutorBuilder, ThreadStore, ToolExecutor, TurnExecutor,
+};
 use sven_hsm::{
     dispatch::Hsm, submachine::ErasedMachine, Context, Event, PermissionPolicy, UiEvent,
 };
 use sven_kernel::ErasedRuntime;
+use sven_machines::machines::reactive_agent::CHAT_THREAD;
 use sven_machines::ReactiveAgentMachine;
 use sven_model::ModelProvider;
 use sven_model_drivers::OpenAiProvider;
@@ -57,6 +60,11 @@ struct SessionOptions {
     /// authenticates, so no key ever reaches the page.
     #[serde(default)]
     api_key: Option<String>,
+    /// The conversation so far, oldest first, in the remote-control
+    /// protocol's shape (`{"role": "user" | "assistant", "text": ...}`): how a
+    /// reopened conversation continues where it stopped.
+    #[serde(default)]
+    history: Vec<sven_control::HistoryEntry>,
 }
 
 /// One agent session, running in this page (or worker).
@@ -67,8 +75,8 @@ pub struct SvenSession {
 
 #[wasm_bindgen]
 impl SvenSession {
-    /// Starts a session from `options`, a JSON object: `base_url`, `model`
-    /// and optionally `api_key`.
+    /// Starts a session from `options`, a JSON object: `base_url`, `model`,
+    /// and optionally `api_key` and `history`.
     ///
     /// # Errors
     ///
@@ -86,7 +94,9 @@ impl SvenSession {
             serde_json::Value::Null,
         ));
         let registry = Arc::new(ToolRegistry::new());
-        let store = Arc::new(Mutex::new(ThreadStore::new()));
+        let mut thread = ThreadStore::new();
+        thread.replace_thread(CHAT_THREAD, history_messages(options.history));
+        let store = Arc::new(Mutex::new(thread));
         let call_threads = Arc::new(Mutex::new(HashMap::new()));
         let turn = TurnExecutor::new(
             model,

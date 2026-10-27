@@ -45,7 +45,15 @@ test("a session answers through the runtime's fetch and reports sven's own event
   const { port } = server.address();
   try {
     const session = new SvenSession(
-      JSON.stringify({ base_url: `http://127.0.0.1:${port}/v1`, model: "fake/model", api_key: "k" }),
+      JSON.stringify({
+        base_url: `http://127.0.0.1:${port}/v1`,
+        model: "fake/model",
+        api_key: "k",
+        history: [
+          { role: "user", text: "my name is Ada" },
+          { role: "assistant", text: "Hello, Ada." },
+        ],
+      }),
     );
     const events = [];
     const finished = new Promise((resolve) => {
@@ -72,7 +80,13 @@ test("a session answers through the runtime's fetch and reports sven's own event
     assert.equal(requests[0].auth, "Bearer k");
     assert.equal(requests[0].body.model, "fake/model");
     assert.equal(requests[0].body.stream, true);
-    assert.deepEqual(requests[0].body.messages.at(-1), { role: "user", content: "hi" });
+    // The conversation so far reaches the model before the new message.
+    const turns = requests[0].body.messages.filter((m) => m.role !== "system");
+    assert.deepEqual(turns, [
+      { role: "user", content: "my name is Ada" },
+      { role: "assistant", content: "Hello, Ada." },
+      { role: "user", content: "hi" },
+    ]);
   } finally {
     server.close();
   }

@@ -11,6 +11,7 @@ license     = "Apache-2.0"
 [dependencies]
 sven-bootstrap     = { path = "../bootstrap", default-features = false }
 sven-control       = { path = "../control" }
+sven-executors     = { path = "../executors" }
 sven-frontend      = { path = "../frontend" }
 sven-machines      = { path = "../machines" }
 sven-model         = { path = "../model" }
