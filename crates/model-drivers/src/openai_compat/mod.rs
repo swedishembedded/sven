@@ -1398,6 +1398,32 @@ mod tests {
 
     // ── Parallel tool call coalescing ────────────────────────────────────────
 
+    /// The API's assistant message holds the turn's `content` and its
+    /// `tool_calls` together; sending the text as a message of its own makes
+    /// a turn that ended before its calls.
+    #[test]
+    fn a_turns_text_travels_with_its_tool_calls() {
+        use sven_model::{FunctionCall, Message, MessageContent, Role};
+        let msgs = vec![
+            Message::assistant("Let me look:"),
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::ToolCall {
+                    tool_call_id: "call_1".into(),
+                    function: FunctionCall {
+                        name: "read_file".into(),
+                        arguments: "{}".into(),
+                    },
+                },
+            },
+            Message::tool_result("call_1", "x"),
+        ];
+        let out = build_openai_messages(&msgs);
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert_eq!(out[0]["content"], "Let me look:");
+        assert_eq!(out[0]["tool_calls"][0]["id"], "call_1");
+    }
+
     #[test]
     fn two_consecutive_tool_call_messages_coalesced_into_one_assistant_message() {
         use sven_model::{FunctionCall, Message, MessageContent, Role};

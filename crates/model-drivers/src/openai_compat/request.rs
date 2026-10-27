@@ -64,12 +64,10 @@ pub(crate) fn role_str(r: &Role) -> &'static str {
 /// Extracted as a free function so it can be unit-tested without making HTTP
 /// requests.
 ///
-/// **Parallel tool call coalescing**: OpenAI requires that all tool calls from
-/// one assistant turn appear inside a *single* assistant message as a
-/// `tool_calls` array.  Sven stores each tool call as a separate
-/// `MessageContent::ToolCall` entry internally (easier to work with), so this
-/// function merges consecutive `ToolCall` messages into one JSON object before
-/// sending them to the API.
+/// **One message per model turn**: the API's assistant message carries the
+/// turn's text (`content`) and all of its calls (`tool_calls`) together.
+/// Sven stores the text and each call as separate messages, so this sends
+/// [`sven_model::turns`] (see there for why it matters).
 pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Value> {
     use sven_model::{ContentPart, MessageContent, ToolContentPart, ToolResultContent};
 
@@ -106,42 +104,9 @@ pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Val
         json!({ "role": "tool", "tool_call_id": tool_call_id, "content": wire_content })
     }
 
-    let mut result: Vec<Value> = Vec::with_capacity(messages.len());
-    let mut i = 0;
-
-    while i < messages.len() {
-        let m = &messages[i];
-
-        // Merge consecutive ToolCall messages into one assistant message so
-        // the wire format satisfies OpenAI's parallel-tool-call contract.
-        if let MessageContent::ToolCall {
-            tool_call_id,
-            function,
-        } = &m.content
-        {
-            let mut calls = vec![tool_call_to_json(tool_call_id, function)];
-            i += 1;
-            while i < messages.len() {
-                if let MessageContent::ToolCall {
-                    tool_call_id,
-                    function,
-                } = &messages[i].content
-                {
-                    calls.push(tool_call_to_json(tool_call_id, function));
-                    i += 1;
-                } else {
-                    break;
-                }
-            }
-            result.push(json!({ "role": "assistant", "tool_calls": calls }));
-            continue;
-        }
-
-        let v = match &m.content {
-            MessageContent::Text(t) => json!({
-                "role": role_str(&m.role),
-                "content": t,
-            }),
+    fn content_json(content: &MessageContent) -> Value {
+        match content {
+            MessageContent::Text(t) => json!(t),
             MessageContent::ContentParts(parts) if !parts.is_empty() => {
                 let content: Vec<Value> = parts
                     .iter()
@@ -159,19 +124,48 @@ pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Val
                         }
                     })
                     .collect();
-                json!({ "role": role_str(&m.role), "content": content })
+                json!(content)
             }
-            MessageContent::ContentParts(_) => {
-                json!({ "role": role_str(&m.role), "content": "" })
+            MessageContent::ContentParts(_)
+            | MessageContent::ToolCall { .. }
+            | MessageContent::ToolResult { .. } => json!(""),
+        }
+    }
+
+    let mut result: Vec<Value> = Vec::with_capacity(messages.len());
+    for turn in sven_model::turns(messages) {
+        match turn {
+            sven_model::Turn::Message(m) => result.push(json!({
+                "role": role_str(&m.role),
+                "content": content_json(&m.content),
+            })),
+            // One assistant message per model turn: the text it said and
+            // every call it made (the API's `content` + `tool_calls`).
+            sven_model::Turn::Assistant { content, calls } => {
+                let mut message = json!({
+                    "role": "assistant",
+                    "tool_calls": calls
+                        .iter()
+                        .map(|c| tool_call_to_json(c.id, c.function))
+                        .collect::<Vec<_>>(),
+                });
+                if let Some(content) = content {
+                    message["content"] = content_json(content);
+                }
+                result.push(message);
             }
-            MessageContent::ToolCall { .. } => unreachable!("handled above"),
-            MessageContent::ToolResult {
-                tool_call_id,
-                content,
-            } => tool_result_to_json(tool_call_id, content),
-        };
-        result.push(v);
-        i += 1;
+            sven_model::Turn::ToolResults(results) => {
+                for m in results {
+                    if let MessageContent::ToolResult {
+                        tool_call_id,
+                        content,
+                    } = &m.content
+                    {
+                        result.push(tool_result_to_json(tool_call_id, content));
+                    }
+                }
+            }
+        }
     }
 
     result

@@ -121,6 +121,9 @@ impl sven_model::ModelProvider for GoogleProvider {
                 }
             }
         }
+        // One content per turn: the model's text with its function calls,
+        // and every function response answering them.
+        let contents = crate::block_turns::coalesce(contents, "parts", |t| json!({ "text": t }));
 
         // Tool declarations
         let tools_section: Option<Value> = if req.tools.is_empty() {

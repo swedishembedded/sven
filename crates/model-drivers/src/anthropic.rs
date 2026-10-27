@@ -710,7 +710,12 @@ pub(crate) fn build_anthropic_messages(messages: &[sven_model::Message]) -> (Str
             }
         }
     }
-    (system_text, out)
+    // One message per turn: text and tool_use blocks together, and every
+    // tool_result answering them in one user message.
+    (
+        system_text,
+        crate::block_turns::coalesce(out, "content", crate::block_turns::typed_text),
+    )
 }
 
 #[cfg(test)]

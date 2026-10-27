@@ -74,87 +74,131 @@ impl sven_model::ModelProvider for CohereProvider {
         let mut system_text = String::new();
         let mut messages: Vec<Value> = Vec::new();
 
-        for m in &req.messages {
-            match m.role {
-                Role::System => {
-                    if let Some(t) = m.as_text() {
-                        system_text = if let Some(suffix) = &req.system_dynamic_suffix {
-                            if !suffix.trim().is_empty() {
-                                format!("{t}\n\n{suffix}")
+        // One assistant message per model turn: its text and every call it
+        // made (see `sven_model::turns`).
+        for turn in sven_model::turns(&req.messages) {
+            let singles: Vec<&sven_model::Message> = match turn {
+                sven_model::Turn::Assistant { content, calls } => {
+                    let mut message = json!({
+                        "role": "assistant",
+                        "tool_calls": calls.iter().map(|c| json!({
+                            "id": c.id,
+                            "type": "function",
+                            "function": {
+                                "name": c.function.name,
+                                "arguments": c.function.arguments,
+                            }
+                        })).collect::<Vec<_>>(),
+                    });
+                    let text = match content {
+                        Some(sven_model::MessageContent::Text(t)) => t.clone(),
+                        Some(sven_model::MessageContent::ContentParts(parts)) => parts
+                            .iter()
+                            .filter_map(|p| match p {
+                                sven_model::ContentPart::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        _ => String::new(),
+                    };
+                    if !text.is_empty() {
+                        message["content"] = json!(text);
+                    }
+                    messages.push(message);
+                    continue;
+                }
+                sven_model::Turn::Message(m) => vec![m],
+                sven_model::Turn::ToolResults(results) => results,
+            };
+            for m in singles {
+                match m.role {
+                    Role::System => {
+                        if let Some(t) = m.as_text() {
+                            system_text = if let Some(suffix) = &req.system_dynamic_suffix {
+                                if !suffix.trim().is_empty() {
+                                    format!("{t}\n\n{suffix}")
+                                } else {
+                                    t.to_string()
+                                }
                             } else {
                                 t.to_string()
-                            }
-                        } else {
-                            t.to_string()
-                        };
+                            };
+                        }
                     }
-                }
-                _ => {
-                    let role = match m.role {
-                        Role::User => "user",
-                        Role::Assistant => "assistant",
-                        Role::Tool => "tool",
-                        Role::System => unreachable!(),
-                    };
-                    match &m.content {
-                        MessageContent::Text(t) => {
-                            messages.push(json!({ "role": role, "content": t }));
-                        }
-                        // Cohere command-r does not support image inputs natively.
-                        // Concatenate text parts; images are represented as a note.
-                        MessageContent::ContentParts(parts) => {
-                            let text = parts
-                                .iter()
-                                .map(|p| match p {
-                                    sven_model::ContentPart::Text { text } => text.clone(),
-                                    sven_model::ContentPart::Image { .. } => "[image]".to_string(),
-                                    sven_model::ContentPart::Audio { .. } => "[audio]".to_string(),
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            messages.push(json!({ "role": role, "content": text }));
-                        }
-                        MessageContent::ToolCall {
-                            tool_call_id,
-                            function,
-                        } => {
-                            messages.push(json!({
-                                "role": "assistant",
-                                "tool_calls": [{
-                                    "id": tool_call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": function.name,
-                                        "arguments": function.arguments,
-                                    }
-                                }]
-                            }));
-                        }
-                        MessageContent::ToolResult {
-                            tool_call_id,
-                            content,
-                        } => {
-                            let text_content = match content {
-                                sven_model::ToolResultContent::Text(t) => t.clone(),
-                                sven_model::ToolResultContent::Parts(parts) => parts
+                    _ => {
+                        let role = match m.role {
+                            Role::User => "user",
+                            Role::Assistant => "assistant",
+                            Role::Tool => "tool",
+                            Role::System => unreachable!(),
+                        };
+                        match &m.content {
+                            MessageContent::Text(t) => {
+                                messages.push(json!({ "role": role, "content": t }));
+                            }
+                            // Cohere command-r does not support image inputs natively.
+                            // Concatenate text parts; images are represented as a note.
+                            MessageContent::ContentParts(parts) => {
+                                let text = parts
                                     .iter()
                                     .map(|p| match p {
-                                        sven_model::ToolContentPart::Text { text } => text.clone(),
-                                        sven_model::ToolContentPart::Image { .. } => {
+                                        sven_model::ContentPart::Text { text } => text.clone(),
+                                        sven_model::ContentPart::Image { .. } => {
                                             "[image]".to_string()
                                         }
-                                        sven_model::ToolContentPart::Audio { .. } => {
+                                        sven_model::ContentPart::Audio { .. } => {
                                             "[audio]".to_string()
                                         }
                                     })
                                     .collect::<Vec<_>>()
-                                    .join("\n"),
-                            };
-                            messages.push(json!({
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "content": text_content,
-                            }));
+                                    .join("\n");
+                                messages.push(json!({ "role": role, "content": text }));
+                            }
+                            MessageContent::ToolCall {
+                                tool_call_id,
+                                function,
+                            } => {
+                                messages.push(json!({
+                                    "role": "assistant",
+                                    "tool_calls": [{
+                                        "id": tool_call_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": function.name,
+                                            "arguments": function.arguments,
+                                        }
+                                    }]
+                                }));
+                            }
+                            MessageContent::ToolResult {
+                                tool_call_id,
+                                content,
+                            } => {
+                                let text_content = match content {
+                                    sven_model::ToolResultContent::Text(t) => t.clone(),
+                                    sven_model::ToolResultContent::Parts(parts) => parts
+                                        .iter()
+                                        .map(|p| match p {
+                                            sven_model::ToolContentPart::Text { text } => {
+                                                text.clone()
+                                            }
+                                            sven_model::ToolContentPart::Image { .. } => {
+                                                "[image]".to_string()
+                                            }
+                                            sven_model::ToolContentPart::Audio { .. } => {
+                                                "[audio]".to_string()
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n"),
+                                };
+                                messages.push(json!({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "content": text_content,
+                                }));
+                            }
                         }
                     }
                 }

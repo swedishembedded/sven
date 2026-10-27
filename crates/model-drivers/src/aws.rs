@@ -220,6 +220,8 @@ impl sven_model::ModelProvider for BedrockProvider {
         };
 
         let max_tokens = req.max_output_tokens_override.unwrap_or(self.max_tokens);
+        // Converse requires alternating roles: one message per turn.
+        let messages = crate::block_turns::coalesce(messages, "content", |t| json!({ "text": t }));
         let mut body = json!({
             "messages": messages,
             "inferenceConfig": {

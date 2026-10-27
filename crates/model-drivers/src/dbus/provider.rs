@@ -14,8 +14,8 @@ use tracing::{debug, warn};
 
 use sven_model::{
     catalog::{InputModality, ModelCatalogEntry},
-    CompletionRequest, ContentPart, Message, MessageContent, ResponseEvent, ResponseStream, Role,
-    ToolChoice, ToolContentPart, ToolResultContent,
+    turns, CompletionRequest, ContentPart, Message, MessageContent, ResponseEvent, ResponseStream,
+    Role, ToolChoice, ToolContentPart, ToolResultContent, Turn,
 };
 
 use super::blob;
@@ -223,41 +223,53 @@ impl DbusProvider {
 /// descriptors, so image and audio parts collapse to the same `[image]` /
 /// `[audio]` textual markers the Cohere driver and the compactor use.
 pub fn flatten_messages(messages: &[Message]) -> Vec<Value> {
-    messages
-        .iter()
-        .map(|m| {
-            let role = role_str(&m.role);
-            match &m.content {
-                MessageContent::Text(t) => json!({ "role": role, "content": t }),
-                MessageContent::ContentParts(parts) => {
-                    json!({ "role": role, "content": flatten_parts(parts) })
+    let mut out = Vec::with_capacity(messages.len());
+    for turn in turns(messages) {
+        match turn {
+            Turn::Message(m) => out.push(json!({
+                "role": role_str(&m.role),
+                "content": content_text(&m.content),
+            })),
+            // One model turn, one message: its text and every call it made.
+            Turn::Assistant { content, calls } => out.push(json!({
+                "role": "assistant",
+                "content": content.map(content_text).unwrap_or_default(),
+                "tool_calls": calls.iter().map(|c| json!({
+                    "id": c.id,
+                    "type": "function",
+                    "function": {
+                        "name": c.function.name,
+                        "arguments": c.function.arguments,
+                    }
+                })).collect::<Vec<_>>(),
+            })),
+            Turn::ToolResults(results) => {
+                for m in results {
+                    if let MessageContent::ToolResult {
+                        tool_call_id,
+                        content,
+                    } = &m.content
+                    {
+                        out.push(json!({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": flatten_tool_result(content),
+                        }));
+                    }
                 }
-                MessageContent::ToolCall {
-                    tool_call_id,
-                    function,
-                } => json!({
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [{
-                        "id": tool_call_id,
-                        "type": "function",
-                        "function": {
-                            "name": function.name,
-                            "arguments": function.arguments,
-                        }
-                    }]
-                }),
-                MessageContent::ToolResult {
-                    tool_call_id,
-                    content,
-                } => json!({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": flatten_tool_result(content),
-                }),
             }
-        })
-        .collect()
+        }
+    }
+    out
+}
+
+/// The text of a message that is not a tool call or result.
+fn content_text(content: &MessageContent) -> String {
+    match content {
+        MessageContent::Text(t) => t.clone(),
+        MessageContent::ContentParts(parts) => flatten_parts(parts),
+        MessageContent::ToolCall { .. } | MessageContent::ToolResult { .. } => String::new(),
+    }
 }
 
 fn role_str(r: &Role) -> &'static str {
@@ -607,6 +619,37 @@ mod tests {
         assert_eq!(out[1]["role"], "tool");
         assert_eq!(out[1]["tool_call_id"], "c1");
         assert_eq!(out[1]["content"], "no matches");
+    }
+
+    /// A model turn is one assistant message: the text it said and the calls
+    /// it made, as the model produced them. Sent apart, the chat template
+    /// renders a turn that ends after "Let me run grep:" and a second turn
+    /// holding only the call.
+    #[test]
+    fn a_turns_text_and_calls_are_one_assistant_message() {
+        let call = |id: &str| Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: id.into(),
+                function: FunctionCall {
+                    name: "grep".into(),
+                    arguments: "{}".into(),
+                },
+            },
+        };
+        let msgs = vec![
+            Message::assistant("Let me run grep:"),
+            call("c1"),
+            call("c2"),
+            Message::tool_result("c1", "a"),
+            Message::tool_result("c2", "b"),
+        ];
+        let out = flatten_messages(&msgs);
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(out[0]["content"], "Let me run grep:");
+        assert_eq!(out[0]["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(out[1]["tool_call_id"], "c1");
+        assert_eq!(out[2]["tool_call_id"], "c2");
     }
 
     #[test]

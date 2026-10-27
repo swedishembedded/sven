@@ -19,6 +19,7 @@ pub(crate) const DEFAULT_TEMPERATURE: f32 = 0.2;
 mod anthropic;
 mod api_key;
 mod aws;
+mod block_turns;
 pub mod brain_local;
 mod cohere;
 pub mod config;
