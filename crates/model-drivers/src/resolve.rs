@@ -746,6 +746,11 @@ mod tests {
     /// endpoint lends nothing.
     #[test]
     fn a_driver_reached_by_its_id_uses_the_key_of_its_entry() {
+        // Resolution reads the process-wide config directory and stored keys,
+        // which other tests repoint under this lock.
+        let _env = crate::TEST_ENV
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let model = ModelConfig::default();
         let mut providers = Providers::new();
         providers.insert(
