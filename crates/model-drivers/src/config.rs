@@ -234,6 +234,7 @@ impl ProviderEntry {
             "mock_responses_file",
             "input_modalities",
         ])
+        .with("api_key_env", Schema::ignored(API_KEY_ENV_REMOVED))
         .with("models", Schema::entries(ModelParams::schema()))
     }
 
@@ -556,8 +557,16 @@ impl ModelConfig {
             "mock_responses_file",
             "input_modalities",
         ])
+        .with("api_key_env", Schema::ignored(API_KEY_ENV_REMOVED))
     }
 }
+
+/// Why a configuration's `api_key_env` does nothing, and what replaces it:
+/// said where the key is read, so the run does not fail later on a missing
+/// key with no hint.
+const API_KEY_ENV_REMOVED: &str =
+    "keys are no longer read from environment variables; name a file with `api_key_file` \
+     or store the key with `sven auth set <provider>`";
 
 /// Settles the active model once the configuration is read, and warns about
 /// limits that cannot hold.

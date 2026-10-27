@@ -300,6 +300,20 @@ mod tests {
         assert_eq!(config.model_reference(), "my_ollama/my-model");
     }
 
+    /// A removed key is reported with what replaces it, where the key is
+    /// read - not left for a later "no API key" with no hint.
+    #[test]
+    fn a_removed_key_is_reported_with_its_replacement() {
+        let doc = document("providers: {gw: {name: openai, api_key_env: TOKEN}}\n");
+        let warnings = doc.unknown_keys(&Config::schema());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("providers.gw.api_key_env")
+                && warnings[0].contains("api_key_file"),
+            "{warnings:?}"
+        );
+    }
+
     #[test]
     fn the_schema_names_every_section_it_reads_and_reports_the_rest() {
         let doc = document("model: {provider: x}\nmcp_servers: {a: {enable: true}}\nbogus: 1\n");
