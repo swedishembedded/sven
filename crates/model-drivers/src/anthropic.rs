@@ -26,7 +26,7 @@ pub struct AnthropicProvider {
     api_key: Option<String>,
     base_url: String,
     max_tokens: u32,
-    temperature: f32,
+    temperature: Option<f32>,
     /// Attach a `cache_control` block to the system message so Anthropic
     /// caches the prompt prefix, reducing input-token costs on repeated calls.
     cache_system_prompt: bool,
@@ -116,7 +116,7 @@ impl AnthropicProvider {
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".into()),
             max_tokens: max_tokens.unwrap_or(4096),
-            temperature: temperature.unwrap_or(0.2),
+            temperature,
             cache_system_prompt,
             extended_cache_time,
             cache_tools,
@@ -277,9 +277,17 @@ impl sven_model::ModelProvider for AnthropicProvider {
             "model": self.model,
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": self.temperature,
             "stream": req.stream,
         });
+        if let Some(t) = crate::temperature(&req, self.temperature) {
+            body["temperature"] = json!(t);
+        }
+        if let Some(p) = req.sampling.top_p {
+            body["top_p"] = json!(p);
+        }
+        if let Some(k) = req.sampling.top_k {
+            body["top_k"] = json!(k);
+        }
 
         // Automatic conversation caching - add a top-level cache_control block.
         // Anthropic automatically moves the breakpoint to the last cacheable

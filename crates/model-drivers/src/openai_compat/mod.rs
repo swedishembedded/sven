@@ -72,7 +72,7 @@ pub struct OpenAICompatProvider {
     /// Full models list URL (optional).  `None` → fall back to static catalog.
     models_url: Option<String>,
     max_tokens: u32,
-    temperature: f32,
+    temperature: Option<f32>,
     client: reqwest::Client,
     /// Additional HTTP headers (e.g. `HTTP-Referer` for OpenRouter).
     extra_headers: Vec<(String, String)>,
@@ -133,7 +133,7 @@ impl OpenAICompatProvider {
             chat_url: format!("{base}/chat/completions"),
             models_url: Some(format!("{base}/models")),
             max_tokens: max_tokens.unwrap_or(4096),
-            temperature: temperature.unwrap_or(crate::DEFAULT_TEMPERATURE),
+            temperature,
             client: crate::build_http_client(),
             extra_headers,
             auth_style,
@@ -171,7 +171,7 @@ impl OpenAICompatProvider {
             chat_url: chat_url.into(),
             models_url: None,
             max_tokens: max_tokens.unwrap_or(4096),
-            temperature: temperature.unwrap_or(crate::DEFAULT_TEMPERATURE),
+            temperature,
             client: crate::build_http_client(),
             extra_headers,
             auth_style,
@@ -469,13 +469,18 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             max_tokens_key: max_tokens,
             "stream_options": { "include_usage": true },
         });
-        // A per-request temperature overrides the configured one.
-        let temperature = req
-            .sampling
-            .temperature
-            .unwrap_or(f64::from(self.temperature));
-        if use_temperature {
-            body["temperature"] = json!(temperature);
+        // A per-request temperature overrides the configured one; with
+        // neither the server's own default applies.
+        if let Some(temperature) = crate::temperature(&req, self.temperature) {
+            if use_temperature {
+                body["temperature"] = json!(temperature);
+            } else {
+                tracing::warn!(
+                    model = %self.model,
+                    temperature,
+                    "this model accepts no temperature; the configured one is not sent"
+                );
+            }
         }
         if let Some(top_p) = req.sampling.top_p {
             body["top_p"] = json!(top_p);

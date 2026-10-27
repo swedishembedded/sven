@@ -22,7 +22,6 @@ use super::blob;
 use super::proxy::{self, BusKind, ManagerProxy};
 use super::stream::{CancelOnDrop, Frame, FrameReader, Translator};
 use crate::openai_compat::function_tool;
-use crate::DEFAULT_TEMPERATURE;
 
 /// The state of one streamed completion.
 struct StreamState {
@@ -178,15 +177,11 @@ impl DbusProvider {
         if let Some(max) = req.max_output_tokens_override.or(self.max_tokens) {
             params.insert("max_new".to_string(), json!(max));
         }
-        // brain's generate action calls it `temp` and decodes greedily without
-        // one, so a temperature is always sent: the request's, the configured
-        // one, else the default every HTTP driver applies.
-        let temperature = req
-            .sampling
-            .temperature
-            .or(self.temperature.map(f64::from))
-            .unwrap_or(f64::from(DEFAULT_TEMPERATURE));
-        params.insert("temp".to_string(), json!(temperature));
+        // brain's generate action calls it `temp`. Without one brain samples
+        // with what the checkpoint declares.
+        if let Some(temperature) = crate::temperature(req, self.temperature) {
+            params.insert("temp".to_string(), json!(temperature));
+        }
         if let Some(p) = req.sampling.top_p {
             params.insert("top_p".to_string(), json!(p));
         }
@@ -726,14 +721,17 @@ mod tests {
     }
 
     #[test]
-    fn params_always_carry_brains_temp() {
+    fn a_temperature_is_sent_only_when_set_and_under_brains_name() {
         let p = DbusProvider::new("m", DbusOptions::default(), None, None);
         let req = CompletionRequest {
             messages: vec![Message::user("hi")],
             ..Default::default()
         };
         let params: Value = serde_json::from_str(&p.build_params(&req).unwrap()).unwrap();
-        assert_eq!(params["temp"], f64::from(crate::DEFAULT_TEMPERATURE));
+        assert!(
+            params.get("temp").is_none(),
+            "unset, the checkpoint's declared sampling applies"
+        );
         assert!(
             params.get("temperature").is_none(),
             "brain refuses an undeclared param"

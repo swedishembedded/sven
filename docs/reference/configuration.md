@@ -213,8 +213,10 @@ model:
   # max_output_tokens: 4096
   # max_input_tokens: 100000
 
-  # Sampling temperature (0.0 = deterministic, 2.0 = very random).
-  temperature: 0.2
+  # Sampling temperature (0.0 = deterministic, 2.0 = very random). Unset,
+  # none is sent and the model's own default applies: the sampling a local
+  # checkpoint declares, or the hosted provider's default.
+  # temperature: 0.6
 
   # Provider-specific options forwarded as-is to the driver.
   # driver_options: {}
@@ -595,7 +597,7 @@ Controls which language model sven talks to and how.
 | `max_tokens` | catalog or server value | Total context window in tokens (input plus output), used for compaction. With `max_output_tokens` unset it also limits one response |
 | `max_output_tokens` | catalog or server value | Output tokens per response |
 | `max_input_tokens` | - | Cap on the input side of the window before compaction is forced |
-| `temperature` | `0.2` | Sampling temperature (0.0-2.0) |
+| `temperature` | unset | Sampling temperature (0.0-2.0). Unset sends none, so the model's own default applies (a local checkpoint's declared sampling, a hosted provider's default); a harness step's `sampling` overrides it per request |
 | `driver_options` | - | Provider-specific options forwarded to the driver |
 | `enable_thinking` | unset | `brain` only: sent as `chat_template_kwargs.enable_thinking`; unset sends nothing and the served template decides |
 | `input_modalities` | the driver's answer | Any of `text`, `image`, `audio`; declares what a self-hosted endpoint accepts |

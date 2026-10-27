@@ -12,9 +12,16 @@
 //!
 //! `reqwest`, SigV4 signing and every provider's dependency closure live here,
 //! so a crate that needs only the trait and its types pays for none of it.
-/// Sampling temperature a driver sends when neither the request nor the
-/// model's configuration sets one.
-pub(crate) const DEFAULT_TEMPERATURE: f32 = 0.2;
+/// The temperature a request is sent with: its own, else the configured one.
+/// `None` sends none, so the model's own default applies - a checkpoint's
+/// declared sampling on a local server, the provider's default on a hosted
+/// API. A client-side default would override what the model ships with.
+pub(crate) fn temperature(
+    req: &sven_model::CompletionRequest,
+    configured: Option<f32>,
+) -> Option<f64> {
+    req.sampling.temperature.or(configured.map(f64::from))
+}
 
 mod anthropic;
 mod api_key;

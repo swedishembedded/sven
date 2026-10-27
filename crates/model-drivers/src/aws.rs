@@ -41,7 +41,7 @@ pub struct BedrockProvider {
     model: String,
     region: String,
     max_tokens: u32,
-    temperature: f32,
+    temperature: Option<f32>,
     client: reqwest::Client,
 }
 
@@ -60,7 +60,7 @@ impl BedrockProvider {
             model,
             region,
             max_tokens: max_tokens.unwrap_or(4096),
-            temperature: temperature.unwrap_or(0.2),
+            temperature,
             client: crate::build_http_client(),
         }
     }
@@ -226,9 +226,14 @@ impl sven_model::ModelProvider for BedrockProvider {
             "messages": messages,
             "inferenceConfig": {
                 "maxTokens": max_tokens,
-                "temperature": self.temperature,
             }
         });
+        if let Some(t) = crate::temperature(&req, self.temperature) {
+            body["inferenceConfig"]["temperature"] = json!(t);
+        }
+        if let Some(p) = req.sampling.top_p {
+            body["inferenceConfig"]["topP"] = json!(p);
+        }
         if !system_parts.is_empty() {
             body["system"] = json!(system_parts);
         }

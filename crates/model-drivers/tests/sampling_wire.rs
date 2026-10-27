@@ -159,7 +159,15 @@ async fn openai_compat_omits_sampling_fields_it_was_not_given() {
     while stream.next().await.is_some() {}
 
     let body = req_rx.await.unwrap().body;
-    for key in ["top_p", "top_k", "seed", "logprobs", "return_token_ids"] {
+    // Unset, the model's own default applies: no temperature either.
+    for key in [
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "logprobs",
+        "return_token_ids",
+    ] {
         assert!(body.get(key).is_none(), "{key} must be absent: {body}");
     }
 }

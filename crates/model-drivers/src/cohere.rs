@@ -23,7 +23,7 @@ pub struct CohereProvider {
     api_key: Option<String>,
     base_url: String,
     max_tokens: u32,
-    temperature: f32,
+    temperature: Option<f32>,
     client: reqwest::Client,
 }
 
@@ -40,7 +40,7 @@ impl CohereProvider {
             api_key,
             base_url: base_url.unwrap_or_else(|| "https://api.cohere.com".into()),
             max_tokens: max_tokens.unwrap_or(4096),
-            temperature: temperature.unwrap_or(0.2),
+            temperature,
             client: crate::build_http_client(),
         }
     }
@@ -226,8 +226,19 @@ impl sven_model::ModelProvider for CohereProvider {
             "messages": messages,
             "stream": req.stream,
             "max_tokens": max_tokens,
-            "temperature": self.temperature,
         });
+        if let Some(t) = crate::temperature(&req, self.temperature) {
+            body["temperature"] = json!(t);
+        }
+        if let Some(p) = req.sampling.top_p {
+            body["p"] = json!(p);
+        }
+        if let Some(k) = req.sampling.top_k {
+            body["k"] = json!(k);
+        }
+        if let Some(seed) = req.sampling.seed {
+            body["seed"] = json!(seed);
+        }
         if !system_text.is_empty() {
             // Cohere v2: system message as first message with role "system"
             if let Some(msgs) = body["messages"].as_array_mut() {

@@ -30,7 +30,7 @@ pub struct GoogleProvider {
     api_key: Option<String>,
     base_url: String,
     max_tokens: u32,
-    temperature: f32,
+    temperature: Option<f32>,
     client: reqwest::Client,
 }
 
@@ -48,7 +48,7 @@ impl GoogleProvider {
             base_url: base_url
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com".into()),
             max_tokens: max_tokens.unwrap_or(8192),
-            temperature: temperature.unwrap_or(0.2),
+            temperature,
             client: crate::build_http_client(),
         }
     }
@@ -148,9 +148,20 @@ impl sven_model::ModelProvider for GoogleProvider {
             "contents": contents,
             "generationConfig": {
                 "maxOutputTokens": max_tokens,
-                "temperature": self.temperature,
             }
         });
+        if let Some(t) = crate::temperature(&req, self.temperature) {
+            body["generationConfig"]["temperature"] = json!(t);
+        }
+        if let Some(p) = req.sampling.top_p {
+            body["generationConfig"]["topP"] = json!(p);
+        }
+        if let Some(k) = req.sampling.top_k {
+            body["generationConfig"]["topK"] = json!(k);
+        }
+        if let Some(seed) = req.sampling.seed {
+            body["generationConfig"]["seed"] = json!(seed);
+        }
         if !system_parts.is_empty() {
             body["systemInstruction"] = json!({ "parts": system_parts });
         }

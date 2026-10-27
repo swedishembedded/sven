@@ -502,7 +502,7 @@ impl Default for ModelConfig {
             max_tokens: None,
             max_output_tokens: None,
             max_input_tokens: None,
-            temperature: Some(0.2),
+            temperature: None,
             azure_resource: None,
             azure_deployment: None,
             azure_api_version: None,
