@@ -101,10 +101,12 @@ async function serve(requests) {
 
 /// Starts headless Chrome and resolves to its DevTools address.
 function launch(profile) {
+  const startup = 30_000;
   const child = spawn(
     chrome,
     ["--headless=new", "--no-sandbox", "--no-first-run", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"],
-    { stdio: ["ignore", "ignore", "pipe"] },
+    // Its own process group, so stopping it stops its helper processes too.
+    { stdio: ["ignore", "ignore", "pipe"], detached: true },
   );
   const address = new Promise((resolve, reject) => {
     let log = "";
@@ -114,6 +116,7 @@ function launch(profile) {
       if (found) resolve(found[1]);
     });
     child.on("exit", (code) => reject(new Error(`Chrome exited (${code}): ${log}`)));
+    setTimeout(() => reject(new Error(`Chrome did not start in ${startup / 1000} s: ${log}`)), startup).unref();
   });
   return { child, address };
 }
@@ -155,11 +158,18 @@ test("a session runs in a real browser's worker and its tool runs there too", as
     const target = await (await fetch(`http://${await address}/json/new?${origin}/`, { method: "PUT" })).json();
     const page = await devtools(target.webSocketDebuggerUrl);
     await page.send("Page.enable");
-    for (let i = 0; i < 50; i++) {
-      const { result } = await page.send("Runtime.evaluate", { expression: "document.readyState", returnByValue: true });
-      if (result.value === "complete" && (await page.send("Runtime.evaluate", { expression: "location.origin", returnByValue: true })).result.value === origin) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    // A loaded Chrome on a busy machine can take a while; never go on with
+    // a page that is not the site's.
+    let loaded = false;
+    for (let i = 0; i < 300 && !loaded; i++) {
+      const { result } = await page.send("Runtime.evaluate", {
+        expression: "document.readyState === 'complete' && location.origin",
+        returnByValue: true,
+      });
+      loaded = result.value === origin;
+      if (!loaded) await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    assert.ok(loaded, `the page at ${origin} did not load in 30 s`);
     const evaluated = await page.send("Runtime.evaluate", {
       expression: `new Promise((resolve, reject) => {
         const worker = new Worker("/worker.js", { type: "module" });
@@ -183,9 +193,14 @@ test("a session runs in a real browser's worker and its tool runs there too", as
     assert.match(JSON.stringify(result.content), /Inbox/);
   } finally {
     const exited = new Promise((resolve) => child.once("exit", resolve));
-    child.kill();
+    process.kill(-child.pid, "SIGTERM");
     await exited;
     server.close();
-    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    // Best effort: a helper still closing its files must not fail the test.
+    try {
+      rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    } catch (error) {
+      console.warn(`could not remove ${profile}: ${error.message}`);
+    }
   }
 });
