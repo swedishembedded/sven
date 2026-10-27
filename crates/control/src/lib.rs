@@ -24,6 +24,8 @@
 //! That is what lets `sven-frontend` reuse the protocol and mappings without
 //! bloating the interactive binaries.
 
+pub mod remote;
+
 use serde::{Deserialize, Serialize};
 use sven_vocab::AgentMode;
 use uuid::Uuid;
@@ -35,6 +37,11 @@ use uuid::Uuid;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlCommand {
     /// Create (or resume) an agent session.
+    ///
+    /// Idempotent: for a session the host already runs it changes nothing, so
+    /// a controller that cannot know whether the host restarted sends it
+    /// before every input. A host that does not run the session yet opens it
+    /// with `history` as the conversation so far.
     NewSession {
         /// Caller-supplied session UUID. The node echoes it back in events.
         id: Uuid,
@@ -42,6 +49,9 @@ pub enum ControlCommand {
         /// Working directory for the agent (absolute path or relative to the
         /// server's CWD). `None` keeps the server's current directory.
         working_dir: Option<String>,
+        /// The conversation so far, oldest first; empty for a new one.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        history: Vec<HistoryEntry>,
     },
 
     /// Submit a text message to an active session.
@@ -189,7 +199,8 @@ pub enum HistoryRole {
     System,
 }
 
-/// One replayed conversation turn returned in [`ControlEvent::History`].
+/// One conversation turn: replayed in [`ControlEvent::History`], or handed to
+/// a host in [`ControlCommand::NewSession`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub role: HistoryRole,
@@ -485,6 +496,7 @@ mod tests {
                 id: sid,
                 mode: AgentMode::Agent,
                 working_dir: None,
+                history: Vec::new(),
             }),
             Some(sid)
         );
