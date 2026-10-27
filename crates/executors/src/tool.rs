@@ -500,18 +500,6 @@ impl EffectExecutor for ToolExecutor {
                 }
             }
 
-            // Emit the outward completion observation so headless / UI observers
-            // can render the tool result. This mirrors `UiEvent::ToolStarted`
-            // (emitted by the turn stream) and carries no inward semantics — the
-            // authoritative result still flows via `Event::ToolSucceeded` /
-            // `Event::ToolFailed` below.
-            obs.emit(UiEvent::ToolCallFinished {
-                call_id: display_id,
-                tool_name: name.clone(),
-                output: output.content.clone(),
-                is_error: output.is_error,
-            });
-
             // Append to conversation thread if a mapping exists. Truncated
             // deterministically and content-aware (`sven_turn::smart_truncate`,
             // category from the tool's own declaration) so the stored history
@@ -550,6 +538,20 @@ impl EffectExecutor for ToolExecutor {
                     s.append(&tid, Message::tool_result(orig, stored));
                 }
             }
+
+            // Emit the outward completion observation so headless / UI observers
+            // can render the tool result. This mirrors `UiEvent::ToolStarted`
+            // (emitted by the turn stream) and carries no inward semantics — the
+            // authoritative result still flows via `Event::ToolSucceeded` /
+            // `Event::ToolFailed` below. Emitted after the result is in the
+            // conversation, so an observer that keeps the conversation when a
+            // call finishes (a host checkpointing mid-answer) keeps its result.
+            obs.emit(UiEvent::ToolCallFinished {
+                call_id: display_id,
+                tool_name: name.clone(),
+                output: output.content.clone(),
+                is_error: output.is_error,
+            });
 
             if output.is_error {
                 let _ = sink

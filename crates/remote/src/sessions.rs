@@ -11,10 +11,17 @@
 //! `<data dir>/sven/remote/sessions/<session id>.json`, owner-only (it holds
 //! the conversation). On opening a session it has kept, it continues from
 //! that, not from the flat text.
+//!
+//! It is also kept after every finished tool call, so a turn the host was
+//! stopped in the middle of is not lost: [`reopen`] keeps the work it did,
+//! reports a call that was cut off as interrupted (it may or may not have
+//! taken effect, so it is never run again on its own), and names the
+//! request the turn was answering, so the server asking again continues
+//! that turn instead of starting it over.
 
 use std::path::{Path, PathBuf};
 
-use sven_model::Message;
+use sven_model::{Message, MessageContent, Role};
 use uuid::Uuid;
 
 /// Where this user's kept sessions live.
@@ -85,10 +92,85 @@ impl SessionStore {
 }
 
 /// What a session opens with: its own kept conversation when the host has
-/// one, else what the server handed over.
+/// one ([`reopen`]ed), else what the server handed over.
 #[must_use]
-pub fn opening_history(kept: Option<Vec<Message>>, from_server: Vec<Message>) -> Vec<Message> {
-    kept.unwrap_or(from_server)
+pub fn opening(kept: Option<Vec<Message>>, from_server: Vec<Message>) -> Reopened {
+    kept.map_or(
+        Reopened {
+            history: from_server,
+            unfinished: None,
+        },
+        reopen,
+    )
+}
+
+/// What a tool call cut off by the host stopping answers.
+pub const INTERRUPTED_CALL: &str = "interrupted: the agent's host stopped before this call \
+finished; it may or may not have taken effect. Check before doing it again.";
+
+/// What the host sends instead of a request it was already answering when
+/// it stopped: the work above is that answer's, so far.
+pub const CONTINUE_INTERRUPTED: &str = "(The answer to my last message was interrupted when \
+the agent's host restarted. The tool calls and results above are from that attempt; a call \
+marked interrupted may or may not have taken effect. Continue from where it stopped.)";
+
+/// A kept conversation, ready to continue.
+#[derive(Debug)]
+pub struct Reopened {
+    pub history: Vec<Message>,
+    /// The request whose answer the host stopped in the middle of, if any.
+    pub unfinished: Option<String>,
+}
+
+/// Prepares a kept conversation to continue: a turn that ended with the
+/// model's answer is as it was; one that did not keeps its tool calls and
+/// results, each call left without a result gets [`INTERRUPTED_CALL`], and
+/// the request it was answering is named.
+#[must_use]
+pub fn reopen(mut history: Vec<Message>) -> Reopened {
+    let Some(asked) = history.iter().rposition(|m| m.role == Role::User) else {
+        return Reopened {
+            history,
+            unfinished: None,
+        };
+    };
+    let answered = matches!(
+        history.last(),
+        Some(Message { role: Role::Assistant, content, .. })
+            if !matches!(content, MessageContent::ToolCall { .. })
+    );
+    if answered {
+        return Reopened {
+            history,
+            unfinished: None,
+        };
+    }
+    let unfinished = history[asked].as_text().map(str::to_string);
+    let results: std::collections::HashSet<String> = history[asked..]
+        .iter()
+        .filter_map(|m| match &m.content {
+            MessageContent::ToolResult { tool_call_id, .. } => Some(tool_call_id.clone()),
+            _ => None,
+        })
+        .collect();
+    let cut_off: Vec<String> = history[asked..]
+        .iter()
+        .filter_map(|m| match &m.content {
+            MessageContent::ToolCall { tool_call_id, .. } if !results.contains(tool_call_id) => {
+                Some(tool_call_id.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    history.extend(
+        cut_off
+            .into_iter()
+            .map(|id| Message::tool_result(id, INTERRUPTED_CALL)),
+    );
+    Reopened {
+        history,
+        unfinished,
+    }
 }
 
 #[cfg(test)]
@@ -134,8 +216,8 @@ mod tests {
     fn a_session_opens_from_its_own_record_before_the_servers_flat_text() {
         let kept = vec![Message::user("a"), Message::assistant("b")];
         let flat = vec![Message::user("only text")];
-        assert_eq!(opening_history(Some(kept.clone()), flat.clone()).len(), 2);
-        assert_eq!(opening_history(None, flat).len(), 1);
+        assert_eq!(opening(Some(kept.clone()), flat.clone()).history.len(), 2);
+        assert_eq!(opening(None, flat).history.len(), 1);
     }
 
     #[test]
@@ -147,5 +229,44 @@ mod tests {
         std::fs::write(store.file(session), "not json").unwrap();
         assert!(store.load(session).is_none());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_finished_turn_reopens_as_it_was() {
+        let kept = vec![Message::user("hi"), Message::assistant("hello")];
+        let reopened = reopen(kept);
+        assert_eq!(reopened.history.len(), 2);
+        assert_eq!(reopened.unfinished, None);
+    }
+
+    #[test]
+    fn a_turn_stopped_mid_run_keeps_its_work_and_never_reruns_a_cut_off_call() {
+        let kept = vec![
+            Message::user("hi"),
+            Message::assistant("hello"),
+            Message::user("deploy it"),
+            Message::tool_call("c1", "shell", r#"{"cmd":"make build"}"#),
+            Message::tool_result("c1", "built"),
+            Message::tool_call("c2", "shell", r#"{"cmd":"make deploy"}"#),
+        ];
+        let reopened = reopen(kept);
+        assert_eq!(reopened.unfinished.as_deref(), Some("deploy it"));
+        assert_eq!(
+            reopened.history.len(),
+            7,
+            "the work is kept, one result added"
+        );
+        match &reopened.history[6].content {
+            MessageContent::ToolResult { tool_call_id, .. } => assert_eq!(tool_call_id, "c2"),
+            other => panic!("expected the cut-off call's result, got {other:?}"),
+        }
+        let json = serde_json::to_string(&reopened.history[6]).unwrap();
+        assert!(json.contains("interrupted"), "{json}");
+        assert!(
+            serde_json::to_string(&reopened.history[4])
+                .unwrap()
+                .contains("built"),
+            "a finished call keeps its own result"
+        );
     }
 }

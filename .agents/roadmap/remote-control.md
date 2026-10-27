@@ -9,11 +9,12 @@ event; proven against a real server end to end.
 
 ## Left
 
-1. **Durable sessions.** Each session's own conversation (tool calls
-   included) is kept after every finished turn and reopened from there after
-   a restart (`sven_remote::sessions`). Left: keep the kernel snapshot too
-   (`AgentState`), so a turn interrupted by the restart resumes mid-run
-   instead of from its last finished turn.
+1. **Durable sessions.** Done: each session's own conversation (tool calls
+   included) is kept after every finished tool call and turn, and reopened
+   from there after a restart (`sven_remote::sessions`). A turn stopped
+   mid-run keeps its work; a cut-off call is reported as interrupted, never
+   re-run; the server's retry continues the turn. A model call in flight is
+   simply asked again: it has no effect to repeat.
 2. **Approvals through the server.** Done: a tool that asks first asks
    the server (`ToolNeedsApproval`) and waits for `ApproveTool`/`DenyTool`,
    denied after ten minutes of silence (`sven_remote::approvals`).

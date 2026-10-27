@@ -36,7 +36,7 @@ use uuid::Uuid;
 use crate::approvals::{PendingApprovals, RemoteApprovals, APPROVAL_TIMEOUT};
 use crate::client::{RemoteClient, TokenRefused};
 use crate::login::RemoteLogin;
-use crate::sessions::{opening_history, SessionStore};
+use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
 
 /// Events waiting for the uploader. Full means the server has stopped
 /// taking them; sessions then wait rather than grow memory without bound.
@@ -321,6 +321,9 @@ struct SessionActor {
     mode: AgentMode,
     model: Option<String>,
     history: Vec<Message>,
+    /// The request whose answer the host was stopped in the middle of, kept
+    /// from before a restart; asked again, it continues that answer.
+    unfinished: Option<String>,
     controller: Option<SessionController>,
     /// An answer is being written; terminal input waits for it.
     answering: bool,
@@ -339,6 +342,7 @@ impl SessionActor {
             mode: AgentMode::Agent,
             model: None,
             history: Vec::new(),
+            unfinished: None,
             controller: None,
             answering: false,
             approvals: PendingApprovals::default(),
@@ -371,10 +375,12 @@ impl SessionActor {
                     self.mode = mode;
                     // Its own record when this host ran it before (tool calls
                     // included), else the server's flat text.
-                    self.history = opening_history(
+                    let opened = opening(
                         self.context.sessions.load(self.id),
                         sven_executors::history_messages(history),
                     );
+                    self.history = opened.history;
+                    self.unfinished = opened.unfinished;
                 }
             }
             SessionCommand::Model(model) => self.model = Some(model),
@@ -418,6 +424,14 @@ impl SessionActor {
     async fn answer(&mut self, text: String) {
         println!("[{}] > {}", self.short(), first_line(&text));
         self.answering = true;
+        // The server asking again for the answer this host was stopped in
+        // the middle of: continue it, rather than start it over.
+        let text = if self.unfinished.take().as_deref() == Some(text.as_str()) {
+            println!("[{}]   continuing the interrupted answer", self.short());
+            CONTINUE_INTERRUPTED.to_string()
+        } else {
+            text
+        };
         if let Err(e) = self.submit(text).await {
             self.fail(&format!("{e:#}")).await;
         }
@@ -494,19 +508,29 @@ impl SessionActor {
             _ => {}
         }
         let finished = matches!(event, AgentEvent::TurnComplete | AgentEvent::Aborted { .. });
+        // Kept after every finished call too, so a host stopped mid-answer
+        // loses none of the work it did.
+        let checkpoint = finished || matches!(event, AgentEvent::ToolCallFinished { .. });
         self.upload(event).await;
+        if checkpoint {
+            self.keep();
+        }
         if finished {
             self.answering = false;
             println!("[{}] done", self.short());
-            if let Some(controller) = &self.controller {
-                if let Err(e) = self.context.sessions.save(self.id, &controller.history()) {
-                    tracing::warn!(
-                        "session {}: could not keep its conversation: {e:#}",
-                        self.id
-                    );
-                }
-            }
             self.state(SessionState::Idle).await;
+        }
+    }
+
+    /// Keeps the session's conversation as it is now.
+    fn keep(&self) {
+        if let Some(controller) = &self.controller {
+            if let Err(e) = self.context.sessions.save(self.id, &controller.history()) {
+                tracing::warn!(
+                    "session {}: could not keep its conversation: {e:#}",
+                    self.id
+                );
+            }
         }
     }
 

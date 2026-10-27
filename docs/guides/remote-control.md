@@ -49,9 +49,16 @@ Each session calls models through the server, with the token, so the
 server's model list and its billing apply.
 
 Each session's conversation, tool calls included, is kept after every
-finished answer in `~/.local/share/sven/remote/sessions/` (mode 0600; the
-platform's data directory elsewhere). After `sven rc` restarts, a session
-continues from there rather than from the server's text-only copy.
+finished tool call and every finished answer in
+`~/.local/share/sven/remote/sessions/` (mode 0600; the platform's data
+directory elsewhere). After `sven rc` restarts, a session continues from
+there rather than from the server's text-only copy.
+
+If `sven rc` stopped in the middle of an answer, the work it did is kept.
+A tool call that was cut off is never run again on its own: the agent is
+told it was interrupted and may or may not have taken effect. Retrying the
+answer at the server continues it from where it stopped instead of starting
+over.
 
 ## Type in the terminal
 
