@@ -29,10 +29,13 @@ pub(crate) async fn run_remote_host(
             working_dir.display()
         )
     })?;
+    let sessions = sven_remote::sessions::default_dir()
+        .ok_or_else(|| anyhow::anyhow!("no data directory for this user to keep sessions in"))?;
     sven_remote::run_host(sven_remote::HostOptions {
         config: Arc::new(config),
         working_dir,
         login,
+        sessions: sven_remote::SessionStore::new(sessions),
     })
     .await
 }

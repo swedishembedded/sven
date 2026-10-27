@@ -49,9 +49,13 @@ Each session calls models through the server, with the token, so the
 server's model list and its billing apply. Sessions run under automatic
 approval, as headless sessions do.
 
+Each session's conversation, tool calls included, is kept after every
+finished answer in `~/.local/share/sven/remote/sessions/` (mode 0600; the
+platform's data directory elsewhere). After `sven rc` restarts, a session
+continues from there rather than from the server's text-only copy.
+
 ## What it does not do yet
 
-- A session is kept in memory: after `sven rc` restarts, the next message
-  starts the session again from the conversation's text, without the tool
-  calls in between.
 - Tool approvals are not forwarded to the server.
+- A message typed into the terminal running `sven rc` does not reach the
+  conversation; send it from the server's interface.

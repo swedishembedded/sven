@@ -22,8 +22,10 @@
 pub mod client;
 pub mod host;
 pub mod login;
+pub mod sessions;
 mod sse;
 
 pub use client::{normalize_server, RemoteClient};
 pub use host::{run_host, HostOptions};
 pub use login::RemoteLogin;
+pub use sessions::SessionStore;

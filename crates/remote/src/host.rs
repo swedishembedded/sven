@@ -35,6 +35,7 @@ use uuid::Uuid;
 
 use crate::client::{RemoteClient, TokenRefused};
 use crate::login::RemoteLogin;
+use crate::sessions::{opening_history, SessionStore};
 
 /// Events waiting for the uploader. Full means the server has stopped
 /// taking them; sessions then wait rather than grow memory without bound.
@@ -56,6 +57,8 @@ pub struct HostOptions {
     /// Where every session works.
     pub working_dir: PathBuf,
     pub login: RemoteLogin,
+    /// Where sessions are kept between turns and across restarts.
+    pub sessions: SessionStore,
 }
 
 /// Runs until interrupted, or until the server stops accepting the token.
@@ -82,6 +85,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
         openai_base_url: options.login.openai_base_url,
         token: options.login.token,
         uploads: uploads.clone(),
+        sessions: options.sessions,
     });
 
     tokio::select! {
@@ -170,6 +174,8 @@ struct SessionContext {
     openai_base_url: String,
     token: String,
     uploads: mpsc::Sender<Upload>,
+    /// Where each session's own conversation is kept between turns.
+    sessions: SessionStore,
 }
 
 enum SessionCommand {
@@ -232,7 +238,12 @@ impl SessionActor {
                 // Idempotent: a running session keeps its own conversation.
                 if self.controller.is_none() {
                     self.mode = mode;
-                    self.history = sven_executors::history_messages(history);
+                    // Its own record when this host ran it before (tool calls
+                    // included), else the server's flat text.
+                    self.history = opening_history(
+                        self.context.sessions.load(self.id),
+                        sven_executors::history_messages(history),
+                    );
                 }
             }
             SessionCommand::Model(model) => self.model = Some(model),
@@ -316,6 +327,14 @@ impl SessionActor {
         self.upload(event).await;
         if finished {
             println!("[{}] done", self.short());
+            if let Some(controller) = &self.controller {
+                if let Err(e) = self.context.sessions.save(self.id, &controller.history()) {
+                    tracing::warn!(
+                        "session {}: could not keep its conversation: {e:#}",
+                        self.id
+                    );
+                }
+            }
             self.state(SessionState::Idle).await;
         }
     }

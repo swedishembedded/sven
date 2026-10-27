@@ -9,10 +9,11 @@ event; proven against a real server end to end.
 
 ## Left
 
-1. **Durable sessions.** A session lives in memory; after `sven rc`
-   restarts it is reopened from the flat text history `NewSession` carries,
-   losing tool calls. Checkpoint each session (`AgentState`) beside the
-   login and resume it.
+1. **Durable sessions.** Each session's own conversation (tool calls
+   included) is kept after every finished turn and reopened from there after
+   a restart (`sven_remote::sessions`). Left: keep the kernel snapshot too
+   (`AgentState`), so a turn interrupted by the restart resumes mid-run
+   instead of from its last finished turn.
 2. **Approvals through the server.** Sessions run under auto approval. Send
    `ToolNeedsApproval` up and take `ApproveTool`/`DenyTool` down, with a
    per-session timeout.
