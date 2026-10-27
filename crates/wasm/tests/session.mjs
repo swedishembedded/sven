@@ -128,3 +128,107 @@ test("a session answers through the runtime's fetch and reports sven's own event
     server.close();
   }
 });
+
+test("a page's tool runs in the page and its result goes back to the model", async () => {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (part) => (body += part));
+    req.on("end", () => {
+      requests.push(JSON.parse(body));
+      if (requests.length === 1) {
+        sse(res, [
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call_1",
+                      type: "function",
+                      function: { name: "page_title", arguments: '{"tab":"current"}' },
+                    },
+                  ],
+                },
+                finish_reason: null,
+              },
+            ],
+          },
+          { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+        ]);
+      } else {
+        sse(res, [
+          { choices: [{ index: 0, delta: { content: "It is Inbox." }, finish_reason: null }] },
+          { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+        ]);
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const calls = [];
+    const session = new SvenSession(
+      JSON.stringify({
+        base_url: `http://127.0.0.1:${server.address().port}/v1`,
+        model: "fake/model",
+        tools: [
+          {
+            name: "page_title",
+            description: "The title of a tab.",
+            parameters: { type: "object", properties: { tab: { type: "string" } }, required: ["tab"] },
+            effect: "read",
+          },
+        ],
+      }),
+      async (name, args) => {
+        calls.push({ name, args: JSON.parse(args) });
+        return "Inbox";
+      },
+    );
+    const events = [];
+    const finished = new Promise((resolve) => {
+      session.onEvent((json) => {
+        const event = JSON.parse(json);
+        events.push(event);
+        if (event === "TurnComplete") resolve();
+      });
+    });
+    await session.send("what is the page called?");
+    let timer;
+    await Promise.race([
+      finished,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`no TurnComplete: ${JSON.stringify(events)}`)), 10_000);
+      }),
+    ]);
+    clearTimeout(timer);
+
+    assert.deepEqual(calls, [{ name: "page_title", args: { tab: "current" } }]);
+    assert.ok(
+      requests[0].tools.some((tool) => tool.function.name === "page_title"),
+      "the model is told about the page's tool",
+    );
+    const result = requests[1].messages.find((m) => m.role === "tool");
+    assert.ok(result, `the second request carries the tool result: ${JSON.stringify(requests[1].messages)}`);
+    assert.equal(result.tool_call_id, "call_1");
+    assert.match(JSON.stringify(result.content), /Inbox/);
+  } finally {
+    server.close();
+  }
+});
+
+test("tools without a handler are refused when the session starts", () => {
+  assert.throws(
+    () =>
+      new SvenSession(
+        JSON.stringify({
+          base_url: "http://127.0.0.1:1/v1",
+          model: "fake/model",
+          tools: [{ name: "t", description: "d", parameters: { type: "object" }, effect: "write" }],
+        }),
+      ),
+    /tool handler/,
+  );
+});

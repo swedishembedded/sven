@@ -40,12 +40,14 @@ session.onEvent((json) => render(JSON.parse(json)));
 await session.send("What can you do?");
 ```
 
-- `new SvenSession(options)` starts a session. `options` is JSON with
-  `base_url` (an OpenAI-compatible API ending in `/v1`), `model`, and
-  optionally `api_key` and `history`: the conversation so far as
-  `[{"role": "user" | "assistant", "text": "..."}]`, oldest first, so a
-  reopened conversation continues where it stopped. Prefer an endpoint of the page's own origin that the
-  page's session cookie authenticates: then no key is ever in the page.
+- `new SvenSession(options, toolHandler?)` starts a session. `options` is
+  JSON with `base_url` (an OpenAI-compatible API ending in `/v1`), `model`,
+  and optionally `api_key`, `history` and `tools`. `history` is the
+  conversation so far as `[{"role": "user" | "assistant", "text": "..."}]`,
+  oldest first, so a reopened conversation continues where it stopped.
+  Prefer an endpoint of the page's own origin that the page's session
+  cookie authenticates: then no key is ever in the page. `tools` and
+  `toolHandler` are the page's own tools (below).
 - `onEvent(callback)` delivers every event from then on: sven's own
   `SessionEvent` as a JSON string (`{"TextDelta":"..."}`,
   `{"ToolCallStarted":{...}}`, `"TurnComplete"`, ...). Events a slow page
@@ -57,10 +59,38 @@ await session.send("What can you do?");
 
 - The model is reached over the runtime's own `fetch`.
 - There are no native tools: a page has no shell or file system, and a
-  session offers no tools until the page registers its own.
+  session offers only the tools its page gives it.
 - The audit log and the verifiers are not available; an effect that needs
   them is answered as undeliverable.
 - A session lives as long as the page or worker that runs it.
+
+## Tools the page gives its agent
+
+```js
+const session = new SvenSession(JSON.stringify({
+  base_url: `${location.origin}/api/v1`,
+  model: "some/model",
+  tools: [{
+    name: "page_title",
+    description: "The title of the open page.",
+    parameters: { type: "object", properties: {} },
+    effect: "read",
+  }],
+}), async (name, argumentsJson) => {
+  if (name === "page_title") return document.title;
+  throw new Error(`no tool ${name}`);
+});
+```
+
+- Each tool is `name`, `description` (what the model is told), `parameters`
+  (the JSON Schema of its arguments) and `effect`: `read`, `write` or
+  `network`. The session is allowed exactly the effects its tools declare,
+  and nothing else.
+- One handler runs every tool: it is called with the tool's name and its
+  arguments as JSON text, and the string its promise resolves to is the
+  result the model sees. A thrown error or rejected promise is a failed call,
+  which the model is told about; the turn goes on.
+- Tools without a handler are refused when the session starts.
 
 ## The shared conversation document
 

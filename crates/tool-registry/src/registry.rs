@@ -94,6 +94,9 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
+    // A browser's tools hold JavaScript values, so there the map is not Send;
+    // a browser runs the registry on one thread, where Arc is merely shared.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn new() -> Self {
         Self {
             tools: Arc::new(RwLock::new(HashMap::new())),

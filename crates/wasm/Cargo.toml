@@ -22,6 +22,9 @@ sven-model-drivers = { path = "../model-drivers" }
 sven-rt            = { path = "../rt" }
 sven-session-sync  = { path = "../session-sync" }
 sven-tool-registry = { path = "../tool-registry" }
+sven-tool-api      = { path = "../tool-api" }
+sven-vocab         = { path = "../vocab" }
+async-trait        = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { workspace = true }
 wasm-bindgen       = "0.2"
