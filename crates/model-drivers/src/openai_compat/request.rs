@@ -37,6 +37,19 @@ fn audio_part_json(audio_url: &str, format: Option<&str>) -> Value {
     }
 }
 
+/// One tool definition in the OpenAI function-calling wire format, the shape
+/// every OpenAI-compatible server (and brain's chat actions) accepts.
+pub(crate) fn function_tool(t: &sven_model::ToolSchema) -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": t.name,
+            "description": t.description,
+            "parameters": t.parameters,
+        }
+    })
+}
+
 pub(crate) fn role_str(r: &Role) -> &'static str {
     match r {
         Role::System => "system",

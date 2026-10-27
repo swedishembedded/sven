@@ -23,7 +23,7 @@ mod stream;
 
 pub(crate) use models::parse_models_response;
 
-pub(crate) use request::build_openai_messages;
+pub(crate) use request::{build_openai_messages, function_tool};
 use stream::decode_events;
 
 #[cfg(test)]
@@ -431,51 +431,14 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             build_openai_messages(&req.messages)
         };
 
-        let tools: Vec<Value> = if use_block_cache && !req.tools.is_empty() {
+        let mut tools: Vec<Value> = req.tools.iter().map(function_tool).collect();
+        if use_block_cache {
             // Mark the last tool definition with cache_control so the full
             // tools array is cached as a stable prefix.
-            let last = req.tools.len() - 1;
-            req.tools
-                .iter()
-                .enumerate()
-                .map(|(i, t)| {
-                    if i == last {
-                        json!({
-                            "type": "function",
-                            "function": {
-                                "name": t.name,
-                                "description": t.description,
-                                "parameters": t.parameters,
-                                "cache_control": { "type": "ephemeral" },
-                            }
-                        })
-                    } else {
-                        json!({
-                            "type": "function",
-                            "function": {
-                                "name": t.name,
-                                "description": t.description,
-                                "parameters": t.parameters,
-                            }
-                        })
-                    }
-                })
-                .collect()
-        } else {
-            req.tools
-                .iter()
-                .map(|t| {
-                    json!({
-                        "type": "function",
-                        "function": {
-                            "name": t.name,
-                            "description": t.description,
-                            "parameters": t.parameters,
-                        }
-                    })
-                })
-                .collect()
-        };
+            if let Some(last) = tools.last_mut() {
+                last["function"]["cache_control"] = json!({ "type": "ephemeral" });
+            }
+        }
 
         // OpenAI's API now uses "max_completion_tokens" for newer models (gpt-5, o1, etc.)
         // Other providers still use "max_tokens"
