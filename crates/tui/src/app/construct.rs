@@ -149,6 +149,7 @@ impl App {
             config,
             tui_config,
             approval: opts.approval,
+            agent_task: opts.agent_task,
             session: crate::state::SessionState::new(initial_model_cfg, opts.mode),
             command_registry: registry,
             completion_manager,

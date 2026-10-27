@@ -131,11 +131,21 @@ impl Reader {
     /// The server refuses or cannot be asked, or answers what is not an
     /// update.
     pub async fn read(&mut self, client: &RemoteClient) -> anyhow::Result<Vec<Line>> {
+        let messages = self.sync(client).await?;
+        Ok(self.transcript.changes(&messages))
+    }
+
+    /// Syncs the replica from the server and returns the whole conversation.
+    ///
+    /// # Errors
+    ///
+    /// As [`Reader::read`].
+    pub async fn sync(&mut self, client: &RemoteClient) -> anyhow::Result<Vec<DocMessage>> {
         let update = client
             .sync_conversation(self.conversation, &self.replica.state_vector())
             .await?;
         self.replica.apply(&update)?;
-        Ok(self.transcript.changes(&self.replica.messages()))
+        Ok(self.replica.messages())
     }
 }
 
@@ -215,7 +225,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod over_http {
+pub(crate) mod over_http {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
     use sven_session_sync::{ConversationDoc, DocMessage};
@@ -229,7 +239,11 @@ mod over_http {
     /// A server that keeps `server` as conversation `id`'s document for the
     /// token `k`, answering each sync with what the asker's state vector
     /// lacks, and 404 for anything else. Serves `requests` requests.
-    async fn serve(id: Uuid, server: std::sync::Arc<ConversationDoc>, requests: usize) -> String {
+    pub(crate) async fn serve(
+        id: Uuid,
+        server: std::sync::Arc<ConversationDoc>,
+        requests: usize,
+    ) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {

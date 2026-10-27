@@ -23,6 +23,7 @@ impl App {
             initial_queue: Vec::new(),
             open_resume_picker: false,
             approval: sven_vocab::ApprovalMode::Auto,
+            agent_task: None,
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut app = Self::new(sven_frontend::Settings::default(), opts);

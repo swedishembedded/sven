@@ -106,6 +106,15 @@ impl App {
             AgentEvent::ContextBudget(budget) => {
                 self.agent.notice = Some(sven_vocab::context_budget_text(&budget));
             }
+            AgentEvent::UserMessage(text) => {
+                // Sent from another client of this conversation; its answer
+                // follows, as for a message sent here.
+                self.chat
+                    .push_segment(ChatSegment::Message(Message::user(&text)));
+                self.agent.busy = true;
+                self.rerender_chat().await;
+                self.scroll_to_bottom();
+            }
             AgentEvent::TextDelta(delta) => {
                 tracing::debug!(len = delta.len(), "TUI: TextDelta received");
                 self.agent.model_waiting = None;

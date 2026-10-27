@@ -83,6 +83,7 @@ following a long conversation costs a few bytes a second. It only reads.
 
 ```sh
 sven rc attach 6f1c...e2          # read it live and write to it
+sven rc attach 6f1c...e2 --tui    # the same, in the full-screen UI
 ```
 
 `sven rc attach` shows the conversation the same way and sends each line
@@ -92,6 +93,14 @@ machine the conversation runs on, and appears in every attached terminal
 and browser. A line typed while an answer is being written is refused with
 a note; send it again when the answer is done. Ctrl-C or end of input
 detaches; the conversation goes on.
+
+With `--tui` the conversation opens in the full-screen UI as if it ran
+here: the answer streams in with its tool calls, and a message sent from a
+browser or another terminal appears as yours. Nothing runs on this machine
+and nothing is saved to its session history; the model, tools and
+permissions are the ones of the machine the conversation runs on, and a
+tool waiting for permission is allowed or refused where the conversation
+is open in the server's interface.
 
 ## Tool approvals
 

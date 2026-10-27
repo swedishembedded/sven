@@ -80,6 +80,22 @@ pub(crate) async fn attach_remote_conversation(conversation: uuid::Uuid) -> anyh
     }
 }
 
+/// The agent the full-screen UI talks to for `sven rc attach --tui`: the
+/// conversation as the server keeps it (`sven_remote::attach`).
+#[cfg(feature = "tui")]
+pub(crate) fn attached_agent(conversation: uuid::Uuid) -> anyhow::Result<sven_tui::AgentTask> {
+    let login = signed_in()?;
+    let client = sven_remote::RemoteClient::new(&login.control_url, &login.token)?;
+    Ok(Box::new(move |requests, events| {
+        Box::pin(sven_remote::attach::remote_agent_task(
+            client,
+            conversation,
+            requests,
+            events,
+        ))
+    }))
+}
+
 pub(crate) async fn run_remote_host(
     config: Config,
     working_dir: Option<PathBuf>,

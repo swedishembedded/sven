@@ -23,8 +23,13 @@ event; proven against a real server end to end.
    answer). `sven rc attach` is a terminal on a conversation from
    anywhere: it reads the shared document live and writes through the
    server (`{control_url}/conversations/{id}/messages`), so every client
-   writes through the same authorized path. Left: the full-screen TUI as
-   an attach client (today attach is line-based).
+   writes through the same authorized path. `--tui` shows it in the
+   full-screen UI through an injected agent task
+   (`sven_remote::attach::remote_agent_task`, `AppOptions::agent_task`)
+   that turns the document's changes into the session events the UI
+   already renders. Left: deciding a pending approval from the attached UI
+   (today it names the call and points to the server), and showing the
+   remote conversation's model in the status bar.
 4. **Browser sessions.** A whole agent turn runs as wasm with the same
    observable sequence as natively, and `sven-wasm` exposes a session to
    JavaScript (`make build/wasm`, `make test/wasm`). A page gives its

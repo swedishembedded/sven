@@ -30,6 +30,8 @@ use run::task::run_task_command;
 // verbatim with the standalone binaries.
 use run::oauth::run_oauth_callback;
 use run::pipeline::{run_map_command, run_reduce_command, run_tee_command};
+#[cfg(feature = "tui")]
+use run::remote::attached_agent;
 #[cfg(feature = "network")]
 use run::remote::{attach_remote_conversation, run_remote_host, show_remote_conversation};
 #[cfg(feature = "network")]
@@ -123,8 +125,25 @@ async fn main() -> anyhow::Result<()> {
                         conversation,
                         follow,
                     }) => return show_remote_conversation(*conversation, *follow).await,
-                    Some(cli::RcAction::Attach { conversation }) => {
+                    Some(cli::RcAction::Attach {
+                        conversation,
+                        tui: false,
+                    }) => {
                         return attach_remote_conversation(*conversation).await;
+                    }
+                    #[cfg(feature = "tui")]
+                    Some(cli::RcAction::Attach {
+                        conversation,
+                        tui: true,
+                    }) => {
+                        let conversation = *conversation;
+                        let settings = Settings::load(cli.config.as_deref())?;
+                        let task = attached_agent(conversation)?;
+                        return run_tui(cli, settings, Some(task)).await;
+                    }
+                    #[cfg(not(feature = "tui"))]
+                    Some(cli::RcAction::Attach { tui: true, .. }) => {
+                        anyhow::bail!("this sven was built without the full-screen UI");
                     }
                     None => {}
                 }
@@ -319,7 +338,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         #[cfg(feature = "tui")]
         {
-            run_tui(cli, settings).await
+            run_tui(cli, settings, None).await
         }
         #[cfg(not(feature = "tui"))]
         {

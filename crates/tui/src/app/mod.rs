@@ -8,6 +8,8 @@ pub(crate) mod activity;
 mod activity_tests;
 pub(crate) mod agent_conn;
 pub(crate) mod agent_events;
+#[cfg(test)]
+mod attach_tests;
 pub(crate) mod chat_ops;
 pub(crate) mod chat_scroll;
 pub(crate) mod chat_state;
@@ -65,6 +67,18 @@ pub use ui_state::FocusPane;
 
 pub use sven_frontend::{ModelDirective, QueuedMessage};
 
+/// The agent the UI talks to, in place of the local session it starts by
+/// default: given the UI's requests and a sender for its events, it runs
+/// until the requests end. How a conversation running elsewhere is shown
+/// (`sven rc attach --tui`).
+pub type AgentTask = Box<
+    dyn FnOnce(
+            mpsc::Receiver<crate::agent::AgentRequest>,
+            mpsc::Sender<sven_machines::AgentEvent>,
+        ) -> futures::future::BoxFuture<'static, ()>
+        + Send,
+>;
+
 /// Options passed when constructing the TUI app.
 pub struct AppOptions {
     pub mode: AgentMode,
@@ -87,6 +101,8 @@ pub struct AppOptions {
     /// Whether the agent's tool calls wait for the user's approval
     /// (`--approval`); every session of this TUI runs under it.
     pub approval: ApprovalMode,
+    /// The agent to talk to instead of a local session; none for a local one.
+    pub agent_task: Option<AgentTask>,
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -99,6 +115,8 @@ pub struct App {
     pub(crate) tui_config: TuiConfig,
     /// Whether tool calls wait for the user's approval (`--approval`).
     pub(crate) approval: ApprovalMode,
+    /// Taken by `run` in place of the local session, when set.
+    pub(crate) agent_task: Option<AgentTask>,
     pub(crate) session: crate::state::SessionState,
     pub(crate) command_registry: Arc<CommandRegistry>,
     pub(crate) completion_manager: CompletionManager,

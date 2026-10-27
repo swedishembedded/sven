@@ -14,6 +14,8 @@
 //!   whoami, the command stream and event uploads.
 //! * [`host`] - `sven rc`: one process that runs any number of sessions for
 //!   the server, each an actor owning its own session controller.
+//! * [`attach`] - `sven rc attach --tui`: a conversation the server keeps, as
+//!   the agent session the full-screen UI shows.
 //! * [`transcript`] - `sven rc show` and `sven rc attach`: a conversation the
 //!   server keeps, synced as a replica of its shared document and read (and,
 //!   attached, written to through the server) in the terminal.
@@ -23,6 +25,7 @@
 //! surface uses, under the same permission policy.
 
 pub mod approvals;
+pub mod attach;
 pub mod client;
 pub mod host;
 pub mod login;

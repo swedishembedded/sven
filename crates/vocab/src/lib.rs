@@ -633,6 +633,10 @@ pub enum CollabEvent {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub enum SessionEvent {
+    /// A message the person sent to this session from another client (a
+    /// browser, another terminal), to be shown as theirs. A message sent from
+    /// the surface showing it is never echoed back as one.
+    UserMessage(String),
     /// A text chunk streamed from the model.
     TextDelta(String),
     /// A complete text response from the model (after streaming finishes).

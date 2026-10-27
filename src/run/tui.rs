@@ -22,7 +22,18 @@ use sven_vocab::AgentMode;
 static KEYBOARD_ENHANCEMENT_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-pub(crate) async fn run_tui(mut cli: Cli, settings: Settings) -> anyhow::Result<()> {
+/// The full-screen UI. With `agent_task`, it shows a conversation running
+/// elsewhere through that agent (`sven rc attach --tui`) and starts nothing
+/// of its own: no local session history, no initial prompt.
+pub(crate) async fn run_tui(
+    mut cli: Cli,
+    settings: Settings,
+    agent_task: Option<sven_tui::AgentTask>,
+) -> anyhow::Result<()> {
+    if agent_task.is_some() {
+        cli.resume = None;
+        cli.prompt = None;
+    }
     use ratatui::crossterm::{
         event::{
             DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
@@ -241,8 +252,16 @@ pub(crate) async fn run_tui(mut cli: Cli, settings: Settings) -> anyhow::Result<
     // goes to --output-trace (or --trace which combines both). This is the
     // ONE session-persistence flag family for the TUI - loaded and saved as
     // a native ATIF trajectory (see `crates/tui/src/app/mod.rs`/`chat_ops.rs`).
-    let trace_load_path = cli.effective_load_trace()?.cloned();
-    let trace_save_path = cli.effective_output_trace().cloned();
+    // An attached UI shows a conversation the server keeps; nothing of it is
+    // loaded from or saved to this machine's session history.
+    let (trace_load_path, trace_save_path) = if agent_task.is_some() {
+        (None, None)
+    } else {
+        (
+            cli.effective_load_trace()?.cloned(),
+            cli.effective_output_trace().cloned(),
+        )
+    };
 
     let mode = cli.agent_mode(settings.runtime.agent.default_mode);
     let opts = AppOptions {
@@ -255,6 +274,7 @@ pub(crate) async fn run_tui(mut cli: Cli, settings: Settings) -> anyhow::Result<
         load_trace_path: trace_load_path,
         initial_queue,
         open_resume_picker,
+        agent_task,
     };
 
     let app = App::new(settings, opts);
