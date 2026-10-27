@@ -23,6 +23,8 @@ pub(crate) mod oauth;
 pub(crate) mod pipeline;
 pub(crate) mod provider_doctor;
 pub(crate) mod questions;
+#[cfg(feature = "network")]
+pub(crate) mod remote;
 pub(crate) mod replay;
 pub(crate) mod secret;
 pub(crate) mod task;

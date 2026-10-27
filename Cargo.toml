@@ -51,6 +51,7 @@ members = [
     "crates/mcp",
     "crates/mcp-client",
     "crates/acp",
+    "crates/remote",
     "crates/team",
     "crates/memory",
     "crates/executors",
@@ -188,6 +189,7 @@ sven-tui         = { path = "crates/tui", optional = true }
 sven-team        = { path = "crates/team", optional = true }
 sven-mcp         = { path = "crates/mcp", optional = true }
 sven-acp         = { path = "crates/acp", optional = true }
+sven-remote      = { path = "crates/remote", optional = true }
 anyhow      = { workspace = true }
 humantime   = { workspace = true }
 tokio       = { workspace = true }
@@ -234,10 +236,12 @@ dbus = ["sven-bootstrap/dbus", "sven-sdk/dbus"]
 # Android device control: the `android` tool and the `ui-test` mode
 # (`sven agent-dispatch` with `mode: "ui-test"`).
 android = ["sven-bootstrap/android", "sven-sdk/android"]
-# Networked surfaces: the ACP and MCP servers (`sven acp`, `sven mcp`) and
-# the team task surface (`sven team`).
+# Networked surfaces: the ACP and MCP servers (`sven acp`, `sven mcp`), the
+# team task surface (`sven team`) and remote control (`sven auth login`,
+# `sven rc`).
 network = [
     "dep:sven-acp",
+    "dep:sven-remote",
     "dep:sven-mcp",
     "dep:sven-team",
 ]

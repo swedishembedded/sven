@@ -23,6 +23,8 @@ mod harness;
 mod index;
 mod output_format;
 mod questions;
+#[cfg(feature = "network")]
+mod rc;
 mod replay;
 mod task;
 #[cfg(feature = "network")]
@@ -406,6 +408,12 @@ pub enum Commands {
         command: AcpCommands,
     },
 
+    /// Remote control: run sessions here for the server `sven auth login`
+    /// signed in to, with this machine's tools, until Ctrl-C.
+    ///   sven rc --working-dir ~/src/project
+    #[cfg(feature = "network")]
+    Rc(rc::RcArgs),
+
     /// Manage agent teams.
     ///
     ///   sven team list                     - list all teams
@@ -671,21 +679,12 @@ pub enum Commands {
 
     /// Handle one agent-dispatch stdio request.
     ///
-    /// Reads exactly one JSON request object from stdin
-    /// (`{"mode", "device", "params"}`, the agent-dispatch stdio contract;
-    /// see `.agents/roadmap/android-ui-test.md`), then closes stdin. Runs the matching sven machine to completion through
-    /// the same `RuntimeBuilder`/mode-registry path every other sven
-    /// machine uses, and writes exactly one JSON reply as the LAST line of
-    /// stdout: `{"ok": true, "output": <any JSON>}` on success or
-    /// `{"ok": false, "error": "<message>"}` on failure.
-    ///
-    /// Exit code 0 covers BOTH outcomes above - a failed UI-test step is
-    /// still a well-formed reply, not a process fault. A non-zero exit is
-    /// reserved for a genuine subcommand-level fault: malformed stdin, or an
-    /// internal error building/joining the kernel session.
-    ///
-    /// The one mode is `ui-test`, in a build with the `android` feature (the
-    /// default build); any other mode is answered `{"ok": false}`.
+    /// Reads one JSON request (`{"mode", "device", "params"}`) from stdin,
+    /// runs the matching machine to completion, and writes one JSON reply as
+    /// the last line of stdout: `{"ok": true, "output": ...}` or
+    /// `{"ok": false, "error": "..."}`. Both exit 0; a non-zero exit means
+    /// malformed stdin or a session that could not be built. The one mode is
+    /// `ui-test` (the `android` feature); any other is answered `ok: false`.
     ///
     ///   echo '{"mode": "ui-test", "params": {...}}' | sven agent-dispatch
     AgentDispatch,

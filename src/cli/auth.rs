@@ -28,4 +28,24 @@ pub enum AuthCommands {
         /// The provider's driver id.
         provider: String,
     },
+    /// Sign this machine in to a remote-control server, so `sven rc` can run
+    /// sessions for it. Prints an address to approve the connection at, then
+    /// reads the token that page shows (pasted, not echoed).
+    ///
+    ///   sven auth login --server localhost:3000
+    ///   sven auth login --server https://example.com --name build-box
+    #[cfg(feature = "network")]
+    Login {
+        /// The server's address. Without a scheme, `http://` is assumed for
+        /// this machine and `https://` for any other.
+        #[arg(long)]
+        server: String,
+        /// What the server calls this machine; its host name by default.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Forget the remote-control sign-in. The server keeps the connection
+    /// until it is removed there.
+    #[cfg(feature = "network")]
+    Logout,
 }

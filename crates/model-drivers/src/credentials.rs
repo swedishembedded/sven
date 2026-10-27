@@ -84,12 +84,22 @@ pub(crate) fn read(file: &Path) -> anyhow::Result<BTreeMap<String, String>> {
 
 /// Write `keys` to `file` readable by its owner only, replacing it whole.
 fn write(file: &Path, keys: &BTreeMap<String, String>) -> anyhow::Result<()> {
+    write_private(file, &serde_yaml::to_string(keys)?)
+}
+
+/// Replace `file` with `body`, readable by its owner only, atomically: a
+/// reader sees the old file or the new one, never part of either. For any
+/// file that holds a secret.
+pub fn write_private(file: &Path, body: &str) -> anyhow::Result<()> {
     let dir = file
         .parent()
         .ok_or_else(|| anyhow::anyhow!("{} has no directory", file.display()))?;
     std::fs::create_dir_all(dir)?;
-    let body = serde_yaml::to_string(keys)?;
-    let aside = dir.join(format!(".credentials.yaml.tmp-{}", std::process::id()));
+    let name = file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("secret");
+    let aside = dir.join(format!(".{name}.tmp-{}", std::process::id()));
     {
         use std::io::Write;
         let mut options = std::fs::OpenOptions::new();

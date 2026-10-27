@@ -31,6 +31,8 @@ use run::task::run_task_command;
 use run::oauth::run_oauth_callback;
 use run::pipeline::{run_map_command, run_reduce_command, run_tee_command};
 #[cfg(feature = "network")]
+use run::remote::run_remote_host;
+#[cfg(feature = "network")]
 use run::team::{run_as_teammate, run_team_command};
 use run::tool::run_tool_command;
 #[cfg(feature = "tui")]
@@ -113,6 +115,11 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(feature = "network")]
             Commands::Acp { command } => {
                 return run_acp_command(command).await;
+            }
+            #[cfg(feature = "network")]
+            Commands::Rc(args) => {
+                let config = Settings::load(cli.config.as_deref())?.runtime;
+                return run_remote_host(config, args.working_dir.clone()).await;
             }
             Commands::Completions { shell } => {
                 cli::print_completions(*shell);
@@ -243,7 +250,7 @@ async fn main() -> anyhow::Result<()> {
                 return list_models_cmd(&config, provider.as_deref(), *catalog, *json).await;
             }
             Commands::Auth { command } => {
-                return run_auth_command(command);
+                return run_auth_command(command).await;
             }
             Commands::Init => {
                 return run_init();

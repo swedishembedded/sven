@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! `sven auth`: store, list and forget hosted providers' keys
-//! (`sven_model_drivers::credentials`).
+//! (`sven_model_drivers::credentials`), and sign in to a remote-control
+//! server (`sven_remote::login`).
 
 use crate::cli::AuthCommands;
 use crate::run::secret::read_secret;
 
-pub(crate) fn run_auth_command(command: &AuthCommands) -> anyhow::Result<()> {
+pub(crate) async fn run_auth_command(command: &AuthCommands) -> anyhow::Result<()> {
     use sven_model_drivers::credentials;
     match command {
         AuthCommands::Set { provider, key_file } => {
@@ -45,12 +46,45 @@ pub(crate) fn run_auth_command(command: &AuthCommands) -> anyhow::Result<()> {
             for provider in stored {
                 println!("{provider}");
             }
+            #[cfg(feature = "network")]
+            if let Some(login) = sven_remote::login::load()? {
+                println!(
+                    "remote control: {} as \"{}\" for {}",
+                    login.server, login.workspace_name, login.account
+                );
+            }
         }
         AuthCommands::Remove { provider } => {
             if credentials::remove(provider)? {
                 println!("forgot the {provider} key");
             } else {
                 println!("no key was stored for {provider}");
+            }
+        }
+        #[cfg(feature = "network")]
+        AuthCommands::Login { server, name } => {
+            let name = name
+                .clone()
+                .unwrap_or_else(sven_remote::login::machine_name);
+            let login = sven_remote::login::sign_in(
+                server,
+                &name,
+                |line| println!("{line}"),
+                || read_secret("Token: "),
+            )
+            .await?;
+            println!(
+                "Authentication successful. Signed in to {} as \"{}\" for {}. \
+                 Run `sven rc` to take sessions.",
+                login.server, login.workspace_name, login.account
+            );
+        }
+        #[cfg(feature = "network")]
+        AuthCommands::Logout => {
+            if sven_remote::login::forget()? {
+                println!("signed out of remote control");
+            } else {
+                println!("not signed in to remote control");
             }
         }
     }
