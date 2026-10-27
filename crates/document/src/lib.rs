@@ -19,6 +19,7 @@ mod convert;
 mod error;
 mod layout;
 mod limiter;
+mod locate;
 mod manifest;
 mod names;
 mod page;
@@ -39,6 +40,7 @@ pub use error::DocumentError;
 pub use layout::{
     column_count, merge_runs, reading_order, DeepseekGrounding, LayoutParser, Region,
 };
+pub use locate::{find as find_text, outline, outline_matches, OutlineEntry, PageHit};
 pub use manifest::{manifest_path, LayoutInfo, Manifest, Method, PageRecord, Status};
 pub use names::{match_model, Candidate, MatchError};
 pub use pages::parse_selection;

@@ -33,6 +33,8 @@ pub fn is_context_overflow(error_text: &str) -> bool {
             && ["exceed", "too long", "too large", "maximum", "window"]
                 .iter()
                 .any(|w| t.contains(w)))
+        // brain over D-Bus: "<model>: needs 65845 tokens, engine capacity is 65536".
+        || (t.contains("needs ") && t.contains(" tokens") && t.contains("capacity is "))
 }
 
 /// Headroom multiplier applied on top of the raw chars/4 estimate.
@@ -174,6 +176,19 @@ pub fn dynamic_output_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_servers_capacity_refusal_is_a_context_overflow() {
+        let dbus = "Brain1.Manager.Run failed: org.freedesktop.DBus.Error.Failed: \
+                    qwen35: needs 65845 tokens, engine capacity is 65536";
+        assert!(is_context_overflow(dbus));
+        assert!(is_context_overflow(
+            "This model's maximum context length is 8192 tokens"
+        ));
+        assert!(!is_context_overflow(
+            "the server needs 3 retries; capacity is fine"
+        ));
+    }
 
     fn schema(name: &str, description: &str, params: serde_json::Value) -> ToolSchema {
         ToolSchema {

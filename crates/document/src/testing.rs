@@ -28,13 +28,26 @@ impl FixturePage {
 
 /// A valid PDF with one page per entry. Text uses the standard Helvetica font.
 pub fn build_pdf(pages: &[FixturePage]) -> Vec<u8> {
+    build_pdf_with_outline(pages, &[])
+}
+
+/// As [`build_pdf`], plus a document outline: `(level, title, page index)`
+/// entries in reading order, level 1 at the top, each nested under the nearest
+/// earlier entry of a lower level.
+pub fn build_pdf_with_outline(pages: &[FixturePage], outline: &[(usize, &str, usize)]) -> Vec<u8> {
     let mut objects: Vec<Vec<u8>> = Vec::new();
     // 1 catalog, 2 pages, 3 font; page n uses objects 4+3n (page), 5+3n
     // (content), 6+3n (image, scans only).
     let kids: String = (0..pages.len())
         .map(|n| format!("{} 0 R ", 4 + 3 * n))
         .collect();
-    objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
+    // The outline's objects follow the pages: the root, then one per entry.
+    let outline_root = 4 + 3 * pages.len();
+    objects.push(if outline.is_empty() {
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec()
+    } else {
+        format!("<< /Type /Catalog /Pages 2 0 R /Outlines {outline_root} 0 R >>").into_bytes()
+    });
     objects.push(format!("<< /Type /Pages /Kids [{kids}] /Count {} >>", pages.len()).into_bytes());
     objects.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec());
     for (n, page) in pages.iter().enumerate() {
@@ -76,6 +89,7 @@ pub fn build_pdf(pages: &[FixturePage]) -> Vec<u8> {
             _ => b"null".to_vec(),
         });
     }
+    objects.extend(outline_objects(outline, outline_root));
     let mut out = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
     for (i, body) in objects.iter().enumerate() {
@@ -97,6 +111,52 @@ pub fn build_pdf(pages: &[FixturePage]) -> Vec<u8> {
         .bytes(),
     );
     out
+}
+
+/// The outline root (object `root`) and its items (`root + 1 + i`), linked as
+/// a tree with Parent/First/Last/Prev/Next; each item points at its page.
+fn outline_objects(outline: &[(usize, &str, usize)], root: usize) -> Vec<Vec<u8>> {
+    if outline.is_empty() {
+        return Vec::new();
+    }
+    let id = |i: usize| root + 1 + i;
+    let parent: Vec<Option<usize>> = (0..outline.len())
+        .map(|i| (0..i).rev().find(|&j| outline[j].0 < outline[i].0))
+        .collect();
+    let children = |p: Option<usize>| -> Vec<usize> {
+        (0..outline.len()).filter(|&i| parent[i] == p).collect()
+    };
+    let link = |kids: &[usize]| -> String {
+        match (kids.first(), kids.last()) {
+            (Some(f), Some(l)) => format!(
+                " /First {} 0 R /Last {} 0 R /Count {}",
+                id(*f),
+                id(*l),
+                kids.len()
+            ),
+            _ => String::new(),
+        }
+    };
+    let mut objects = vec![format!("<< /Type /Outlines{} >>", link(&children(None))).into_bytes()];
+    for (i, (_, title, page)) in outline.iter().enumerate() {
+        let siblings = children(parent[i]);
+        let at = siblings.iter().position(|&s| s == i).unwrap();
+        let mut item = format!(
+            "<< /Title ({title}) /Parent {} 0 R /Dest [{} 0 R /Fit]",
+            parent[i].map_or(root, id),
+            4 + 3 * page
+        );
+        if at > 0 {
+            item.push_str(&format!(" /Prev {} 0 R", id(siblings[at - 1])));
+        }
+        if let Some(next) = siblings.get(at + 1) {
+            item.push_str(&format!(" /Next {} 0 R", id(*next)));
+        }
+        item.push_str(&link(&children(Some(i))));
+        item.push_str(" >>");
+        objects.push(item.into_bytes());
+    }
+    objects
 }
 
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {

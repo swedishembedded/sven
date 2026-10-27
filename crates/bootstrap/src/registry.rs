@@ -30,7 +30,7 @@ use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool, TodoTool};
 use sven_tools_ctx::{ChunkExpandTool, ChunkExpander, ContextStore};
 #[cfg(feature = "document")]
-use sven_tools_document::DocumentConvertTool;
+use sven_tools_document::{DocumentConvertTool, DocumentLocateTool};
 use sven_tools_exec::ShellTool;
 #[cfg(feature = "media")]
 use sven_tools_fs::AttachFileTool;
@@ -584,6 +584,9 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
 
     // ── PDF to Markdown ───────────────────────────────────────────────────────
     // Page text goes from the OCR model to the file; the model gets a record.
+    // document_locate finds the pages (outline, text search) to convert.
+    #[cfg(feature = "document")]
+    reg.register_with_display(DocumentLocateTool::new(paths.clone()));
     #[cfg(feature = "document")]
     reg.register_with_display(DocumentConvertTool::new(
         paths.clone(),

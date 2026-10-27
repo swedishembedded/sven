@@ -26,6 +26,8 @@ tracing     = { workspace = true }
 hayro       = { version = "0.8", features = ["embed-fonts"] }
 # Per-page native text in reading order (MIT), on lopdf.
 pdf-extract = "0.12"
+# Outline (bookmarks) of a PDF; the parser pdf-extract is built on (MIT).
+lopdf       = "0.42"
 
 [dev-dependencies]
 tempfile        = { workspace = true }

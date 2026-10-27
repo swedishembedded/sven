@@ -55,8 +55,9 @@ impl Tool for DocumentConvertTool {
     }
 
     fn description(&self) -> &str {
-        "Convert a PDF to a Markdown file with an OCR model. Returns a status record, not the \
-         text; read the destination only if you need the content."
+        "Convert a PDF (or the pages of it you select) to a Markdown file with an OCR model. \
+         Returns a status record, not the text; read the destination only if you need the \
+         content. To convert one chapter or section, find its `pages` with document_locate first."
     }
 
     fn parameters_schema(&self) -> Value {

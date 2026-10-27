@@ -209,6 +209,17 @@ feature `asr`, Linux), and refused without that.
 | `note` | Note recorded with the attachment |
 | `force_transcribe` | Audio: transcribe even when the model accepts audio (offered only in builds with `asr` on Linux) |
 
+### `document_locate`
+
+Find which pages of a PDF hold a chapter, section or term, from the outline and
+the native text layer; returns titles, page ranges and short snippets, never
+page text. Read-only. See [Converting one chapter](../guides/document-conversion.md#converting-one-chapter).
+
+| Parameter | Description |
+|-----------|-------------|
+| `source` (required) | PDF file |
+| `query` | chapter/section title or term; omit for the outline's top levels |
+
 ### `document_convert`
 
 Convert a PDF to a Markdown file with an OCR model; the result is a control

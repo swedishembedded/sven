@@ -173,4 +173,28 @@ retry or work around it; an error that ends the whole conversion (an unreadable
 source) is worded the same way. Cancelling the tool stops the requests in flight and leaves the
 manifest consistent.
 
+### Converting one chapter
+
+`document_locate(source, query?)` finds where something is without reading it.
+It is read-only and runs in every mode. With a `query` (a chapter or section
+title, or a term such as a register name) it returns the outline entries whose
+title matches, each with the pages it covers, and the pages whose native text
+contains the query, with a short snippet; without one it returns the outline's
+top two levels:
+
+From a `document_locate(source: "manual.pdf", query: "USART")` on the STM32F10x
+reference manual (RM0008, 995 pages), shortened:
+
+```json
+{"query":"USART","outline_matches":[
+  {"level":1,"title":"25 Universal synchronous asynchronous receiver transmitter (USART)","pages":"653-693"},
+  {"level":2,"title":"25.3 USART functional description","pages":"654-680"}, …],
+ "text_hits":[…],"text_hit_pages":…,"page_count":995}
+```
+
+So "extract the USART chapter of manual.pdf into usart.md" is one
+`document_locate` and one `document_convert` with that `pages` range; no page
+text passes through the chat model. Pages without a usable text layer are not
+searched, and the record says how many there were.
+
 Configuration keys are in the [configuration reference](../reference/configuration.md#ocr).
