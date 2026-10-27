@@ -3,15 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Decoding a brain `Run` reply into sven response events.
 
-use std::collections::HashMap;
-
-use anyhow::{Context, Result};
 use serde_json::Value;
 use tracing::warn;
 
 use sven_model::ResponseEvent;
 
-use super::blob;
 use crate::openai_compat::served_identity;
 
 /// The response events a `Run` reply carries, in the order a streamed reply
@@ -68,31 +64,6 @@ pub(super) fn reply_events(result_json: &str, text: String) -> Vec<ResponseEvent
         });
     }
     events
-}
-
-/// Pull the generated text out of a `Run` reply.
-///
-/// `out_fds["text"]` is preferred; the `result` JSON's `"text"` field is the
-/// fallback for servers that inline short replies.
-pub(super) fn reply_text(
-    result_json: &str,
-    out_fds: &HashMap<String, zbus::zvariant::OwnedFd>,
-) -> Result<String> {
-    if let Some(fd) = out_fds.get("text") {
-        return blob::read_fd_to_string(fd);
-    }
-    let parsed: Value = serde_json::from_str(result_json)
-        .with_context(|| format!("parsing Run result JSON: {result_json:.256}"))?;
-    parsed
-        .get("text")
-        .and_then(|t| t.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Run reply carried neither an out_fds[\"text\"] blob nor a \
-                 `text` field in its result JSON: {result_json:.256}"
-            )
-        })
 }
 
 /// The token-level facts and the serving identity a `Run` reply reports, as
@@ -255,29 +226,6 @@ mod tests {
         assert!(events
             .iter()
             .all(|e| !matches!(e, ResponseEvent::ToolCall { .. })));
-    }
-
-    #[test]
-    fn reply_text_falls_back_to_the_result_json_field() {
-        let out = reply_text(r#"{"text": "hello"}"#, &HashMap::new()).unwrap();
-        assert_eq!(out, "hello");
-    }
-
-    #[test]
-    fn reply_text_prefers_the_out_fd() {
-        let mut fds = HashMap::new();
-        fds.insert(
-            "text".to_string(),
-            blob::memfd_with_bytes("text", b"from fd").unwrap(),
-        );
-        let out = reply_text(r#"{"text": "from json"}"#, &fds).unwrap();
-        assert_eq!(out, "from fd");
-    }
-
-    #[test]
-    fn reply_text_errors_when_there_is_no_text_anywhere() {
-        let err = reply_text(r#"{"status": "ok"}"#, &HashMap::new()).unwrap_err();
-        assert!(err.to_string().contains("neither"), "{err}");
     }
 
     #[test]

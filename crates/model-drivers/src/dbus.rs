@@ -24,26 +24,16 @@
 //!         max_tokens: 32768
 //! ```
 //!
-//! # Scope: one-shot `Run` only (deliberate)
+//! # Streaming over `Subscribe`
 //!
-//! brain's interface also exposes a streaming `Subscribe` method, which is
-//! **not** implemented here and is not an oversight.  `Subscribe` hands back a
-//! `SOCK_SEQPACKET` socket over which the server pushes framed events with
-//! `SCM_RIGHTS` ancillary data; consuming it means writing a framing protocol
-//! reader, an ancillary-fd receiver, and an event demultiplexer — a subsystem
-//! considerably larger than this whole transport.  The payoff would be
-//! incremental token display, but the model this transport exists for
-//! (`brain/omni`) emits only coarse progress rather than per-token deltas, so
-//! there is nothing to stream.  [`DbusProvider`]'s
-//! [`sven_model::ModelProvider::complete`] therefore performs one `Run` call and
-//! emits the full response as a single `TextDelta`.
-//!
-//! Adding streaming later means: a `subscribe()` method on the `Manager`
-//! interface behind [`proxy::ManagerProxy`] returning the socket fd, a
-//! reader task that parses frames off that socket
-//! and forwards each as a `ResponseEvent`, and swapping
-//! [`DbusProvider`]'s one-shot `stream::iter(...)` for that task's receiver — the rest of the
-//! transport (params flattening, blob encoding, reply decoding) is unchanged.
+//! [`DbusProvider`]'s [`sven_model::ModelProvider::complete`] calls brain's
+//! `Subscribe`, which returns at once with a job id and a `SOCK_SEQPACKET`
+//! socket; brain pushes JSON frames over it (content deltas, reasoning and
+//! tool-call events, `SCM_RIGHTS` blobs, then `done` or `error`). The response
+//! stream therefore starts when the job is admitted and text arrives as it is
+//! generated, so a queued or long generation under parallel load never trips
+//! the first-byte timeout. Dropping the stream before `done` cancels the job
+//! (`stream::CancelOnDrop`). Framing and translation live in `stream`.
 //!
 //! # Tool calling
 //!
@@ -75,6 +65,8 @@ mod provider;
 pub mod proxy;
 #[cfg(all(target_os = "linux", feature = "dbus"))]
 mod reply;
+#[cfg(all(target_os = "linux", feature = "dbus"))]
+mod stream;
 
 #[cfg(all(target_os = "linux", feature = "dbus"))]
 pub use action::{ActionClient, ActionInput, ActionOutcome};

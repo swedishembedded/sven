@@ -52,6 +52,20 @@ pub trait Manager {
         transport: &str,
     ) -> zbus::Result<(String, HashMap<String, OwnedFd>, String)>;
 
+    /// Start one action and stream its events: returns the job id and the
+    /// client end of a `SOCK_SEQPACKET` pair the server writes frames to.
+    fn subscribe(
+        &self,
+        model: &str,
+        action: &str,
+        params: &str,
+        in_fds: HashMap<String, OwnedFd>,
+        in_meta: &str,
+    ) -> zbus::Result<(u64, OwnedFd)>;
+
+    /// Cancel a job started by `subscribe`; false when it was already gone.
+    fn cancel(&self, job: u64) -> zbus::Result<bool>;
+
     /// List the model ids the server currently has loaded or can load.
     ///
     /// Assumed to be an array of strings (`as`).  Because a mismatch here is

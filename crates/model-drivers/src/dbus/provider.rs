@@ -20,9 +20,19 @@ use sven_model::{
 
 use super::blob;
 use super::proxy::{self, BusKind, ManagerProxy};
-use super::reply::{reply_events, reply_extras, reply_text, reply_usage};
+use super::stream::{CancelOnDrop, Frame, FrameReader, Translator};
 use crate::openai_compat::function_tool;
 use crate::DEFAULT_TEMPERATURE;
+
+/// The state of one streamed completion.
+struct StreamState {
+    reader: FrameReader,
+    translator: Translator,
+    pending: std::collections::VecDeque<ResponseEvent>,
+    want_logprobs: bool,
+    guard: CancelOnDrop,
+    finished: bool,
+}
 
 /// Configuration for [`DbusProvider`], read from `driver_options`.
 #[derive(Debug, Clone)]
@@ -30,10 +40,8 @@ pub struct DbusOptions {
     pub bus: BusKind,
     pub service: String,
     pub object_path: String,
-    /// Action name passed as `Run`'s second argument.
+    /// Action name passed as `Subscribe`'s second argument.
     pub action: String,
-    /// Transport tag passed as `Run`'s last argument.
-    pub transport: String,
     /// Longest image side sent as raw pixels; larger images are downscaled.
     pub max_image_dim: u32,
 }
@@ -45,38 +53,43 @@ impl Default for DbusOptions {
             service: proxy::DEFAULT_SERVICE.to_string(),
             object_path: proxy::DEFAULT_PATH.to_string(),
             action: "generate".to_string(),
-            transport: "memfd".to_string(),
             max_image_dim: 1024,
         }
     }
 }
 
 impl DbusOptions {
-    /// Build options from a free-form `driver_options` JSON value.
-    ///
-    /// Unknown keys are ignored; missing keys keep their defaults.
+    /// Build options from a free-form `driver_options` JSON value. Missing
+    /// keys keep their defaults; a key this driver does not know, or a value
+    /// of the wrong type, is reported as a warning rather than ignored.
     pub fn from_driver_options(opts: &Value) -> Self {
         let mut out = Self::default();
         let Some(map) = opts.as_object() else {
+            if !opts.is_null() {
+                warn!(driver_options = %opts, "dbus driver_options is not a mapping; using defaults");
+            }
             return out;
         };
-        if let Some(v) = map.get("bus").and_then(|v| v.as_str()) {
-            out.bus = BusKind::parse(v);
-        }
-        if let Some(v) = map.get("service").and_then(|v| v.as_str()) {
-            out.service = v.to_string();
-        }
-        if let Some(v) = map.get("object_path").and_then(|v| v.as_str()) {
-            out.object_path = v.to_string();
-        }
-        if let Some(v) = map.get("action").and_then(|v| v.as_str()) {
-            out.action = v.to_string();
-        }
-        if let Some(v) = map.get("transport").and_then(|v| v.as_str()) {
-            out.transport = v.to_string();
-        }
-        if let Some(v) = map.get("max_image_dim").and_then(|v| v.as_u64()) {
-            out.max_image_dim = v as u32;
+        for (key, value) in map {
+            let text = || value.as_str().map(str::to_owned);
+            let applied = match key.as_str() {
+                "bus" => text().map(|v| out.bus = BusKind::parse(&v)),
+                "service" => text().map(|v| out.service = v),
+                "object_path" => text().map(|v| out.object_path = v),
+                "action" => text().map(|v| out.action = v),
+                "max_image_dim" => value.as_u64().map(|v| out.max_image_dim = v as u32),
+                "transport" => {
+                    warn!("dbus driver_options.transport is no longer used: the stream carries blobs as file descriptors");
+                    Some(())
+                }
+                _ => {
+                    warn!(key = %key, "unknown dbus driver_options key ignored");
+                    Some(())
+                }
+            };
+            if applied.is_none() {
+                warn!(key = %key, value = %value, "dbus driver_options value has the wrong type; default kept");
+            }
         }
         out
     }
@@ -138,7 +151,7 @@ impl DbusProvider {
             .await
     }
 
-    async fn manager(&self) -> Result<ManagerProxy<'_>> {
+    async fn manager(&self) -> Result<ManagerProxy<'static>> {
         let conn = self.connection().await?;
         ManagerProxy::builder(conn)
             .destination(self.opts.service.clone())
@@ -431,42 +444,65 @@ impl sven_model::ModelProvider for DbusProvider {
         debug!(
             model = %self.model,
             action = %self.opts.action,
-            transport = %self.opts.transport,
             blobs = in_fds.len(),
-            "calling Brain1.Manager.Run"
+            "calling Brain1.Manager.Subscribe"
         );
 
         let proxy = self.manager().await?;
-        let (result_json, out_fds, _out_meta) = proxy
-            .run(
-                &self.model,
-                &self.opts.action,
-                &params,
-                in_fds,
-                &in_meta,
-                &self.opts.transport,
-            )
+        let (job, fd) = proxy
+            .subscribe(&self.model, &self.opts.action, &params, in_fds, &in_meta)
             .await
-            .context("Brain1.Manager.Run failed")?;
-
-        let text = reply_text(&result_json, &out_fds)?;
-        let (input_tokens, output_tokens) = reply_usage(&result_json);
-
-        // One-shot: the whole reply arrives at once (see the module docs).
-        let mut events: Vec<Result<ResponseEvent>> = reply_events(&result_json, text)
-            .into_iter()
-            .map(Ok)
-            .collect();
-        events.extend(reply_extras(&result_json).into_iter().map(Ok));
-        events.push(Ok(ResponseEvent::Usage {
-            input_tokens,
-            output_tokens,
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-            cost_usd: None,
-        }));
-        events.push(Ok(ResponseEvent::Done));
-        Ok(Box::pin(stream::iter(events)))
+            .context("Brain1.Manager.Subscribe failed")?;
+        let reader = FrameReader::new(std::os::fd::OwnedFd::from(fd))?;
+        let state = StreamState {
+            reader,
+            translator: Translator::default(),
+            pending: std::collections::VecDeque::new(),
+            want_logprobs: req.want_logprobs,
+            guard: CancelOnDrop {
+                proxy: Some(proxy),
+                job,
+            },
+            finished: false,
+        };
+        // Events as brain produces them; the stream ends after `Done` or an error.
+        Ok(Box::pin(stream::unfold(state, |mut st| async move {
+            loop {
+                if let Some(event) = st.pending.pop_front() {
+                    return Some((Ok(event), st));
+                }
+                if st.finished {
+                    st.guard.proxy.take(); // completed: nothing to cancel
+                    return None;
+                }
+                match st.reader.next().await {
+                    Ok(Some(frame)) => {
+                        let done = matches!(frame, Frame::Done { .. });
+                        match st.translator.events(frame, st.want_logprobs) {
+                            Ok(events) => st.pending.extend(events),
+                            Err(e) => {
+                                st.finished = true;
+                                return Some((Err(e), st));
+                            }
+                        }
+                        st.finished = done;
+                    }
+                    Ok(None) => {
+                        st.finished = true;
+                        return Some((
+                            Err(anyhow::anyhow!(
+                                "brain closed the stream before the reply was done"
+                            )),
+                            st,
+                        ));
+                    }
+                    Err(e) => {
+                        st.finished = true;
+                        return Some((Err(e), st));
+                    }
+                }
+            }
+        })))
     }
 }
 
@@ -499,7 +535,6 @@ mod tests {
         assert_eq!(o.service, "com.swedishembedded.Brain1");
         assert_eq!(o.object_path, "/com/swedishembedded/Brain1");
         assert_eq!(o.action, "generate");
-        assert_eq!(o.transport, "memfd");
         assert_eq!(o.max_image_dim, 1024);
     }
 
@@ -510,14 +545,12 @@ mod tests {
             "service": "com.example.Other",
             "object_path": "/com/example/Other",
             "action": "chat",
-            "transport": "shm",
             "max_image_dim": 512,
         }));
         assert_eq!(o.bus, BusKind::System);
         assert_eq!(o.service, "com.example.Other");
         assert_eq!(o.object_path, "/com/example/Other");
         assert_eq!(o.action, "chat");
-        assert_eq!(o.transport, "shm");
         assert_eq!(o.max_image_dim, 512);
     }
 

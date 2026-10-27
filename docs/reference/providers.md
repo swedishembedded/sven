@@ -714,7 +714,6 @@ providers:
       service: com.swedishembedded.Brain1
       object_path: /com/swedishembedded/Brain1
       action: generate
-      transport: memfd
       max_image_dim: 1024     # longest image side sent as raw pixels
     models:
       brain/omni:
@@ -722,13 +721,14 @@ providers:
 ```
 
 Every `driver_options` key is optional; the values above are the defaults
-(`bus` defaults to `session`). Select it with `-M brain_dbus/brain/omni`.
+(`bus` defaults to `session`). An unknown key, the obsolete `transport` key,
+or a value of the wrong type is logged as a warning, never silently ignored. Select it with `-M brain_dbus/brain/omni`.
 
 What sven sends and expects, on interface
 `com.swedishembedded.Brain1.Manager`:
 
-- `Run(model, action, params, in_fds, in_meta, transport)` returns
-  `(result, out_fds, out_meta)`. `params` is a JSON object holding `messages`
+- `Subscribe(model, action, params, in_fds, in_meta)` returns `(job, socket)`
+  at once. `params` is a JSON object holding `messages`
   (the conversation as a JSON string, with image and audio parts replaced by
   `[image]`/`[audio]` markers), the sampling temperature as `temp` (always:
   the request's, the model's `temperature`, else 0.2, since brain decodes
@@ -737,18 +737,24 @@ What sven sends and expects, on interface
   (a JSON string of OpenAI function definitions, with `tool_choice` `"none"`
   when tools are offered but must not be called). At most one image and one
   audio blob are sent per request; extra attachments are dropped with a
-  warning. The generated text arrives in the `text` entry of `out_fds`; the
-  model's reasoning (`reasoning_content`) and tool calls (`tool_calls`, a JSON
-  string of `{id, name, arguments}`) are read from `result`, so an agent works
+  warning. Brain then writes one JSON frame per `SOCK_SEQPACKET` datagram:
+  `progress` frames carry content `delta`s and `event`s (reasoning, tool-call
+  start and argument pieces), `blob` frames carry a memfd, and the last frame
+  is `done` with the result object or `error`. Whatever the stream did not
+  carry (text, `reasoning_content`, `tool_calls` as a JSON string of
+  `{id, name, arguments}`) is read from the `done` result, so an agent works
   over D-Bus as it does over HTTP. So are the decode's identity (`seed`,
   `adapter`, `base_digest`, `backend`, `engine`) and, when asked for, the
   token facts (`prompt_token_ids`, `completion_token_ids`,
   `completion_logprobs`).
 - `ListModels()` lists model ids; failure is treated as "unknown".
 
-Only the one-shot `Run` call is used, so the whole reply arrives at once: there
-is no incremental token display. The connection is made lazily on the first
-request.
+- `Cancel(job)` is called when the response stream is dropped before `done`
+  (an interrupted turn), so brain stops generating for nobody.
+
+Because the stream starts when the job is admitted, a generation queued behind
+others under parallel load does not trip the first-byte timeout. The
+connection is made lazily on the first request.
 
 The transport is compiled only on Linux and only with the `dbus` feature. The
 default `sven` build has it, `--no-default-features --features minimal` does

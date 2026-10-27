@@ -39,7 +39,7 @@ sven-audio = { path = "../sven-audio", optional = true }
 libc = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix        = { version = "0.29", features = ["mman", "fs"], optional = true }
+nix        = { version = "0.29", features = ["mman", "fs", "socket", "uio"], optional = true }
 
 [dev-dependencies]
 base64 = { workspace = true }
