@@ -786,6 +786,7 @@ fn push_turn_record(assembler: &mut StepAssembler, turn: &TurnRecord) {
                         arguments: args_json,
                     },
                 },
+                reasoning: None,
             });
         }
         TurnRecord::ToolResult {

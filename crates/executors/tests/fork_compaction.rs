@@ -623,6 +623,7 @@ async fn a_burst_of_parallel_tool_results_larger_than_the_window_is_summarised_p
                 arguments: "{}".into(),
             },
         },
+        reasoning: None,
     };
     let mut burst = vec![Message::user("read the twelve files")];
     burst.extend((0..12).map(call));

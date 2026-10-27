@@ -30,6 +30,7 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
                         arguments: tc.args.to_string(),
                     },
                 },
+                reasoning: None,
             });
         }
         SessionEvent::ToolCallFinished {

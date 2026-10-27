@@ -112,6 +112,7 @@ mod tests {
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         });
         assembler.push_message(&Message::tool_result("call_a", "ok"));
         assembler.push_message(&Message::user("next"));

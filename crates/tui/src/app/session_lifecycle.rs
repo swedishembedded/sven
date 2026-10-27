@@ -120,6 +120,7 @@ impl App {
                     let seg = ChatSegment::Message(Message {
                         role: Role::Assistant,
                         content: MessageContent::Text(content),
+                        reasoning: None,
                     });
                     let mut chat = ChatState::new();
                     chat.set_segments(vec![seg]);

@@ -1000,6 +1000,7 @@ mod tests {
                             arguments: args.into(),
                         },
                     },
+                    reasoning: None,
                 },
             );
             let content = run_tool_effect_with_args(

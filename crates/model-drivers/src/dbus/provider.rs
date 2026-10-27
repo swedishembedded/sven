@@ -221,23 +221,35 @@ pub fn flatten_messages(messages: &[Message]) -> Vec<Value> {
     let mut out = Vec::with_capacity(messages.len());
     for turn in turns(messages) {
         match turn {
-            Turn::Message(m) => out.push(json!({
-                "role": role_str(&m.role),
-                "content": content_text(&m.content),
-            })),
+            Turn::Message(m) => {
+                let mut message = json!({
+                    "role": role_str(&m.role),
+                    "content": content_text(&m.content),
+                });
+                with_reasoning(&mut message, m.reasoning.as_deref());
+                out.push(message);
+            }
             // One model turn, one message: its text and every call it made.
-            Turn::Assistant { content, calls } => out.push(json!({
-                "role": "assistant",
-                "content": content.map(content_text).unwrap_or_default(),
-                "tool_calls": calls.iter().map(|c| json!({
-                    "id": c.id,
-                    "type": "function",
-                    "function": {
-                        "name": c.function.name,
-                        "arguments": c.function.arguments,
-                    }
-                })).collect::<Vec<_>>(),
-            })),
+            Turn::Assistant {
+                reasoning,
+                content,
+                calls,
+            } => {
+                let mut message = json!({
+                    "role": "assistant",
+                    "content": content.map(content_text).unwrap_or_default(),
+                    "tool_calls": calls.iter().map(|c| json!({
+                        "id": c.id,
+                        "type": "function",
+                        "function": {
+                            "name": c.function.name,
+                            "arguments": c.function.arguments,
+                        }
+                    })).collect::<Vec<_>>(),
+                });
+                with_reasoning(&mut message, reasoning);
+                out.push(message);
+            }
             Turn::ToolResults(results) => {
                 for m in results {
                     if let MessageContent::ToolResult {
@@ -256,6 +268,14 @@ pub fn flatten_messages(messages: &[Message]) -> Vec<Value> {
         }
     }
     out
+}
+
+/// Adds an assistant turn's reasoning as brain's `reasoning_content`; the
+/// chat template renders it where the model was trained to see it.
+fn with_reasoning(message: &mut Value, reasoning: Option<&str>) {
+    if let Some(r) = reasoning.filter(|r| !r.is_empty()) {
+        message["reasoning_content"] = json!(r);
+    }
 }
 
 /// The text of a message that is not a tool call or result.
@@ -605,6 +625,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 },
+                reasoning: None,
             },
             Message::tool_result("c1", "no matches"),
         ];
@@ -631,9 +652,12 @@ mod tests {
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         };
+        let mut opening = Message::assistant("Let me run grep:");
+        opening.reasoning = Some("grep finds it".into());
         let msgs = vec![
-            Message::assistant("Let me run grep:"),
+            opening,
             call("c1"),
             call("c2"),
             Message::tool_result("c1", "a"),
@@ -642,7 +666,9 @@ mod tests {
         let out = flatten_messages(&msgs);
         assert_eq!(out.len(), 3, "{out:?}");
         assert_eq!(out[0]["content"], "Let me run grep:");
+        assert_eq!(out[0]["reasoning_content"], "grep finds it");
         assert_eq!(out[0]["tool_calls"].as_array().unwrap().len(), 2);
+        assert!(out[1].get("reasoning_content").is_none());
         assert_eq!(out[1]["tool_call_id"], "c1");
         assert_eq!(out[2]["tool_call_id"], "c2");
     }

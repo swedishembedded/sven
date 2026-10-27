@@ -68,7 +68,13 @@ pub(crate) fn role_str(r: &Role) -> &'static str {
 /// turn's text (`content`) and all of its calls (`tool_calls`) together.
 /// Sven stores the text and each call as separate messages, so this sends
 /// [`sven_model::turns`] (see there for why it matters).
-pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Value> {
+///
+/// With `reasoning` set, each assistant turn's reasoning goes along as
+/// `reasoning_content` (the field local servers' chat templates read).
+pub(crate) fn build_openai_messages_with(
+    messages: &[sven_model::Message],
+    reasoning: bool,
+) -> Vec<Value> {
     use sven_model::{ContentPart, MessageContent, ToolContentPart, ToolResultContent};
 
     fn tool_call_to_json(tool_call_id: &str, function: &sven_model::FunctionCall) -> Value {
@@ -135,13 +141,27 @@ pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Val
     let mut result: Vec<Value> = Vec::with_capacity(messages.len());
     for turn in sven_model::turns(messages) {
         match turn {
-            sven_model::Turn::Message(m) => result.push(json!({
-                "role": role_str(&m.role),
-                "content": content_json(&m.content),
-            })),
+            sven_model::Turn::Message(m) => {
+                let mut message = json!({
+                    "role": role_str(&m.role),
+                    "content": content_json(&m.content),
+                });
+                if let Some(r) = m
+                    .reasoning
+                    .as_deref()
+                    .filter(|r| reasoning && !r.is_empty())
+                {
+                    message["reasoning_content"] = json!(r);
+                }
+                result.push(message);
+            }
             // One assistant message per model turn: the text it said and
             // every call it made (the API's `content` + `tool_calls`).
-            sven_model::Turn::Assistant { content, calls } => {
+            sven_model::Turn::Assistant {
+                reasoning: turn_reasoning,
+                content,
+                calls,
+            } => {
                 let mut message = json!({
                     "role": "assistant",
                     "tool_calls": calls
@@ -151,6 +171,9 @@ pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Val
                 });
                 if let Some(content) = content {
                     message["content"] = content_json(content);
+                }
+                if let Some(r) = turn_reasoning.filter(|r| reasoning && !r.is_empty()) {
+                    message["reasoning_content"] = json!(r);
                 }
                 result.push(message);
             }
@@ -169,4 +192,10 @@ pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Val
     }
 
     result
+}
+
+/// [`build_openai_messages_with`] without reasoning, as most tests want it.
+#[cfg(test)]
+pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Value> {
+    build_openai_messages_with(messages, false)
 }

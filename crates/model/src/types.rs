@@ -266,6 +266,12 @@ pub fn parse_data_url_parts(url: &str) -> Result<(String, String), &'static str>
 pub struct Message {
     pub role: Role,
     pub content: MessageContent,
+    /// On the first message of an assistant turn: the reasoning the model
+    /// produced before it. Sent back to providers that take it (a chat
+    /// template renders it where the model was trained to see it); `None`
+    /// on every other message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
 }
 
 impl Message {
@@ -273,6 +279,7 @@ impl Message {
         Self {
             role: Role::System,
             content: MessageContent::Text(text.into()),
+            reasoning: None,
         }
     }
 
@@ -280,6 +287,7 @@ impl Message {
         Self {
             role: Role::User,
             content: MessageContent::Text(text.into()),
+            reasoning: None,
         }
     }
 
@@ -287,6 +295,7 @@ impl Message {
         Self {
             role: Role::Assistant,
             content: MessageContent::Text(text.into()),
+            reasoning: None,
         }
     }
 
@@ -305,6 +314,7 @@ impl Message {
                     arguments: arguments.into(),
                 },
             },
+            reasoning: None,
         }
     }
 
@@ -315,6 +325,7 @@ impl Message {
                 tool_call_id: id.into(),
                 content: ToolResultContent::Text(content.into()),
             },
+            reasoning: None,
         }
     }
 
@@ -341,6 +352,7 @@ impl Message {
                 tool_call_id: id.into(),
                 content,
             },
+            reasoning: None,
         }
     }
 
@@ -363,6 +375,7 @@ impl Message {
         Self {
             role: Role::User,
             content,
+            reasoning: None,
         }
     }
 
@@ -410,7 +423,7 @@ impl Message {
 
     /// Approximate token count used for context management.
     ///
-    /// Uses a 4-chars-per-token heuristic for text.  Images use OpenAI's token
+    /// Uses a 4-chars-per-token heuristic for text and reasoning.  Images use OpenAI's token
     /// estimates: 85 tokens for `detail = "low"`, 765 tokens otherwise
     /// (the typical auto/high estimate for a 512×512 region).
     pub fn approx_tokens(&self) -> usize {
@@ -439,6 +452,9 @@ impl Message {
                     .sum(),
             },
         };
+        // Reasoning a provider sends back takes room too; counted always, so
+        // the estimate errs high where it is not sent.
+        let chars = chars + self.reasoning.as_ref().map_or(0, String::len);
         (chars / 4).max(1)
     }
 }
@@ -774,6 +790,7 @@ mod tests {
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         };
         assert!(m.as_text().is_none());
     }
@@ -809,6 +826,7 @@ mod tests {
                     arguments: "bbbbbbbb".into(), // 8 chars
                 },
             },
+            reasoning: None,
         };
         // 12 chars / 4 = 3 tokens
         assert_eq!(m.approx_tokens(), 3);

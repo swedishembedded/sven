@@ -359,6 +359,7 @@ mod tests {
                     arguments: arguments.into(),
                 },
             },
+            reasoning: None,
         }
     }
 

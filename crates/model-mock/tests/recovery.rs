@@ -57,6 +57,7 @@ fn call(id: &str, name: &str, arguments: &str) -> Message {
                 arguments: arguments.into(),
             },
         },
+        reasoning: None,
     }
 }
 

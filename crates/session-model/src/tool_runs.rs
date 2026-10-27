@@ -110,6 +110,7 @@ mod tests {
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         })
     }
 

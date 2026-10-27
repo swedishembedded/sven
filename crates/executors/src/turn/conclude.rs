@@ -83,9 +83,6 @@ impl TurnExecutor {
         // Append the assistant turn to the thread (append-only, cache-safe).
         // Build the messages list first, then call the non-async helper.
         {
-            if let Ok(mut store) = self.store.lock() {
-                store.record_reasoning(&thread_id, reasoning);
-            }
             let mut msgs_to_append = Vec::new();
             if !text.is_empty() {
                 msgs_to_append.push(Message::assistant(&text));
@@ -100,7 +97,18 @@ impl TurnExecutor {
                             arguments: tc.args.to_string(),
                         },
                     },
+                    reasoning: None,
                 });
+            }
+            // The turn's first message carries the reasoning that preceded
+            // it, so the reasoning travels with the turn wherever it goes.
+            match msgs_to_append.first_mut() {
+                Some(first) => first.reasoning = (!reasoning.is_empty()).then_some(reasoning),
+                None => {
+                    if let Ok(mut store) = self.store.lock() {
+                        store.record_unspoken_reasoning(&thread_id, reasoning);
+                    }
+                }
             }
             append_messages(&self.store, &thread_id, msgs_to_append);
         }

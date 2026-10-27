@@ -23,7 +23,9 @@ mod stream;
 
 pub(crate) use models::parse_models_response;
 
-pub(crate) use request::{build_openai_messages, function_tool};
+#[cfg(test)]
+use request::build_openai_messages;
+pub(crate) use request::{build_openai_messages_with, function_tool};
 use stream::decode_events;
 /// Read by the D-Bus driver, which decodes the same reply fields.
 #[cfg(all(target_os = "linux", feature = "dbus"))]
@@ -97,6 +99,11 @@ pub struct OpenAICompatProvider {
     /// leave the field out. The caller post-parses a structured answer
     /// either way, so the constraint is an optimisation, not the contract.
     response_format_refused: std::sync::atomic::AtomicBool,
+    /// Whether past turns' reasoning goes back as `reasoning_content`: on a
+    /// local server (brain, vLLM, llama.cpp), whose chat template renders it.
+    /// Hosted APIs define reasoning replay differently (DeepSeek refuses the
+    /// field), so they get none.
+    sends_reasoning: bool,
 }
 
 impl OpenAICompatProvider {
@@ -140,6 +147,7 @@ impl OpenAICompatProvider {
             extra_body,
             server_root: Some(derive_server_root(base)),
             response_format_refused: std::sync::atomic::AtomicBool::new(false),
+            sends_reasoning: crate::discovery::is_local_endpoint(base),
         }
     }
 
@@ -178,6 +186,7 @@ impl OpenAICompatProvider {
             extra_body,
             server_root: None,
             response_format_refused: std::sync::atomic::AtomicBool::new(false),
+            sends_reasoning: false,
         }
     }
 
@@ -414,7 +423,7 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         let messages: Vec<Value> = if use_block_cache {
             // Build messages without merging the dynamic suffix; it will be
             // handled below as a separate uncached system content block.
-            build_openai_messages(&req.messages)
+            build_openai_messages_with(&req.messages, self.sends_reasoning)
         } else if let Some(suffix) = &req.system_dynamic_suffix {
             // Standard path: merge dynamic suffix into the system message text.
             // OpenAI has a single "system" message; there is no separate
@@ -429,9 +438,9 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
                     }
                 }
             }
-            build_openai_messages(&msgs)
+            build_openai_messages_with(&msgs, self.sends_reasoning)
         } else {
-            build_openai_messages(&req.messages)
+            build_openai_messages_with(&req.messages, self.sends_reasoning)
         };
 
         let mut tools: Vec<Value> = req.tools.iter().map(function_tool).collect();
@@ -1403,6 +1412,21 @@ mod tests {
 
     // ── Parallel tool call coalescing ────────────────────────────────────────
 
+    /// A turn's reasoning goes back as `reasoning_content` only where asked
+    /// (a local server's template renders it); never otherwise.
+    #[test]
+    fn a_turns_reasoning_is_sent_only_to_servers_that_take_it() {
+        use sven_model::Message;
+        let mut turn = Message::tool_call("call_1", "read_file", "{}");
+        turn.reasoning = Some("read it first".into());
+        let msgs = vec![turn, Message::tool_result("call_1", "x")];
+        let local = build_openai_messages_with(&msgs, true);
+        assert_eq!(local[0]["reasoning_content"], "read it first");
+        assert!(local[1].get("reasoning_content").is_none());
+        let hosted = build_openai_messages_with(&msgs, false);
+        assert!(hosted[0].get("reasoning_content").is_none());
+    }
+
     /// The API's assistant message holds the turn's `content` and its
     /// `tool_calls` together; sending the text as a message of its own makes
     /// a turn that ended before its calls.
@@ -1420,6 +1444,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 },
+                reasoning: None,
             },
             Message::tool_result("call_1", "x"),
         ];
@@ -1442,6 +1467,7 @@ mod tests {
                         arguments: r#"{"pattern":"*.c"}"#.into(),
                     },
                 },
+                reasoning: None,
             },
             Message {
                 role: Role::Assistant,
@@ -1452,6 +1478,7 @@ mod tests {
                         arguments: r#"{"path":"main.c"}"#.into(),
                     },
                 },
+                reasoning: None,
             },
             Message::tool_result("call_1", "found 3 files"),
             Message::tool_result("call_2", "int main() {}"),
@@ -1545,6 +1572,7 @@ mod tests {
                         arguments: r#"{"command":"ls"}"#.into(),
                     },
                 },
+                reasoning: None,
             },
             Message::tool_result("call_1", "file.txt"),
         ];

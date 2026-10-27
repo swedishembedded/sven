@@ -194,6 +194,7 @@ fn conversation_round_trip_with_tool_call() {
                     arguments: r#"{"path":"src/x.rs"}"#.into(),
                 },
             },
+            reasoning: None,
         },
         Message::tool_result("call_99", "file contents"),
         Message::assistant("Found it"),

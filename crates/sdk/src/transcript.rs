@@ -170,6 +170,7 @@ mod tests {
                         arguments: r#"{"command":"./svctl status"}"#.into(),
                     },
                 },
+                reasoning: None,
             },
             Message {
                 role: Role::Tool,
@@ -177,6 +178,7 @@ mod tests {
                     tool_call_id: "call_0".into(),
                     content: ToolResultContent::Text("active deployment: staging".into()),
                 },
+                reasoning: None,
             },
         ];
         let turns = from_history(&history);
@@ -206,6 +208,7 @@ mod tests {
         let history = vec![Message {
             role: Role::User,
             content: MessageContent::ContentParts(Vec::new()),
+            reasoning: None,
         }];
         assert_eq!(
             from_history(&history),
@@ -228,6 +231,7 @@ mod tests {
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         };
         assert_eq!(from_history(&[call("a"), call("b")]).len(), 2);
     }

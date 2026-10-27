@@ -721,5 +721,6 @@ fn tool_call_message(record: &ToolCallRecord) -> Message {
                 arguments: record.arguments.clone(),
             },
         },
+        reasoning: None,
     }
 }

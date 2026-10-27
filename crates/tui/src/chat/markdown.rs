@@ -382,6 +382,7 @@ fn parse_message_at_line(lines: &[&str], i: &mut usize) -> Result<Option<Message
                 tool_call_id,
                 function: FunctionCall { name, arguments },
             },
+            reasoning: None,
         }));
     }
 
@@ -401,6 +402,7 @@ fn parse_message_at_line(lines: &[&str], i: &mut usize) -> Result<Option<Message
                 tool_call_id,
                 content: sven_model::ToolResultContent::Text(content),
             },
+            reasoning: None,
         }));
     }
 
@@ -539,12 +541,14 @@ mod tests {
         ChatSegment::Message(Message {
             role: Role::User,
             content: MessageContent::Text(text.into()),
+            reasoning: None,
         })
     }
     fn agent_seg(text: &str) -> ChatSegment {
         ChatSegment::Message(Message {
             role: Role::Assistant,
             content: MessageContent::Text(text.into()),
+            reasoning: None,
         })
     }
     fn tool_call_seg(call_id: &str, name: &str) -> ChatSegment {
@@ -557,6 +561,7 @@ mod tests {
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         })
     }
     fn tool_result_seg(call_id: &str, output: &str) -> ChatSegment {
@@ -566,6 +571,7 @@ mod tests {
                 tool_call_id: call_id.into(),
                 content: output.into(),
             },
+            reasoning: None,
         })
     }
 
@@ -576,6 +582,7 @@ mod tests {
         let msg = Message {
             role: Role::User,
             content: MessageContent::Text("hello world".into()),
+            reasoning: None,
         };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
@@ -597,6 +604,7 @@ mod tests {
         let msg = Message {
             role: Role::Assistant,
             content: MessageContent::Text("response text".into()),
+            reasoning: None,
         };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
@@ -615,6 +623,7 @@ mod tests {
                     arguments: r#"{"path":"src/x.rs"}"#.into(),
                 },
             },
+            reasoning: None,
         };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
@@ -636,6 +645,7 @@ mod tests {
                 tool_call_id: "id1".into(),
                 content: "file contents here".into(),
             },
+            reasoning: None,
         };
         let md = message_to_markdown(&msg, &cache);
         assert!(
@@ -849,6 +859,7 @@ mod tests {
                         arguments: r#"{"path":"src/x.rs","encoding":"utf8"}"#.into(),
                     },
                 },
+                reasoning: None,
             },
             Message {
                 role: Role::Tool,
@@ -856,6 +867,7 @@ mod tests {
                     tool_call_id: "call1".into(),
                     content: "file contents\nline two\nline three".into(),
                 },
+                reasoning: None,
             },
             Message::assistant("The file contains three lines"),
         ];

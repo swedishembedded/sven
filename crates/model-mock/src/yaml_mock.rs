@@ -549,6 +549,7 @@ responses:
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         };
         let again = CompletionRequest {
             messages: vec![
@@ -680,6 +681,7 @@ responses:
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         });
         request
             .messages

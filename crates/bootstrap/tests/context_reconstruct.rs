@@ -33,6 +33,7 @@ fn call(id: &str, name: &str, args: &str) -> Message {
                 arguments: args.into(),
             },
         },
+        reasoning: None,
     }
 }
 

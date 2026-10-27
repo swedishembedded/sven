@@ -6,7 +6,7 @@
 //! resume and feed the legacy readers.
 
 use atif::{ContentSegment, MessageBody, StepOrigin, TraceStep};
-use sven_model::{FunctionCall, Message, MessageContent, Role};
+use sven_model::Message;
 
 use crate::chat_document::{json_str_to_yaml, TurnRecord};
 use crate::compaction_details::ContextCompactionDetails;
@@ -23,17 +23,15 @@ use crate::conversation::ConversationRecord;
 ///   spec's SFT-filtering guidance ([`atif::Trajectory::sft_steps`]), repurposed
 ///   here for the same underlying reason: don't replay content the model
 ///   didn't originally produce fresh.
-/// - `reasoning_content` is **never** replayed back into a message ("thinking
-///   not sent back to model", matching `turns_to_messages`'s documented
-///   behavior).
-/// - An agent step's `tool_calls` are emitted first (each as its own
-///   `Role::Assistant` `ToolCall` message, in array order), then their
-///   matching `observation.results` entries (each as its own `Role::Tool`
-///   `ToolResult` message, matched by `tool_call_id == source_call_id`, in
-///   the same order as `tool_calls`) — this is a canonical choice where the
-///   original interleaving is ambiguous (multiple tool calls per step).
-///   Finally, non-empty step `message` text is emitted as a trailing
-///   `Role::Assistant` text message.
+/// - An agent step is one model turn and comes back in the order it
+///   happened: its non-empty `message` text as a `Role::Assistant` text
+///   message, then each of its `tool_calls` as a `ToolCall` message (in array
+///   order), then the matching `observation.results` entries as `ToolResult`
+///   messages (matched by `tool_call_id == source_call_id`, in call order).
+///   Text after results is a step of its own, so none trails the calls.
+/// - `reasoning_content` is never message content: it is the
+///   [`Message::reasoning`] of the turn's first message, which a provider
+///   that takes reasoning sends back.
 pub fn steps_to_messages(steps: &[TraceStep]) -> Vec<Message> {
     let mut out = Vec::new();
     for step in steps {
@@ -50,37 +48,37 @@ pub fn steps_to_messages(steps: &[TraceStep]) -> Vec<Message> {
                 }
             }
             StepOrigin::Agent => {
-                if let Some(tool_calls) = &step.tool_calls {
-                    for call in tool_calls {
-                        out.push(Message {
-                            role: Role::Assistant,
-                            content: MessageContent::ToolCall {
-                                tool_call_id: call.tool_call_id.clone(),
-                                function: FunctionCall {
-                                    name: call.function_name.clone(),
-                                    arguments: call.arguments.to_string(),
-                                },
-                            },
-                        });
-                    }
-                    if let Some(observation) = &step.observation {
-                        for call in tool_calls {
-                            if let Some(entry) = observation.results.iter().find(|r| {
-                                r.source_call_id.as_deref() == Some(call.tool_call_id.as_str())
-                            }) {
-                                let content = entry
-                                    .content
-                                    .as_ref()
-                                    .and_then(message_body_to_text)
-                                    .unwrap_or_default();
-                                out.push(Message::tool_result(call.tool_call_id.clone(), content));
-                            }
-                        }
-                    }
-                }
+                // One model turn: its text, then its calls, then the results
+                // that answered them; the reasoning rides on the first.
+                let first = out.len();
                 if let Some(text) = message_body_to_text(&step.message) {
                     if !text.is_empty() {
                         out.push(Message::assistant(text));
+                    }
+                }
+                let calls = step.tool_calls.as_deref().unwrap_or_default();
+                for call in calls {
+                    out.push(Message::tool_call(
+                        call.tool_call_id.clone(),
+                        call.function_name.clone(),
+                        call.arguments.to_string(),
+                    ));
+                }
+                if let Some(first) = out.get_mut(first) {
+                    first.reasoning.clone_from(&step.reasoning_content);
+                }
+                if let Some(observation) = &step.observation {
+                    for call in calls {
+                        if let Some(entry) = observation.results.iter().find(|r| {
+                            r.source_call_id.as_deref() == Some(call.tool_call_id.as_str())
+                        }) {
+                            let content = entry
+                                .content
+                                .as_ref()
+                                .and_then(message_body_to_text)
+                                .unwrap_or_default();
+                            out.push(Message::tool_result(call.tool_call_id.clone(), content));
+                        }
                     }
                 }
             }

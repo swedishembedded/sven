@@ -353,6 +353,7 @@ mod tests {
                     arguments: format!("{{\"cmd\":\"cat {id}\"}}"),
                 },
             },
+            reasoning: None,
         }
     }
 

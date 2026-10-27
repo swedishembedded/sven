@@ -63,10 +63,10 @@ pub struct ThreadStore {
     /// instruction a harness step sent (`task`, `follow_up`, `repair`,
     /// `correction`).
     origins: Vec<(ThreadId, usize, String)>,
-    /// What the model reasoned before the assistant message at a transcript
-    /// position. Kept beside the transcript, not in the messages: a message
-    /// is replayed to providers and reasoning is never sent back.
-    reasonings: Vec<(ThreadId, usize, String)>,
+    /// Reasoning of turns that produced no message (cut off while thinking),
+    /// with the transcript position the next message will take. A turn that
+    /// produced a message carries its reasoning on that message instead.
+    unspoken_reasonings: Vec<(ThreadId, usize, String)>,
     /// The thread's transcript length at each entry of `compactions`.
     compaction_positions: Vec<usize>,
     /// Each model request's account, with the thread and the transcript
@@ -150,25 +150,38 @@ impl ThreadStore {
             .collect()
     }
 
-    /// Files the reasoning of the response whose messages are appended next.
-    /// An empty `reasoning` files nothing.
-    pub fn record_reasoning(&mut self, id: &str, reasoning: String) {
+    /// Files the reasoning of a turn that produced no message to carry it.
+    pub fn record_unspoken_reasoning(&mut self, id: &str, reasoning: String) {
         if reasoning.is_empty() {
             return;
         }
         let position = self.transcript_len(id);
-        self.reasonings.push((id.to_string(), position, reasoning));
+        self.unspoken_reasonings
+            .push((id.to_string(), position, reasoning));
     }
 
-    /// The reasoning filed for `id`, each with the transcript position of the
-    /// message it preceded.
+    /// The reasoning of each assistant turn of `id`, in order, with the
+    /// transcript position of the message it preceded: the reasoning a turn's
+    /// first message carries, and that of turns that produced no message.
     #[must_use]
     pub fn transcript_reasonings(&self, id: &str) -> Vec<(usize, String)> {
-        self.reasonings
+        // Unspoken turns first: at an equal position the stable sort keeps
+        // them ahead of the message a later turn produced there.
+        let mut out: Vec<(usize, String)> = self
+            .unspoken_reasonings
             .iter()
             .filter(|(thread, _, _)| thread == id)
             .map(|(_, position, text)| (*position, text.clone()))
-            .collect()
+            .collect();
+        out.extend(
+            self.log
+                .iter()
+                .filter(|(thread, _)| thread == id)
+                .enumerate()
+                .filter_map(|(position, (_, m))| m.reasoning.clone().map(|r| (position, r))),
+        );
+        out.sort_by_key(|(position, _)| *position);
+        out
     }
 
     /// Append a single turn to a thread (creating the thread if needed).
@@ -631,6 +644,7 @@ mod tests {
                         arguments: "{}".into(),
                     },
                 },
+                reasoning: None,
             },
         );
         store.answer_open_calls("t", &HashMap::new());
@@ -678,6 +692,7 @@ mod tests {
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         };
         let mut store = ThreadStore::new();
         store.append("t", call("ran"));

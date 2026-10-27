@@ -814,6 +814,7 @@ mod tests {
                         arguments: r#"{"expr":"2+2"}"#.into(),
                     },
                 },
+                reasoning: None,
             }),
             ChatSegment::Message(Message::tool_result("call_1", "4")),
             ChatSegment::Message(Message::assistant("The answer is 4.")),

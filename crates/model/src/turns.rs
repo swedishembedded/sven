@@ -39,9 +39,11 @@ pub enum Turn<'a> {
     /// A message that is a whole turn by itself: system, user, or an
     /// assistant reply without tool calls.
     Message(&'a Message),
-    /// An assistant turn that called tools: the text it opened with, if any
-    /// (`Text` or `ContentParts`), then its calls in order.
+    /// An assistant turn that called tools: the reasoning that preceded it
+    /// and the text it opened with, if any (`Text` or `ContentParts`), then
+    /// its calls in order.
     Assistant {
+        reasoning: Option<&'a str>,
         content: Option<&'a MessageContent>,
         calls: Vec<TurnCall<'a>>,
     },
@@ -68,6 +70,7 @@ pub fn turns(messages: &[Message]) -> Vec<Turn<'_>> {
             )
             && messages.get(i + 1).is_some_and(is_call);
         if opens_turn || is_call(m) {
+            let reasoning = m.reasoning.as_deref();
             let content = opens_turn.then_some(&m.content);
             if opens_turn {
                 i += 1;
@@ -84,7 +87,11 @@ pub fn turns(messages: &[Message]) -> Vec<Turn<'_>> {
                 });
                 i += 1;
             }
-            out.push(Turn::Assistant { content, calls });
+            out.push(Turn::Assistant {
+                reasoning,
+                content,
+                calls,
+            });
             continue;
         }
         if matches!(m.content, MessageContent::ToolResult { .. }) {
@@ -123,6 +130,7 @@ mod tests {
                     arguments: "{}".into(),
                 },
             },
+            reasoning: None,
         }
     }
 
@@ -131,7 +139,7 @@ mod tests {
             .iter()
             .map(|t| match t {
                 Turn::Message(m) => format!("{:?}", m.role),
-                Turn::Assistant { content, calls } => format!(
+                Turn::Assistant { content, calls, .. } => format!(
                     "assistant(text={},calls={})",
                     content.is_some(),
                     calls.iter().map(|c| c.id).collect::<Vec<_>>().join("+")

@@ -316,6 +316,7 @@ mod tests {
                     arguments: "{}".to_string(),
                 },
             },
+            reasoning: None,
         }
     }
 

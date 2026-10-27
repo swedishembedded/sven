@@ -35,6 +35,7 @@ fn call(id: &str) -> Message {
                 arguments: format!(r#"{{"command":"step {id}"}}"#),
             },
         },
+        reasoning: None,
     }
 }
 

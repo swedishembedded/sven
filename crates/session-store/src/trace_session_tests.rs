@@ -201,6 +201,7 @@ fn thinking_call_and_result_are_one_step_and_the_final_text_is_the_next() {
                 arguments: r#"{"expr":"2+2"}"#.into(),
             },
         },
+        reasoning: None,
     });
     a.push_message(&Message::tool_result("call_1", "4"));
     a.push_message(&Message::assistant("The answer is 4."));
@@ -262,6 +263,7 @@ fn multi_turn_conversation_step_ids_sequential() {
                 arguments: "{}".into(),
             },
         },
+        reasoning: None,
     });
     a.push_message(&Message::tool_result("c1", "result"));
     a.push_message(&Message::assistant("Turn one done."));
@@ -323,6 +325,7 @@ fn snapshot_including_pending_captures_in_flight_turn_without_consuming() {
                 arguments: "{}".into(),
             },
         },
+        reasoning: None,
     });
     // No tool result / closing event yet — the agent step is still open.
     assert_eq!(
@@ -406,6 +409,7 @@ fn push_subagent_embedded_attaches_to_pending_tool_call_step_without_splitting_i
                 arguments: "{}".into(),
             },
         },
+        reasoning: None,
     });
     assert_eq!(
         a.closed_steps().len(),
@@ -509,12 +513,13 @@ fn conversation_records_to_steps_handles_full_event_stream() {
 // ── reverse: TraceStep -> Message ────────────────────────────────────
 
 #[test]
-fn steps_to_messages_skips_reasoning_content() {
+fn steps_to_messages_carries_a_turns_reasoning_on_its_first_message() {
     let mut step = TraceStep::new(1, StepOrigin::Agent, "Answer");
-    step.reasoning_content = Some("secret reasoning".to_string());
+    step.reasoning_content = Some("the reasoning".to_string());
     let messages = steps_to_messages(&[step]);
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].as_text(), Some("Answer"));
+    assert_eq!(messages[0].as_text(), Some("Answer"), "never as content");
+    assert_eq!(messages[0].reasoning.as_deref(), Some("the reasoning"));
 }
 
 #[test]
@@ -540,9 +545,12 @@ fn steps_to_messages_skips_copied_context_steps() {
     assert_eq!(messages[0].as_text(), Some("fresh"));
 }
 
+/// A step is one model turn: what it said, the calls it made, then the
+/// results that answered them - the order the model produced and saw them.
 #[test]
-fn steps_to_messages_unmerges_tool_call_and_result() {
-    let mut step = TraceStep::new(1, StepOrigin::Agent, "Found main.rs");
+fn steps_to_messages_rebuilds_a_turn_in_the_order_it_happened() {
+    let mut step = TraceStep::new(1, StepOrigin::Agent, "Let me look for it:");
+    step.reasoning_content = Some("glob for rust files".to_string());
     step.tool_calls = Some(vec![ToolInvocation::new("call_1", "glob")
         .with_arguments(serde_json::json!({"pattern": "**/*.rs"}))]);
     step.observation = Some(StepObservation::single(ObservationEntry::for_call(
@@ -552,7 +560,12 @@ fn steps_to_messages_unmerges_tool_call_and_result() {
     let messages = steps_to_messages(&[step]);
 
     assert_eq!(messages.len(), 3);
-    match &messages[0].content {
+    assert_eq!(messages[0].as_text(), Some("Let me look for it:"));
+    assert_eq!(
+        messages[0].reasoning.as_deref(),
+        Some("glob for rust files")
+    );
+    match &messages[1].content {
         MessageContent::ToolCall {
             tool_call_id,
             function,
@@ -562,7 +575,8 @@ fn steps_to_messages_unmerges_tool_call_and_result() {
         }
         _ => panic!("expected ToolCall"),
     }
-    match &messages[1].content {
+    assert!(messages[1].reasoning.is_none());
+    match &messages[2].content {
         MessageContent::ToolResult {
             tool_call_id,
             content,
@@ -572,7 +586,6 @@ fn steps_to_messages_unmerges_tool_call_and_result() {
         }
         _ => panic!("expected ToolResult"),
     }
-    assert_eq!(messages[2].as_text(), Some("Found main.rs"));
 }
 
 #[test]
@@ -694,6 +707,7 @@ fn steps_to_conversation_records_preserves_thinking_and_tool_calls() {
                     arguments: r#"{"expr":"2+2"}"#.into(),
                 },
             },
+            reasoning: None,
         }),
         ConversationRecord::Message(Message::tool_result("call_1", "4")),
         ConversationRecord::Message(Message::assistant("The answer is 4.")),
@@ -782,6 +796,8 @@ fn full_round_trip_multi_turn_conversation() {
                     arguments: r#"{"query":"rust"}"#.into(),
                 },
             },
+            // The thinking before it comes back on the turn's first message.
+            reasoning: Some("I should search first.".into()),
         }),
         ConversationRecord::Message(Message::tool_result("call_1", "found: main.rs")),
         ConversationRecord::Message(Message::assistant(

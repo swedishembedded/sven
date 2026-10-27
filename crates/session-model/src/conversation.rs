@@ -295,6 +295,7 @@ fn convert_sections_to_conversation(
                             arguments: envelope.args.to_string(),
                         },
                     },
+                    reasoning: None,
                 });
             }
 
@@ -675,6 +676,7 @@ mod tests {
                     arguments: r#"{"path":"src/x.rs"}"#.into(),
                 },
             },
+            reasoning: None,
         };
         let out = message_to_section(&msg);
         assert!(out.starts_with("## Tool\n"));
@@ -724,6 +726,7 @@ mod tests {
                         arguments: r#"{"pattern":"**/*.rs"}"#.into(),
                     },
                 },
+                reasoning: None,
             },
             Message::tool_result("id_1", "src/main.rs"),
             sven_msg("Found main.rs"),
@@ -929,6 +932,7 @@ mod tests {
                     arguments: r#"{"a":1,"b":2}"#.into(),
                 },
             },
+            reasoning: None,
         };
         let out = message_to_section(&msg);
         // Args are nested inside the "args" envelope key so indented 4 spaces

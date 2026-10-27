@@ -527,6 +527,7 @@ mod tests {
                         arguments: r#"{"pattern":"**/*.rs"}"#.into(),
                     },
                 },
+                reasoning: None,
             },
             Message::tool_result("c1", "src/main.rs"),
             Message::assistant("Found main.rs"),

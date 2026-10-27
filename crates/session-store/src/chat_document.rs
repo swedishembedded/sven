@@ -298,6 +298,7 @@ fn turn_to_record(turn: &TurnRecord) -> Option<ConversationRecord> {
                         arguments: args_json,
                     },
                 },
+                reasoning: None,
             }))
         }
         TurnRecord::ToolResult {

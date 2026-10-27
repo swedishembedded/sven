@@ -78,7 +78,7 @@ impl sven_model::ModelProvider for CohereProvider {
         // made (see `sven_model::turns`).
         for turn in sven_model::turns(&req.messages) {
             let singles: Vec<&sven_model::Message> = match turn {
-                sven_model::Turn::Assistant { content, calls } => {
+                sven_model::Turn::Assistant { content, calls, .. } => {
                     let mut message = json!({
                         "role": "assistant",
                         "tool_calls": calls.iter().map(|c| json!({
