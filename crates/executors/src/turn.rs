@@ -68,6 +68,13 @@ use std::sync::{Arc, Mutex};
 /// instead of nudged again. See the module docs.
 const EMPTY_TURN_FAILURE_THRESHOLD: u32 = 2;
 
+/// Consecutive replies the output budget cut before any text or tool call
+/// that fail the thread. Such a reply is not empty, since the model was
+/// working, so the agent loop continues it (with an instruction to act and
+/// reason briefly) before this bound ends a model that cannot finish within
+/// the budget.
+const TRUNCATED_TURN_FAILURE_THRESHOLD: u32 = 4;
+
 use async_trait::async_trait;
 use sven_decision::telemetry::DecisionTelemetry;
 use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, UiEvent};

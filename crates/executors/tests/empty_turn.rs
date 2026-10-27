@@ -71,6 +71,71 @@ impl sven_model::ModelProvider for EmptyProvider {
     }
 }
 
+/// Reasons until the output budget cuts it, every turn: the reply carries
+/// reasoning, no text and no call, and ends with `MaxTokens`.
+struct TruncatingProvider {
+    calls: std::sync::atomic::AtomicU32,
+}
+
+#[async_trait]
+impl sven_model::ModelProvider for TruncatingProvider {
+    fn name(&self) -> &str {
+        "truncating"
+    }
+    fn model_name(&self) -> &str {
+        "truncating"
+    }
+    async fn complete(
+        &self,
+        _req: sven_model::CompletionRequest,
+    ) -> anyhow::Result<
+        std::pin::Pin<
+            Box<dyn futures::Stream<Item = anyhow::Result<sven_model::ResponseEvent>> + Send>,
+        >,
+    > {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let events: Vec<anyhow::Result<sven_model::ResponseEvent>> = vec![
+            Ok(sven_model::ResponseEvent::ThinkingDelta(
+                "working out the ring buffer design".into(),
+            )),
+            Ok(sven_model::ResponseEvent::MaxTokens),
+            Ok(sven_model::ResponseEvent::Done),
+        ];
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
+/// A reply the output budget cut is not an empty one: the model is asked to
+/// continue a few times, and only a run of such replies with no tool call
+/// fails the run - loudly, naming the output limit.
+#[tokio::test]
+async fn replies_cut_by_the_output_budget_are_continued_then_fail_with_the_cause() {
+    let provider = Arc::new(TruncatingProvider {
+        calls: std::sync::atomic::AtomicU32::new(0),
+    });
+    let (rt, events) = silent_provider_run(provider.clone()).await;
+    let calls = provider.calls.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        calls > 2,
+        "cut replies must be continued, not failed at once: {calls} calls"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Error(msg) if msg.contains("output limit"))),
+        "the failure must name the output limit: {events:?}"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| **e == UiEvent::TurnComplete)
+            .count(),
+        1,
+        "{events:?}"
+    );
+    rt.abort();
+}
+
 /// A provider that always returns an empty turn (no text, no tool calls)
 /// must eventually fail the run loudly, not report a silent success.
 ///

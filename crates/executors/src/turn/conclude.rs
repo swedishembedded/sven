@@ -13,7 +13,9 @@ use sven_hsm::{Event, ObservationSink, UiEvent};
 use sven_kernel::EventSink;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
 
-use super::{replies, TurnExecutor, EMPTY_TURN_FAILURE_THRESHOLD};
+use super::{
+    replies, TurnExecutor, EMPTY_TURN_FAILURE_THRESHOLD, TRUNCATED_TURN_FAILURE_THRESHOLD,
+};
 use crate::thread_store::{append_messages, register_calls};
 
 /// What the request that made a reply decided about how to treat it.
@@ -69,11 +71,27 @@ impl TurnExecutor {
             }
         };
 
-        if is_empty_turn && empty_turn_count >= EMPTY_TURN_FAILURE_THRESHOLD {
-            let msg = format!(
-                "model returned no content and no tool calls after \
-                 {empty_turn_count} consecutive attempts"
-            );
+        // A reply cut by the output budget is the model working, not saying
+        // nothing: it gets a longer run before it fails, and the failure
+        // names the cause.
+        let threshold = if truncated {
+            TRUNCATED_TURN_FAILURE_THRESHOLD
+        } else {
+            EMPTY_TURN_FAILURE_THRESHOLD
+        };
+        if is_empty_turn && empty_turn_count >= threshold {
+            let msg = if truncated {
+                format!(
+                    "the model reached its output limit {empty_turn_count} times in a row \
+                     without a tool call or an answer; raise max_output_tokens or have it \
+                     reason less"
+                )
+            } else {
+                format!(
+                    "model returned no content and no tool calls after \
+                     {empty_turn_count} consecutive attempts"
+                )
+            };
             obs.emit(UiEvent::Error(msg.clone()));
             let _ = sink.emit(Event::LlmFailed { error: msg }).await;
             obs.emit(UiEvent::TurnComplete);
