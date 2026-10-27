@@ -345,9 +345,9 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Writes the session's audit log to `path` instead of
-    /// `<project root>/.sven/audit.jsonl`: a host that must not put files in
-    /// the project it works on (a harness run) names a file of its own.
+    /// Writes the session's audit log to `path` instead of the default, one
+    /// file per project under the user's state directory
+    /// (`$XDG_STATE_HOME/sven/audit/`).
     pub fn with_audit_log_path(mut self, path: std::path::PathBuf) -> Self {
         self.audit_log_path = Some(path);
         self

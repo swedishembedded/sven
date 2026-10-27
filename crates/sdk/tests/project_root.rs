@@ -220,7 +220,7 @@ async fn the_shell_starts_in_the_root_and_refuses_a_workdir_outside_it() {
 }
 
 #[tokio::test]
-async fn the_audit_log_is_kept_in_the_root_not_the_process_cwd() {
+async fn the_audit_log_is_kept_out_of_the_project_and_the_process_cwd() {
     let _serial = exclusive().await;
     let ws = workspace();
     run_calls(
@@ -229,12 +229,10 @@ async fn the_audit_log_is_kept_in_the_root_not_the_process_cwd() {
     )
     .await;
 
+    // Sven leaves the tree it works on as it found it, apart from the
+    // changes asked for: the log lives in the user's state directory.
     let log = ws.root.join(".sven").join("audit.jsonl");
-    assert!(
-        std::fs::metadata(&log).is_ok_and(|m| m.len() > 0),
-        "the audit log is written to {}",
-        log.display()
-    );
+    assert!(!log.exists(), "the audit log is written into the project");
     assert!(
         !process_cwd().join(".sven").exists(),
         "the run writes nothing to the process cwd"

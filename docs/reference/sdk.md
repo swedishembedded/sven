@@ -123,8 +123,9 @@ With a root set:
 - **`shell`** starts in the root when the call names no `workdir`, and refuses
   a `workdir` outside it. **`task`** starts its sub-agent in the root and
   holds its `workdir` inside it the same way.
-- **The audit log** is `<root>/.sven/audit.jsonl`, and the verifier checks
-  paths relative to the root.
+- **The audit log** goes to the user's state directory
+  (`$XDG_STATE_HOME/sven/audit/<root path>.jsonl`), never into the root, and
+  the verifier checks paths relative to the root.
 - **Discovery** runs from the root as the CLI runs it from its project:
   skills, sub-agent personas, `.sven/knowledge/`, the project context file
   (`AGENTS.md` and friends) and the git summary in the system prompt.

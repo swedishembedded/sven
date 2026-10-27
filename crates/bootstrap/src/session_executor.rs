@@ -159,14 +159,9 @@ pub(crate) fn compose(
     if let Some(custom) = custom {
         return custom;
     }
-    let audit_log_path = parts.audit_log_path.unwrap_or_else(|| {
-        parts
-            .instructions
-            .project_root
-            .as_ref()
-            .map(|r| r.join(".sven").join("audit.jsonl"))
-            .unwrap_or_else(|| PathBuf::from(".sven/audit.jsonl"))
-    });
+    let audit_log_path = parts
+        .audit_log_path
+        .unwrap_or_else(|| default_audit_log(parts.instructions.project_root.as_deref()));
     // Only the verified-task machine's `Verifying` state ever emits
     // `Effect::Verify` (see its `permission_policy`), so wiring it here
     // unconditionally is harmless for every other mode.
@@ -242,4 +237,44 @@ pub(crate) fn compose(
         }
     };
     Box::new(composed.build())
+}
+
+/// Where a session's audit log goes when the host names none: the user's
+/// state directory (`$XDG_STATE_HOME/sven/audit`, else the data directory),
+/// one file per project, named after the project's absolute path. Never
+/// inside the project: sven must leave the tree it works on as it found it
+/// apart from the changes it was asked to make.
+fn default_audit_log(project_root: Option<&Path>) -> PathBuf {
+    let project = project_root
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    let base = dirs::state_dir()
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(std::env::temp_dir);
+    audit_log_in(&base, &project)
+}
+
+fn audit_log_in(base: &Path, project: &Path) -> PathBuf {
+    let key: String = project
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    base.join("sven")
+        .join("audit")
+        .join(format!("{}.jsonl", key.trim_matches('-')))
+}
+
+#[cfg(test)]
+mod audit_log_tests {
+    use super::*;
+
+    #[test]
+    fn the_audit_log_is_kept_outside_the_project() {
+        let project = Path::new("/work/repo");
+        let log = audit_log_in(Path::new("/state"), project);
+        assert_eq!(log, Path::new("/state/sven/audit/work-repo.jsonl"));
+        assert!(!default_audit_log(Some(project)).starts_with(project));
+    }
 }
