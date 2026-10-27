@@ -31,7 +31,7 @@ use tokio::io::unix::AsyncFd;
 
 use sven_model::ResponseEvent;
 
-use super::reply::{reply_events, reply_extras, reply_usage};
+use super::reply::{reply_events, reply_extras, reply_usage, scan_anomalies};
 
 /// Largest frame brain sends: a JSON header (blobs travel as fds).
 const MAX_FRAME: usize = 1 << 20;
@@ -263,11 +263,18 @@ impl Translator {
                 .into_iter()
                 .filter(|e| want_logprobs || !matches!(e, ResponseEvent::Tokens { .. })),
         );
-        let (input_tokens, output_tokens) = reply_usage(&json);
+        let anomalies = scan_anomalies(&json);
+        if !anomalies.is_empty() {
+            tracing::warn!(
+                ?anomalies,
+                "brain could not parse part of the reply cleanly; a tool call may be lost"
+            );
+        }
+        let usage = reply_usage(&json);
         events.push(ResponseEvent::Usage {
-            input_tokens,
-            output_tokens,
-            cache_read_tokens: 0,
+            input_tokens: usage.input,
+            output_tokens: usage.output,
+            cache_read_tokens: usage.cache_read,
             cache_write_tokens: 0,
             cost_usd: None,
         });

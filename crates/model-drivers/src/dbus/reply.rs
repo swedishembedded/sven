@@ -105,13 +105,22 @@ pub(super) fn reply_extras(result_json: &str) -> Vec<ResponseEvent> {
     events
 }
 
+/// Token counts of a reply, in sven's terms: `input` excludes what the
+/// server's prefix cache served, which is `cache_read`.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct ReplyUsage {
+    pub input: u32,
+    pub output: u32,
+    pub cache_read: u32,
+}
+
 /// Best-effort token counts from the `result` JSON.
 ///
 /// Recognises both a nested `usage` object and flat `num_tokens`-style keys;
 /// anything unrecognised simply reports zero rather than failing the turn.
-pub(super) fn reply_usage(result_json: &str) -> (u32, u32) {
+pub(super) fn reply_usage(result_json: &str) -> ReplyUsage {
     let Ok(v) = serde_json::from_str::<Value>(result_json) else {
-        return (0, 0);
+        return ReplyUsage::default();
     };
     let pick = |obj: &Value, keys: &[&str]| -> u32 {
         for k in keys {
@@ -122,10 +131,11 @@ pub(super) fn reply_usage(result_json: &str) -> (u32, u32) {
         0
     };
     let usage = v.get("usage").unwrap_or(&v);
-    let input = pick(
+    let prompt = pick(
         usage,
         &["input_tokens", "prompt_tokens", "num_input_tokens"],
     );
+    let cache_read = pick(usage, &["cached_tokens"]).min(prompt);
     let output = pick(
         usage,
         &[
@@ -135,7 +145,22 @@ pub(super) fn reply_usage(result_json: &str) -> (u32, u32) {
             "num_output_tokens",
         ],
     );
-    (input, output)
+    ReplyUsage {
+        input: prompt - cache_read,
+        output,
+        cache_read,
+    }
+}
+
+/// What brain's chat scanner reports it could not parse cleanly (a tool
+/// call inside the reasoning, a malformed call header, a call cut off): the
+/// turn may have lost a call the model made, which must never pass silently.
+pub(super) fn scan_anomalies(result_json: &str) -> Vec<String> {
+    serde_json::from_str::<Value>(result_json)
+        .ok()
+        .and_then(|v| v.get("scan_anomalies").cloned())
+        .and_then(|a| serde_json::from_value(a).ok())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -228,20 +253,30 @@ mod tests {
             .all(|e| !matches!(e, ResponseEvent::ToolCall { .. })));
     }
 
+    /// brain's `prompt_tokens` is the whole prompt and `cached_tokens` the
+    /// part its prefix cache served; sven's input count excludes cache hits.
+    #[test]
+    fn cached_prompt_tokens_are_reported_as_cache_reads() {
+        let u = reply_usage(
+            r#"{"prompt_tokens": 6000, "cached_tokens": 5760, "completion_tokens": 9}"#,
+        );
+        assert_eq!((u.input, u.output, u.cache_read), (240, 9, 5760));
+    }
+
     #[test]
     fn reply_usage_reads_a_nested_usage_object() {
-        let (i, o) = reply_usage(r#"{"usage": {"input_tokens": 7, "output_tokens": 3}}"#);
-        assert_eq!((i, o), (7, 3));
+        let u = reply_usage(r#"{"usage": {"input_tokens": 7, "output_tokens": 3}}"#);
+        assert_eq!((u.input, u.output, u.cache_read), (7, 3, 0));
     }
 
     #[test]
     fn reply_usage_reads_flat_num_tokens() {
-        let (_, o) = reply_usage(r#"{"text": "hi", "num_tokens": 5}"#);
+        let o = reply_usage(r#"{"text": "hi", "num_tokens": 5}"#).output;
         assert_eq!(o, 5);
     }
 
     #[test]
     fn reply_usage_is_zero_for_unparsable_json() {
-        assert_eq!(reply_usage("not json"), (0, 0));
+        assert_eq!(reply_usage("not json"), ReplyUsage::default());
     }
 }
