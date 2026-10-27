@@ -40,10 +40,15 @@ sven rc
 
 `sven rc` connects and shows up on the server as connected. Every
 conversation started there for this machine becomes a session here, working
-in the directory `sven rc` started in (`--working-dir DIR` for another). The
-terminal prints one line per message, tool call and finished answer; the
-full conversation is on the server. Ctrl-C stops `sven rc` and any answer in
-progress.
+in the directory `sven rc` started in (`--working-dir DIR` for another).
+This machine runs each session's tool calls and file edits, and only this
+machine: every other place the conversation is open - the server's
+interface, `sven rc attach` - watches it and sends messages to it.
+
+`sven rc` itself takes no input. Like `watch`, it shows what its sessions
+do: one line per message, tool call and finished answer. To write to a
+conversation, attach to it (below). Ctrl-C stops `sven rc` and any answer
+in progress.
 
 Each session calls models through the server, with the token, so the
 server's model list and its billing apply.
@@ -59,14 +64,6 @@ A tool call that was cut off is never run again on its own: the agent is
 told it was interrupted and may or may not have taken effect. Retrying the
 answer at the server continues it from where it stopped instead of starting
 over.
-
-## Type in the terminal
-
-A line typed into the terminal running `sven rc` is the next message of the
-conversation most recently given a message, or of the one named by the
-start of its id: `@6f1c run the tests`. It is taken only while that
-conversation is not answering, and it appears in the server's interface
-with its answer, as if it had been sent there.
 
 ## Read a conversation
 

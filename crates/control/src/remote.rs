@@ -271,13 +271,6 @@ mod tests {
                 },
                 EventEnvelope {
                     seq: 5,
-                    event: ControlEvent::UserInput {
-                        session_id: session,
-                        text: "and from the terminal".into(),
-                    },
-                },
-                EventEnvelope {
-                    seq: 6,
                     event: ControlEvent::SessionState {
                         session_id: session,
                         state: crate::SessionState::Idle,
@@ -298,8 +291,7 @@ mod tests {
                         "event": {"ToolCallFinished": {"call_id": "call_1", "tool_name": "list_dir",
                             "output": "Cargo.toml", "is_error": false}}}},
                     {"seq": 4, "event": {"type": "session", "session_id": SESSION, "event": "TurnComplete"}},
-                    {"seq": 5, "event": {"type": "user_input", "session_id": SESSION, "text": "and from the terminal"}},
-                    {"seq": 6, "event": {"type": "session_state", "session_id": SESSION, "state": "idle"}}
+                    {"seq": 5, "event": {"type": "session_state", "session_id": SESSION, "state": "idle"}}
                 ],
                 "acked_through": 11
             })

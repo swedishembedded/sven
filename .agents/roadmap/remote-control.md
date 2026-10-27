@@ -18,9 +18,8 @@ event; proven against a real server end to end.
 2. **Approvals through the server.** Done: a tool that asks first asks
    the server (`ToolNeedsApproval`) and waits for `ApproveTool`/`DenyTool`,
    denied after ten minutes of silence (`sven_remote::approvals`).
-3. **Terminal input.** A line typed at `sven rc` is the conversation's next
-   message (`ControlEvent::UserInput`, recorded by the server before its
-   answer). `sven rc attach` is a terminal on a conversation from
+3. **Attached sessions.** `sven rc` owns each session's executor and takes
+   no input of its own (watch-only). `sven rc attach` is a terminal on a conversation from
    anywhere: it reads the shared document live and writes through the
    server (`{control_url}/conversations/{id}/messages`), so every client
    writes through the same authorized path. `--tui` shows it in the
