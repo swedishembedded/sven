@@ -61,3 +61,21 @@ await session.send("What can you do?");
 - The audit log and the verifiers are not available; an effect that needs
   them is answered as undeliverable.
 - A session lives as long as the page or worker that runs it.
+
+## The shared conversation document
+
+`ConversationDoc` is one replica of a conversation's shared document, the
+same implementation (`sven-session-sync`) sven uses natively: replicas add
+messages while apart, exchange `diff(stateVector)` updates in any order and
+any number of times, and reach the same messages in the same order.
+
+```js
+const mine = new ConversationDoc();
+mine.addMessage(JSON.stringify({ id, role: "user", author, state: "complete", parts }));
+const update = mine.diff(theirs.stateVector()); // what they lack
+theirs.apply(update);
+JSON.parse(theirs.messages());
+```
+
+Merging is not authorizing: whoever relays updates decides which changes a
+replica was allowed to make.

@@ -1,0 +1,15 @@
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name        = "sven-session-sync"
+version.workspace = true
+edition     = "2021"
+description = "The shared conversation document: a CRDT (yrs) every replica of a conversation - terminal, browser, server - merges to the same messages in the same order, whatever order the changes arrive in."
+license     = "Apache-2.0"
+
+[dependencies]
+yrs        = "0.21"
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }

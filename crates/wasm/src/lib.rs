@@ -166,3 +166,83 @@ impl SvenSession {
         })
     }
 }
+
+/// One replica of a conversation's shared document (`sven-session-sync`):
+/// the same implementation every replica runs, so they all merge alike.
+#[wasm_bindgen(js_name = ConversationDoc)]
+pub struct JsConversationDoc {
+    inner: sven_session_sync::ConversationDoc,
+}
+
+impl Default for JsConversationDoc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[wasm_bindgen(js_class = ConversationDoc)]
+impl JsConversationDoc {
+    /// An empty replica.
+    #[wasm_bindgen(constructor)]
+    #[must_use]
+    pub fn new() -> JsConversationDoc {
+        JsConversationDoc {
+            inner: sven_session_sync::ConversationDoc::new(),
+        }
+    }
+
+    /// Adds a message (`{id, role, author, state, parts}` as JSON, `parts`
+    /// itself JSON text); an id already present is updated instead.
+    ///
+    /// # Errors
+    ///
+    /// `message` is not that object.
+    #[wasm_bindgen(js_name = addMessage)]
+    pub fn add_message(&self, message: &str) -> Result<(), JsError> {
+        let message: sven_session_sync::DocMessage =
+            serde_json::from_str(message).map_err(|e| JsError::new(&format!("message: {e}")))?;
+        self.inner.add_message(&message);
+        Ok(())
+    }
+
+    /// Replaces message `id`'s state and content.
+    #[wasm_bindgen(js_name = updateMessage)]
+    pub fn update_message(&self, id: &str, state: &str, parts: &str) {
+        self.inner.update_message(id, state, parts);
+    }
+
+    /// The conversation in order, as a JSON array of messages.
+    #[must_use]
+    pub fn messages(&self) -> String {
+        serde_json::to_string(&self.inner.messages()).unwrap_or_else(|_| "[]".into())
+    }
+
+    /// What this replica has; another replica's `diff` of it is what it lacks.
+    #[wasm_bindgen(js_name = stateVector)]
+    #[must_use]
+    pub fn state_vector(&self) -> Vec<u8> {
+        self.inner.state_vector()
+    }
+
+    /// Everything this replica has that one with `state_vector` lacks.
+    ///
+    /// # Errors
+    ///
+    /// `state_vector` is not one.
+    pub fn diff(&self, state_vector: &[u8]) -> Result<Vec<u8>, JsError> {
+        self.inner
+            .diff(state_vector)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Merges an update from another replica; any order, any number of times.
+    ///
+    /// # Errors
+    ///
+    /// `update` is not one.
+    pub fn apply(&self, update: &[u8]) -> Result<(), JsError> {
+        self.inner
+            .apply(update)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+}

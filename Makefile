@@ -185,7 +185,7 @@ test/wasm:
 	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
 		$(RUSTUP_RUN) $(CARGO) test -p sven-executors --test portable_session --target wasm32-unknown-unknown --target-dir target/wasm
 	$(MAKE) --no-print-directory build/wasm
-	SVEN_WASM_PKG=target/wasm-pkg/node node --test crates/wasm/tests/session.mjs
+	SVEN_WASM_PKG=target/wasm-pkg/node node --test crates/wasm/tests/session.mjs crates/wasm/tests/conversation-doc.mjs
 
 ## test/crate - lists the per-package test targets; tests nothing
 test/crate:
@@ -323,7 +323,7 @@ check/features:
 ##   a browser (an OS thread, a socket, OS randomness) fails here, not later.
 ##   Needs `rustup target add wasm32-unknown-unknown`. Its own target dir:
 ##   the wasm build must not invalidate the native one.
-WASM_PACKAGES = sven-rt sven-vocab sven-hsm sven-machines sven-control sven-kernel sven-model sven-model-drivers sven-turn sven-decision sven-executors sven-wasm
+WASM_PACKAGES = sven-rt sven-session-sync sven-vocab sven-hsm sven-machines sven-control sven-kernel sven-model sven-model-drivers sven-turn sven-decision sven-executors sven-wasm
 check/wasm:
 	@if ! $(RUSTUP_RUN) rustc --print sysroot | xargs -I{} test -d {}/lib/rustlib/wasm32-unknown-unknown; then \
 		echo "check/wasm: the wasm32-unknown-unknown target is not installed; run: rustup target add wasm32-unknown-unknown" >&2; exit 1; \

@@ -4,6 +4,7 @@ members = [
     ".",
     "crates/hsm",
     "crates/rt",
+    "crates/session-sync",
     "crates/harness-spec",
     "crates/harness-runtime",
     "crates/kernel",

@@ -27,6 +27,10 @@ event; proven against a real server end to end.
    register (the `Tool` trait is still `Send`), wiring the package into an
    application's Web Worker, and running `test/wasm` in a real browser
    worker once a WebDriver is available in CI.
-5. **Shared conversation document.** A CRDT document of the conversation
-   (one implementation for Rust and the browser) so a terminal and a
-   browser can both write to it; execution order stays the host's.
+5. **Shared conversation document.** `sven-session-sync` is the CRDT
+   (yrs) document every replica of a conversation merges alike: Rust tests
+   prove convergence under any delivery order and duplication, and
+   `sven-wasm` exposes it to JavaScript (`ConversationDoc`), where a late
+   joiner replaying a server's log converges too. Left: make it the
+   conversation's record in a server and in the host (today the server's
+   message table is), and authorize updates (who may add which message).
