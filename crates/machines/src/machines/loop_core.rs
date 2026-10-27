@@ -41,6 +41,10 @@ use sven_hsm::{
 
 use sven_vocab::TurnRequest;
 
+use super::loop_nudges::{
+    EMPTY_TURN_NUDGE, EMPTY_TURN_WRAPUP_NUDGE, MAX_ROUNDS_NUDGE, TRUNCATED_TURN_NUDGE,
+};
+
 /// The single context key under which [`LoopState`] is serialized.
 pub const LOOP_STATE_KEY: &str = "lc_state";
 
@@ -95,6 +99,10 @@ pub struct LoopState {
     /// postdates persisted states.
     #[serde(default)]
     pub empty_turns: u32,
+    /// The reply being completed was cut by the output budget (the turn
+    /// executor's `TURN_TRUNCATED`); consumed by the next `LlmTurnComplete`.
+    #[serde(default)]
+    pub truncated: bool,
     /// The current batch's calls as proposed, so a call held at an approval
     /// gate can be issued exactly as proposed once it is approved. Replaced
     /// with each new batch, like [`LoopState::call_registry`].
@@ -392,6 +400,7 @@ pub fn init_loop(
         failure_streaks: HashMap::new(),
         stall_nudge: None,
         empty_turns: 0,
+        truncated: false,
     };
     ls.store(ctx);
     ctx.set_fact(MAX_ROUNDS_REACHED_FACT, serde_json::json!(false));
@@ -421,32 +430,6 @@ pub enum GeneratingAction {
     /// wrap-up turn and **stay** (or bail to `Failed`/`Recovery`).
     MaxRoundsReached { wrapup_effect: Effect },
 }
-
-/// Nudge instruction appended when the model emits an empty turn.
-const EMPTY_TURN_NUDGE: &str =
-    "Your last response was empty. Please provide your analysis, answer, or \
-     use one of the available tools to make progress.";
-
-/// Wrap-up instruction fired when the model has answered the empty-turn
-/// nudge with more empty turns past [`EMPTY_TURN_NUDGE_BUDGET`]. Same
-/// faithful-report demands as [`MAX_ROUNDS_NUDGE`] - a pressured model is
-/// most likely to narrate unmade work exactly here.
-const EMPTY_TURN_WRAPUP_NUDGE: &str =
-    "Your last several responses were all empty, so this turn is being \
-     ended rather than nudged again. Respond now with whatever you have - \
-     even a partial answer. Report faithfully what you actually did and \
-     know; do not describe changes you have not made.";
-
-/// Instruction appended when `max_tool_rounds` is exceeded.
-///
-/// This path is always schema-less (see the wrap-up construction), and it is
-/// the moment a pressured model is most likely to describe work it never did
-/// as if it existed. The wording demands a faithful report.
-const MAX_ROUNDS_NUDGE: &str =
-    "You have reached the maximum tool-call budget. Do not call any more tools. \
-     Respond now with your final reply. Report faithfully what you actually \
-     changed and what the checks showed; if the task is incomplete, say \
-     precisely what remains - do not describe changes you have not made.";
 
 /// Decide what the machine in its generating state should do after receiving
 /// [`Event::LlmTurnComplete`].
@@ -492,8 +475,9 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
         return GeneratingAction::MaxRoundsReached { wrapup_effect };
     }
 
+    let truncated = std::mem::take(&mut ls.truncated);
     if tool_calls.is_empty() {
-        if text.trim().is_empty() {
+        if text.trim().is_empty() || truncated {
             ls.empty_turns += 1;
             if ls.empty_turns > EMPTY_TURN_NUDGE_BUDGET {
                 // The nudge had its chances; the model keeps returning
@@ -513,12 +497,17 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
                 ls.store(ctx);
                 return GeneratingAction::MaxRoundsReached { wrapup_effect };
             }
+            let nudge = if truncated {
+                TRUNCATED_TURN_NUDGE
+            } else {
+                EMPTY_TURN_NUDGE
+            };
             let nudge_effect = build_turn_effect(
                 &thread,
                 &ls.tools,
                 &ls.all_tools_mode,
                 None,
-                Some(EMPTY_TURN_NUDGE),
+                Some(nudge),
                 None,
                 max.saturating_sub(round),
                 None,
@@ -572,6 +561,16 @@ pub fn handle_tool_event<S>(
     event: &Event,
 ) -> Option<Reaction<S>> {
     match event {
+        // The reply about to complete was cut by the output budget: the
+        // completion that follows is continued, never taken as an answer.
+        Event::Internal(sven_hsm::event::InternalEvent::Custom { name, .. })
+            if name == sven_hsm::TURN_TRUNCATED =>
+        {
+            let mut ls = LoopState::load(ctx);
+            ls.truncated = true;
+            ls.store(ctx);
+            Some(Reaction::handled())
+        }
         // ── Tool results: drain pending, emit continuation when all done ──────
         Event::ToolSucceeded { call_id, .. } => {
             let mut ls = LoopState::load(ctx);
@@ -1243,6 +1242,42 @@ mod tests {
             !instruction.contains("same tool call"),
             "a success must clear the streak: {instruction}"
         );
+    }
+
+    /// A reply the output budget cut (the turn executor says so with
+    /// `TURN_TRUNCATED` before completing it) never ends the turn as an
+    /// empty or final one: the model is told what happened and continues,
+    /// a bounded number of times.
+    #[test]
+    fn a_turn_cut_by_the_output_budget_is_continued_not_ended() {
+        let mut ctx = make_ctx();
+        init_loop(&mut ctx, "chat", &[], "agent", 16);
+        let truncated = Event::Internal(sven_hsm::event::InternalEvent::Custom {
+            name: sven_hsm::TURN_TRUNCATED.to_string(),
+            payload: Value::Null,
+        });
+        let cut = |text: &str| Event::LlmTurnComplete {
+            thread: "chat".into(),
+            text: text.into(),
+            tool_calls: vec![],
+        };
+        for text in ["", "Here is the fix: first"] {
+            let r: Option<Reaction<u8>> =
+                handle_tool_event(&mut ctx, |ls| ls.continuation_turn(), &truncated);
+            assert!(r.is_some(), "the truncation notice is the loop's to handle");
+            match on_llm_turn_complete(&mut ctx, &cut(text)) {
+                GeneratingAction::EmptyTurn { nudge_effect } => {
+                    let instruction = wrapup_turn_instruction(&nudge_effect);
+                    assert!(instruction.contains("output limit"), "{instruction}");
+                }
+                other => panic!("a cut turn must be continued, got {other:?}"),
+            }
+        }
+        // Without the notice a text reply is the final answer, as before.
+        assert!(matches!(
+            on_llm_turn_complete(&mut ctx, &cut("Done.")),
+            GeneratingAction::FinalAnswer { .. }
+        ));
     }
 
     /// A reply made of nothing but whitespace is an empty turn: the model said
