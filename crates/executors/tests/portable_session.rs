@@ -90,7 +90,8 @@ impl ModelProvider for ScriptedModel {
 /// Answers with its argument.
 struct Echo;
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Tool for Echo {
     fn name(&self) -> &str {
         "echo"

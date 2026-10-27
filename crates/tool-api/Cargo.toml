@@ -8,6 +8,7 @@ license     = "Apache-2.0"
 [dependencies]
 sven-hsm    = { path = "../hsm" }
 sven-vocab  = { path = "../vocab" }
+sven-rt     = { path = "../rt" }
 atif        = { path = "../atif" }
 # task_local! (the active tool's scope) and join!: no I/O driver, so the
 # tool vocabulary also builds for a browser.

@@ -11,8 +11,12 @@ pub use sven_vocab::{OutputCategory, ParkedAnswer, ToolCall, ToolOutput, ToolOut
 use crate::policy::ApprovalPolicy;
 
 /// Trait that every built-in and user-defined tool must implement.
-#[async_trait]
-pub trait Tool: Send + Sync {
+///
+/// `Send + Sync` natively; in a browser a tool may hold JavaScript values,
+/// which are neither (see `sven_rt::MaybeSend`).
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait Tool: sven_rt::MaybeSend + sven_rt::MaybeSync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     /// One line, at most [`crate::summary::SUMMARY_MAX_CHARS`] characters, saying what the
