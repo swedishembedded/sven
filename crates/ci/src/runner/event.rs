@@ -162,8 +162,8 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
     // Fold every event into the reward tally first — one insertion point that
     // no future arm can forget.
     s.outcome.observe(&event);
-    if let Some(request) = ledger_record(&event) {
-        s.ledger.record(request, &mut *s.assembler);
+    s.ledger.observe(&event, &mut *s.assembler);
+    if ledger_record(&event).is_some() {
         return;
     }
     let response_text = &mut *s.response_text;
@@ -546,6 +546,12 @@ fn handle_subagent_update(
             // The record closes its request: the request's own thinking and
             // text belong to the step the record is attached to.
             child.flush_buffered();
+            // A subagent's requests reach the parent as ledger records only;
+            // the usage they report is the step's account.
+            child.assembler.push_request(&sven_vocab::RequestRecord {
+                reported: request.reported.unwrap_or_default(),
+                ..sven_vocab::RequestRecord::default()
+            });
             child.assembler.push_request_ledger(&request);
         }
         SubagentUpdate::ToolCallFinished {

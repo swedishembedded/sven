@@ -7,10 +7,9 @@
 //! agent step it belongs to, under [`STEP_METRICS_EXTRA_KEY`], inside
 //! `TraceStep.metrics` (ATIF `StepMetrics`). A step can cover several
 //! requests (tool results fold into the same turn-shaped step as the next
-//! reply), so the value is an array in request order. The provider-reported
-//! counters of the same requests are also summed into `StepMetrics`'s own
-//! `prompt_tokens`, `completion_tokens` and `cached_tokens`, which keep their
-//! ATIF meaning: the prompt total includes cached tokens.
+//! reply), so the value is an array in request order. The step's own
+//! `prompt_tokens`, `completion_tokens` and `cached_tokens` are the request
+//! account's ([`crate::step_request`]), not this record's: one writer each.
 //!
 //! [`summarize`] is the pure aggregator over a whole trajectory, subagents
 //! included. Trajectories written before the ledger existed carry no records
@@ -27,12 +26,6 @@ use sven_vocab::{
 /// Add one request's record to a step's metrics, creating them if needed.
 pub fn record_request(metrics: &mut Option<StepMetrics>, request: &RequestBreakdown) {
     let metrics = metrics.get_or_insert_with(StepMetrics::default);
-    if let Some(reported) = request.reported {
-        let add = |slot: &mut Option<u64>, n: u32| *slot = Some(slot.unwrap_or(0) + u64::from(n));
-        add(&mut metrics.prompt_tokens, reported.logical_prompt());
-        add(&mut metrics.completion_tokens, reported.output);
-        add(&mut metrics.cached_tokens, reported.cache_read);
-    }
     let extra = metrics
         .extra
         .get_or_insert_with(|| Value::Object(Map::new()));
@@ -199,8 +192,8 @@ mod tests {
         );
         let m = back.steps[0].metrics.as_ref().unwrap();
         assert_eq!(
-            (m.prompt_tokens, m.completion_tokens, m.cached_tokens),
-            (Some(22), Some(3), Some(2))
+            m.prompt_tokens, None,
+            "the step's counts are the request account's"
         );
     }
 

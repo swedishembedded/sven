@@ -220,8 +220,8 @@ pub(super) fn print_total_usage(state: &CiOutState) {
 pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32> {
     // Fold into the reward tally before dispatching, so no arm can forget it.
     state.outcome.observe(&ev);
-    if let Some(request) = ledger_record(&ev) {
-        state.ledger.record(request, &mut state.assembler);
+    state.ledger.observe(&ev, &mut state.assembler);
+    if ledger_record(&ev).is_some() {
         return None;
     }
     match ev {
