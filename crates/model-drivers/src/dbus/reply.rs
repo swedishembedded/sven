@@ -12,6 +12,7 @@ use tracing::warn;
 use sven_model::ResponseEvent;
 
 use super::blob;
+use crate::openai_compat::served_identity;
 
 /// The response events a `Run` reply carries, in the order a streamed reply
 /// would emit them: the model's reasoning, its text, then its tool calls.
@@ -94,33 +95,43 @@ pub(super) fn reply_text(
         })
 }
 
-/// What the server reports about the generation itself, from the
-/// `generation` object of `out_meta`.
-pub(super) struct ReplyGeneration {
-    pub(super) model: Option<String>,
-    pub(super) seed: Option<u64>,
-    pub(super) ids: Vec<i64>,
-    pub(super) logprobs: Vec<f64>,
-}
-
-/// Parse the optional `generation` entry of `out_meta`. A server that does
-/// not report one, or reports it malformed, simply yields `None`: the text
-/// reply is still valid without the training-grade extras.
-pub(super) fn reply_generation(out_meta: &str) -> Option<ReplyGeneration> {
-    let meta: Value = serde_json::from_str(out_meta).ok()?;
-    let g = meta.get("generation")?;
-    let list = |key: &str| {
-        g.get(key)
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
+/// The token-level facts and the serving identity a `Run` reply reports, as
+/// events: the prompt's token ids, the account of the decode (seed, adapter,
+/// base digest, backend, engine) and the sampled ids with their
+/// log-probabilities. brain returns the token facts only when the request
+/// asked (`logprobs`, `return_token_ids`), under the same keys its HTTP
+/// surface reads: `prompt_token_ids`, `completion_token_ids` and
+/// `completion_logprobs`.
+pub(super) fn reply_extras(result_json: &str) -> Vec<ResponseEvent> {
+    let Ok(result) = serde_json::from_str::<Value>(result_json) else {
+        return Vec::new();
     };
-    Some(ReplyGeneration {
-        model: g.get("model").and_then(|m| m.as_str()).map(str::to_owned),
-        seed: g.get("seed").and_then(|s| s.as_u64()),
-        ids: list("token_ids").iter().filter_map(Value::as_i64).collect(),
-        logprobs: list("logprobs").iter().filter_map(Value::as_f64).collect(),
-    })
+    let ids = |key: &str| -> Vec<i64> {
+        result
+            .get(key)
+            .and_then(Value::as_array)
+            .map_or_else(Vec::new, |a| a.iter().filter_map(Value::as_i64).collect())
+    };
+    let mut events = Vec::new();
+    let prompt = ids("prompt_token_ids");
+    if !prompt.is_empty() {
+        events.push(ResponseEvent::PromptTokens { ids: prompt });
+    }
+    if let Some(identity) = served_identity(&result) {
+        events.push(ResponseEvent::Identity(identity));
+    }
+    let completion = ids("completion_token_ids");
+    let logprobs: Vec<f64> = result
+        .get("completion_logprobs")
+        .and_then(Value::as_array)
+        .map_or_else(Vec::new, |a| a.iter().filter_map(Value::as_f64).collect());
+    if !completion.is_empty() || !logprobs.is_empty() {
+        events.push(ResponseEvent::Tokens {
+            ids: completion,
+            logprobs,
+        });
+    }
+    events
 }
 
 /// Best-effort token counts from the `result` JSON.
@@ -170,6 +181,27 @@ mod tests {
             } => (*index, id, name, arguments),
             other => panic!("expected a tool call, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn token_facts_and_identity_come_from_the_result_outputs() {
+        let result = r#"{"text":"hi","seed":7,"base_digest":"sha256:ab","backend":"cuda","engine":"brain 3.0.0",
+                         "prompt_token_ids":[1,2],"completion_token_ids":[3],"completion_logprobs":[-0.5]}"#;
+        let events = reply_extras(result);
+        assert!(matches!(&events[0], ResponseEvent::PromptTokens { ids } if ids == &[1, 2]));
+        assert!(
+            matches!(&events[1], ResponseEvent::Identity(i) if i.seed == Some(7) && i.backend.as_deref() == Some("cuda"))
+        );
+        assert!(
+            matches!(&events[2], ResponseEvent::Tokens { ids, logprobs } if ids == &[3] && logprobs == &[-0.5])
+        );
+    }
+
+    #[test]
+    fn a_reply_without_token_facts_has_only_its_identity() {
+        let events = reply_extras(r#"{"text":"hi","seed":7}"#);
+        assert!(matches!(events.as_slice(), [ResponseEvent::Identity(_)]));
+        assert!(reply_extras("not json").is_empty());
     }
 
     #[test]

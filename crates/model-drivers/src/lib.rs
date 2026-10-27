@@ -12,6 +12,10 @@
 //!
 //! `reqwest`, SigV4 signing and every provider's dependency closure live here,
 //! so a crate that needs only the trait and its types pays for none of it.
+/// Sampling temperature a driver sends when neither the request nor the
+/// model's configuration sets one.
+pub(crate) const DEFAULT_TEMPERATURE: f32 = 0.2;
+
 mod anthropic;
 mod api_key;
 mod aws;

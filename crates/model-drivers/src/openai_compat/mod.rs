@@ -25,6 +25,7 @@ pub(crate) use models::parse_models_response;
 
 pub(crate) use request::{build_openai_messages, function_tool};
 use stream::decode_events;
+pub(crate) use stream::served_identity;
 
 #[cfg(test)]
 use stream::parse_sse_chunk_test as parse_sse_chunk;
@@ -106,7 +107,7 @@ impl OpenAICompatProvider {
     /// - `base_url` - API base that ends **before** `/chat/completions`, e.g.
     ///   `https://api.groq.com/openai/v1`
     /// - `max_tokens` - `None` uses the catalog default or 4096
-    /// - `temperature` - `None` defaults to 0.2
+    /// - `temperature` - `None` defaults to [`crate::DEFAULT_TEMPERATURE`]
     /// - `extra_headers` - additional `(name, value)` pairs sent on every request
     /// - `auth_style` - how the key is attached to requests
     /// - `extra_body` - JSON object merged verbatim into the request body
@@ -130,7 +131,7 @@ impl OpenAICompatProvider {
             chat_url: format!("{base}/chat/completions"),
             models_url: Some(format!("{base}/models")),
             max_tokens: max_tokens.unwrap_or(4096),
-            temperature: temperature.unwrap_or(0.2),
+            temperature: temperature.unwrap_or(crate::DEFAULT_TEMPERATURE),
             client: crate::build_http_client(),
             extra_headers,
             auth_style,
@@ -168,7 +169,7 @@ impl OpenAICompatProvider {
             chat_url: chat_url.into(),
             models_url: None,
             max_tokens: max_tokens.unwrap_or(4096),
-            temperature: temperature.unwrap_or(0.2),
+            temperature: temperature.unwrap_or(crate::DEFAULT_TEMPERATURE),
             client: crate::build_http_client(),
             extra_headers,
             auth_style,

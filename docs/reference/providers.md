@@ -730,15 +730,20 @@ What sven sends and expects, on interface
 - `Run(model, action, params, in_fds, in_meta, transport)` returns
   `(result, out_fds, out_meta)`. `params` is a JSON object holding `messages`
   (the conversation as a JSON string, with image and audio parts replaced by
-  `[image]`/`[audio]` markers) and, when set, `max_new`, `temperature`,
-  `top_p`, `top_k`, `seed` and `logprobs`, and the request's tools as `tools`
+  `[image]`/`[audio]` markers), the sampling temperature as `temp` (always:
+  the request's, the model's `temperature`, else 0.2, since brain decodes
+  greedily without one) and, when set, `max_new`, `top_p`, `top_k`, `seed`,
+  `logprobs` with `return_token_ids`, and the request's tools as `tools`
   (a JSON string of OpenAI function definitions, with `tool_choice` `"none"`
   when tools are offered but must not be called). At most one image and one
   audio blob are sent per request; extra attachments are dropped with a
   warning. The generated text arrives in the `text` entry of `out_fds`; the
   model's reasoning (`reasoning_content`) and tool calls (`tool_calls`, a JSON
   string of `{id, name, arguments}`) are read from `result`, so an agent works
-  over D-Bus as it does over HTTP.
+  over D-Bus as it does over HTTP. So are the decode's identity (`seed`,
+  `adapter`, `base_digest`, `backend`, `engine`) and, when asked for, the
+  token facts (`prompt_token_ids`, `completion_token_ids`,
+  `completion_logprobs`).
 - `ListModels()` lists model ids; failure is treated as "unknown".
 
 Only the one-shot `Run` call is used, so the whole reply arrives at once: there

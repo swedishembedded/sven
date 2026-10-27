@@ -249,7 +249,7 @@ pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
 /// The server's account of a decode, from a frame's non-standard `brain`
 /// object: `seed`, `adapter {id, digest}`, `base_digest`, `backend`, `engine`.
 /// `None` when it names none of them.
-fn served_identity(brain: &Value) -> Option<ServedIdentity> {
+pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
     let text = |key: &str| brain.get(key).and_then(Value::as_str).map(str::to_owned);
     let identity = ServedIdentity {
         seed: brain.get("seed").and_then(Value::as_u64),

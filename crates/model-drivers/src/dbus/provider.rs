@@ -20,8 +20,9 @@ use sven_model::{
 
 use super::blob;
 use super::proxy::{self, BusKind, ManagerProxy};
-use super::reply::{reply_events, reply_generation, reply_text, reply_usage};
+use super::reply::{reply_events, reply_extras, reply_text, reply_usage};
 use crate::openai_compat::function_tool;
+use crate::DEFAULT_TEMPERATURE;
 
 /// Configuration for [`DbusProvider`], read from `driver_options`.
 #[derive(Debug, Clone)]
@@ -164,9 +165,15 @@ impl DbusProvider {
         if let Some(max) = req.max_output_tokens_override.or(self.max_tokens) {
             params.insert("max_new".to_string(), json!(max));
         }
-        if let Some(t) = req.sampling.temperature.or(self.temperature.map(f64::from)) {
-            params.insert("temperature".to_string(), json!(t));
-        }
+        // brain's generate action calls it `temp` and decodes greedily without
+        // one, so a temperature is always sent: the request's, the configured
+        // one, else the default every HTTP driver applies.
+        let temperature = req
+            .sampling
+            .temperature
+            .or(self.temperature.map(f64::from))
+            .unwrap_or(f64::from(DEFAULT_TEMPERATURE));
+        params.insert("temp".to_string(), json!(temperature));
         if let Some(p) = req.sampling.top_p {
             params.insert("top_p".to_string(), json!(p));
         }
@@ -178,6 +185,7 @@ impl DbusProvider {
         }
         if req.want_logprobs {
             params.insert("logprobs".to_string(), json!(true));
+            params.insert("return_token_ids".to_string(), json!(true));
         }
         // Like `messages`, brain declares `tools` and `tool_choice` as strings
         // holding JSON text.
@@ -429,7 +437,7 @@ impl sven_model::ModelProvider for DbusProvider {
         );
 
         let proxy = self.manager().await?;
-        let (result_json, out_fds, out_meta) = proxy
+        let (result_json, out_fds, _out_meta) = proxy
             .run(
                 &self.model,
                 &self.opts.action,
@@ -449,20 +457,7 @@ impl sven_model::ModelProvider for DbusProvider {
             .into_iter()
             .map(Ok)
             .collect();
-        if let Some(generation) = reply_generation(&out_meta) {
-            if req.want_logprobs && !(generation.ids.is_empty() && generation.logprobs.is_empty()) {
-                events.push(Ok(ResponseEvent::Tokens {
-                    ids: generation.ids,
-                    logprobs: generation.logprobs,
-                }));
-            }
-            if let Some(model) = generation.model {
-                events.push(Ok(ResponseEvent::Served {
-                    model,
-                    seed: generation.seed.or(req.sampling.seed),
-                }));
-            }
-        }
+        events.extend(reply_extras(&result_json).into_iter().map(Ok));
         events.push(Ok(ResponseEvent::Usage {
             input_tokens,
             output_tokens,
@@ -652,6 +647,38 @@ mod tests {
         };
         let params: Value = serde_json::from_str(&p.build_params(&none).unwrap()).unwrap();
         assert_eq!(params["tool_choice"], "\"none\"");
+    }
+
+    #[test]
+    fn params_always_carry_brains_temp() {
+        let p = DbusProvider::new("m", DbusOptions::default(), None, None);
+        let req = CompletionRequest {
+            messages: vec![Message::user("hi")],
+            ..Default::default()
+        };
+        let params: Value = serde_json::from_str(&p.build_params(&req).unwrap()).unwrap();
+        assert_eq!(params["temp"], f64::from(crate::DEFAULT_TEMPERATURE));
+        assert!(
+            params.get("temperature").is_none(),
+            "brain refuses an undeclared param"
+        );
+
+        let configured = DbusProvider::new("m", DbusOptions::default(), None, Some(0.6));
+        let params: Value = serde_json::from_str(&configured.build_params(&req).unwrap()).unwrap();
+        assert!((params["temp"].as_f64().unwrap() - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn params_ask_for_token_ids_with_logprobs() {
+        let p = DbusProvider::new("m", DbusOptions::default(), None, None);
+        let req = CompletionRequest {
+            messages: vec![Message::user("hi")],
+            want_logprobs: true,
+            ..Default::default()
+        };
+        let params: Value = serde_json::from_str(&p.build_params(&req).unwrap()).unwrap();
+        assert_eq!(params["logprobs"], true);
+        assert_eq!(params["return_token_ids"], true);
     }
 
     #[test]
