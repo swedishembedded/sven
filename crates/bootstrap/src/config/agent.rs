@@ -143,8 +143,8 @@ pub struct AgentConfig {
     /// (chars/4 of accumulated `ThinkingDelta` content). `None` (the default)
     /// sets no cap: thinking is part of the response and is bounded by the
     /// request's output budget, the window less the prompt. A model that
-    /// loops in its reasoning is stopped by a repetition detector and by
-    /// `thinking_timeout_secs`, not by a token count. Live-adjustable in a
+    /// loops in its reasoning is stopped by a repetition detector, not by a
+    /// token count. Live-adjustable in a
     /// session via `/think-limit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_thinking_tokens: Option<u32>,
@@ -153,9 +153,10 @@ pub struct AgentConfig {
     /// with no forward progress (a real text or tool-call delta) before the
     /// turn is aborted - the other half of the thinking-loop watchdog beside
     /// `max_thinking_tokens`, whichever fires first. Reset on every sign of
-    /// progress, so a legitimately long multi-step turn is never killed.
-    /// `None` (the default) falls back to 600s. Live-adjustable via
-    /// `/think-limit`.
+    /// progress. `None` (the default) sets no cap: wall-clock time measures
+    /// the server's throughput, not a loop, and a loop is caught by the
+    /// repetition detector and bounded by the output budget. Live-adjustable
+    /// via `/think-limit`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_timeout_secs: Option<u64>,
 

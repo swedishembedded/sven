@@ -95,14 +95,13 @@ fn current_status_text() -> String {
              max_thinking_tokens: {}\n  thinking_timeout_secs: {}\n\n\
              /think-limit off  - clear the override, revert to config/defaults",
             b.max_thinking_tokens
-                .map_or("default (10% of context window)".to_string(), |v| v
-                    .to_string()),
+                .map_or("none".to_string(), |v| v.to_string()),
             b.thinking_timeout_secs
-                .map_or("default (600)".to_string(), |v| v.to_string()),
+                .map_or("none".to_string(), |v| v.to_string()),
         ),
         None => "Thinking-loop watchdog: no live override\n\
                  Using agent.max_thinking_tokens / agent.thinking_timeout_secs from config\n\
-                 (or the built-in defaults: 10% of context window / 600s).\n\n\
+                 (built-in: no caps; a repetition detector stops reasoning loops).\n\n\
                  /think-limit <max_tokens> [<timeout_secs>]  - set a live override\n\
                  /think-limit off                            - clear an override"
             .to_string(),

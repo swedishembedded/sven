@@ -190,10 +190,6 @@ impl TurnLimits {
 
 // ─── Thinking-loop watchdog ─────────────────────────────────────────────────
 
-/// Default time a model may spend emitting `ThinkingDelta`s with no forward
-/// progress (a `TextDelta` or a tool-call delta) before the turn is aborted.
-const DEFAULT_THINKING_TIMEOUT: Duration = Duration::from_secs(600);
-
 /// How a runaway reasoning loop is stopped (observed with some local
 /// reasoning models, e.g. Qwen, which repeat themselves instead of answering).
 ///
@@ -205,26 +201,28 @@ const DEFAULT_THINKING_TIMEOUT: Duration = Duration::from_secs(600);
 ///
 /// - **Repetition**: the reasoning repeats a stretch of itself verbatim
 ///   (see `RepetitionWatch`).
-/// - **Time cap**: time spent thinking with no forward progress.
+/// - **Time cap**, opt-in: time spent thinking with no text or tool call.
+///   Not on by default: wall-clock time measures the server's throughput,
+///   not a loop - 600 s at 15 tokens/s per stream ended honest reasoning.
+///   A server that stops sending is the stalled-stream watch's case.
 /// - **Token cap**, opt-in: estimated thinking tokens (chars/4) per call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ThinkingBudget {
     /// Opt-in cap on estimated thinking tokens. `None` (the default) sets no
     /// cap: the request's output budget is the bound.
     pub max_thinking_tokens: Option<u32>,
-    /// Cap on time spent thinking without forward progress. `None` defaults
-    /// to `DEFAULT_THINKING_TIMEOUT`.
+    /// Opt-in cap on time spent thinking without text or a tool call.
+    /// `None` (the default) sets none.
     pub thinking_timeout_secs: Option<u64>,
 }
 
 impl ThinkingBudget {
-    /// The effective `(token_cap, time_cap)`, filling in the default time cap.
-    fn resolve(self) -> (Option<u32>, Duration) {
-        let timeout = self
-            .thinking_timeout_secs
-            .map(Duration::from_secs)
-            .unwrap_or(DEFAULT_THINKING_TIMEOUT);
-        (self.max_thinking_tokens, timeout)
+    /// The effective `(token_cap, time_cap)`; `None` is no cap.
+    fn resolve(self) -> (Option<u32>, Option<Duration>) {
+        (
+            self.max_thinking_tokens,
+            self.thinking_timeout_secs.map(Duration::from_secs),
+        )
     }
 }
 
@@ -531,12 +529,14 @@ pub async fn stream_turn(
                         ))));
                     }
                 }
-                if stall_started.elapsed() >= thinking_time_cap {
-                    return Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
-                        "thinking timeout exceeded ({}s with no forward progress); \
-                         raise agent.thinking_timeout_secs if the model needs longer",
-                        thinking_time_cap.as_secs()
-                    ))));
+                if let Some(cap) = thinking_time_cap {
+                    if stall_started.elapsed() >= cap {
+                        return Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
+                            "thinking timeout exceeded ({}s with no forward progress); \
+                             raise agent.thinking_timeout_secs if the model needs longer",
+                            cap.as_secs()
+                        ))));
+                    }
                 }
             }
             ResponseEvent::TextDelta(delta) if !delta.is_empty() => {
@@ -1294,12 +1294,25 @@ mod default_thinking_cap_tests {
         assert_eq!(ThinkingBudget::default().resolve().0, None);
     }
 
+    /// A wall-clock cap measures the server's throughput, not a loop: at 15
+    /// tokens/s per stream 600 s ended honest 9k-token reasoning mid-thought.
+    /// Loops are caught by repetition and bounded by the output budget.
+    #[test]
+    fn there_is_no_default_thinking_time_cap() {
+        assert_eq!(ThinkingBudget::default().resolve().1, None);
+        let explicit = ThinkingBudget {
+            thinking_timeout_secs: Some(30),
+            ..ThinkingBudget::default()
+        };
+        assert_eq!(explicit.resolve().1, Some(Duration::from_secs(30)));
+    }
+
     #[test]
     fn an_explicit_cap_is_an_opt_in_that_is_honoured() {
         let explicit = ThinkingBudget {
             max_thinking_tokens: Some(100),
             thinking_timeout_secs: Some(5),
         };
-        assert_eq!(explicit.resolve(), (Some(100), Duration::from_secs(5)));
+        assert_eq!(explicit.resolve(), (Some(100), Some(Duration::from_secs(5))));
     }
 }

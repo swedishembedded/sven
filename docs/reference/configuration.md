@@ -355,10 +355,12 @@ agent:
   # SDLC task), in seconds (0 = no limit).
   child_run_timeout_secs: 3600
 
-  # Thinking-loop watchdog. No token cap by default (opt-in); a repetition
-  # detector and a 600 second no-progress limit stop loops.
+  # Thinking-loop watchdog. A repetition detector stops reasoning loops and
+  # the output budget bounds a turn; the token and time caps are opt-in (a
+  # wall-clock cap measures throughput, and ends honest reasoning on a busy
+  # server).
   # max_thinking_tokens: 20000
-  # thinking_timeout_secs: 600
+  # thinking_timeout_secs: 1800
 
   # Stalled-server limits, in seconds (unset or 0 = the default; the first
   # value is for a hosted API, the second for a server on your own hardware).
