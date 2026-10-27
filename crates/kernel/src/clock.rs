@@ -13,10 +13,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::watch;
-use tokio::task::JoinHandle;
 
 use sven_hsm::{Event, TimerId};
 
+use crate::rt::{self, Instant, JoinHandle, MaybeSend, MaybeSync};
 use crate::EventSink;
 
 /// A monotonic, awaitable clock. Abstracted so timeouts are deterministic in
@@ -26,8 +26,9 @@ use crate::EventSink;
 /// *absolute* deadline. Schedulers compute the deadline once, synchronously, at
 /// scheduling time; this is what makes a [`VirtualClock`] race-free even when
 /// time is advanced before the sleeping task starts.
-#[async_trait]
-pub trait Clock: Send + Sync + 'static {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait Clock: MaybeSend + MaybeSync + 'static {
     /// Time elapsed since the clock's epoch.
     fn now(&self) -> Duration;
     /// Resolves once clock-time reaches `deadline`.
@@ -39,9 +40,9 @@ pub trait Clock: Send + Sync + 'static {
     }
 }
 
-/// Real wall-clock time backed by `tokio::time`.
+/// Real wall-clock time: tokio's timers natively, the browser's in a browser.
 pub struct SystemClock {
-    start: std::time::Instant,
+    start: Instant,
 }
 
 impl SystemClock {
@@ -49,7 +50,7 @@ impl SystemClock {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            start: std::time::Instant::now(),
+            start: Instant::now(),
         }
     }
 }
@@ -60,7 +61,8 @@ impl Default for SystemClock {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Clock for SystemClock {
     fn now(&self) -> Duration {
         self.start.elapsed()
@@ -69,7 +71,7 @@ impl Clock for SystemClock {
     async fn sleep_until(&self, deadline: Duration) {
         let now = self.now();
         if deadline > now {
-            tokio::time::sleep(deadline - now).await;
+            rt::sleep(deadline - now).await;
         }
     }
 }
@@ -106,7 +108,8 @@ impl Default for VirtualClock {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl Clock for VirtualClock {
     fn now(&self) -> Duration {
         *self.tx.borrow()
@@ -152,7 +155,7 @@ impl TimerService {
         // Compute the absolute deadline now, synchronously, so advancing a
         // VirtualClock before the spawned task starts cannot be missed.
         let deadline = self.clock.now() + duration;
-        let handle = tokio::spawn(async move {
+        let handle = rt::spawn(async move {
             clock.sleep_until(deadline).await;
             let _ = sink.emit(Event::timeout(timer_id)).await;
         });

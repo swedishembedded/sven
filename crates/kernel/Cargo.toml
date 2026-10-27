@@ -7,11 +7,29 @@ license     = "Apache-2.0"
 
 [dependencies]
 sven-hsm    = { path = "../hsm" }
-tokio       = { workspace = true }
-tokio-util  = "0.7"
+tokio-util  = { version = "0.7", default-features = false }
 async-trait = { workspace = true }
 serde_json  = { workspace = true }
 uuid        = { workspace = true }
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio       = { workspace = true }
+
+# In a browser the kernel runs on the page's (or worker's) own event loop:
+# tokio for its channels and select! only, wasm-bindgen-futures to start
+# tasks, the browser's timers and clock, and its crypto API for ids.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio                = { version = "1", default-features = false, features = ["sync", "macros"] }
+futures              = { workspace = true }
+wasm-bindgen-futures = "0.4"
+gloo-timers          = { version = "0.3", features = ["futures"] }
+uuid                 = { workspace = true, features = ["js"] }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio       = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

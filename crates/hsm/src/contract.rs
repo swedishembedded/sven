@@ -22,7 +22,9 @@
 //! by sending an email to info@swedishembedded.com.
 
 use std::fmt::Debug;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::Instant;
 
 use crate::permissions::{PermissionPolicy, ToolCapability};
 

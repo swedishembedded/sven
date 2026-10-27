@@ -28,8 +28,9 @@
 //! no benefit.
 
 mod abort_on_drop;
+pub mod rt;
+use rt::{Instant, MaybeSend};
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio::sync::{mpsc, watch};
@@ -87,8 +88,9 @@ impl EventSink {
 /// Performs the I/O for effects. Implementations live in higher crates (LLM,
 /// tools, UI, ...); each consumes an [`Effect`] and posts result
 /// [`Event`]s back through the [`EventSink`].
-#[async_trait]
-pub trait EffectExecutor: Send {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait EffectExecutor: MaybeSend {
     /// Performs `effect`.
     ///
     /// May post zero or more result [`Event`]s back through `sink` (the inward
@@ -128,7 +130,8 @@ pub trait EffectExecutor: Send {
     fn gate_refused(&mut self, _call_id: ToolCallId, _capability: ToolCapability, _reason: &str) {}
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl EffectExecutor for Box<dyn EffectExecutor> {
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
         self.as_mut().execute(effect, sink, obs).await;

@@ -154,6 +154,15 @@ test/gates:
 test/package:
 	bats tests/package/publish_deb.bats
 
+## test/wasm - the portable kernel's tests compiled to wasm32 and run on a
+##   JavaScript event loop (Node, through wasm-bindgen-test-runner): the same
+##   bodies `cargo test -p sven-kernel --test portable` runs natively, so a
+##   pass on both is parity. Needs the wasm32 target and wasm-bindgen-cli
+##   matching the locked wasm-bindgen; RUSTUP_RUN as for check/wasm.
+test/wasm:
+	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
+		$(RUSTUP_RUN) $(CARGO) test -p sven-kernel --test portable --target wasm32-unknown-unknown --target-dir target/wasm
+
 ## test/crate - lists the per-package test targets; tests nothing
 test/crate:
 	@bash scripts/make-help.sh test/crate
@@ -283,12 +292,13 @@ check/features:
 	done
 
 ## check/wasm - the browser-portable core builds for wasm32-unknown-unknown: the
-##   event vocabulary, the HSM kernel, the machines and the control protocol.
+##   event vocabulary, the HSM kernel and its runtime, the machines and the
+##   control protocol.
 ##   A browser session runs this same code, so a dependency that cannot reach
 ##   a browser (an OS thread, a socket, OS randomness) fails here, not later.
 ##   Needs `rustup target add wasm32-unknown-unknown`. Its own target dir:
 ##   the wasm build must not invalidate the native one.
-WASM_PACKAGES = sven-vocab sven-hsm sven-machines sven-control
+WASM_PACKAGES = sven-vocab sven-hsm sven-machines sven-control sven-kernel
 check/wasm:
 	@if ! $(RUSTUP_RUN) rustc --print sysroot | xargs -I{} test -d {}/lib/rustlib/wasm32-unknown-unknown; then \
 		echo "check/wasm: the wasm32-unknown-unknown target is not installed; run: rustup target add wasm32-unknown-unknown" >&2; exit 1; \
@@ -669,8 +679,8 @@ generate/roadmap/index:
         test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness $(HARNESS_TARGETS) \
         generate \
         generate/config generate/config/golden generate/roadmap generate/roadmap/index \
-        test/crate $(TEST_CRATE_TARGETS) test/formal \
-        check check/fmt check/features check/clippy check/doc check/arch \
+        test/crate $(TEST_CRATE_TARGETS) test/formal test/wasm \
+        check check/fmt check/features check/wasm check/clippy check/doc check/arch \
         check/gates $(GATE_TARGETS) \
         fmt clean help \
         package package/dist package/deb package/deb/debug package/deb/release package/deb/publish \

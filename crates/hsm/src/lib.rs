@@ -92,6 +92,15 @@ pub use permissions::{
     ToolCapability,
 };
 pub use report::{AuditTrailHandle, ErasedReport, RuntimeStatus, StateLabel};
+
 pub use snapshot::{RestoreError, Snapshot};
 pub use status::Reaction;
+/// A monotonic instant that works on every host: `std::time::Instant`
+/// natively; in a browser, where calling that panics, the browser's clock.
+#[cfg(not(target_arch = "wasm32"))]
+pub use std::time::Instant;
 pub use submachine::{ErasedMachine, Submachine, SubmachineOutcome};
+/// A monotonic instant that works on every host: `std::time::Instant`
+/// natively; in a browser, where calling that panics, the browser's clock.
+#[cfg(target_arch = "wasm32")]
+pub use web_time::Instant;

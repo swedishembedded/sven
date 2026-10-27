@@ -19,13 +19,14 @@ event; proven against a real server end to end.
 3. **Attach from a terminal.** `sven rc` prints a line per event; a TUI
    attached to one of its sessions (sharing the same session, not a copy)
    needs the host to fan events out locally as well as to the server.
-4. **Browser core (WASM).** Compile the pure crates (`sven-vocab`,
-   `sven-hsm`, `sven-machines`, `sven-control`) for `wasm32-unknown-unknown`
-   first. Blockers already known: `tokio` with `full` in `sven-hsm`
-   (only `sync` is used), `uuid` v4 needing the `js` entropy feature, and
-   `std::time::Instant` in `sven-hsm`'s contract checks and the kernel.
-   The kernel's tokio runtime needs a portable driver before a session can
-   run in a browser.
+4. **Browser core (WASM).** The vocabulary, kernel, its runtime, the
+   machines and the control protocol build for wasm32 (`make check/wasm`),
+   and the kernel's portable tests pass on a JavaScript event loop with the
+   same transition trace as natively (`make test/wasm`). Left: a browser
+   model executor (the OpenAI wire over `fetch`, from `sven-turn` without
+   its native tool registry), browser tools, the JS bindings crate and the
+   page's Web Worker; and running `test/wasm` in a real browser worker once
+   a WebDriver is available in CI.
 5. **Shared conversation document.** A CRDT document of the conversation
    (one implementation for Rust and the browser) so a terminal and a
    browser can both write to it; execution order stays the host's.

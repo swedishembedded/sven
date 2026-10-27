@@ -354,21 +354,29 @@ pub fn timer_id() -> TimerId {
 /// Minimal machine demonstrating a scheduled timeout.
 pub struct TimerMachine {
     id: MachineId,
+    timeout: std::time::Duration,
 }
 
 impl Default for TimerMachine {
     fn default() -> Self {
-        Self {
-            id: MachineId::new(),
-        }
+        Self::with_timeout(std::time::Duration::from_secs(30))
     }
 }
 
 impl TimerMachine {
-    /// Creates a fresh timer machine.
+    /// Creates a fresh timer machine with a 30 s timeout.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a timer machine whose timeout is `timeout`.
+    #[must_use]
+    pub fn with_timeout(timeout: std::time::Duration) -> Self {
+        Self {
+            id: MachineId::new(),
+            timeout,
+        }
     }
 }
 
@@ -406,7 +414,6 @@ impl Machine for TimerMachine {
         event: &Event,
         _ctx: &mut sven_hsm::Context,
     ) -> Reaction<TState> {
-        use std::time::Duration;
         match state {
             TState::Top => Reaction::Ignored,
             TState::Idle => match event {
@@ -417,7 +424,7 @@ impl Machine for TimerMachine {
                 Event::Internal(InternalEvent::Entry) => {
                     Reaction::effects([Effect::ScheduleTimeout {
                         timer_id: timer_id(),
-                        duration: Duration::from_secs(30),
+                        duration: self.timeout,
                     }])
                 }
                 Event::Timeout { timer_id: t } if *t == timer_id() => {

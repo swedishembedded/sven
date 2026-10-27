@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Linked cancellation for runs and the runs they start.
 
-use std::time::Instant;
+use crate::rt::{self, Instant};
 
 use tokio_util::sync::CancellationToken;
 
@@ -65,10 +65,10 @@ impl CancelScope {
     #[must_use = "the deadline is dropped with the guard"]
     pub fn cancel_at(&self, deadline: Instant) -> DeadlineTimer {
         let token = self.token.clone();
-        let timer = tokio::spawn(async move {
+        let timer = rt::spawn(async move {
             tokio::select! {
                 () = token.cancelled() => {}
-                () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                () = rt::sleep_until(deadline) => {
                     token.cancel();
                 }
             }
@@ -88,7 +88,7 @@ impl Drop for CancelOnDrop {
 
 /// Keeps a [`CancelScope::cancel_at`] deadline armed; dropping it disarms it.
 #[derive(Debug)]
-pub struct DeadlineTimer(tokio::task::JoinHandle<()>);
+pub struct DeadlineTimer(rt::JoinHandle<()>);
 
 impl Drop for DeadlineTimer {
     fn drop(&mut self) {

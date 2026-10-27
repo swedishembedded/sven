@@ -162,7 +162,7 @@ impl ErasedRuntime {
         let obs = ObservationSink::new(OBSERVATION_CAPACITY);
         let cancel = children.scope();
 
-        let handle = tokio::spawn(erased_consumer_loop(
+        let handle = crate::rt::spawn(erased_consumer_loop(
             machine,
             ctx,
             policy,
@@ -324,7 +324,7 @@ impl ErasedRuntime {
     /// # Errors
     ///
     /// Returns the join error if the task panicked or was aborted.
-    pub async fn join(self) -> std::result::Result<ErasedReport, tokio::task::JoinError> {
+    pub async fn join(self) -> std::result::Result<ErasedReport, crate::rt::JoinError> {
         self.handle.disarm().await
     }
 }

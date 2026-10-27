@@ -49,8 +49,9 @@ pub struct ChildRun {
 /// `spawn_child` should return promptly (spawn-and-forget); long-running child
 /// work belongs on the task it spawns, never inline, so the parent's single
 /// consumer loop is never blocked. This is what makes fan-out *parallel*.
-#[async_trait]
-pub trait ChildSpawner: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait ChildSpawner: crate::rt::MaybeSend + crate::rt::MaybeSync {
     /// Builds and starts the child identified by `machine`.
     ///
     /// Implementations post the terminal [`InternalEvent::SubmachineCompleted`]

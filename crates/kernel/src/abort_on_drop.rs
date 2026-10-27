@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A task handle that aborts on drop.
 
-use tokio::task::JoinHandle;
+use crate::rt::JoinHandle;
 
 /// A [`JoinHandle`] that aborts its task when dropped.
 ///
