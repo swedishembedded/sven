@@ -15,11 +15,13 @@ use tracing::{debug, warn};
 use sven_model::{
     catalog::{InputModality, ModelCatalogEntry},
     CompletionRequest, ContentPart, Message, MessageContent, ResponseEvent, ResponseStream, Role,
-    ToolContentPart, ToolResultContent,
+    ToolChoice, ToolContentPart, ToolResultContent,
 };
 
 use super::blob;
 use super::proxy::{self, BusKind, ManagerProxy};
+use super::reply::{reply_events, reply_generation, reply_text, reply_usage};
+use crate::openai_compat::function_tool;
 
 /// Configuration for [`DbusProvider`], read from `driver_options`.
 #[derive(Debug, Clone)]
@@ -177,6 +179,15 @@ impl DbusProvider {
         if req.want_logprobs {
             params.insert("logprobs".to_string(), json!(true));
         }
+        // Like `messages`, brain declares `tools` and `tool_choice` as strings
+        // holding JSON text.
+        if !req.tools.is_empty() {
+            let tools: Vec<Value> = req.tools.iter().map(function_tool).collect();
+            params.insert("tools".to_string(), json!(Value::Array(tools).to_string()));
+            if req.tool_choice == ToolChoice::None {
+                params.insert("tool_choice".to_string(), json!("\"none\""));
+            }
+        }
         serde_json::to_string(&Value::Object(params)).context("serialising params object")
     }
 }
@@ -327,95 +338,6 @@ pub fn extract_blob_urls(messages: &[Message]) -> (Option<String>, Option<String
     (image, audio)
 }
 
-// ─── Reply decoding ───────────────────────────────────────────────────────────
-
-/// Pull the generated text out of a `Run` reply.
-///
-/// `out_fds["text"]` is preferred; the `result` JSON's `"text"` field is the
-/// fallback for servers that inline short replies.
-fn reply_text(
-    result_json: &str,
-    out_fds: &HashMap<String, zbus::zvariant::OwnedFd>,
-) -> Result<String> {
-    if let Some(fd) = out_fds.get("text") {
-        return blob::read_fd_to_string(fd);
-    }
-    let parsed: Value = serde_json::from_str(result_json)
-        .with_context(|| format!("parsing Run result JSON: {result_json:.256}"))?;
-    parsed
-        .get("text")
-        .and_then(|t| t.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Run reply carried neither an out_fds[\"text\"] blob nor a \
-                 `text` field in its result JSON: {result_json:.256}"
-            )
-        })
-}
-
-/// What the server reports about the generation itself, from the
-/// `generation` object of `out_meta`.
-struct ReplyGeneration {
-    model: Option<String>,
-    seed: Option<u64>,
-    ids: Vec<i64>,
-    logprobs: Vec<f64>,
-}
-
-/// Parse the optional `generation` entry of `out_meta`. A server that does
-/// not report one, or reports it malformed, simply yields `None`: the text
-/// reply is still valid without the training-grade extras.
-fn reply_generation(out_meta: &str) -> Option<ReplyGeneration> {
-    let meta: Value = serde_json::from_str(out_meta).ok()?;
-    let g = meta.get("generation")?;
-    let list = |key: &str| {
-        g.get(key)
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-    };
-    Some(ReplyGeneration {
-        model: g.get("model").and_then(|m| m.as_str()).map(str::to_owned),
-        seed: g.get("seed").and_then(|s| s.as_u64()),
-        ids: list("token_ids").iter().filter_map(Value::as_i64).collect(),
-        logprobs: list("logprobs").iter().filter_map(Value::as_f64).collect(),
-    })
-}
-
-/// Best-effort token counts from the `result` JSON.
-///
-/// Recognises both a nested `usage` object and flat `num_tokens`-style keys;
-/// anything unrecognised simply reports zero rather than failing the turn.
-fn reply_usage(result_json: &str) -> (u32, u32) {
-    let Ok(v) = serde_json::from_str::<Value>(result_json) else {
-        return (0, 0);
-    };
-    let pick = |obj: &Value, keys: &[&str]| -> u32 {
-        for k in keys {
-            if let Some(n) = obj.get(*k).and_then(|x| x.as_u64()) {
-                return n as u32;
-            }
-        }
-        0
-    };
-    let usage = v.get("usage").unwrap_or(&v);
-    let input = pick(
-        usage,
-        &["input_tokens", "prompt_tokens", "num_input_tokens"],
-    );
-    let output = pick(
-        usage,
-        &[
-            "output_tokens",
-            "completion_tokens",
-            "num_tokens",
-            "num_output_tokens",
-        ],
-    );
-    (input, output)
-}
-
 // ─── ModelProvider ────────────────────────────────────────────────────────────
 
 #[async_trait]
@@ -523,7 +445,10 @@ impl sven_model::ModelProvider for DbusProvider {
         let (input_tokens, output_tokens) = reply_usage(&result_json);
 
         // One-shot: the whole reply arrives at once (see the module docs).
-        let mut events: Vec<Result<ResponseEvent>> = vec![Ok(ResponseEvent::TextDelta(text))];
+        let mut events: Vec<Result<ResponseEvent>> = reply_events(&result_json, text)
+            .into_iter()
+            .map(Ok)
+            .collect();
         if let Some(generation) = reply_generation(&out_meta) {
             if req.want_logprobs && !(generation.ids.is_empty() && generation.logprobs.is_empty()) {
                 events.push(Ok(ResponseEvent::Tokens {
@@ -696,6 +621,51 @@ mod tests {
     }
 
     #[test]
+    fn params_carry_tools_in_the_openai_function_form() {
+        let p = DbusProvider::new("m", DbusOptions::default(), None, None);
+        let req = CompletionRequest {
+            messages: vec![Message::user("hi")],
+            tools: vec![sven_model::ToolSchema {
+                name: "read_file".into(),
+                description: "Read a file".into(),
+                parameters: json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let params: Value = serde_json::from_str(&p.build_params(&req).unwrap()).unwrap();
+        let tools: Value = serde_json::from_str(params["tools"].as_str().unwrap()).unwrap();
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["function"]["name"], "read_file");
+        assert_eq!(
+            tools[0]["function"]["parameters"]["properties"]["path"]["type"],
+            "string"
+        );
+        assert!(
+            params.get("tool_choice").is_none(),
+            "auto is brain's default"
+        );
+
+        let none = CompletionRequest {
+            tool_choice: ToolChoice::None,
+            ..req
+        };
+        let params: Value = serde_json::from_str(&p.build_params(&none).unwrap()).unwrap();
+        assert_eq!(params["tool_choice"], "\"none\"");
+    }
+
+    #[test]
+    fn params_omit_tools_when_there_are_none() {
+        let p = DbusProvider::new("m", DbusOptions::default(), None, None);
+        let req = CompletionRequest {
+            messages: vec![Message::user("hi")],
+            ..Default::default()
+        };
+        let params: Value = serde_json::from_str(&p.build_params(&req).unwrap()).unwrap();
+        assert!(params.get("tools").is_none());
+    }
+
+    #[test]
     fn params_omit_max_new_when_unconfigured() {
         let p = DbusProvider::new("brain/omni", DbusOptions::default(), None, None);
         let req = CompletionRequest {
@@ -754,48 +724,6 @@ mod tests {
         );
         let (img, _) = extract_blob_urls(&[msg]);
         assert_eq!(img.as_deref(), Some("tool-img"));
-    }
-
-    // ── Reply decoding ────────────────────────────────────────────────────────
-
-    #[test]
-    fn reply_text_falls_back_to_the_result_json_field() {
-        let out = reply_text(r#"{"text": "hello"}"#, &HashMap::new()).unwrap();
-        assert_eq!(out, "hello");
-    }
-
-    #[test]
-    fn reply_text_prefers_the_out_fd() {
-        let mut fds = HashMap::new();
-        fds.insert(
-            "text".to_string(),
-            blob::memfd_with_bytes("text", b"from fd").unwrap(),
-        );
-        let out = reply_text(r#"{"text": "from json"}"#, &fds).unwrap();
-        assert_eq!(out, "from fd");
-    }
-
-    #[test]
-    fn reply_text_errors_when_there_is_no_text_anywhere() {
-        let err = reply_text(r#"{"status": "ok"}"#, &HashMap::new()).unwrap_err();
-        assert!(err.to_string().contains("neither"), "{err}");
-    }
-
-    #[test]
-    fn reply_usage_reads_a_nested_usage_object() {
-        let (i, o) = reply_usage(r#"{"usage": {"input_tokens": 7, "output_tokens": 3}}"#);
-        assert_eq!((i, o), (7, 3));
-    }
-
-    #[test]
-    fn reply_usage_reads_flat_num_tokens() {
-        let (_, o) = reply_usage(r#"{"text": "hi", "num_tokens": 5}"#);
-        assert_eq!(o, 5);
-    }
-
-    #[test]
-    fn reply_usage_is_zero_for_unparsable_json() {
-        assert_eq!(reply_usage("not json"), (0, 0));
     }
 
     // ── Trait surface ─────────────────────────────────────────────────────────

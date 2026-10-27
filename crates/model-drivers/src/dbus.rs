@@ -45,6 +45,14 @@
 //! [`DbusProvider`]'s one-shot `stream::iter(...)` for that task's receiver — the rest of the
 //! transport (params flattening, blob encoding, reply decoding) is unchanged.
 //!
+//! # Tool calling
+//!
+//! A request's tools travel as brain's `tools` parameter in the OpenAI
+//! function-calling form (and `tool_choice` when it is `none`). The reply's
+//! `reasoning_content` and `tool_calls` come back as thinking and tool-call
+//! events after the text, the order a streamed reply would emit them in
+//! (`reply::reply_events`).
+//!
 //! The same connection carries brain's generic capability surface:
 //! [`ActionClient`] runs any action a served model advertises (transcription,
 //! image generation, ...), which is how the `attach_file` tool transcribes
@@ -65,6 +73,8 @@ pub mod blob;
 mod provider;
 #[cfg(all(target_os = "linux", feature = "dbus"))]
 pub mod proxy;
+#[cfg(all(target_os = "linux", feature = "dbus"))]
+mod reply;
 
 #[cfg(all(target_os = "linux", feature = "dbus"))]
 pub use action::{ActionClient, ActionInput, ActionOutcome};

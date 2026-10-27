@@ -731,9 +731,14 @@ What sven sends and expects, on interface
   `(result, out_fds, out_meta)`. `params` is a JSON object holding `messages`
   (the conversation as a JSON string, with image and audio parts replaced by
   `[image]`/`[audio]` markers) and, when set, `max_new`, `temperature`,
-  `top_p`, `top_k`, `seed` and `logprobs`. At most one image and one audio
-  blob are sent per request; extra attachments are dropped with a warning.
-  The generated text arrives in the `text` entry of `out_fds`.
+  `top_p`, `top_k`, `seed` and `logprobs`, and the request's tools as `tools`
+  (a JSON string of OpenAI function definitions, with `tool_choice` `"none"`
+  when tools are offered but must not be called). At most one image and one
+  audio blob are sent per request; extra attachments are dropped with a
+  warning. The generated text arrives in the `text` entry of `out_fds`; the
+  model's reasoning (`reasoning_content`) and tool calls (`tool_calls`, a JSON
+  string of `{id, name, arguments}`) are read from `result`, so an agent works
+  over D-Bus as it does over HTTP.
 - `ListModels()` lists model ids; failure is treated as "unknown".
 
 Only the one-shot `Run` call is used, so the whole reply arrives at once: there
