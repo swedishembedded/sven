@@ -32,6 +32,11 @@ event; proven against a real server end to end.
    (yrs) document every replica of a conversation merges alike: Rust tests
    prove convergence under any delivery order and duplication, and
    `sven-wasm` exposes it to JavaScript (`ConversationDoc`), where a late
-   joiner replaying a server's log converges too. Left: make it the
-   conversation's record in a server and in the host (today the server's
-   message table is), and authorize updates (who may add which message).
+   joiner replaying a server's log converges too. A server keeps each
+   conversation's document as the one writer, following its own message
+   record, and serves replicas by state vector
+   (`{control_url}/conversations/{id}/doc`); `sven rc show [--follow]`
+   reads a conversation through it. Left: replicas that write (a person's
+   message added offline and merged), which needs the server to authorize
+   each update (who may add which message) before the document can be the
+   record itself.

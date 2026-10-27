@@ -10,15 +10,44 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use sven_bootstrap::Config;
 
+fn signed_in() -> anyhow::Result<sven_remote::RemoteLogin> {
+    sven_remote::login::load()?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "not signed in to a remote-control server; run `sven auth login --server URL` first"
+        )
+    })
+}
+
+/// `sven rc show`: prints the conversation's finished messages, and with
+/// `follow` keeps syncing and printing until Ctrl-C.
+pub(crate) async fn show_remote_conversation(
+    conversation: uuid::Uuid,
+    follow: bool,
+) -> anyhow::Result<()> {
+    use sven_remote::transcript::{Reader, FOLLOW_INTERVAL};
+
+    let login = signed_in()?;
+    let client = sven_remote::RemoteClient::new(&login.control_url, &login.token)?;
+    let mut reader = Reader::new(conversation);
+    loop {
+        for line in reader.read(&client).await? {
+            println!("{line}");
+        }
+        if !follow {
+            return Ok(());
+        }
+        tokio::select! {
+            () = tokio::time::sleep(FOLLOW_INTERVAL) => {}
+            _ = tokio::signal::ctrl_c() => return Ok(()),
+        }
+    }
+}
+
 pub(crate) async fn run_remote_host(
     config: Config,
     working_dir: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let login = sven_remote::login::load()?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "not signed in to a remote-control server; run `sven auth login --server URL` first"
-        )
-    })?;
+    let login = signed_in()?;
     let working_dir = match working_dir {
         Some(dir) => dir,
         None => std::env::current_dir().context("the current directory")?,

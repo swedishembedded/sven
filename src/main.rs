@@ -31,7 +31,7 @@ use run::task::run_task_command;
 use run::oauth::run_oauth_callback;
 use run::pipeline::{run_map_command, run_reduce_command, run_tee_command};
 #[cfg(feature = "network")]
-use run::remote::run_remote_host;
+use run::remote::{run_remote_host, show_remote_conversation};
 #[cfg(feature = "network")]
 use run::team::{run_as_teammate, run_team_command};
 use run::tool::run_tool_command;
@@ -118,6 +118,13 @@ async fn main() -> anyhow::Result<()> {
             }
             #[cfg(feature = "network")]
             Commands::Rc(args) => {
+                if let Some(cli::RcAction::Show {
+                    conversation,
+                    follow,
+                }) = &args.action
+                {
+                    return show_remote_conversation(*conversation, *follow).await;
+                }
                 let config = Settings::load(cli.config.as_deref())?.runtime;
                 return run_remote_host(config, args.working_dir.clone()).await;
             }

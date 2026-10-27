@@ -31,6 +31,12 @@
 //!    stored, so a batch sent twice is stored once and a restarted host is
 //!    never mistaken for one replaying old events. Numbers stay small enough
 //!    to be exact in any JSON reader.
+//! 5. **Conversations.** `GET {control_url}/conversations/{id}/doc?sv=S`
+//!    answers, as bytes, the update (`sven-session-sync`'s v1 encoding) that
+//!    brings a replica whose state vector is `S` (base64url, empty for an
+//!    empty replica) up to the server's copy of the conversation's shared
+//!    document. Only a conversation that runs on this host is found
+//!    ([`conversation_doc_endpoint`]).
 //!
 //! The server is trusted with the conversation and nothing else: it can ask
 //! a session to do work, and the session's own permission policy still
@@ -113,6 +119,13 @@ pub fn control_endpoint(control_url: &str, endpoint: &str) -> String {
         control_url.trim_end_matches('/'),
         endpoint.trim_start_matches('/')
     )
+}
+
+/// The endpoint, relative to `control_url`, of conversation `id`'s shared
+/// document.
+#[must_use]
+pub fn conversation_doc_endpoint(id: Uuid) -> String {
+    format!("conversations/{id}/doc")
 }
 
 #[cfg(test)]

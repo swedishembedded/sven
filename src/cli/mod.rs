@@ -25,6 +25,7 @@ mod output_format;
 mod questions;
 #[cfg(feature = "network")]
 mod rc;
+pub use rc::RcAction;
 mod replay;
 mod task;
 #[cfg(feature = "network")]

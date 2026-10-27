@@ -17,10 +17,12 @@ sven-hsm           = { path = "../hsm" }
 sven-machines      = { path = "../machines" }
 sven-model         = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
+sven-session-sync  = { path = "../session-sync" }
 sven-tool-api      = { path = "../tool-api" }
 sven-vocab         = { path = "../vocab" }
 async-trait        = { workspace = true }
 anyhow     = { workspace = true }
+base64     = { workspace = true }
 dirs       = { workspace = true }
 futures    = { workspace = true }
 libc       = { workspace = true }

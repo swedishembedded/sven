@@ -61,6 +61,20 @@ start of its id: `@6f1c run the tests`. It is taken only while that
 conversation is not answering, and it appears in the server's interface
 with its answer, as if it had been sent there.
 
+## Read a conversation
+
+```sh
+sven rc show 6f1c...e2            # the conversation as the server keeps it
+sven rc show 6f1c...e2 --follow   # and what is added, from anywhere, until Ctrl-C
+```
+
+`sven rc show` prints each finished message of a conversation that runs on
+this machine - written here, in a browser, or in another terminal - and a
+note while the agent is answering. It keeps a replica of the conversation's
+shared document and asks the server only for what the replica lacks, so
+following a long conversation costs a few bytes a second. It only reads;
+type into `sven rc` (above) to add to the conversation.
+
 ## Tool approvals
 
 A tool whose policy is to ask before it runs asks the person at the server:

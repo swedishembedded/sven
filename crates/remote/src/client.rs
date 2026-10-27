@@ -5,11 +5,14 @@
 
 use std::time::Duration;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use futures::{Stream, StreamExt};
 use sven_control::remote::{
-    control_endpoint, CommandEnvelope, EventBatch, RemoteDiscovery, WhoAmI, DISCOVERY_PATH,
-    REMOTE_PROTOCOL_VERSION,
+    control_endpoint, conversation_doc_endpoint, CommandEnvelope, EventBatch, RemoteDiscovery,
+    WhoAmI, DISCOVERY_PATH, REMOTE_PROTOCOL_VERSION,
 };
+use uuid::Uuid;
 
 use crate::sse::SseDecoder;
 
@@ -27,6 +30,18 @@ impl std::fmt::Display for TokenRefused {
 }
 
 impl std::error::Error for TokenRefused {}
+
+/// The server knows no conversation by this id that runs on this host.
+#[derive(Debug)]
+pub struct ConversationNotFound(pub Uuid);
+
+impl std::fmt::Display for ConversationNotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no conversation {} runs on this machine", self.0)
+    }
+}
+
+impl std::error::Error for ConversationNotFound {}
 
 /// How long a request that is not the command stream may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -183,6 +198,39 @@ impl RemoteClient {
             };
             futures::stream::iter(parsed)
         }))
+    }
+
+    /// The update that brings a replica of conversation `id`'s shared
+    /// document, whose state vector is `state_vector`, up to the server's.
+    ///
+    /// # Errors
+    ///
+    /// The token is refused, the conversation is not one that runs on this
+    /// host ([`ConversationNotFound`]), or the server cannot be asked.
+    pub async fn sync_conversation(
+        &self,
+        id: Uuid,
+        state_vector: &[u8],
+    ) -> anyhow::Result<Vec<u8>> {
+        let response = self
+            .http
+            .get(self.url(&conversation_doc_endpoint(id)))
+            .query(&[("sv", URL_SAFE_NO_PAD.encode(state_vector))])
+            .bearer_auth(&self.token)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await?;
+        match response.status().as_u16() {
+            401 | 403 => return Err(TokenRefused.into()),
+            404 => return Err(ConversationNotFound(id).into()),
+            _ => {}
+        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "the conversation's document answered {}",
+            response.status()
+        );
+        Ok(response.bytes().await?.to_vec())
     }
 
     /// Uploads `batch`.
