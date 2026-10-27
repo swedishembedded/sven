@@ -321,13 +321,13 @@ fn locate(data: Vec<u8>, request: &Request) -> Result<Value, String> {
         .collect();
     if !unsearchable.is_empty() {
         // Say what the search could not see rather than imply the term is absent.
-        let (pages, have) = if unsearchable.len() == 1 {
-            ("page", "has")
+        let (pages, have, its, it) = if unsearchable.len() == 1 {
+            ("page", "has", "its", "it")
         } else {
-            ("pages", "have")
+            ("pages", "have", "their", "them")
         };
         record["warning"] = json!(format!(
-            "{pages} {} {have} no usable text layer, so their text was not searched; document_convert with an OCR model reads them",
+            "{pages} {} {have} no usable text layer, so {its} text was not searched; document_convert with an OCR model reads {it}",
             page_ranges(&unsearchable)
         ));
     }
