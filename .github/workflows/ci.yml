@@ -52,6 +52,38 @@ jobs:
       - name: Run basic e2e tests
         run: make test/e2e/basic
 
+  # The browser build: the portable core for wasm32, the same tests natively
+  # and as WebAssembly (Node), and a session with a tool in a real headless
+  # Chrome's Web Worker (the runner's preinstalled Chrome).
+  wasm:
+    name: Browser build (wasm32, Node, Chrome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      # wasm-bindgen-cli must match the wasm-bindgen the build resolves to.
+      - name: Install wasm-bindgen-cli
+        run: |
+          cargo generate-lockfile
+          version="$(cargo metadata --format-version 1 --locked \
+            | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')"
+          cargo install wasm-bindgen-cli --version "$version" --locked
+
+      - name: Check the portable core
+        run: make check/wasm
+
+      - name: Test as WebAssembly
+        run: make test/wasm
+
+      - name: Test in a real browser
+        run: make test/wasm/browser CHROME="$(command -v google-chrome)"
+
   # Quick smoke-test: make sure we can actually build a release binary.
   # This catches linker / feature-flag issues before a real release.
   build-smoke:
