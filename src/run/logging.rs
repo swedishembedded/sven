@@ -55,7 +55,11 @@ pub(crate) fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
         1 => "debug",
         _ => "trace",
     };
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+    // pdf-extract warns once per glyph its font tables do not name: hundreds
+    // of lines per manual page that say nothing about the conversion, whose
+    // own warnings report text-layer problems.
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(format!("{level},pdf_extract=error")));
 
     let layer = fmt::layer()
         .with_target(false)
