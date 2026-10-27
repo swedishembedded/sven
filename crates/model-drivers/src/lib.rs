@@ -212,6 +212,14 @@ impl ModelProvider for ConfigBoundedProvider {
         self.inner.endpoint_host()
     }
 
+    /// Local by where it answers, not by which driver speaks to it: an
+    /// OpenAI-compatible server on this machine is as local as one reached
+    /// by its own driver name (its output is bounded by its window, not by
+    /// a hosted model's default).
+    fn is_local(&self) -> bool {
+        self.live.as_ref().is_some_and(|l| l.is_refreshable()) || self.inner.is_local()
+    }
+
     /// Forwards to the driver. On a local server, a stale probe is refreshed
     /// in the background, and a request rejected as too large for the window
     /// re-probes before the error is returned, so the retry sees the new one.
@@ -732,6 +740,33 @@ pub(crate) static TEST_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod tests {
     use super::*;
     use sven_model::{get_driver, list_drivers};
+
+    /// A server on this machine is local whatever driver speaks to it: an
+    /// OpenAI-compatible endpoint on loopback gets the window-bounded output
+    /// budget of a local server, not a hosted model's 4096-token default.
+    #[test]
+    fn an_openai_compatible_endpoint_on_this_machine_is_local() {
+        let inner: Arc<dyn ModelProvider> = Arc::new(openai_compat::OpenAICompatProvider::new(
+            "openai",
+            "m".into(),
+            None,
+            "http://127.0.0.1:8799/v1",
+            None,
+            None,
+            vec![],
+            openai_compat::AuthStyle::None,
+            serde_json::Value::Null,
+        ));
+        assert!(!inner.is_local(), "the driver alone says hosted");
+        let bounded = ConfigBoundedProvider {
+            inner,
+            config_context_window: None,
+            max_output_tokens: None,
+            input_modalities: None,
+            live: Some(discovery::LiveState::new("m", true)),
+        };
+        assert!(bounded.is_local());
+    }
 
     #[test]
     fn url_host_names_the_server_with_its_port() {
