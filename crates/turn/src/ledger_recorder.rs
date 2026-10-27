@@ -17,7 +17,7 @@ use crate::ledger::estimate_request;
 pub struct LedgerRecorder {
     breakdown: sven_vocab::RequestBreakdown,
     reported: ReportedUsage,
-    started: std::time::Instant,
+    started: crate::clock::Instant,
     first_token_ms: Option<u64>,
 }
 
@@ -28,7 +28,7 @@ impl LedgerRecorder {
         Self {
             breakdown: estimate_request(request),
             reported: ReportedUsage::default(),
-            started: std::time::Instant::now(),
+            started: crate::clock::Instant::now(),
             first_token_ms: None,
         }
     }

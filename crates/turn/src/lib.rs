@@ -17,6 +17,7 @@ mod aborted;
 pub mod assembly;
 mod assembly_focus;
 mod assembly_supersede;
+mod clock;
 mod compact;
 mod fork;
 mod inline_markup;

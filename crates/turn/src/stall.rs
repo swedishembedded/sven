@@ -29,9 +29,9 @@
 
 use std::time::Duration;
 
+use crate::clock::{sleep_until, Instant};
 use futures::{Stream, StreamExt};
 use tokio::sync::mpsc;
-use tokio::time::Instant;
 
 use sven_model::{ModelProvider, ResponseEvent};
 use sven_vocab::{ModelWaitPhase, SessionEvent as AgentEvent};
@@ -194,7 +194,7 @@ impl StallWatch {
                     self.last_bytes = now;
                     return answer;
                 }
-                () = tokio::time::sleep_until(deadline.min(self.next_notice)) => {
+                () = sleep_until(deadline.min(self.next_notice)) => {
                     if Instant::now() >= deadline {
                         anyhow::bail!(
                             "no response headers from {} after {} - raise agent.first_byte_timeout_secs for a slow server",
@@ -229,7 +229,7 @@ impl StallWatch {
                     }
                     return Ok(item);
                 }
-                () = tokio::time::sleep_until(wake) => {
+                () = sleep_until(wake) => {
                     let now = Instant::now();
                     if now >= idle_deadline {
                         anyhow::bail!(

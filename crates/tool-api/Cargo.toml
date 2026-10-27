@@ -9,10 +9,13 @@ license     = "Apache-2.0"
 sven-hsm    = { path = "../hsm" }
 sven-vocab  = { path = "../vocab" }
 atif        = { path = "../atif" }
-tokio       = { workspace = true }
+# task_local! (the active tool's scope) and join!: no I/O driver, so the
+# tool vocabulary also builds for a browser.
+tokio       = { version = "1", default-features = false, features = ["rt", "macros", "sync"] }
 async-trait = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio    = { workspace = true }

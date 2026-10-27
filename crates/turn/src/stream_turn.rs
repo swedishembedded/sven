@@ -456,7 +456,7 @@ pub async fn stream_turn(
     let mut thinking_token_estimate: u32 = 0;
     // Set on the first ThinkingDelta of an uninterrupted reasoning stretch;
     // cleared on any TextDelta or tool-call delta (forward progress).
-    let mut thinking_stall_started: Option<std::time::Instant> = None;
+    let mut thinking_stall_started: Option<crate::clock::Instant> = None;
     let mut slots: HashMap<u32, AccumSlot> = HashMap::new();
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
@@ -504,7 +504,7 @@ pub async fn stream_turn(
             }
             ResponseEvent::ThinkingDelta(delta) => {
                 let stall_started =
-                    *thinking_stall_started.get_or_insert_with(std::time::Instant::now);
+                    *thinking_stall_started.get_or_insert_with(crate::clock::Instant::now);
                 thinking_token_estimate =
                     thinking_token_estimate.saturating_add(estimate_tokens(&delta));
                 thinking_buf.push_str(&delta);
