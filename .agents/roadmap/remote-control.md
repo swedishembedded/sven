@@ -9,6 +9,13 @@ event; proven against a real server end to end.
 
 ## Left
 
+0. **Hosted mode** (decided 2026-10-27). A server runs `sven rc --hosted`,
+   one per account, to answer conversations that have no machine of the
+   person's: the same host and session actors, with a fixed safe tool set
+   (web search, finding skills; no shell, no file tools) and a scratch
+   working directory. Browsers and attached terminals only view and send
+   input. Needed here: the `--hosted` tool allowlist and its tests.
+
 1. **Durable sessions.** Done: each session's own conversation (tool calls
    included) is kept after every finished tool call and turn, and reopened
    from there after a restart (`sven_remote::sessions`). A turn stopped
