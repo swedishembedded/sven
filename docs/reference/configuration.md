@@ -392,6 +392,9 @@ tools:
   # Tools, by name, a session never offers the model and never runs.
   disabled: []
 
+  # When set, the ONLY tools a session offers and runs; every other is removed.
+  # only: [web_search, web_fetch]
+
   # Timeout for a single tool call, in seconds.
   timeout_secs: 30
 
@@ -950,6 +953,7 @@ Controls what the agent is allowed to do and how.
 | `auto_approve_patterns` | `["cat *", "ls *", ...]` | Under `--approval manual`, a shell command whose text matches one of these runs without asking (sub-agents' and SDLC tasks' included). A command containing `;`, `\|`, `&`, `<`, `>`, a backtick, `$(` or a line break never matches. |
 | `deny_patterns` | `["rm -rf /*", ...]` | A shell command whose text matches one of these is refused, in every approval mode - by the `shell` tool, `sven mcp serve`, sub-agents and the GDB tool's host commands (the shell side of `shell`, `!`, `pipe` and `\|`, and the server it starts) |
 | `disabled` | `[]` | Tools, by name, a session never offers the model and never runs - built-in, MCP or application-supplied alike |
+| `only` | unset | When set, the only tools, by name, a session offers and runs; every other tool is removed, whoever registered it, so a tool added later is never offered unless named. `sven rc --hosted` sets it |
 | `timeout_secs` | `30` | Per-tool-call timeout in seconds |
 | `disclosure.mode` | `deferred` | How much of each tool's definition a request carries: `full` or `deferred` (below) |
 

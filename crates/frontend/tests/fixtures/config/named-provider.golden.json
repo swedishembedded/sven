@@ -182,6 +182,7 @@
       "memory": {
         "memory_file": null
       },
+      "only": null,
       "timeout_secs": 30,
       "web": {
         "fetch_max_chars": 20000,

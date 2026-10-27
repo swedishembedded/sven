@@ -763,6 +763,8 @@ pub(crate) struct Completion<'a> {
     /// The skills the `skill` tool serves.
     pub skills: sven_workspace::SharedSkills,
     pub disabled: &'a [String],
+    /// When set, every tool not named here is removed too.
+    pub only: Option<&'a [String]>,
 }
 
 /// Registers MCP and caller-supplied tools, enables deferred disclosure and
@@ -783,6 +785,13 @@ pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) 
     }
     for name in completion.disabled {
         registry.remove(name);
+    }
+    if let Some(only) = completion.only {
+        for name in registry.names() {
+            if !only.contains(&name) {
+                registry.remove(&name);
+            }
+        }
     }
 }
 

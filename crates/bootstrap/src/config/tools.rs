@@ -36,6 +36,12 @@ pub struct ToolsConfig {
     /// Tools, by name, a session never offers the model and never runs -
     /// built-in, MCP or supplied by an embedding application alike.
     pub disabled: Vec<String>,
+    /// When set, the only tools, by name, a session offers the model and
+    /// runs; every other tool is removed, whoever registered it. A tool
+    /// added to sven later is therefore never offered unless named here.
+    /// How a host that must not touch its machine (`sven rc --hosted`)
+    /// limits its sessions.
+    pub only: Option<Vec<String>>,
     /// Timeout in seconds for a single tool call
     pub timeout_secs: u64,
     /// Longest wall time in seconds a single shell call may ask for through
@@ -103,6 +109,7 @@ impl Default for ToolsConfig {
             ],
             deny_patterns: vec!["rm -rf /*".into(), "dd if=*".into()],
             disabled: Vec::new(),
+            only: None,
             timeout_secs: 30,
             max_timeout_secs: sven_tools_exec::shell::DEFAULT_MAX_TIMEOUT_SECS,
             web: WebConfig::default(),

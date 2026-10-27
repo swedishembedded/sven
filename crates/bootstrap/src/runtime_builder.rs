@@ -677,6 +677,7 @@ impl RuntimeBuilder {
                 skill_ranker,
                 skills: runtime.skills.clone(),
                 disabled: &self.config.tools.disabled,
+                only: self.config.tools.only.as_deref(),
             },
         );
 
@@ -1023,6 +1024,20 @@ mod tests {
         runtime.abort();
         assert!(names.iter().any(|n| n == "read_file"), "{names:?}");
         assert!(!names.iter().any(|n| n == "shell"), "{names:?}");
+    }
+
+    #[tokio::test]
+    async fn with_an_allow_list_a_session_offers_exactly_those_tools() {
+        let mut config = mock_config();
+        config.tools.only = Some(vec!["read_file".into(), "not_a_tool".into()]);
+        let (runtime, handle, ..) = RuntimeBuilder::new(Arc::new(config), "agent")
+            .with_builtin_tools(BuiltinTools::Coding)
+            .build()
+            .await
+            .expect("runtime builds");
+        let names = handle.tool_registry().names();
+        runtime.abort();
+        assert_eq!(names, vec!["read_file".to_string()]);
     }
 
     #[tokio::test]

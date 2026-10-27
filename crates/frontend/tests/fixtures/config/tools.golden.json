@@ -149,6 +149,7 @@
       "memory": {
         "memory_file": "notes/memory.json"
       },
+      "only": null,
       "timeout_secs": 45,
       "web": {
         "fetch_max_chars": 50000,
