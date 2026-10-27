@@ -83,6 +83,19 @@ impl std::fmt::Display for Busy {
 
 impl std::error::Error for Busy {}
 
+/// The machine the conversation runs on is not connected, so the server
+/// stored nothing; the reason says where to run `sven rc` to reconnect it.
+#[derive(Debug)]
+pub struct Disconnected(pub String);
+
+impl std::fmt::Display for Disconnected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Disconnected {}
+
 /// How long a request that is not the command stream may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -360,7 +373,8 @@ impl RemoteClient {
     /// # Errors
     ///
     /// The token is refused, the conversation does not run on this host
-    /// ([`ConversationNotFound`]), it is answering already ([`Busy`]), or
+    /// ([`ConversationNotFound`]), it is answering already ([`Busy`]), the
+    /// machine it runs on is not connected ([`Disconnected`]), or
     /// the server cannot be asked.
     pub async fn send_to_conversation(&self, id: Uuid, text: &str) -> anyhow::Result<()> {
         let response = self
@@ -375,12 +389,17 @@ impl RemoteClient {
             401 | 403 => return Err(TokenRefused.into()),
             404 => return Err(ConversationNotFound(id).into()),
             409 => {
-                let reason = response
-                    .json::<serde_json::Value>()
-                    .await
-                    .ok()
-                    .and_then(|body| body.get("error")?.as_str().map(str::to_string))
-                    .unwrap_or_else(|| "the conversation is busy".into());
+                let body = response.json::<serde_json::Value>().await.ok();
+                let field = |name: &str| {
+                    body.as_ref()
+                        .and_then(|body| body.get(name)?.as_str().map(str::to_string))
+                };
+                if field("code").as_deref() == Some("environment_disconnected") {
+                    let reason =
+                        field("error").unwrap_or_else(|| "the machine is not connected".into());
+                    return Err(Disconnected(reason).into());
+                }
+                let reason = field("error").unwrap_or_else(|| "the conversation is busy".into());
                 return Err(Busy(reason).into());
             }
             _ => {}

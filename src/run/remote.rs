@@ -83,6 +83,9 @@ pub(crate) async fn attach_remote_conversation(conversation: uuid::Uuid) -> anyh
                     Err(e) if e.downcast_ref::<sven_remote::Busy>().is_some() => {
                         println!("({e}; send it when the answer is done)");
                     }
+                    Err(e) if e.downcast_ref::<sven_remote::Disconnected>().is_some() => {
+                        println!("({e})");
+                    }
                     Err(e) => return Err(e),
                 }
             }
