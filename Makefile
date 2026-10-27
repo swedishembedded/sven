@@ -154,14 +154,17 @@ test/gates:
 test/package:
 	bats tests/package/publish_deb.bats
 
-## test/wasm - the portable kernel's tests compiled to wasm32 and run on a
-##   JavaScript event loop (Node, through wasm-bindgen-test-runner): the same
-##   bodies `cargo test -p sven-kernel --test portable` runs natively, so a
-##   pass on both is parity. Needs the wasm32 target and wasm-bindgen-cli
+## test/wasm - the portable tests compiled to wasm32 and run on a JavaScript
+##   event loop (Node, through wasm-bindgen-test-runner): the kernel's
+##   (sven-kernel tests/portable.rs) and a whole agent turn with a tool call
+##   (sven-executors tests/portable_session.rs). The same bodies run natively
+##   under `cargo test`, so a pass on both is parity. Needs the wasm32 target and wasm-bindgen-cli
 ##   matching the locked wasm-bindgen; RUSTUP_RUN as for check/wasm.
 test/wasm:
 	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
 		$(RUSTUP_RUN) $(CARGO) test -p sven-kernel --test portable --target wasm32-unknown-unknown --target-dir target/wasm
+	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
+		$(RUSTUP_RUN) $(CARGO) test -p sven-executors --test portable_session --target wasm32-unknown-unknown --target-dir target/wasm
 
 ## test/crate - lists the per-package test targets; tests nothing
 test/crate:
@@ -293,13 +296,13 @@ check/features:
 
 ## check/wasm - the browser-portable core builds for wasm32-unknown-unknown: the
 ##   event vocabulary, the HSM kernel and its runtime, the machines, the
-##   control protocol, the model interface and its HTTP drivers, and the turn
-##   that streams a model call.
+##   control protocol, the model interface and its HTTP drivers, the turn
+##   that streams a model call, and the executors that run a session.
 ##   A browser session runs this same code, so a dependency that cannot reach
 ##   a browser (an OS thread, a socket, OS randomness) fails here, not later.
 ##   Needs `rustup target add wasm32-unknown-unknown`. Its own target dir:
 ##   the wasm build must not invalidate the native one.
-WASM_PACKAGES = sven-rt sven-vocab sven-hsm sven-machines sven-control sven-kernel sven-model sven-model-drivers sven-turn
+WASM_PACKAGES = sven-rt sven-vocab sven-hsm sven-machines sven-control sven-kernel sven-model sven-model-drivers sven-turn sven-decision sven-executors
 check/wasm:
 	@if ! $(RUSTUP_RUN) rustc --print sysroot | xargs -I{} test -d {}/lib/rustlib/wasm32-unknown-unknown; then \
 		echo "check/wasm: the wasm32-unknown-unknown target is not installed; run: rustup target add wasm32-unknown-unknown" >&2; exit 1; \

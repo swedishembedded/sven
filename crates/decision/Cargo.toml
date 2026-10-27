@@ -16,7 +16,13 @@ sha2        = { workspace = true }
 hex         = { workspace = true }
 sven-vocab  = { path = "../vocab" }
 thiserror   = { workspace = true }
-tokio       = { workspace = true }
+sven-rt     = { path = "../rt" }
 
 [dev-dependencies]
 serde_yaml = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio       = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio       = { version = "1", default-features = false, features = ["sync"] }

@@ -20,21 +20,26 @@
 //! ```
 
 use std::collections::HashSet;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sven_hsm::{AuditTrailHandle, Effect, EffectKind, ObservationSink, ToolCallId, ToolCapability};
+#[cfg(not(target_arch = "wasm32"))]
+use sven_hsm::AuditTrailHandle;
+use sven_hsm::{Effect, EffectKind, ObservationSink, ToolCallId, ToolCapability};
 use sven_kernel::{CancelScope, Clock, EffectExecutor, EventSink};
 use sven_tool_registry::ToolRegistry;
 use tokio::sync::mpsc;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::audit::AuditExecutor;
 use crate::internal::InternalExecutor;
 use crate::timer::TimerExecutor;
 use crate::tool::ToolExecutor;
 use crate::turn::TurnExecutor;
 use crate::user::{ApprovalRequest, UserExecutor, UserQuestion};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::verify::VerifyExecutor;
 
 /// All sub-executors collected into one structure.
@@ -61,7 +66,8 @@ impl CompositeExecutor {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl EffectExecutor for CompositeExecutor {
     fn bind_cancel(&mut self, scope: &CancelScope) {
         let slots = [
@@ -248,6 +254,7 @@ impl CompositeExecutorBuilder {
     }
 
     /// Attach the verifier executor, jailing every `Effect::Verify` to `root`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_verify(mut self, root: impl Into<PathBuf>) -> Self {
         self.verify = Some(Box::new(VerifyExecutor::new(root)));
         self
@@ -258,6 +265,7 @@ impl CompositeExecutorBuilder {
     /// Without a trail each `PersistAudit` appends a hash-chained checkpoint
     /// marker only; use [`Self::with_audit_trail`] to persist the full audit
     /// records.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_audit(mut self, log_path: impl Into<PathBuf>) -> Self {
         self.audit = Some(Box::new(AuditExecutor::new(log_path)));
         self
@@ -270,6 +278,7 @@ impl CompositeExecutorBuilder {
     /// `sven_kernel::ErasedRuntime::spawn_with_audit_trail`) so `PersistAudit`
     /// flushes every dispatch and tool audit record accumulated since the
     /// previous flush.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_audit_trail(
         mut self,
         log_path: impl Into<PathBuf>,
@@ -571,7 +580,7 @@ mod tests {
         let sink = rt.sink();
         exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
             .await;
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        sven_rt::sleep(std::time::Duration::from_millis(20)).await;
         rt.abort();
     }
 }

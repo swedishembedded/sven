@@ -30,7 +30,8 @@ impl Default for InternalExecutor {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl EffectExecutor for InternalExecutor {
     async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         let Effect::EmitInternal { name, payload } = effect else {
@@ -160,7 +161,7 @@ mod tests {
             .await;
 
         // The machine should NOT have transitioned since no event was emitted.
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        sven_rt::sleep(std::time::Duration::from_millis(20)).await;
         assert!(!rt.status().done, "machine should still be in Idle");
         rt.abort();
     }

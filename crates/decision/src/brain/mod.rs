@@ -92,9 +92,12 @@ impl BrainProvider {
         let cache_entries =
             NonZeroUsize::new(settings.cache_entries).ok_or("cache_entries must be at least 1")?;
         // No proxy: where decisions go is the configured URL, never the
-        // process environment.
-        let http = reqwest::Client::builder()
-            .no_proxy()
+        // process environment. (A browser's fetch has no proxy setting.)
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = reqwest::Client::builder().no_proxy();
+        #[cfg(target_arch = "wasm32")]
+        let builder = reqwest::Client::builder();
+        let http = builder
             .build()
             .map_err(|e| format!("cannot build the HTTP client: {e}"))?;
         Ok(Self {
@@ -222,7 +225,7 @@ impl BrainProvider {
                 DecisionError::InvalidResponse("the response has no `outputs`".into())
             })
         };
-        tokio::time::timeout(deadline, exchange)
+        sven_rt::timeout(deadline, exchange)
             .await
             .unwrap_or(Err(DecisionError::Timeout { deadline }))
     }
@@ -284,7 +287,12 @@ impl BrainProvider {
 }
 
 fn describe(error: reqwest::Error, url: &str) -> String {
-    let kind = if error.is_connect() {
+    // A browser's fetch does not say whether the connection was refused.
+    #[cfg(not(target_arch = "wasm32"))]
+    let refused = error.is_connect();
+    #[cfg(target_arch = "wasm32")]
+    let refused = false;
+    let kind = if refused {
         "connection failed"
     } else {
         "request failed"
@@ -292,11 +300,12 @@ fn describe(error: reqwest::Error, url: &str) -> String {
     format!("{kind} for {url}: {}", error.without_url())
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DecisionProvider for BrainProvider {
     async fn decide(&self, request: &DecisionRequest) -> Result<DecisionResult, DecisionError> {
         request.validate()?;
-        tokio::time::timeout(request.deadline, self.decide_within(request))
+        sven_rt::timeout(request.deadline, self.decide_within(request))
             .await
             .unwrap_or(Err(DecisionError::Timeout {
                 deadline: request.deadline,

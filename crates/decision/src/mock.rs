@@ -59,7 +59,8 @@ impl MockDecisionProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl DecisionProvider for MockDecisionProvider {
     async fn decide(&self, request: &DecisionRequest) -> Result<DecisionResult, DecisionError> {
         self.requests.lock().unwrap().push(request.clone());

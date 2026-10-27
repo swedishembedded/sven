@@ -57,6 +57,13 @@ pub use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 pub use web_time::Instant;
 
+/// Wall-clock time that works on every host.
+#[cfg(not(target_arch = "wasm32"))]
+pub use std::time::{SystemTime, UNIX_EPOCH};
+/// Wall-clock time that works on every host.
+#[cfg(target_arch = "wasm32")]
+pub use web_time::{SystemTime, UNIX_EPOCH};
+
 /// Waits `duration`.
 pub async fn sleep(duration: Duration) {
     #[cfg(not(target_arch = "wasm32"))]
@@ -147,6 +154,33 @@ impl<T> JoinHandle<T> {
         #[cfg(target_arch = "wasm32")]
         self.abort.abort();
     }
+
+    /// A handle that aborts the task, kept while the `JoinHandle` itself is
+    /// awaited (in a timeout, for instance).
+    pub fn abort_handle(&self) -> AbortHandle {
+        AbortHandle {
+            #[cfg(not(target_arch = "wasm32"))]
+            inner: self.inner.abort_handle(),
+            #[cfg(target_arch = "wasm32")]
+            inner: self.abort.clone(),
+        }
+    }
+}
+
+/// Aborts one task; see [`JoinHandle::abort_handle`].
+#[derive(Debug, Clone)]
+pub struct AbortHandle {
+    #[cfg(not(target_arch = "wasm32"))]
+    inner: tokio::task::AbortHandle,
+    #[cfg(target_arch = "wasm32")]
+    inner: futures::future::AbortHandle,
+}
+
+impl AbortHandle {
+    /// Stops the task at its next await.
+    pub fn abort(&self) {
+        self.inner.abort();
+    }
 }
 
 impl<T> Future for JoinHandle<T> {
@@ -201,7 +235,7 @@ mod tests {
         let forever = spawn(async {
             sleep(Duration::from_secs(3600)).await;
         });
-        forever.abort();
+        forever.abort_handle().abort();
         assert!(forever.await.is_err());
         sleep_until(Instant::now()).await;
         assert_eq!(timeout(Duration::from_secs(5), async { 1 }).await, Ok(1));

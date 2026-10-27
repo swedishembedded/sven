@@ -62,3 +62,9 @@ zbus = { version = "5", default-features = false, features = ["tokio", "p2p"] }
 # transcription, which rides the same transport) opts in. Linux only (blobs
 # travel in sealed memfds); on other targets the provider is refused by name.
 dbus = ["dep:zbus", "dep:nix", "dep:base64", "dep:sven-image", "dep:sven-audio"]
+
+# In a browser, chrono reads the clock through JavaScript's Date; its
+# default clock panics there.
+[target.'cfg(target_arch = "wasm32")'.dependencies.chrono]
+workspace = true
+features = ["wasmbind"]

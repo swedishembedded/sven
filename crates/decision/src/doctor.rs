@@ -9,7 +9,9 @@
 //! `sven doctor decisions`: what the decision runtime would do with this
 //! configuration and this provider, found out by asking.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use sven_rt::Instant;
 
 use serde::Serialize;
 

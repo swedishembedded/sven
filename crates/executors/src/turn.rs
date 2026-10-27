@@ -289,7 +289,8 @@ impl TurnExecutor {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl EffectExecutor for TurnExecutor {
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
         let Effect::CallLlm { request } = effect else {
@@ -323,7 +324,7 @@ impl EffectExecutor for TurnExecutor {
         // across the checks and repairs between turns.
         let judged_by_harness = req.origin.is_some();
         if let Some(ms) = req.delay_ms {
-            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            sven_rt::sleep(std::time::Duration::from_millis(ms)).await;
         }
         let model = match self.resolve_role(&req) {
             Ok(model) => model,
@@ -531,7 +532,7 @@ impl EffectExecutor for TurnExecutor {
         // belongs to, so a run's record survives a lagging observation stream.
         let request_store = Arc::clone(&self.store);
         let request_thread = thread_id.clone();
-        let forwarder = tokio::spawn(async move {
+        let forwarder = sven_rt::spawn(async move {
             let mut requests = sven_vocab::RequestFold::default();
             while let Some(mut ev) = rx.recv().await {
                 if let UiEvent::TextDelta(delta) = &ev {
@@ -702,7 +703,7 @@ impl EffectExecutor for TurnExecutor {
 /// Resolves when a turn's wall-clock bound passes; never when it has none.
 async fn turn_deadline(deadline: Option<std::time::Duration>) {
     match deadline {
-        Some(limit) => tokio::time::sleep(limit).await,
+        Some(limit) => sven_rt::sleep(limit).await,
         None => std::future::pending().await,
     }
 }

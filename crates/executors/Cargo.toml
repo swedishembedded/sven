@@ -6,12 +6,12 @@ description  = "Effect executors for the Sven HSM runtime"
 license      = "Apache-2.0"
 
 [dependencies]
-sven-chain    = { path = "../chain" }
 sven-chunks   = { path = "../chunks" }
 sven-cost     = { path = "../cost" }
 sven-model-catalog = { path = "../model-catalog" }
 sven-decision = { path = "../decision" }
 sven-hsm      = { path = "../hsm" }
+sven-rt       = { path = "../rt" }
 sven-kernel   = { path = "../kernel" }
 sven-tool-api = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
@@ -22,21 +22,34 @@ atif          = { path = "../atif" }
 jsonschema    = { version = "0.49", default-features = false }
 anyhow        = { workspace = true }
 serde_json    = { workspace = true }
-tokio         = { workspace = true }
-chrono        = { workspace = true }
 async-trait   = { workspace = true }
 tracing       = { workspace = true }
-# VerifierSpec::{FileHash, HttpPredicate} evaluation.
+
+# Native only: the audit log (a hash-chained file) and the verifiers (files,
+# sockets, HTTP probes). A browser session has neither slot; an effect for
+# one is answered as undeliverable, never dropped.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sven-chain    = { path = "../chain" }
+tokio         = { workspace = true }
+chrono        = { workspace = true }
 sha2          = { workspace = true }
 hex           = { workspace = true }
 reqwest       = { workspace = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio         = { version = "1", default-features = false, features = ["sync", "macros"] }
+
 [dev-dependencies]
-tokio      = { workspace = true }
-tempfile   = { workspace = true }
 sven-machines   = { path = "../machines" }
 sven-model  = { path = "../model" }
 sven-model-mock = { path = "../model-mock" }
 sven-workspace = { path = "../workspace" }
 futures     = { workspace = true }
 async-trait = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio      = { workspace = true }
+tempfile   = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

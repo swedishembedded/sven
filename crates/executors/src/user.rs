@@ -221,7 +221,8 @@ impl UserExecutor {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl EffectExecutor for UserExecutor {
     async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         match effect {
@@ -239,7 +240,7 @@ impl EffectExecutor for UserExecutor {
                     return;
                 }
                 let sink = sink.clone();
-                tokio::spawn(async move {
+                sven_rt::spawn(async move {
                     // A run that stops first withdraws the question: dropping
                     // the receiver closes the frontend's reply channel.
                     let reply = tokio::select! {
@@ -318,7 +319,7 @@ impl EffectExecutor for UserExecutor {
                     return;
                 }
                 let sink = sink.clone();
-                tokio::spawn(async move {
+                sven_rt::spawn(async move {
                     let reply = tokio::select! {
                         reply = reply_rx => reply,
                         () = sink.closed() => return,
@@ -516,8 +517,7 @@ mod tests {
         let sink = rt.sink();
         exec.execute(effect, &sink, &sven_hsm::ObservationSink::default())
             .await;
-        let outcome =
-            tokio::time::timeout(std::time::Duration::from_millis(200), rt.wait_done()).await;
+        let outcome = sven_rt::timeout(std::time::Duration::from_millis(200), rt.wait_done()).await;
         rt.abort();
         assert!(
             outcome.is_err(),
@@ -537,7 +537,7 @@ mod tests {
 
         // Spawn a task that plays the role of the TUI: receives the question
         // and sends a reply.
-        tokio::spawn(async move {
+        sven_rt::spawn(async move {
             let q = q_rx.recv().await.unwrap();
             q.reply_tx.send("Alice".into()).unwrap();
         });
@@ -554,7 +554,7 @@ mod tests {
         let (q_tx, mut q_rx) = mpsc::channel::<UserQuestion>(4);
         let (a_tx, _a_rx) = mpsc::channel::<ApprovalRequest>(4);
         let mut exec = UserExecutor::new(q_tx, a_tx);
-        tokio::spawn(async move {
+        sven_rt::spawn(async move {
             let question = q_rx.recv().await.unwrap();
             drop(question);
         });
@@ -573,7 +573,7 @@ mod tests {
             &ObservationSink::default(),
         )
         .await;
-        tokio::time::timeout(std::time::Duration::from_secs(5), rt.wait_done())
+        sven_rt::timeout(std::time::Duration::from_secs(5), rt.wait_done())
             .await
             .expect("answered without waiting for anyone");
         let report = rt.join().await.unwrap();
@@ -600,7 +600,7 @@ mod tests {
             call: None,
         };
 
-        tokio::spawn(async move {
+        sven_rt::spawn(async move {
             let req = a_rx.recv().await.unwrap();
             req.reply_tx.send(true).unwrap();
         });
@@ -623,7 +623,7 @@ mod tests {
             call: None,
         };
 
-        tokio::spawn(async move {
+        sven_rt::spawn(async move {
             let req = a_rx.recv().await.unwrap();
             req.reply_tx.send(false).unwrap();
         });
@@ -645,7 +645,7 @@ mod tests {
             description: "approve the plan".into(),
             call: None,
         };
-        let kind = tokio::time::timeout(
+        let kind = sven_rt::timeout(
             std::time::Duration::from_secs(5),
             run_user_effect(&mut exec, effect),
         )
@@ -763,7 +763,7 @@ mod tests {
                     withdrawn = true;
                     break;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                sven_rt::sleep(std::time::Duration::from_millis(10)).await;
             }
             assert!(
                 withdrawn,

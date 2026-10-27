@@ -17,8 +17,9 @@ use crate::{DecisionError, DecisionRequest, DecisionResult};
 ///
 /// An implementation honours the request's deadline and maps every failure to
 /// a [`DecisionError`] class; it never substitutes an answer of its own.
-#[async_trait]
-pub trait DecisionProvider: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait DecisionProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
     /// Answers the questions of `request`.
     ///
     /// # Errors

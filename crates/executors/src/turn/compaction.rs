@@ -521,7 +521,7 @@ impl TurnExecutor {
         let request_estimate = estimate(&plan.request, calibration) + tools_tokens;
         let room = (window as usize).saturating_sub(request_estimate + 128);
         let output = u32::try_from(reply_cap.min(room)).unwrap_or(u32::MAX);
-        let started = std::time::Instant::now();
+        let started = sven_rt::Instant::now();
         for thinking in [Some(false), None] {
             // The thinking-token cap guards against a reasoning loop in the
             // agent's own turns. Notes must not be thrown away (and the

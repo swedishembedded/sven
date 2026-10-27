@@ -14,3 +14,9 @@ sha2       = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+# In a browser, chrono reads the clock through JavaScript's Date; its
+# default clock panics there.
+[target.'cfg(target_arch = "wasm32")'.dependencies.chrono]
+workspace = true
+features = ["wasmbind"]

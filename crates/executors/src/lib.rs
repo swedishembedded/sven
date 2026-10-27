@@ -40,6 +40,7 @@
 //! ```
 
 mod argument_check;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod audit;
 pub mod chunks;
 pub mod composite;
@@ -50,9 +51,11 @@ pub mod timer;
 pub mod tool;
 pub mod turn;
 pub mod user;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod verify;
 
 // Re-exports
+#[cfg(not(target_arch = "wasm32"))]
 pub use audit::{
     append_chain, read_chain, verify_chain, AuditExecutor, ChainError, ChainedLine, GENESIS_HASH,
 };
@@ -64,4 +67,5 @@ pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
 pub use turn::{CompactionConfig, CostPolicy, TurnExecutor};
 pub use user::{ApprovalRequest, Preapproval, UserExecutor, UserQuestion};
+#[cfg(not(target_arch = "wasm32"))]
 pub use verify::VerifyExecutor;

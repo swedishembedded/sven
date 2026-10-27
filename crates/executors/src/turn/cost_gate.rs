@@ -10,7 +10,7 @@
 //! what its cache is expected to hold, and how long the session has run.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
+use sven_rt::Instant;
 
 use sven_cost::{CacheAware, CacheState};
 use sven_model_catalog::{lookup_pricing, Pricing};

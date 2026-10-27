@@ -32,7 +32,8 @@ impl TimerExecutor {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl EffectExecutor for TimerExecutor {
     async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         let svc = self
@@ -216,7 +217,7 @@ mod tests {
         // Advance past deadline - the event should NOT arrive because we cancelled.
         clock.advance(Duration::from_secs(10));
         // Give the cancelled task a tick to confirm it is gone.
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        sven_rt::sleep(Duration::from_millis(10)).await;
         // No assertion needed: if the task was not cancelled it would panic
         // trying to send on the dropped sink, and tokio would log the error.
     }

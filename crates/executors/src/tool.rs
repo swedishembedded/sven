@@ -252,7 +252,8 @@ fn note_argument_violations(
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl EffectExecutor for ToolExecutor {
     fn bind_cancel(&mut self, scope: &CancelScope) {
         self.cancel = scope.clone();
@@ -359,7 +360,7 @@ impl EffectExecutor for ToolExecutor {
         let repeat_notes = self.repeat_notes;
 
         // Spawn-and-forget: the task runs concurrently with other effects.
-        tokio::spawn(async move {
+        sven_rt::spawn(async move {
             // Resolve the (thread, original_call_id) mapping before running the
             // tool.  The original_call_id is the raw string the LLM returned (e.g.
             // "call_HyZJn1bTtqVbmzzS3W4VM4xb") — it must match the id recorded in
@@ -399,13 +400,13 @@ impl EffectExecutor for ToolExecutor {
             // pending set forever and the session wedges holding its whole
             // object graph — with no error surfaced anywhere.
             let recorder = CallRecorder::new();
-            let started = std::time::Instant::now();
+            let started = sven_rt::Instant::now();
             let output = {
                 // Shadowed inside this block only; the outer `registry` is
                 // still used below for `output_category`.
                 let registry = Arc::clone(&registry);
                 let call = tool_call.clone();
-                let task = tokio::spawn(sven_tool_api::call_records::scope(
+                let task = sven_rt::spawn(sven_tool_api::call_records::scope(
                     recorder.clone(),
                     async move { registry.execute(&call).await },
                 ));
@@ -416,7 +417,7 @@ impl EffectExecutor for ToolExecutor {
                         abort.abort();
                         return;
                     }
-                    finished = tokio::time::timeout(tool_timeout, task) => finished,
+                    finished = sven_rt::timeout(tool_timeout, task) => finished,
                 };
                 match finished {
                     Ok(Ok(output)) => output,
@@ -1311,7 +1312,7 @@ mod watchdog_tests {
             &sven_hsm::ObservationSink::default(),
         )
         .await;
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        sven_rt::sleep(Duration::from_millis(20)).await;
         assert!(!stopped.load(std::sync::atomic::Ordering::SeqCst));
 
         cancel.cancel();
@@ -1319,7 +1320,7 @@ mod watchdog_tests {
             if stopped.load(std::sync::atomic::Ordering::SeqCst) {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            sven_rt::sleep(Duration::from_millis(10)).await;
         }
         panic!("the tool call kept running after its run was cancelled");
     }
