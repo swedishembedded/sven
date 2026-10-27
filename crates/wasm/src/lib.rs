@@ -85,14 +85,17 @@ impl SvenSession {
     pub fn new(options: &str) -> Result<SvenSession, JsError> {
         let options: SessionOptions = serde_json::from_str(options)
             .map_err(|e| JsError::new(&format!("session options: {e}")))?;
-        let model: Arc<dyn ModelProvider> = Arc::new(OpenAiProvider::new(
-            options.model,
-            options.api_key,
-            Some(options.base_url),
-            None,
-            None,
-            serde_json::Value::Null,
-        ));
+        let model: Arc<dyn ModelProvider> = Arc::new(match options.api_key {
+            Some(key) => OpenAiProvider::new(
+                options.model,
+                Some(key),
+                Some(options.base_url),
+                None,
+                None,
+                serde_json::Value::Null,
+            ),
+            None => OpenAiProvider::authenticated_by_origin(options.model, &options.base_url),
+        });
         let registry = Arc::new(ToolRegistry::new());
         let mut thread = ThreadStore::new();
         thread.replace_thread(CHAT_THREAD, history_messages(options.history));

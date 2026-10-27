@@ -39,6 +39,26 @@ impl OpenAiProvider {
             ),
         }
     }
+
+    /// The same driver for an endpoint that authenticates its caller some
+    /// other way - a browser page's same-origin endpoint, which its session
+    /// cookie authenticates - so no key is sent and none is required.
+    #[must_use]
+    pub fn authenticated_by_origin(model: String, base_url: &str) -> Self {
+        Self {
+            inner: OpenAICompatProvider::new(
+                "openai",
+                model,
+                None,
+                base_url,
+                None,
+                None,
+                vec![],
+                AuthStyle::None,
+                serde_json::Value::Null,
+            ),
+        }
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

@@ -26,6 +26,43 @@ function sse(res, chunks) {
   res.end("data: [DONE]\n\n");
 }
 
+async function serveOneAnswer(requests) {
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (part) => (body += part));
+    req.on("end", () => {
+      requests.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body) });
+      sse(res, [
+        { choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+      ]);
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return server;
+}
+
+test("a session with no key sends none, for an endpoint its page's cookie authenticates", async () => {
+  const requests = [];
+  const server = await serveOneAnswer(requests);
+  try {
+    const session = new SvenSession(
+      JSON.stringify({ base_url: `http://127.0.0.1:${server.address().port}/v1`, model: "fake/model" }),
+    );
+    const finished = new Promise((resolve) => {
+      session.onEvent((json) => {
+        if (JSON.parse(json) === "TurnComplete") resolve();
+      });
+    });
+    await session.send("hi");
+    await finished;
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].auth, undefined);
+  } finally {
+    server.close();
+  }
+});
+
 test("a session answers through the runtime's fetch and reports sven's own events", async () => {
   const requests = [];
   const server = createServer((req, res) => {
