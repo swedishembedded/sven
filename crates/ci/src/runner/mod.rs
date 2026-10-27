@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod exit;
+
 mod attachment;
 mod deadline;
 mod event;
@@ -80,6 +82,7 @@ pub const EXIT_VALIDATION_ERROR: i32 = 2;
 /// One or more tool calls returned errors during the run but the run completed.
 /// Allows `set -e` pipelines to treat partial failures differently from hard errors.
 pub const EXIT_TOOL_WARNINGS: i32 = 3;
+
 /// The token budget set via `--max-tokens` was exhausted before all steps completed.
 pub const EXIT_BUDGET_EXHAUSTED: i32 = 4;
 /// A tool call parked awaiting a human answer that did not arrive during this
@@ -1413,12 +1416,9 @@ impl CiRunner {
         }
 
         // ── Exit with tool-warning code if any non-fatal tool errors occurred ─
-        // Exit code 3 signals "run completed but with tool warnings" - the
-        // caller can use this to distinguish a clean run from a partially
-        // successful one without treating it as a hard failure.
-        if any_tool_errors {
+        if let Some(code) = exit::tool_error_exit(any_tool_errors, opts.input_from_file) {
             write_stderr("[sven:warn] Run completed with tool errors (exit 3).");
-            std::process::exit(EXIT_TOOL_WARNINGS);
+            std::process::exit(code);
         }
 
         Ok(())
