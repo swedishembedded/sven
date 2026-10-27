@@ -24,8 +24,10 @@ use sven_model_mock::ScriptedMockProvider;
 use sven_sdk::{Engine, Toolset};
 use sven_turn::ledger::schema_tokens;
 
-/// Estimated tokens of every definition `Toolset::coding()` offers.
-const CODING_CEILING: u32 = 3_195;
+/// Estimated tokens of every definition `Toolset::coding()` offers. Raised
+/// from 3 195 when the coding set gained PDF search (`document_locate`,
+/// ~300 tokens beside `document_convert`'s ~170).
+const CODING_CEILING: u32 = 3_520;
 /// Estimated tokens of every definition `Toolset::research()` offers.
 const RESEARCH_CEILING: u32 = 2_390;
 

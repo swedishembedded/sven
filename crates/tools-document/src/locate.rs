@@ -67,16 +67,11 @@ impl Tool for DocumentLocateTool {
     }
 
     fn description(&self) -> &str {
-        "Search inside a PDF, whose text a plain-text search cannot see (for text files, use \
-         plain-text search, not this). With `query` it returns the outline entries (chapters, \
-         sections) whose title matches, each with its page range, and the pages whose text \
-         matches, each with a match count and a short snippet. `syntax`: `literal` (default), \
-         `regex`, or `fzf` (space-separated terms that must all match one line: `abc` fuzzy, \
-         `'abc` exact, `^abc` prefix, `abc$` suffix, `!abc` excludes, `a | b` either; ranked \
-         best first). Matching ignores case and line breaks. Without `query` it lists the \
-         outline to `depth` levels. Results come `limit` at a time; pass the returned \
-         `next_offset` as `offset` for more. `pages` (e.g. 600-700) narrows the search. A \
-         match's `pages` is the page selection that converts just that part to Markdown."
+        "Search a PDF's outline and text layer without reading it (plain-text files need no \
+         special tool). Returns the outline entries whose title matches, each with its page \
+         range, and the pages whose text matches, each with a match count and a snippet; \
+         without `query`, the outline. Results are paged: pass `next_offset` back as `offset`. \
+         A match's `pages` is the selection to convert that part to Markdown."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -85,12 +80,12 @@ impl Tool for DocumentLocateTool {
             "properties": {
                 "source": {"type": "string", "description": "PDF file"},
                 "query": {"type": "string", "description": "what to find; omit to list the outline"},
-                "syntax": {"type": "string", "enum": Syntax::NAMES, "description": "how `query` is read (default literal)"},
-                "pages": {"type": "string", "description": "only these pages, e.g. 1-5,9,600-"},
-                "depth": {"type": "integer", "minimum": 1, "description": format!("outline levels listed (default {OVERVIEW_DEPTH} without a query, all with one)")},
-                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "description": format!("entries per list (default {DEFAULT_LIMIT})")},
-                "offset": {"type": "integer", "minimum": 0, "description": "entries to skip in each list, from a previous next_offset"},
-                "context": {"type": "integer", "minimum": 0, "maximum": MAX_CONTEXT, "description": format!("snippet characters each side of a match (default {DEFAULT_CONTEXT})")}
+                "syntax": {"type": "string", "enum": Syntax::NAMES, "description": "literal (default); regex; fzf: terms on one line, abc fuzzy, 'abc exact, ^abc prefix, abc$ suffix, !abc not, a | b either"},
+                "pages": {"type": "string", "description": "only these pages, e.g. 600-700"},
+                "depth": {"type": "integer", "minimum": 1, "description": "outline levels listed"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "description": "entries per list"},
+                "offset": {"type": "integer", "minimum": 0},
+                "context": {"type": "integer", "minimum": 0, "maximum": MAX_CONTEXT, "description": "snippet characters each side"}
             },
             "required": ["source"],
             "additionalProperties": false
