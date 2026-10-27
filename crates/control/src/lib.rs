@@ -145,6 +145,13 @@ pub enum ControlEvent {
         args: serde_json::Value,
     },
 
+    /// A person typed `text` at the host itself (the terminal running the
+    /// host) as the session's next message. The host sends it before the
+    /// events of the answer it starts, so a controller records the message
+    /// and then the answer, in that order; the host takes such input only
+    /// while the session is idle.
+    UserInput { session_id: Uuid, text: String },
+
     /// The session's lifecycle state changed.
     SessionState {
         session_id: Uuid,

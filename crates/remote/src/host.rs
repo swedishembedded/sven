@@ -88,8 +88,13 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
         sessions: options.sessions,
     });
 
+    let (routed, routed_rx) = mpsc::channel(SESSION_QUEUE);
+    tokio::spawn(router(routed_rx, Arc::clone(&context)));
+    tokio::spawn(terminal_loop(routed.clone()));
+    println!("Type a message to send it to the conversation in progress here, or @<id> message for another.");
+
     tokio::select! {
-        result = command_loop(&client, &context, &uploads) => result,
+        result = command_loop(&client, &routed, &uploads) => result,
         _ = tokio::signal::ctrl_c() => {
             println!("Stopping. Sessions in progress end here.");
             Ok(())
@@ -99,10 +104,9 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
 
 async fn command_loop(
     client: &RemoteClient,
-    context: &Arc<SessionContext>,
+    routed: &mpsc::Sender<Routed>,
     uploads: &mpsc::Sender<Upload>,
 ) -> anyhow::Result<()> {
-    let mut sessions: HashMap<Uuid, mpsc::Sender<SessionCommand>> = HashMap::new();
     let mut taken = 0u64;
     let mut backoff = Duration::from_millis(500);
     loop {
@@ -124,7 +128,7 @@ async fn command_loop(
                         continue;
                     }
                     taken = envelope.seq;
-                    route(envelope.command, &mut sessions, context).await;
+                    let _ = routed.send(Routed::Command(envelope.command)).await;
                     let _ = uploads.send(Upload::Ack(taken)).await;
                 }
             }
@@ -133,6 +137,81 @@ async fn command_loop(
         }
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
+    }
+}
+
+/// What reaches the router: a command from the server, or a line typed at
+/// this host's terminal.
+enum Routed {
+    Command(ControlCommand),
+    Terminal(String),
+}
+
+/// Owns the sessions: starts each one's actor on first sight and hands it its
+/// commands, and sends a terminal line to the session it names (`@<id
+/// prefix> text`) or else to the one most recently given input.
+async fn router(mut rx: mpsc::Receiver<Routed>, context: Arc<SessionContext>) {
+    let mut sessions: HashMap<Uuid, mpsc::Sender<SessionCommand>> = HashMap::new();
+    let mut last_active: Option<Uuid> = None;
+    while let Some(routed) = rx.recv().await {
+        match routed {
+            Routed::Command(command) => {
+                if let ControlCommand::SendInput { session_id, .. } = &command {
+                    last_active = Some(*session_id);
+                }
+                route(command, &mut sessions, &context).await;
+            }
+            Routed::Terminal(line) => {
+                let Some((target, text)) = terminal_target(&line, sessions.keys(), last_active)
+                else {
+                    println!("No conversation to send that to yet: start one from the server, or name one with @<id>.");
+                    continue;
+                };
+                last_active = Some(target);
+                if let Some(actor) = sessions.get(&target) {
+                    let _ = actor.send(SessionCommand::Terminal(text)).await;
+                }
+            }
+        }
+    }
+}
+
+/// The session a terminal line is for and its text: `@<prefix> text` names a
+/// session by the start of its id (one match only), anything else goes to
+/// `last_active`. None when there is no such session or nothing to send.
+fn terminal_target<'a>(
+    line: &str,
+    known: impl Iterator<Item = &'a Uuid>,
+    last_active: Option<Uuid>,
+) -> Option<(Uuid, String)> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    if let Some(rest) = line.strip_prefix('@') {
+        let (prefix, text) = rest.split_once(char::is_whitespace)?;
+        let matches: Vec<Uuid> = known
+            .filter(|id| id.to_string().starts_with(prefix))
+            .copied()
+            .collect();
+        let text = text.trim();
+        return match matches.as_slice() {
+            [only] if !text.is_empty() => Some((*only, text.to_string())),
+            _ => None,
+        };
+    }
+    last_active.map(|id| (id, line.to_string()))
+}
+
+/// Lines typed at this host's terminal, until it closes (a host started with
+/// no terminal reads nothing and carries on).
+async fn terminal_loop(routed: mpsc::Sender<Routed>) {
+    use tokio::io::AsyncBufReadExt;
+    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        if routed.send(Routed::Terminal(line)).await.is_err() {
+            break;
+        }
     }
 }
 
@@ -185,6 +264,8 @@ enum SessionCommand {
     },
     Model(String),
     Input(String),
+    /// A line typed at this host's terminal for this session.
+    Terminal(String),
     Cancel,
 }
 
@@ -197,6 +278,8 @@ struct SessionActor {
     model: Option<String>,
     history: Vec<Message>,
     controller: Option<SessionController>,
+    /// An answer is being written; terminal input waits for it.
+    answering: bool,
     events_tx: mpsc::Sender<AgentEvent>,
     events_rx: mpsc::Receiver<AgentEvent>,
 }
@@ -211,6 +294,7 @@ impl SessionActor {
             model: None,
             history: Vec::new(),
             controller: None,
+            answering: false,
             events_tx,
             events_rx,
         }
@@ -247,17 +331,40 @@ impl SessionActor {
                 }
             }
             SessionCommand::Model(model) => self.model = Some(model),
-            SessionCommand::Input(text) => {
-                println!("[{}] > {}", self.short(), first_line(&text));
-                if let Err(e) = self.submit(text).await {
-                    self.fail(&format!("{e:#}")).await;
+            SessionCommand::Input(text) => self.answer(text).await,
+            SessionCommand::Terminal(text) => {
+                if self.answering {
+                    println!(
+                        "[{}] still answering; send it when the answer is done",
+                        self.short()
+                    );
+                    return;
                 }
+                // The server records the message before the answer's events.
+                let input = ControlEvent::UserInput {
+                    session_id: self.id,
+                    text: text.clone(),
+                };
+                let _ = self
+                    .context
+                    .uploads
+                    .send(Upload::Event(Box::new(input)))
+                    .await;
+                self.answer(text).await;
             }
             SessionCommand::Cancel => {
                 if let Some(controller) = &self.controller {
                     controller.cancel().await;
                 }
             }
+        }
+    }
+
+    async fn answer(&mut self, text: String) {
+        println!("[{}] > {}", self.short(), first_line(&text));
+        self.answering = true;
+        if let Err(e) = self.submit(text).await {
+            self.fail(&format!("{e:#}")).await;
         }
     }
 
@@ -301,14 +408,15 @@ impl SessionActor {
     }
 
     /// Reports a failure the session itself never saw, ending the answer.
-    async fn fail(&self, message: &str) {
+    async fn fail(&mut self, message: &str) {
         println!("[{}] ! {message}", self.short());
+        self.answering = false;
         self.upload(AgentEvent::Error(message.to_string())).await;
         self.upload(AgentEvent::TurnComplete).await;
         self.state(SessionState::Idle).await;
     }
 
-    async fn forward(&self, event: AgentEvent) {
+    async fn forward(&mut self, event: AgentEvent) {
         match &event {
             // The kernel's per-dispatch trace: for a debugger, not a reader.
             AgentEvent::Transition { .. } => return,
@@ -326,6 +434,7 @@ impl SessionActor {
         let finished = matches!(event, AgentEvent::TurnComplete | AgentEvent::Aborted { .. });
         self.upload(event).await;
         if finished {
+            self.answering = false;
             println!("[{}] done", self.short());
             if let Some(controller) = &self.controller {
                 if let Err(e) = self.context.sessions.save(self.id, &controller.history()) {
@@ -442,6 +551,42 @@ async fn upload_loop(client: RemoteClient, mut rx: mpsc::Receiver<Upload>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_terminal_line_goes_to_the_session_it_names_or_else_the_last_active_one() {
+        let a = Uuid::parse_str("aaaa1111-0000-4000-8000-000000000000").unwrap();
+        let b = Uuid::parse_str("bbbb2222-0000-4000-8000-000000000000").unwrap();
+        let known = [a, b];
+        assert_eq!(
+            terminal_target("hello", known.iter(), Some(a)),
+            Some((a, "hello".into()))
+        );
+        assert_eq!(
+            terminal_target("@bbbb  run the tests ", known.iter(), Some(a)),
+            Some((b, "run the tests".into()))
+        );
+        assert_eq!(
+            terminal_target("hello", known.iter(), None),
+            None,
+            "no conversation yet"
+        );
+        assert_eq!(
+            terminal_target("@cccc hi", known.iter(), Some(a)),
+            None,
+            "no such session"
+        );
+        assert_eq!(
+            terminal_target("@ hi", known.iter(), Some(a)),
+            None,
+            "ambiguous: every id matches"
+        );
+        assert_eq!(
+            terminal_target("@aaaa", known.iter(), Some(a)),
+            None,
+            "nothing to send"
+        );
+        assert_eq!(terminal_target("   ", known.iter(), Some(a)), None);
+    }
 
     #[test]
     fn a_long_prompt_prints_as_its_first_line_cut_at_a_character() {

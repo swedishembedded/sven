@@ -54,8 +54,14 @@ finished answer in `~/.local/share/sven/remote/sessions/` (mode 0600; the
 platform's data directory elsewhere). After `sven rc` restarts, a session
 continues from there rather than from the server's text-only copy.
 
+## Type in the terminal
+
+A line typed into the terminal running `sven rc` is the next message of the
+conversation most recently given a message, or of the one named by the
+start of its id: `@6f1c run the tests`. It is taken only while that
+conversation is not answering, and it appears in the server's interface
+with its answer, as if it had been sent there.
+
 ## What it does not do yet
 
 - Tool approvals are not forwarded to the server.
-- A message typed into the terminal running `sven rc` does not reach the
-  conversation; send it from the server's interface.
