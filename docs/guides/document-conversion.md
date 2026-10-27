@@ -38,26 +38,35 @@ text is read by pure-Rust libraries.
    bounding-box output). Blank pages cost no request.
    **Columns and articles.** Whole-page OCR reads a newspaper badly: columns
    interleave and a model loses its place after the first column. With
-   `--layout auto` (the default) a page that looks like columns, or whose
-   whole-page reading was cut off or looped, is read block by block instead.
-   The model is asked for each block with its location (DeepSeek-OCR's
-   grounding output, `<|ref|>label<|/ref|><|det|>[[x1,y1,x2,y2]]<|/det|>`); the
-   blocks are put in reading order by a deterministic rule, with no chat model
-   involved (wide blocks such as a masthead cut the page into bands; within a
-   band the blocks are read column by column, each headline before the text
-   under it and each article whole before the next); and every block is read
-   again from a crop of the page at `--region-dpi`, which resolves small
-   type that the whole page cannot. The crops are independent requests and use
-   the same concurrency window. A crop that loops, runs to the token limit or
-   is mostly non-words is a picture the model invented text for; the layout
-   pass's own text stands in and the page is marked with a warning. A model that
-   does not return locations simply reads the page whole, with a note. `--layout regions` does this for every OCR
-   page, `--layout off` never.
+   `--layout auto` (the default) a page that looks like columns is sent to the
+   model for its blocks with their locations (DeepSeek-OCR's grounding output,
+   `<|ref|>label<|/ref|><|det|>[[x1,y1,x2,y2]]<|/det|>`). When the blocks line
+   up in three or more columns, or the whole-page reading was cut off or
+   looped, the page is read block by block; otherwise (a page with figures) it
+   is read whole. The blocks are put in reading order by a deterministic rule,
+   with no chat model involved: wide blocks such as a masthead cut the page into
+   bands; within a band the blocks are read column by column, each headline
+   before the text under it and each article whole before the next. A block the
+   model lists with two boxes (a paragraph that continues in the next column) is
+   two regions. Runs of body blocks that follow each other in one column are
+   merged into one crop, headlines and one-line blocks keep the text of the
+   layout pass, and each crop is read again from the page at `--region-dpi`,
+   which resolves small type the whole page cannot: a newspaper page costs
+   about fifteen requests rather than one per paragraph. The crops are
+   independent requests and use the same concurrency window. A crop that loops,
+   runs to the token limit or is mostly non-words is a picture the model
+   invented text for; the layout pass's own text stands in and the page is marked
+   with a warning. A text repeated by two overlapping crops is kept once. A model
+   that does not return locations reads the page whole, with a note.
+   `--layout regions` reads every OCR page by blocks, `--layout off` never.
 4. **Validate and retry.** An answer is checked for a cut-off (token limit),
    emptiness, degenerate repetition, leaked model control tokens, and against the page's own text layer: coverage
    of its words where the layer is good, and the numbers and codes (register
    values, bit patterns, amounts) wherever the layer has enough of them. A page that fails is
-   rendered again at a higher resolution, up to `--max-attempts`. A page that
+   rendered again at a higher resolution, up to `--max-attempts`. In `auto`,
+   a page whose recognised numbers still disagree with its text layer keeps the
+   text layer (a misread digit in a register value is worse than lost
+   formatting) and says so; `--ocr always` keeps the recognised text. A page that
    never validates keeps its best text with a warning; a page that never
    produced text is marked failed in the output.
 5. **Publish.** Pages are assembled in order (`--page-markers` adds
@@ -112,6 +121,14 @@ A model the catalog does not know as image-capable needs
 serve the same model (one server per GPU) are listed as
 `models: {pool: [a/m, b/m]}`; requests go to the endpoint with the most headroom, so work spreads in proportion to what each can take.
 
+**Tiling.** brain reads a dense page in tiles; `driver_options: {max_tiles: N}`
+on the provider entry (a request field brain forwards, `0` reads the page as one
+view) trades accuracy for speed. Measured on three pages of a born-digital paper
+with DeepSeek-OCR-2: the default (up to 6 tiles) gave a character error rate of
+0.006 against the PDF's own text on a dense text page, `max_tiles: 0` 0.040 in
+60% of the time, so the default stays; on a figure page where tiling made the
+model loop to the token limit, `max_tiles: 0` ended after 193 tokens.
+
 **No OCR model.** When none is configured or discovered, or the configured one
 is unreachable or cannot take images, nothing falls back silently. The CLI exits
 with status 3 and says so; the tool returns `status: no_ocr_model` whose text
@@ -148,8 +165,12 @@ The result looks like:
  "warnings":[],"manifest":"/work/paper.md.manifest.json","seconds":4}
 ```
 
-`status` is `ok`, `ok_with_warnings`, `partial` (some pages failed) or
-`no_ocr_model`. Cancelling the tool stops the requests in flight and leaves the
+`status` is `ok`, `ok_with_warnings`, `partial` (some pages failed), `failed`
+(none converted) or `no_ocr_model`. A failure carries `failures` (each distinct
+cause with the pages it hit, as the model server reported it) and an
+instruction to the chat model to report the cause to the user and stop, not to
+retry or work around it; an error that ends the whole conversion (an unreadable
+source) is worded the same way. Cancelling the tool stops the requests in flight and leaves the
 manifest consistent.
 
 Configuration keys are in the [configuration reference](../reference/configuration.md#ocr).

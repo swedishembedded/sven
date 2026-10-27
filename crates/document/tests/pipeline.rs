@@ -395,12 +395,12 @@ async fn regions_are_read_from_crops_in_reading_order() {
     );
     assert_eq!(
         calls.load(Ordering::SeqCst),
-        6,
-        "one layout pass and five blocks"
+        3,
+        "one layout pass and one crop per column run; the headline is not cropped"
     );
     let md = std::fs::read_to_string(&out).unwrap();
     let at = |s: &str| md.find(s).unwrap_or_else(|| panic!("{s} in {md}"));
-    assert!(at("# Headline from its crop") < at("left column from its crop"));
+    assert!(at("# HEADLINE") < at("left column from its crop"));
     assert!(at("left column from its crop") < at("right column from its crop"));
     assert!(
         !md.contains("layout pass"),
@@ -408,7 +408,7 @@ async fn regions_are_read_from_crops_in_reading_order() {
     );
     let m: Manifest = serde_json::from_slice(&std::fs::read(manifest_path(&out)).unwrap()).unwrap();
     let info = m.pages[0].layout.as_ref().expect("layout recorded");
-    assert_eq!((info.regions, info.columns, info.degraded), (5, 2, 0));
+    assert_eq!((info.regions, info.columns, info.degraded), (3, 2, 0));
 }
 
 #[tokio::test]
@@ -497,7 +497,7 @@ async fn a_crop_the_model_invented_text_for_falls_back_to_the_layout_pass_text()
     assert!(md.contains("right column (layout pass)"), "{md}");
     assert_eq!(r.pages_warning, 1);
     assert!(
-        r.warnings.iter().any(|w| w.contains("2 of 5 blocks")),
+        r.warnings.iter().any(|w| w.contains("1 of 3 blocks")),
         "{:?}",
         r.warnings
     );
@@ -534,4 +534,103 @@ async fn a_line_on_the_seam_between_two_blocks_is_kept_once() {
         lines.windows(2).all(|w| w[0] != w[1]),
         "a line on a seam appears twice in a row: {md}"
     );
+}
+
+/// Grounding for a page of three columns, two paragraphs each.
+const THREE_COLUMNS: &str = "<|ref|>text<|/ref|><|det|>[[50, 100, 300, 300]]<|/det|>\nc1 a\n\n\
+                             <|ref|>text<|/ref|><|det|>[[50, 320, 300, 500]]<|/det|>\nc1 b\n\n\
+                             <|ref|>text<|/ref|><|det|>[[350, 100, 600, 300]]<|/det|>\nc2 a\n\n\
+                             <|ref|>text<|/ref|><|det|>[[350, 320, 600, 500]]<|/det|>\nc2 b\n\n\
+                             <|ref|>text<|/ref|><|det|>[[650, 100, 900, 300]]<|/det|>\nc3 a\n\n\
+                             <|ref|>text<|/ref|><|det|>[[650, 320, 900, 500]]<|/det|>\nc3 b\n";
+
+fn grounding_model(grounded: &'static str) -> ScriptedOcr {
+    ScriptedOcr::new(move |seen, call| {
+        if seen.prompt.contains("<|grounding|>") {
+            Reply::text(grounded)
+        } else if seen.width > 300 {
+            Reply::text("the page read whole")
+        } else {
+            Reply::text(match call {
+                1 => "northern district report, read from its crop",
+                2 => "harbour council minutes, read from its crop",
+                _ => "weather station notes, read from its crop",
+            })
+        }
+    })
+}
+
+#[tokio::test]
+async fn auto_reads_a_two_column_page_whole_and_a_newspaper_by_crops() {
+    let dir = tempfile::tempdir().unwrap();
+    let opts = layout_options(LayoutMode::Auto);
+
+    // Two columns: the grounding pass finds fewer than three, so the page is read whole.
+    let src = write_pdf(dir.path(), &[FixturePage::Bars(2)]);
+    let out = dir.path().join("two.md");
+    let (conv, calls) = converter(grounding_model(GROUNDED));
+    conv.convert(&src, &out, &opts).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap().trim(),
+        "the page read whole"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "one grounding pass, one whole-page reading"
+    );
+
+    // Three columns: one crop per column, however many paragraphs it holds.
+    let src = write_pdf(dir.path(), &[FixturePage::Bars(3)]);
+    let out = dir.path().join("three.md");
+    let (conv, calls) = converter(grounding_model(THREE_COLUMNS));
+    conv.convert(&src, &out, &opts).await.unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        4,
+        "one grounding pass and three column crops"
+    );
+    let md = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(md.matches("read from its crop").count(), 3, "{md}");
+}
+
+/// A pixel-poor text layer full of codes: judged unreliable as text, but its
+/// numbers are right.
+fn register_page() -> FixturePage {
+    FixturePage::Text(vec![
+        "qxzkv wrtpl 0x4002 0000 0x4002 0004 0x4002 0008 0x4002 000C bnmzx",
+        "0x4002 0010 0x4002 0014 0x4002 0018 0x4002 001C xkcdz rrtkq 0x4002 0020",
+        "0x4002 0024 0x4002 0028 0x4002 002C 0x4002 0030 0x4002 0034 qqxzw",
+        "0x4002 0038 0x4002 003C 0x4002 0040 0x4002 0044 0x4002 0048 zzkxq",
+    ])
+}
+
+#[tokio::test]
+async fn auto_keeps_the_text_layer_when_recognised_digits_disagree_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &[register_page()]);
+    // Every zero read as a letter O: the shape of a register map, the digits gone.
+    let wrong = FixturePage::text_of(&register_page()).replace('0', "O");
+    let (conv, _) = converter(ScriptedOcr::new(move |_, _| Reply::text(wrong.clone())));
+
+    let out = dir.path().join("auto.md");
+    let r = conv.convert(&src, &out, &options()).await.unwrap();
+    let md = std::fs::read_to_string(&out).unwrap();
+    assert!(md.contains("0x4002 0000") && !md.contains("Ox4OO2"), "{md}");
+    assert_eq!((r.pages_native, r.pages_ocr, r.pages_warning), (1, 0, 1));
+    assert!(
+        r.warnings.iter().any(|w| w.contains("text layer was kept")),
+        "{:?}",
+        r.warnings
+    );
+
+    // Asked for OCR explicitly, the recognised text stands, with the warning.
+    let out = dir.path().join("always.md");
+    let opts = ConvertOptions {
+        ocr: OcrMode::Always,
+        ..options()
+    };
+    let r = conv.convert(&src, &out, &opts).await.unwrap();
+    assert!(std::fs::read_to_string(&out).unwrap().contains("Ox4OO2"));
+    assert_eq!(r.pages_ocr, 1);
 }

@@ -39,6 +39,16 @@ impl Region {
         )
     }
 
+    /// Whether the block is worth a request of its own: body text of some
+    /// size. Headlines are set large and read well from the layout pass; a
+    /// one-line block (a date, a running head) is too small to repay a request.
+    pub fn needs_crop(&self) -> bool {
+        const ONE_LINE: f32 = 0.02;
+        self.is_textual()
+            && !matches!(self.label.as_str(), "title" | "sub_title")
+            && self.bbox[3] - self.bbox[1] > ONE_LINE
+    }
+
     /// Headline that opens an article (not a sub-heading inside one).
     fn is_headline(&self) -> bool {
         self.label == "title"
@@ -75,22 +85,30 @@ impl LayoutParser for DeepseekGrounding {
             let Some((boxes, text)) = rest.split_once(DET_CLOSE) else {
                 continue;
             };
-            let Some(bbox) = union_of_boxes(boxes) else {
-                continue;
-            };
-            regions.push(Region {
-                label: label.trim().to_lowercase().replace(' ', "_"),
-                bbox,
-                text: text.trim().to_string(),
-            });
+            // A block that continues into the next column lists both boxes:
+            // each is a region of its own, and the text (which the model gave
+            // once) stays with the first.
+            let label = label.trim().to_lowercase().replace(' ', "_");
+            for (i, bbox) in boxes_of(boxes).into_iter().enumerate() {
+                regions.push(Region {
+                    label: label.clone(),
+                    bbox,
+                    text: if i == 0 {
+                        text.trim().to_string()
+                    } else {
+                        String::new()
+                    },
+                });
+            }
         }
         regions
     }
 }
 
-/// The union of every `[x1,y1,x2,y2]` in `[[...],[...]]`, as page fractions.
-fn union_of_boxes(s: &str) -> Option<[f32; 4]> {
-    let mut union: Option<[f32; 4]> = None;
+/// Every `[x1,y1,x2,y2]` in `[[...],[...]]`, as page fractions; boxes out of
+/// the grid or empty are skipped.
+fn boxes_of(s: &str) -> Vec<[f32; 4]> {
+    let mut boxes = Vec::new();
     for part in s.split('[').skip(1) {
         let numbers: Vec<f32> = part
             .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
@@ -106,20 +124,11 @@ fn union_of_boxes(s: &str) -> Option<[f32; 4]> {
             numbers[2] / GRID,
             numbers[3] / GRID,
         ];
-        if b[2] <= b[0] || b[3] <= b[1] {
-            continue;
+        if b[2] > b[0] && b[3] > b[1] {
+            boxes.push(b);
         }
-        union = Some(match union {
-            None => b,
-            Some(u) => [
-                u[0].min(b[0]),
-                u[1].min(b[1]),
-                u[2].max(b[2]),
-                u[3].max(b[3]),
-            ],
-        });
     }
-    union
+    boxes
 }
 
 // ── Reading order ───────────────────────────────────────────────────────────
@@ -173,6 +182,18 @@ fn columns_of(regions: &[Region]) -> Vec<Column> {
         })
         .collect();
     columns.sort_by(|a, b| a.left.total_cmp(&b.left));
+    // Columns stand side by side. A cluster that starts inside the one before
+    // it is an indent (a list, a table's first cell), not a column.
+    let mut apart: Vec<Column> = Vec::new();
+    for c in columns {
+        if apart
+            .last()
+            .is_none_or(|prev| c.left >= prev.right - COLUMN_TOLERANCE)
+        {
+            apart.push(c);
+        }
+    }
+    let mut columns = apart;
     // A single column is just a page.
     if columns.len() < 2 {
         columns.clear();
@@ -299,6 +320,100 @@ fn order_band(band: Vec<Region>, columns: &[Column]) -> Vec<Region> {
     order.into_iter().filter_map(|i| slots[i].take()).collect()
 }
 
+// ── Fewer, larger crops ─────────────────────────────────────────────────────
+
+/// Body blocks stacked in one column within this distance (page height) of each
+/// other are one run of text.
+const RUN_GAP: f32 = 0.035;
+/// Left and right edges of blocks in one run agree within this.
+const RUN_EDGE: f32 = 0.04;
+/// A merged crop is at most this share of the page height and area: bigger
+/// ones would ask the model for more than it reliably writes in one answer.
+const RUN_MAX_HEIGHT: f32 = 0.6;
+const RUN_MAX_AREA: f32 = 0.3;
+/// A neighbour overlapped more than this by a merged crop stops the merge.
+const RUN_MAX_INTRUSION: f32 = 0.1;
+
+fn is_body(r: &Region) -> bool {
+    matches!(r.label.as_str(), "text" | "list")
+}
+
+fn union(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[2].max(b[2]),
+        a[3].max(b[3]),
+    ]
+}
+
+fn area(b: [f32; 4]) -> f32 {
+    (b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0)
+}
+
+fn intersection_area(a: [f32; 4], b: [f32; 4]) -> f32 {
+    area([
+        a[0].max(b[0]),
+        a[1].max(b[1]),
+        a[2].min(b[2]),
+        a[3].min(b[3]),
+    ])
+}
+
+/// Joins runs of body blocks that follow each other in reading order, stand in
+/// one column and nearly touch, so that a column of twenty paragraphs is read
+/// in one request instead of twenty. Headlines, sub-headings, tables and
+/// pictures are never merged, and neither is a run whose crop would take in a
+/// block that is not part of it.
+pub fn merge_runs(ordered: Vec<Region>) -> Vec<Region> {
+    let all: Vec<[f32; 4]> = ordered.iter().map(|r| r.bbox).collect();
+    let mut out: Vec<Region> = Vec::new();
+    // Indices (into `ordered`) of the blocks in the run being built.
+    let mut members: Vec<usize> = Vec::new();
+    for (i, region) in ordered.into_iter().enumerate() {
+        let joined = out.last().is_some_and(|last| {
+            is_body(last)
+                && is_body(&region)
+                && can_join(last, &region)
+                && !intrudes(union(last.bbox, region.bbox), &all, &members, i)
+        });
+        if joined {
+            let last = out.last_mut().expect("checked above");
+            last.bbox = union(last.bbox, region.bbox);
+            last.text = format!("{}\n\n{}", last.text, region.text)
+                .trim()
+                .to_string();
+            members.push(i);
+        } else {
+            members = vec![i];
+            out.push(region);
+        }
+    }
+    out
+}
+
+fn can_join(a: &Region, b: &Region) -> bool {
+    let (x, y) = (a.bbox, b.bbox);
+    let gap = y[1] - x[3];
+    let merged = union(x, y);
+    (x[0] - y[0]).abs() <= RUN_EDGE
+        && (x[2] - y[2]).abs() <= RUN_EDGE
+        && (-RUN_GAP..=RUN_GAP).contains(&gap)
+        && merged[3] - merged[1] <= RUN_MAX_HEIGHT
+        && area(merged) <= RUN_MAX_AREA
+}
+
+/// Whether `crop` would take in a block that is not one of the run's own
+/// (`members`, which excludes the candidate `next`).
+fn intrudes(crop: [f32; 4], all: &[[f32; 4]], members: &[usize], next: usize) -> bool {
+    all.iter().enumerate().any(|(j, b)| {
+        !members.contains(&j)
+            && j != next
+            && area(*b) > 0.0
+            && intersection_area(crop, *b) / area(*b) > RUN_MAX_INTRUSION
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,15 +434,16 @@ mod tests {
                       <|ref|>text<|/ref|><|det|>[[5, 5, 2000, 9]]<|/det|>\nout of range\n\
                       <|ref|>broken";
         let regions = DeepseekGrounding.parse(answer);
-        assert_eq!(regions.len(), 2);
+        assert_eq!(regions.len(), 3, "a block with two boxes is two regions");
         assert_eq!(
             (regions[0].label.as_str(), regions[0].text.as_str()),
             ("title", "# HEAD")
         );
         assert!((regions[1].bbox[1] - 180.0 / 999.0).abs() < 1e-6);
-        assert!(
-            (regions[1].bbox[3] - 300.0 / 999.0).abs() < 1e-6,
-            "boxes are united"
+        assert!((regions[2].bbox[1] - 250.0 / 999.0).abs() < 1e-6);
+        assert_eq!(
+            (regions[1].text.as_str(), regions[2].text.as_str()),
+            ("Body.", "")
         );
         assert!(DeepseekGrounding
             .parse("plain markdown, no grounding")
@@ -387,6 +503,29 @@ mod tests {
     }
 
     #[test]
+    fn indented_lines_and_tables_are_not_columns() {
+        // A register page: a heading, lines indented to three depths, tables.
+        let t = "text";
+        let page = vec![
+            r(
+                "sub_title",
+                [107, 105, 535, 123],
+                "3.9.3 Flash key register",
+            ),
+            r(t, [203, 130, 882, 160], "intro"),
+            r(t, [205, 166, 363, 180], "a"),
+            r(t, [205, 181, 403, 195], "b"),
+            r(t, [205, 202, 471, 216], "c"),
+            r("table", [108, 233, 888, 326], "t"),
+            r(t, [184, 344, 429, 358], "d"),
+            r(t, [251, 359, 865, 387], "e"),
+            r(t, [291, 388, 470, 402], "f"),
+            r(t, [291, 403, 480, 417], "g"),
+        ];
+        assert_eq!(column_count(&page), 0);
+    }
+
+    #[test]
     fn a_page_without_columns_reads_top_to_bottom() {
         let page = vec![
             r("text", [100, 300, 900, 400], "second"),
@@ -396,5 +535,124 @@ mod tests {
         let order: Vec<String> = reading_order(page).into_iter().map(|r| r.text).collect();
         assert_eq!(order, ["first", "second", "third"]);
         assert_eq!(column_count(&front_page()), 4);
+    }
+
+    #[test]
+    fn runs_of_body_blocks_in_a_column_become_one_crop() {
+        let ordered = reading_order(front_page());
+        let before = ordered.len();
+        let merged = merge_runs(ordered);
+        let texts: Vec<&str> = merged.iter().map(|r| r.text.as_str()).collect();
+        // Two paragraphs in column one before the headline, and the pairs under
+        // the two-column headline, are one crop each; headlines stay alone.
+        assert!(merged.len() < before, "{texts:?}");
+        let c1 = merged.iter().find(|r| r.text.starts_with("c1-a")).unwrap();
+        assert!(
+            c1.text.contains("c1-b") && !c1.text.contains("H-c1"),
+            "{:?}",
+            c1.text
+        );
+        let under = merged
+            .iter()
+            .find(|r| r.text.starts_with("c2-under-span"))
+            .unwrap();
+        assert!(under.text.contains("c2-under-span-2"));
+        assert!(
+            !under.text.contains("c3-under"),
+            "a run never crosses columns"
+        );
+        assert!(merged
+            .iter()
+            .any(|r| r.label == "title" && r.text == "H-c1"));
+    }
+
+    #[test]
+    fn a_crop_never_swallows_a_block_that_is_not_part_of_it() {
+        // Two body blocks in one column with a picture box laid over the gap.
+        let page = vec![
+            r("text", [100, 100, 400, 300], "above"),
+            r("image", [100, 290, 400, 420], "picture"),
+            r("text", [100, 310, 400, 500], "below"),
+        ];
+        let merged = merge_runs(reading_order(page));
+        assert_eq!(merged.iter().filter(|r| r.is_textual()).count(), 2);
+    }
+
+    /// A real DeepSeek-OCR-2 grounding of the 1960 newspaper's front page: 65
+    /// boxes that must become a handful of column crops, not 65 requests.
+    #[test]
+    fn a_real_front_page_needs_far_fewer_crops_than_blocks() {
+        let blocks: [(&str, [u16; 4]); 65] = [
+            ("text", [9, 86, 106, 97]),
+            ("text", [250, 86, 310, 97]),
+            ("text", [486, 86, 586, 97]),
+            ("text", [908, 89, 988, 100]),
+            ("title", [67, 116, 436, 175]),
+            ("text", [5, 183, 244, 242]),
+            ("text", [5, 242, 244, 317]),
+            ("text", [6, 317, 244, 359]),
+            ("text", [6, 358, 244, 425]),
+            ("text", [6, 424, 245, 501]),
+            ("text", [252, 183, 491, 217]),
+            ("text", [252, 217, 492, 277]),
+            ("sub_title", [308, 309, 685, 330]),
+            ("text", [274, 338, 486, 381]),
+            ("text", [274, 385, 486, 468]),
+            ("text", [274, 471, 487, 493]),
+            ("text", [503, 107, 958, 123]),
+            ("title", [503, 126, 929, 213]),
+            ("text", [501, 215, 991, 232]),
+            ("text", [708, 234, 792, 245]),
+            ("text", [501, 245, 991, 277]),
+            ("text", [757, 278, 991, 314]),
+            ("text", [757, 314, 991, 367]),
+            ("text", [503, 339, 713, 360]),
+            ("text", [503, 363, 714, 459]),
+            ("text", [503, 461, 714, 493]),
+            ("text", [757, 367, 991, 411]),
+            ("text", [757, 411, 991, 446]),
+            ("text", [757, 447, 991, 500]),
+            ("title", [7, 517, 336, 543]),
+            ("title", [7, 551, 438, 576]),
+            ("text", [5, 580, 245, 665]),
+            ("text", [5, 666, 244, 705]),
+            ("text", [5, 708, 244, 737]),
+            ("text", [5, 740, 244, 797]),
+            ("text", [5, 799, 244, 838]),
+            ("sub_title", [53, 856, 192, 870]),
+            ("text", [13, 873, 236, 909]),
+            ("text", [13, 909, 236, 952]),
+            ("text", [13, 952, 236, 980]),
+            ("text", [252, 580, 492, 656]),
+            ("text", [252, 657, 492, 715]),
+            ("text", [252, 717, 492, 757]),
+            ("text", [252, 759, 492, 832]),
+            ("text", [252, 835, 492, 880]),
+            ("text", [252, 882, 492, 959]),
+            ("text", [252, 961, 492, 990]),
+            ("title", [504, 515, 989, 545]),
+            ("text", [502, 552, 742, 592]),
+            ("text", [502, 592, 742, 662]),
+            ("text", [502, 663, 742, 683]),
+            ("sub_title", [509, 699, 657, 711]),
+            ("text", [509, 715, 721, 761]),
+            ("text", [749, 554, 990, 589]),
+            ("text", [749, 589, 990, 624]),
+            ("text", [749, 624, 990, 701]),
+            ("text", [766, 701, 878, 710]),
+            ("text", [749, 711, 990, 772]),
+            ("title", [502, 789, 908, 850]),
+            ("text", [501, 857, 741, 891]),
+            ("text", [501, 890, 741, 932]),
+            ("text", [501, 932, 741, 991]),
+            ("text", [749, 858, 990, 910]),
+            ("text", [749, 912, 990, 965]),
+            ("text", [749, 966, 990, 994]),
+        ];
+        let page: Vec<Region> = blocks.iter().map(|(l, b)| r(l, *b, "t")).collect();
+        let ordered = reading_order(page);
+        let merged = merge_runs(ordered);
+        let crops = merged.iter().filter(|r| r.needs_crop()).count();
+        assert!(crops <= 16, "{crops} crops");
     }
 }

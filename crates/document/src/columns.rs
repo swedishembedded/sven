@@ -18,11 +18,12 @@ const INK_BELOW: u32 = 140;
 /// Rows and columns looked at, at most; a sample is enough for a share.
 const MAX_SAMPLES: usize = 600;
 
-/// Number of text columns in an RGBA image: 1 for a page of ordinary text, 2
-/// or more when vertical gutters run through the text area.
-pub fn count_columns(rgba: &[u8], width: usize, height: usize) -> usize {
+/// `(columns, ink)`: the column count and the share of dark pixels over the
+/// strips that hold text. Newspaper print is dense everywhere; the sparse rules
+/// of a table, a form or a figure page are not.
+pub fn column_profile(rgba: &[u8], width: usize, height: usize) -> (usize, f32) {
     if width < STRIPS || height < 32 || rgba.len() < width * height * 4 {
-        return 1;
+        return (1, 0.0);
     }
     let row_step = (height / MAX_SAMPLES).max(1);
     let col_step = (width / (STRIPS * 4)).max(1);
@@ -48,15 +49,16 @@ pub fn count_columns(rgba: &[u8], width: usize, height: usize) -> usize {
         .collect();
     let mut typical: Vec<f32> = share.iter().copied().filter(|s| *s > 0.0).collect();
     if typical.len() < STRIPS / 4 {
-        return 1;
+        return (1, 0.0);
     }
+    let ink_mean = typical.iter().sum::<f32>() / typical.len() as f32;
     typical.sort_by(f32::total_cmp);
     let limit = typical[typical.len() * 3 / 4] * EMPTY_SHARE;
     let empty: Vec<bool> = share.iter().map(|s| *s <= limit).collect();
     let first_ink = empty.iter().position(|e| !e);
     let last_ink = empty.iter().rposition(|e| !e);
     let (Some(first), Some(last)) = (first_ink, last_ink) else {
-        return 1;
+        return (1, 0.0);
     };
     let mut gutters = 0;
     let mut run = 0;
@@ -70,7 +72,7 @@ pub fn count_columns(rgba: &[u8], width: usize, height: usize) -> usize {
             run = 0;
         }
     }
-    gutters + 1
+    (gutters + 1, ink_mean)
 }
 
 #[cfg(test)]
@@ -100,13 +102,13 @@ mod tests {
     fn gutters_between_columns_are_counted() {
         for n in 1..=5 {
             let (px, w, h) = page(n);
-            assert_eq!(count_columns(&px, w, h), n, "{n} columns");
+            assert_eq!(column_profile(&px, w, h).0, n, "{n} columns");
         }
     }
 
     #[test]
     fn a_blank_page_has_one_column() {
         let px = vec![255u8; 1000 * 1000 * 4];
-        assert_eq!(count_columns(&px, 1000, 1000), 1);
+        assert_eq!(column_profile(&px, 1000, 1000).0, 1);
     }
 }

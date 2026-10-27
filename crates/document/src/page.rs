@@ -15,9 +15,9 @@ use sven_model::{
 use tokio::sync::Semaphore;
 
 use crate::backend::{PdfSource, RenderedPage};
-use crate::convert::{ConvertOptions, LayoutMode};
+use crate::convert::{ConvertOptions, LayoutMode, OcrMode};
 use crate::error::DocumentError;
-use crate::layout::{reading_order, LayoutParser, Region};
+use crate::layout::{merge_runs, reading_order, LayoutParser, Region};
 use crate::limiter::{is_pushback, Limiter};
 use crate::manifest::{sha256_hex, LayoutInfo, Method, PageRecord, Status};
 use crate::quality::plausible_share;
@@ -29,16 +29,22 @@ const MAX_PUSHBACKS: u32 = 8;
 /// side, this bounds the crops waiting in memory.
 const BLOCKS_AT_ONCE: usize = 8;
 /// Output tokens a block may take per unit of page area (a full page of dense
-/// print is about 4,000 tokens). A block that needs more than this is a model
+/// newspaper print is about 10,000 tokens). A block that needs more than this is a model
 /// inventing text for a picture, and the limit stops it sooner.
-const BLOCK_TOKENS_PER_PAGE: f32 = 6000.0;
+const BLOCK_TOKENS_PER_PAGE: f32 = 12000.0;
 /// Fewest output tokens a block is allowed.
-const MIN_BLOCK_TOKENS: u32 = 256;
+const MIN_BLOCK_TOKENS: u32 = 384;
 /// A crop whose text has a smaller share of word-shaped tokens is not trusted.
 const MIN_BLOCK_WORDS: f32 = 0.5;
-/// Page images with at least this many columns go through the layout pass in
-/// `auto` mode.
+/// Pages the model finds fewer columns on than this are read whole in `auto`,
+/// not block by block.
+const MIN_COLUMNS_FOR_CROPS: usize = 3;
+/// Page images with at least this many columns...
 const AUTO_LAYOUT_COLUMNS: usize = 2;
+/// ...and at least this dark go through the layout pass in `auto` mode:
+/// newspaper print is dense (0.13-0.23 measured), the rules of a register table
+/// or a figure page are not (0.03-0.08).
+const AUTO_LAYOUT_INK: f32 = 0.08;
 
 pub(crate) struct PageContext {
     pub doc: Arc<dyn PdfSource>,
@@ -157,15 +163,21 @@ async fn recognise(
     record: &mut PageRecord,
 ) {
     let opts = &ctx.options;
-    let columns = prepared.image.as_ref().map_or(1, |i| i.columns);
+    let (columns, ink) = prepared
+        .image
+        .as_ref()
+        .map_or((1, 0.0), |i| (i.columns, i.ink));
     let layout_first = match opts.layout {
         LayoutMode::Off => false,
         LayoutMode::Regions => true,
-        LayoutMode::Auto => columns >= AUTO_LAYOUT_COLUMNS,
+        LayoutMode::Auto => columns >= AUTO_LAYOUT_COLUMNS && ink >= AUTO_LAYOUT_INK,
     };
     let reference = native.filter(|_| work.reference);
     let mut image = Some(prepared.image);
-    if layout_first && read_by_layout(ctx, work, image.take().unwrap(), record).await {
+    let force = opts.layout == LayoutMode::Regions;
+    if layout_first && read_by_layout(ctx, work, native, image.take().unwrap(), force, record).await
+    {
+        keep_text_layer_for_digits(opts, native, record);
         return;
     }
     let reading = read(
@@ -194,13 +206,40 @@ async fn recognise(
         if !read_by_layout(
             ctx,
             work,
+            native,
             render(ctx, work.page - 1, opts.dpi).await.0,
+            true,
             record,
         )
         .await
         {
             *record = before;
         }
+    }
+    keep_text_layer_for_digits(opts, native, record);
+}
+
+/// In `auto`, a page whose recognised numbers still disagree with the page's
+/// own text layer keeps the text layer: a misread digit in a register value is
+/// worse than lost formatting. `--ocr always` asked for the recognised text.
+fn keep_text_layer_for_digits(
+    opts: &ConvertOptions,
+    native: Option<&str>,
+    record: &mut PageRecord,
+) {
+    let differs = record
+        .warnings
+        .iter()
+        .any(|w| w == Problem::NumbersDiffer.describe());
+    let layer = native.map(str::trim).filter(|t| !t.is_empty());
+    if let (true, OcrMode::Auto, Some(layer)) = (differs, opts.ocr, layer) {
+        record.method = Method::Native;
+        record.text = layer.to_string();
+        record.layout = None;
+        record.status = Status::Warning;
+        record.warnings = vec![
+            "the recognised numbers differ from the text layer; the text layer was kept".into(),
+        ];
     }
 }
 
@@ -248,7 +287,9 @@ fn absorb(record: &mut PageRecord, reading: &Reading) {
 async fn read_by_layout(
     ctx: &PageContext,
     work: &PageWork,
+    native: Option<&str>,
     image: Result<RenderedPage, DocumentError>,
+    force_crops: bool,
     record: &mut PageRecord,
 ) -> bool {
     let opts = &ctx.options;
@@ -258,8 +299,8 @@ async fn read_by_layout(
         Request {
             target: Target::Page(index),
             prompt: &opts.layout_prompt,
-            reference: None,
-            numbers_from: None,
+            reference: native.filter(|_| work.reference),
+            numbers_from: native,
             grounded: true,
         },
         Some(image),
@@ -285,17 +326,25 @@ async fn read_by_layout(
         return true;
     }
     let columns = crate::layout::column_count(&regions);
-    let ordered: Vec<Region> = reading_order(regions)
+    if !force_crops && columns < MIN_COLUMNS_FOR_CROPS {
+        // Not a newspaper after all (a page with figures): the whole-page
+        // reading is the better one and the caller does it.
+        return false;
+    }
+    let ordered: Vec<Region> = merge_runs(reading_order(regions))
         .into_iter()
         .filter(Region::is_textual)
         .collect();
     let total = ordered.len();
     let dpi = opts.region_dpi.max(opts.dpi);
-    // All blocks of the page in one pass, so the page's images are decoded
+    // Headlines and one-line blocks are read well enough at page resolution:
+    // the layout pass's own text stands, and they cost no request. The bodies
+    // go to crops, all rendered in one pass so the page's images are decoded
     // once rather than once per block.
-    let boxes: Vec<[f32; 4]> = ordered.iter().map(|r| r.bbox).collect();
+    let wanted: Vec<Region> = ordered.iter().filter(|r| r.needs_crop()).cloned().collect();
+    let boxes: Vec<[f32; 4]> = wanted.iter().map(|r| r.bbox).collect();
     let crops = render_blocks(ctx, index, dpi, boxes).await;
-    let blocks: Vec<(Region, Reading)> = futures::stream::iter(ordered.into_iter().zip(crops))
+    let mut read_blocks = futures::stream::iter(wanted.into_iter().zip(crops))
         .map(|(region, (crop, render_ms))| async move {
             let reading = read(
                 ctx,
@@ -311,15 +360,23 @@ async fn read_by_layout(
             .await;
             let mut reading = reading;
             reading.render_ms += render_ms;
-            (region, reading)
+            reading
         })
         .buffered(BLOCKS_AT_ONCE)
-        .collect()
-        .await;
+        .collect::<Vec<_>>()
+        .await
+        .into_iter();
     let mut parts = Vec::with_capacity(total);
     let mut degraded = 0;
-    for (region, reading) in &blocks {
-        absorb(record, reading);
+    for region in &ordered {
+        if !region.needs_crop() {
+            if !region.text.trim().is_empty() {
+                parts.push(heading(&region.label, region.text.clone()));
+            }
+            continue;
+        }
+        let reading = read_blocks.next().expect("one reading per cropped block");
+        absorb(record, &reading);
         // A crop that looped, ran to the limit or is mostly non-words is a
         // model inventing text for a picture or a smudge: the layout pass's
         // own text for the block stands in, or nothing if it had none.
@@ -338,7 +395,7 @@ async fn read_by_layout(
             parts.push(heading(&region.label, body));
         }
     }
-    drop_seam_repeats(&mut parts);
+    drop_repeats(&mut parts);
     record.text = parts.join("\n\n");
     record.dpi = Some(dpi);
     record.layout = Some(LayoutInfo {
@@ -359,47 +416,106 @@ async fn read_by_layout(
     true
 }
 
-/// Neighbouring blocks share an edge, and a text line on it can appear in
-/// both crops. When the first line of a block repeats the last line of the
-/// block before (within a few misread characters), the repeat is dropped from
-/// the later block.
-fn drop_seam_repeats(parts: &mut Vec<String>) {
-    const SIMILAR: f64 = 0.3;
-    const MIN_FUZZY_CHARS: usize = 12;
-    const MIN_EXACT_CHARS: usize = 6;
+/// Crops of neighbouring blocks overlap where the model's boxes do, so the
+/// same text can come out twice: a line on a seam, or a whole paragraph that
+/// two boxes both cover. A paragraph (or, failing that, a first line) that
+/// repeats one of the two blocks before it, within a few misread characters,
+/// is dropped from the later block.
+fn drop_repeats(parts: &mut Vec<String>) {
+    const SIMILAR: f64 = 0.25;
+    const MIN_PARAGRAPH_CHARS: usize = 40;
+    const SIMILAR_LINE: f64 = 0.15;
+    const LOOK_BACK: usize = 2;
+    let squash = |s: &str| -> String {
+        // Hyphenated line ends join: "stu-\ndent" is "student".
+        let joined = s.replace("-\n", "");
+        joined
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let near = |a: &str, b: &str| {
+        a == b
+            || crate::score::character_error_rate(a, b).is_some_and(|c| c <= SIMILAR)
+            || (a.len().min(b.len()) >= MIN_PARAGRAPH_CHARS && (a.contains(b) || b.contains(a)))
+    };
     for i in 1..parts.len() {
-        let last = parts[i - 1]
-            .lines()
-            .rev()
-            .map(str::trim)
-            .find(|l| !l.is_empty())
-            .map(str::to_string);
-        let (Some(last), Some(first)) = (
-            last,
-            parts[i]
+        let earlier: Vec<String> = parts[i.saturating_sub(LOOK_BACK)..i]
+            .iter()
+            .flat_map(|p| p.split("\n\n"))
+            .map(squash)
+            .filter(|p| p.chars().count() >= MIN_PARAGRAPH_CHARS)
+            .collect();
+        let kept: Vec<&str> = parts[i]
+            .split("\n\n")
+            .filter(|para| {
+                let sq = squash(para);
+                let heading = para.trim_start().starts_with('#');
+                heading
+                    || sq.chars().count() < MIN_PARAGRAPH_CHARS
+                    || !earlier.iter().any(|e| near(e, &sq))
+            })
+            .collect();
+        let mut text = kept.join("\n\n");
+        // The seam: the first lines of this block are the end of the block
+        // before (a crop that began a line or two too early).
+        if let Some(end) = repeated_head(&parts[i - 1], &text, SIMILAR_LINE) {
+            text = text
                 .lines()
-                .map(str::trim)
-                .find(|l| !l.is_empty())
-                .map(str::to_string),
-        ) else {
-            continue;
-        };
-        if first.starts_with('#') || last.starts_with('#') {
-            continue;
+                .skip(end)
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_string();
         }
-        let long_enough =
-            first.chars().count() >= MIN_FUZZY_CHARS && last.chars().count() >= MIN_FUZZY_CHARS;
-        let same = first.chars().count() >= MIN_EXACT_CHARS && first == last
-            || long_enough
-                && crate::score::character_error_rate(&last, &first).is_some_and(|c| c <= SIMILAR);
-        if same {
-            if let Some(at) = parts[i].find(first.as_str()) {
-                let rest = parts[i][at + first.len()..].trim().to_string();
-                parts[i] = rest;
-            }
-        }
+        parts[i] = text;
     }
     parts.retain(|p| !p.trim().is_empty());
+}
+
+/// Fewest characters a repeated head must have to be told from coincidence.
+const MIN_HEAD_CHARS: usize = 20;
+/// Fewest characters of a repeated single line that is exactly the end of the
+/// block before.
+const MIN_EXACT_HEAD_CHARS: usize = 6;
+/// Most lines of a block that can repeat the end of the one before.
+const MAX_HEAD_LINES: usize = 5;
+
+/// How many leading lines of `next` repeat the end of `previous` (0 if none):
+/// the most that read, joined, like the same number of characters at the end
+/// of `previous`, within `similar` edit distance.
+fn repeated_head(previous: &str, next: &str, similar: f64) -> Option<usize> {
+    let squash = |s: &str| -> String {
+        s.replace("-\n", "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    if next.trim_start().starts_with('#') || previous.trim_start().starts_with('#') {
+        return None;
+    }
+    let tail = squash(previous);
+    let lines: Vec<&str> = next.lines().collect();
+    let mut found = None;
+    let mut head = String::new();
+    for (n, line) in lines.iter().enumerate().take(MAX_HEAD_LINES) {
+        head = format!("{head}\n{line}");
+        let head_sq = squash(&head);
+        let len = head_sq.chars().count();
+        if len < MIN_EXACT_HEAD_CHARS || len > tail.chars().count() {
+            continue;
+        }
+        let end: String = tail.chars().skip(tail.chars().count() - len).collect();
+        let same = head_sq == end
+            || len >= MIN_HEAD_CHARS
+                && crate::score::character_error_rate(&end, &head_sq).is_some_and(|c| c <= similar);
+        if same {
+            found = Some(n + 1);
+        }
+    }
+    found
 }
 
 /// The crops of `boxes` on page `index`, each with its share of the time.
@@ -665,4 +781,57 @@ async fn ask(
     tokio::time::timeout(ctx.options.request_timeout, exchange)
         .await
         .map_err(|_| "model request timed out".to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drop_repeats;
+
+    const OPENING: &str =
+        "Atlanta, May 17 - Thousands of student youth, joined by hundreds of adults, \
+                           marched in this city's biggest demonstration against segregation.";
+
+    /// The 1960 newspaper's first page: two crops both covered the opening
+    /// paragraph, the second with line breaks and a misread letter.
+    #[test]
+    fn a_paragraph_two_crops_both_cover_is_kept_once() {
+        let wrapped = "Atlanta, May 17 - Thousands of stu-\ndent youth, joined by hundreds of adults,\nmarched in this city's biggest demon-\nstration against segregat1on.";
+        let mut parts = vec![
+            format!("# HEADLINE\n\n{OPENING}"),
+            format!(
+                "{wrapped}\n\nA second paragraph that only the later crop has, about the march."
+            ),
+        ];
+        // The headline stays; the repeated paragraph goes from the later block.
+        drop_repeats(&mut parts);
+        let all = parts.join("\n\n");
+        assert_eq!(all.matches("Atlanta, May 17").count(), 1, "{all}");
+        assert!(all.contains("A second paragraph"));
+    }
+
+    #[test]
+    fn a_crop_that_began_a_few_lines_early_does_not_repeat_the_block_before() {
+        let before = "The capitalist class of the South rules mainly by the trick of white \
+                      supremacy, that is by keeping the Negro down and telling the poor white he is \
+                      superior to the Negro.";
+        let after = "acy, that is by keeping the Negro down\nand telling the poor white he is su-\nperior to the Negro.\nUnder this system no Negro can be\nallowed to hold office.";
+        let mut parts = vec![before.to_string(), after.to_string()];
+        drop_repeats(&mut parts);
+        assert_eq!(
+            parts[1],
+            "Under this system no Negro can be\nallowed to hold office."
+        );
+    }
+
+    #[test]
+    fn short_repeated_lines_and_distinct_paragraphs_are_left_alone() {
+        let mut parts = vec![
+            "Yes.\n\nThe committee approved the budget for the new library on Tuesday.".to_string(),
+            "Yes.\n\nThe regional grant was increased by three percent this year, it said."
+                .to_string(),
+        ];
+        drop_repeats(&mut parts);
+        assert_eq!(parts[1].matches("Yes.").count(), 1);
+        assert!(parts[1].contains("regional grant"));
+    }
 }

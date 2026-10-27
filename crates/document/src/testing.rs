@@ -11,6 +11,19 @@ pub enum FixturePage {
     Scan(u8),
     /// A page with nothing on it.
     Blank,
+    /// Image-only page with this many dark vertical bars separated by white
+    /// gutters: a page the column detector sees columns on.
+    Bars(u8),
+}
+
+impl FixturePage {
+    /// The lines of a text page, joined by newlines.
+    pub fn text_of(page: &Self) -> String {
+        match page {
+            Self::Text(lines) => lines.join("\n"),
+            _ => String::new(),
+        }
+    }
 }
 
 /// A valid PDF with one page per entry. Text uses the standard Helvetica font.
@@ -34,7 +47,7 @@ pub fn build_pdf(pages: &[FixturePage]) -> Vec<u8> {
                 c.push_str("ET");
                 (c, "/Font << /F1 3 0 R >>".to_string())
             }
-            FixturePage::Scan(_) => (
+            FixturePage::Scan(_) | FixturePage::Bars(_) => (
                 "q 612 0 0 792 0 0 cm /Im0 Do Q".to_string(),
                 format!("/XObject << /Im0 {} 0 R >>", 6 + 3 * n),
             ),
@@ -55,6 +68,10 @@ pub fn build_pdf(pages: &[FixturePage]) -> Vec<u8> {
             FixturePage::Scan(gray) => stream(
                 "<< /Type /XObject /Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4096 >>",
                 &vec![*gray; 4096],
+            ),
+            FixturePage::Bars(n) => stream(
+                "<< /Type /XObject /Subtype /Image /Width 120 /Height 64 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 7680 >>",
+                &bars(*n),
             ),
             _ => b"null".to_vec(),
         });
@@ -94,3 +111,17 @@ pub const PROSE: [&str; 3] = [
     "Funding will come from the regional grant, which was increased by three percent this year.",
     "Construction is expected to begin in the spring and finish before the end of next autumn.",
 ];
+
+/// 120 x 64 gray image: `n` dark bars with a white gutter between them and
+/// white margins.
+fn bars(n: u8) -> Vec<u8> {
+    let n = usize::from(n.max(1));
+    let (width, margin, gutter) = (120, 10, 6);
+    let bar = (width - 2 * margin - gutter * (n - 1)) / n;
+    let mut row = vec![255u8; width];
+    for i in 0..n {
+        let from = margin + i * (bar + gutter);
+        row[from..from + bar].fill(40);
+    }
+    (0..64).flat_map(|_| row.clone()).collect()
+}

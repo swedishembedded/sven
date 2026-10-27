@@ -36,7 +36,9 @@ pub use convert::{
     DEFAULT_PROMPT,
 };
 pub use error::DocumentError;
-pub use layout::{column_count, reading_order, DeepseekGrounding, LayoutParser, Region};
+pub use layout::{
+    column_count, merge_runs, reading_order, DeepseekGrounding, LayoutParser, Region,
+};
 pub use manifest::{manifest_path, LayoutInfo, Manifest, Method, PageRecord, Status};
 pub use names::{match_model, Candidate, MatchError};
 pub use pages::parse_selection;

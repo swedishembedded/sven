@@ -21,7 +21,7 @@ use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::vello_cpu::{Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit};
 use hayro::{render, render_into, PixmapSettings, RenderCache, RenderSettings};
 
-use crate::columns::count_columns;
+use crate::columns::column_profile;
 use crate::error::DocumentError;
 
 /// One rendered page, PNG encoded.
@@ -33,6 +33,9 @@ pub struct RenderedPage {
     pub blank: bool,
     /// Text columns the page looks to have (1 for ordinary text).
     pub columns: usize,
+    /// Share of dark pixels over the strips holding text (see
+    /// [`crate::columns::column_profile`]).
+    pub ink: f32,
 }
 
 /// Opens PDFs.
@@ -166,10 +169,10 @@ impl PdfSource for HayroSource {
             .data_as_u8_slice()
             .iter()
             .all(|channel| *channel >= 250);
-        let columns = if blank {
-            1
+        let (columns, ink) = if blank {
+            (1, 0.0)
         } else {
-            count_columns(rendered.data_as_u8_slice(), width as usize, height as usize)
+            column_profile(rendered.data_as_u8_slice(), width as usize, height as usize)
         };
         let png = rendered
             .into_png()
@@ -180,6 +183,7 @@ impl PdfSource for HayroSource {
             height,
             blank,
             columns,
+            ink,
         })
     }
 
@@ -283,5 +287,6 @@ fn render_block<'a>(
         height: u32::from(ch),
         blank,
         columns: 1,
+        ink: 0.0,
     })
 }
