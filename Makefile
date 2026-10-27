@@ -1,4 +1,7 @@
 CARGO   ?= cargo
+# A toolchain wrapper for check/wasm when the wasm target lives in another
+# rustup home, e.g. RUSTUP_RUN="env RUSTUP_HOME=$$HOME/.rustup rustup run stable".
+RUSTUP_RUN ?=
 # CARGO_HOME selects where registry caches, compiled crates, and binaries are
 # stored.  ALL build paths (make, cargo, CI, agent) MUST use the same value
 # or Cargo will see different absolute source paths in its fingerprint files
@@ -257,7 +260,7 @@ test/formal:
 # Every gate below is reachable from HERE, not only from an installed git
 # hook -- a check that lives only in `make hooks/install` enforces nothing on a
 # fresh clone that never ran it.
-check: check/fmt check/gates check/arch check/features check/clippy check/doc
+check: check/fmt check/gates check/arch check/features check/wasm check/clippy check/doc
 
 ## check/fmt - rustfmt shape, checked not applied (`make fmt` fixes it)
 # First, because it is the cheapest thing that can fail and the least
@@ -278,6 +281,19 @@ check/features:
 		echo "clippy -p $$p --no-default-features"; \
 		$(CARGO) clippy -q -p $$p --no-default-features --all-targets -- -D warnings || exit 1; \
 	done
+
+## check/wasm - the browser-portable core builds for wasm32-unknown-unknown: the
+##   event vocabulary, the HSM kernel, the machines and the control protocol.
+##   A browser session runs this same code, so a dependency that cannot reach
+##   a browser (an OS thread, a socket, OS randomness) fails here, not later.
+##   Needs `rustup target add wasm32-unknown-unknown`. Its own target dir:
+##   the wasm build must not invalidate the native one.
+WASM_PACKAGES = sven-vocab sven-hsm sven-machines sven-control
+check/wasm:
+	@if ! $(RUSTUP_RUN) rustc --print sysroot | xargs -I{} test -d {}/lib/rustlib/wasm32-unknown-unknown; then \
+		echo "check/wasm: the wasm32-unknown-unknown target is not installed; run: rustup target add wasm32-unknown-unknown" >&2; exit 1; \
+	fi
+	$(RUSTUP_RUN) $(CARGO) check $(foreach p,$(WASM_PACKAGES),-p $(p)) --target wasm32-unknown-unknown --target-dir target/wasm
 
 ## check/clippy - lint the workspace, warnings are errors
 check/clippy:

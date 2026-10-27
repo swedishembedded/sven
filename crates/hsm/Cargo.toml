@@ -10,8 +10,14 @@ serde       = { workspace = true }
 serde_json  = { workspace = true }
 uuid        = { workspace = true }
 thiserror   = { workspace = true }
-tokio       = { workspace = true }
+# Only the observation bus's broadcast channel: no runtime, timers or I/O,
+# so the kernel's pure core also builds for a browser (wasm32).
+tokio       = { version = "1", default-features = false, features = ["sync"] }
 sven-vocab  = { path = "../vocab" }
+
+# A browser has no OS randomness; ids come from its crypto API.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid        = { workspace = true, features = ["js"] }
 
 [dev-dependencies]
 tokio       = { workspace = true }

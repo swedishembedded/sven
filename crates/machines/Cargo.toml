@@ -9,7 +9,10 @@ sven-vocab   = { path = "../vocab" }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 uuid        = { workspace = true }
-chrono      = { workspace = true }
+
+# A browser has no OS randomness; ids come from its crypto API.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
 
 [dev-dependencies]
 tempfile    = { workspace = true }
