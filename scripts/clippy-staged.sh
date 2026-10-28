@@ -10,12 +10,14 @@ if [[ $# -eq 0 ]]; then
 fi
 
 # Derive package names from file paths:
-#   crates/<name>/...  -> package <name>
+#   crates/<dir>/...  -> the `name` in crates/<dir>/Cargo.toml (not the
+#                        directory: crates/turn is package sven-turn)
 #   else (e.g. src/...) -> root package "sven"
 packages=()
 for f in "$@"; do
     if [[ "$f" =~ ^crates/([^/]+)/ ]]; then
-        packages+=("${BASH_REMATCH[1]}")
+        manifest="crates/${BASH_REMATCH[1]}/Cargo.toml"
+        packages+=("$(sed -n 's/^name *= *"\(.*\)"/\1/p' "$manifest" | head -n 1)")
     else
         packages+=("sven")
     fi
