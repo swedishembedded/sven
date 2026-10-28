@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **auth**: `sven auth login` signs in to the hosted sven service (`https://sven.swedishembedded.com`) unless `--server` names another; `--server` is no longer required.
+
 ### Added
 - **web_search**: searches through the sven service when one is known, billed to its account: the server `sven rc` signed in to (hosted conversations and connected computers), or a `providers.sven` entry with a `base_url` and a key. sven posts the query to `<base_url>/search` with that key. `tools.web.search.provider` (`auto`, `sven`, `brave`) chooses; `auto` falls back to Brave with `tools.web.search.api_key` or `BRAVE_API_KEY`. The signed-in key is never written to a configuration file or log.
 

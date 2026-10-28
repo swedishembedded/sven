@@ -804,6 +804,28 @@ mod tests {
             .expect("the arguments parse")
     }
 
+    /// `sven auth login` signs in to the hosted sven service unless told
+    /// another server.
+    #[cfg(feature = "network")]
+    #[test]
+    fn auth_login_defaults_to_the_hosted_service() {
+        for (args, expected) in [
+            (&["auth", "login"][..], "https://sven.swedishembedded.com"),
+            (
+                &["auth", "login", "--server", "localhost:3000"],
+                "localhost:3000",
+            ),
+        ] {
+            let Some(Commands::Auth {
+                command: AuthCommands::Login { server, .. },
+            }) = cli(args).command
+            else {
+                panic!("{args:?} is not `auth login`");
+            };
+            assert_eq!(server, expected);
+        }
+    }
+
     /// An explicit `--mode` wins; without one the configured default applies.
     #[test]
     fn mode_falls_back_to_the_configured_default() {

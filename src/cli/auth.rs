@@ -5,6 +5,10 @@
 
 use clap::Subcommand;
 
+/// The server `sven auth login` signs in to when told no other.
+#[cfg(feature = "network")]
+pub const DEFAULT_SERVER: &str = "https://sven.swedishembedded.com";
+
 #[derive(Subcommand, Debug)]
 pub enum AuthCommands {
     /// Store the key of a hosted provider. It then serves every model of that
@@ -32,13 +36,15 @@ pub enum AuthCommands {
     /// sessions for it. Prints an address and a code: open the address, sign in
     /// and enter the code to approve this machine; sven waits for it.
     ///
+    ///   sven auth login
     ///   sven auth login --server localhost:3000
     ///   sven auth login --server https://example.com --name build-box
     #[cfg(feature = "network")]
     Login {
-        /// The server's address. Without a scheme, `http://` is assumed for
-        /// this machine and `https://` for any other.
-        #[arg(long)]
+        /// The server's address; the hosted sven service by default. Without
+        /// a scheme, `http://` is assumed for this machine and `https://` for
+        /// any other.
+        #[arg(long, default_value = DEFAULT_SERVER)]
         server: String,
         /// What the server calls this machine; its host name by default.
         #[arg(long)]

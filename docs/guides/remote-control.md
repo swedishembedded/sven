@@ -15,11 +15,13 @@ out; nothing on it listens for connections.
 ## Sign in once
 
 ```bash
-sven auth login --server https://example.com
+sven auth login
 ```
 
-sven prints an address and a code, for example `Open https://example.com/connect/sven
-and enter the code WDJB-MJHT`. Open the address, sign in to the server if
+That signs in to the hosted sven service, `https://sven.swedishembedded.com`;
+`--server https://example.com` signs in to another server instead. sven
+prints an address and a code, for example `Open
+https://sven.swedishembedded.com/connect/sven and enter the code WDJB-MJHT`. Open the address, sign in to the server if
 asked, type the code and approve the connection; sven waits for it, then
 checks the key the server issued and says `Authentication successful`. The
 key never passes through the browser or your clipboard, and only the terminal
