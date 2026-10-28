@@ -820,7 +820,7 @@ mod tests {
     /// path, git or tool index, which are the site's internals.
     #[test]
     fn a_hosted_session_is_prompted_with_its_configured_prompt_alone() {
-        let dir = std::path::Path::new("/var/lib/site/hosted/acct/conv/work");
+        let dir = std::path::Path::new("hosted/acct/conv/work");
         let mut config = Config::default();
         config.agent.system_prompt = Some("You are a helpful assistant.".into());
         let runtime = session_runtime(&config, dir, true);
@@ -836,7 +836,7 @@ mod tests {
 
     #[test]
     fn a_hosted_session_without_a_configured_prompt_gets_one_that_names_no_path() {
-        let dir = std::path::Path::new("/var/lib/site/hosted/acct/conv/work");
+        let dir = std::path::Path::new("hosted/acct/conv/work");
         let runtime = session_runtime(&Config::default(), dir, true);
         assert!(runtime.no_system);
         let prompt = runtime
@@ -850,8 +850,7 @@ mod tests {
 
     #[test]
     fn a_session_on_a_persons_computer_keeps_its_project_context() {
-        let project = tempfile::tempdir().unwrap();
-        let dir = project.path();
+        let dir = std::path::Path::new("someone/project");
         let mut config = Config::default();
         config.agent.system_prompt = Some("Be terse.".into());
         let runtime = session_runtime(&config, dir, false);
