@@ -42,6 +42,11 @@ pub enum ControlCommand {
     /// a controller that cannot know whether the host restarted sends it
     /// before every input. A host that does not run the session yet opens it
     /// with `history` as the conversation so far.
+    ///
+    /// With `replace_history` the host replaces the conversation of a session
+    /// it already runs with `history` (a running turn is cancelled first), so
+    /// a controller can take back its last turns - regenerate an answer, edit
+    /// a message - without the host keeping what was taken back.
     NewSession {
         /// Caller-supplied session UUID. The node echoes it back in events.
         id: Uuid,
@@ -52,6 +57,12 @@ pub enum ControlCommand {
         /// The conversation so far, oldest first; empty for a new one.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         history: Vec<HistoryEntry>,
+        /// Replace the conversation of a session the host already runs with
+        /// `history`. A host that does not run the session opens it with
+        /// `history` either way. Servers that never send the field keep the
+        /// idempotent behaviour above.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        replace_history: bool,
     },
 
     /// Submit a text message to an active session.
@@ -403,6 +414,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn new_session_replace_history_is_off_by_default_and_omitted_when_off() {
+        let id = Uuid::nil();
+        let bare: ControlCommand = serde_json::from_str(&format!(
+            r#"{{"type":"new_session","id":"{id}","mode":"agent","working_dir":null}}"#
+        ))
+        .unwrap();
+        assert!(matches!(
+            bare,
+            ControlCommand::NewSession {
+                replace_history: false,
+                ..
+            }
+        ));
+        let json = serde_json::to_value(&bare).unwrap();
+        assert!(json.get("replace_history").is_none(), "{json}");
+
+        let replace: ControlCommand = serde_json::from_str(&format!(
+            r#"{{"type":"new_session","id":"{id}","mode":"agent","working_dir":null,
+                "history":[],"replace_history":true}}"#
+        ))
+        .unwrap();
+        assert!(matches!(
+            replace,
+            ControlCommand::NewSession {
+                replace_history: true,
+                ..
+            }
+        ));
+        let json = serde_json::to_value(&replace).unwrap();
+        assert_eq!(json["replace_history"], true);
+    }
+
+    #[test]
     fn control_command_json_round_trip() {
         let cmd = ControlCommand::ListSessions;
         let json = serde_json::to_string(&cmd).unwrap();
@@ -538,6 +582,7 @@ mod tests {
                 mode: AgentMode::Agent,
                 working_dir: None,
                 history: Vec::new(),
+                replace_history: false,
             }),
             Some(sid)
         );

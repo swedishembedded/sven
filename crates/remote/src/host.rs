@@ -23,7 +23,6 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use sven_bootstrap::{Config, RuntimeContext};
-use sven_control::remote::{EventBatch, EventEnvelope};
 use sven_control::{ControlCommand, ControlEvent, HistoryEntry, SessionState};
 use sven_frontend::{CompactError, SessionController, SessionOptions, SessionSpec};
 use sven_machines::AgentEvent;
@@ -37,22 +36,15 @@ use crate::approvals::{PendingApprovals, RemoteApprovals, APPROVAL_TIMEOUT};
 use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused};
 use crate::login::RemoteLogin;
 use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
+use upload::{upload_loop, Upload};
 
 mod describe;
 mod slash;
+mod upload;
 
 /// Events waiting for the uploader. Full means the server has stopped
 /// taking them; sessions then wait rather than grow memory without bound.
 const UPLOAD_QUEUE: usize = 4096;
-/// The most events one upload carries.
-const BATCH_EVENTS: usize = 256;
-/// How long the uploader collects before sending what it has.
-const BATCH_WINDOW: Duration = Duration::from_millis(150);
-/// The longest the host goes without an upload: the server's sign that it is
-/// alive (and, with `working`, which answers are still coming). Rare, so
-/// thousands of idle hosts cost the server little; anything the host has to
-/// say (a command it took, an event) goes at once and counts too.
-const HEARTBEAT: Duration = Duration::from_secs(15);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Commands queued for one session while it works.
 const SESSION_QUEUE: usize = 64;
@@ -230,8 +222,19 @@ async fn route(
 ) {
     let (session_id, message) = match command {
         ControlCommand::NewSession {
-            id, mode, history, ..
-        } => (id, SessionCommand::Open { mode, history }),
+            id,
+            mode,
+            history,
+            replace_history,
+            ..
+        } => (
+            id,
+            SessionCommand::Open {
+                mode,
+                history,
+                replace: replace_history,
+            },
+        ),
         ControlCommand::SetModel { session_id, model } => {
             (session_id, SessionCommand::Model(model))
         }
@@ -324,6 +327,9 @@ enum SessionCommand {
     Open {
         mode: AgentMode,
         history: Vec<HistoryEntry>,
+        /// The server took turns back: `history` replaces the conversation
+        /// of a session already running, instead of being ignored.
+        replace: bool,
     },
     Model(String),
     Input(String),
@@ -402,9 +408,16 @@ impl SessionActor {
 
     async fn handle(&mut self, command: SessionCommand) {
         match command {
-            SessionCommand::Open { mode, history } => {
-                // Idempotent: a running session keeps its own conversation.
-                if self.controller.is_none() {
+            SessionCommand::Open {
+                mode,
+                history,
+                replace,
+            } => {
+                if replace {
+                    self.replace_conversation(mode, sven_executors::history_messages(history))
+                        .await;
+                } else if self.controller.is_none() {
+                    // Idempotent: a running session keeps its own conversation.
                     self.mode = mode;
                     // Its own record when this host ran it before (tool calls
                     // included), else the server's flat text.
@@ -441,6 +454,37 @@ impl SessionActor {
                 }
                 println!("[{}] closed", self.short());
             }
+        }
+    }
+
+    /// Takes turns back: the conversation becomes exactly `history`, the
+    /// server's flat text (tool calls of the turns kept are lost, as for a
+    /// session the host never ran). A turn still running is cancelled and the
+    /// live session let go; the next input opens a new one on `history`. The
+    /// kept copy is replaced too, so a restart does not bring the old turns
+    /// back. Events the cancelled turn had not delivered yet are dropped: they
+    /// would otherwise end the answer started next.
+    async fn replace_conversation(&mut self, mode: AgentMode, history: Vec<Message>) {
+        if let Some(controller) = self.controller.take() {
+            controller.cancel().await;
+        }
+        let (events_tx, events_rx) = mpsc::channel(1024);
+        self.events_tx = events_tx;
+        self.events_rx = events_rx;
+        if self.working {
+            self.state(SessionState::Idle).await;
+        }
+        self.mode = mode;
+        self.unfinished = None;
+        self.history = history;
+        if self.closed {
+            return;
+        }
+        if let Err(e) = self.context.sessions.save(self.id, &self.history) {
+            tracing::warn!(
+                "session {}: could not keep its replaced conversation: {e:#}",
+                self.id
+            );
         }
     }
 
@@ -717,87 +761,6 @@ fn first_line(text: &str) -> &str {
     }
 }
 
-enum Upload {
-    Event(Box<ControlEvent>),
-    /// The highest command `seq` taken.
-    Ack(u64),
-}
-
-/// Numbers, batches and uploads events in order. A batch is sent again until
-/// the server stores it, so nothing is lost while the server is away; the
-/// server drops a `(run, seq)` it already has, so nothing is stored twice.
-async fn upload_loop(client: RemoteClient, mut rx: mpsc::Receiver<Upload>, run: Uuid) {
-    // Numbered from 1 within this run; the server tells runs apart by `run`,
-    // so a restarted host is never taken for one replaying old events.
-    let mut next_seq = 1u64;
-    let mut running: HashMap<Uuid, bool> = HashMap::new();
-    let mut last_upload = Instant::now();
-    loop {
-        let mut batch = EventBatch {
-            run,
-            events: Vec::new(),
-            acked_through: None,
-            working: Vec::new(),
-        };
-        let first = tokio::time::timeout(HEARTBEAT, rx.recv()).await;
-        let mut take = |upload: Upload, batch: &mut EventBatch| match upload {
-            Upload::Ack(seq) => batch.acked_through = Some(seq),
-            Upload::Event(event) => {
-                let event = *event;
-                if let ControlEvent::SessionState { session_id, state } = &event {
-                    running.insert(*session_id, *state == SessionState::Running);
-                }
-                batch.events.push(EventEnvelope {
-                    seq: next_seq,
-                    event,
-                });
-                next_seq += 1;
-            }
-        };
-        match first {
-            Ok(Some(upload)) => take(upload, &mut batch),
-            Ok(None) => return,
-            Err(_) => {}
-        }
-        let window = tokio::time::sleep(BATCH_WINDOW);
-        tokio::pin!(window);
-        while batch.events.len() < BATCH_EVENTS && !batch.events.is_empty() {
-            tokio::select! {
-                upload = rx.recv() => match upload {
-                    Some(upload) => take(upload, &mut batch),
-                    None => break,
-                },
-                () = &mut window => break,
-            }
-        }
-        // An upload at least every HEARTBEAT, idle or not, is how the server
-        // knows this host is alive: a host that froze or lost its network
-        // stops sending them, and its environment is let go.
-        let heartbeat_due = last_upload.elapsed() >= HEARTBEAT;
-        if batch.events.is_empty() && batch.acked_through.is_none() && !heartbeat_due {
-            continue;
-        }
-        batch.working = running
-            .iter()
-            .filter(|(_, on)| **on)
-            .map(|(id, _)| *id)
-            .collect();
-        let mut backoff = Duration::from_millis(500);
-        while let Err(e) = client.post_events(&batch).await {
-            // Replaced: nothing more from this run is taken; the command
-            // stream is refused too, and that stops the host.
-            if e.downcast_ref::<EnvironmentTaken>().is_some() {
-                tracing::warn!("event upload: {e:#}");
-                return;
-            }
-            tracing::warn!("event upload: {e:#}");
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(MAX_BACKOFF);
-        }
-        last_upload = Instant::now();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[tokio::test]
@@ -827,6 +790,122 @@ mod tests {
     }
 
     use super::*;
+    use sven_control::HistoryRole;
+
+    fn turn(role: HistoryRole, text: &str) -> HistoryEntry {
+        HistoryEntry {
+            role,
+            text: text.into(),
+        }
+    }
+
+    /// A session with a live controller (mock model) holding the original
+    /// turns, as after the server's first question and answer.
+    async fn running_session(dir: &std::path::Path) -> SessionActor {
+        let (uploads, _kept_open) = mpsc::channel(64);
+        let (asks, _asks_open) = mpsc::channel(8);
+        std::mem::forget(_kept_open);
+        std::mem::forget(_asks_open);
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+        let context = Arc::new(SessionContext {
+            config: Arc::new(config),
+            working_dir: dir.to_path_buf(),
+            openai_base_url: String::new(),
+            token: String::new(),
+            uploads,
+            sessions: SessionStore::new(dir.join("kept")),
+            asks,
+        });
+        let mut actor = SessionActor::new(Uuid::new_v4(), context);
+        let model = ModelConfig {
+            provider: "mock".into(),
+            name: "mock-model".into(),
+            ..ModelConfig::default()
+        };
+        actor.history = sven_executors::history_messages([
+            turn(HistoryRole::User, "first question"),
+            turn(HistoryRole::Assistant, "first answer"),
+            turn(HistoryRole::User, "second question"),
+            turn(HistoryRole::Assistant, "second answer"),
+        ]);
+        actor.controller = Some(actor.open_controller(model).await.expect("opens"));
+        actor
+    }
+
+    /// The conversation's turns; the session's own system prompt is not one.
+    fn texts(history: &[Message]) -> Vec<String> {
+        history
+            .iter()
+            .filter(|m| m.role != sven_model::Role::System)
+            .map(|m| m.as_text().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn replacing_history_leaves_a_running_session_with_exactly_the_given_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut actor = running_session(dir.path()).await;
+        assert_eq!(
+            texts(&actor.controller.as_ref().unwrap().history()).len(),
+            4,
+            "the session starts with the original turns"
+        );
+
+        // Regenerate the second answer: the server sends the turns before
+        // the question, then the question again as input.
+        let replacement = vec![
+            turn(HistoryRole::User, "first question"),
+            turn(HistoryRole::Assistant, "first answer"),
+        ];
+        actor
+            .handle(SessionCommand::Open {
+                mode: AgentMode::Agent,
+                history: replacement,
+                replace: true,
+            })
+            .await;
+
+        assert!(actor.controller.is_none(), "the old session is let go");
+        assert_eq!(texts(&actor.history), ["first question", "first answer"]);
+        let kept = actor.context.sessions.load(actor.id).expect("kept copy");
+        assert_eq!(
+            texts(&kept),
+            ["first question", "first answer"],
+            "a restart does not bring the taken-back turns back"
+        );
+
+        // The next session opens on exactly that history: the question
+        // arrives once, as the input.
+        let model = actor.model_config().unwrap_or(ModelConfig {
+            provider: "mock".into(),
+            name: "mock-model".into(),
+            ..ModelConfig::default()
+        });
+        let reopened = actor.open_controller(model).await.expect("opens");
+        assert_eq!(
+            texts(&reopened.history()),
+            ["first question", "first answer"]
+        );
+    }
+
+    #[tokio::test]
+    async fn opening_again_without_replace_keeps_the_running_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut actor = running_session(dir.path()).await;
+        actor
+            .handle(SessionCommand::Open {
+                mode: AgentMode::Agent,
+                history: vec![turn(HistoryRole::User, "other")],
+                replace: false,
+            })
+            .await;
+        assert_eq!(
+            texts(&actor.controller.as_ref().unwrap().history()).len(),
+            4
+        );
+    }
 
     #[test]
     fn a_long_prompt_prints_as_its_first_line_cut_at_a_character() {
