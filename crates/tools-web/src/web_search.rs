@@ -179,11 +179,11 @@ async fn sven_search(
             );
         anyhow::bail!(message);
     }
-    let results = body
-        .get("results")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
+    let Some(results) = body.get("results").and_then(Value::as_array) else {
+        anyhow::bail!(
+            "{url} did not answer with search results; check the sven service's base URL"
+        );
+    };
     Ok(format_results(results, count))
 }
 
@@ -415,6 +415,19 @@ mod tests {
             out.content
         );
         assert!(out.provenance.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_is_not_search_results_is_an_error_not_an_empty_search() {
+        // A base URL that reaches a web page (a proxy's or the site's own)
+        // instead of the API: success with nothing found would hide it.
+        let (base, served) = one_answer(200, "<html>sign in</html>").await;
+        let out = sven_tool(base)
+            .execute(&call(serde_json::json!({"query": "q"})))
+            .await;
+        served.await.unwrap();
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("search results"), "{}", out.content);
     }
 
     #[tokio::test]
