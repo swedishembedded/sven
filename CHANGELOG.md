@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-10-28
+
+The first 4.x release with its binaries: v4.0.0's release workflow
+published none, because two end-to-end tests still expected the exit
+code 4.0.0 had changed.
+
+### Fixed
+- **tests**: `tests/e2e/basic` 08.34 and 22.02 expect exit 0 from a single prompt whose tool call fails, as the exit-code rule (`crates/ci/src/runner/exit.rs`) and the CLI reference say; exit 3 is for workflow-file runs only.
+
 ## [4.0.0] - 2026-10-28
 
 ### Added
@@ -787,7 +796,8 @@ Phase 3.7 closes here. **Another correction to the plan's premise, same pattern 
 - Circular delegation false-positive caused by empty peer ID in P2P
 - Agent stall nudge firing on legitimate single-tool-call + answer patterns
 
-[Unreleased]: https://github.com/swedishembedded/sven/compare/v4.0.0...HEAD
+[Unreleased]: https://github.com/swedishembedded/sven/compare/v4.0.1...HEAD
+[4.0.1]: https://github.com/swedishembedded/sven/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/swedishembedded/sven/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/bosun-ai/sven/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/bosun-ai/sven/compare/v1.9.1...v2.0.0
