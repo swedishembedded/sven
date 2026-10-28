@@ -38,6 +38,7 @@ use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused};
 use crate::login::RemoteLogin;
 use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
 
+mod describe;
 mod slash;
 
 /// Events waiting for the uploader. Full means the server has stopped
@@ -326,6 +327,9 @@ struct SessionActor {
     controller: Option<SessionController>,
     /// This session's tool calls waiting for the server's permission.
     approvals: PendingApprovals,
+    /// Each running tool call's description and when it started, to tell
+    /// the server how long it ran.
+    running: HashMap<String, (Instant, describe::Described)>,
     events_tx: mpsc::Sender<AgentEvent>,
     events_rx: mpsc::Receiver<AgentEvent>,
 }
@@ -342,6 +346,7 @@ impl SessionActor {
             unfinished: None,
             controller: None,
             approvals: PendingApprovals::default(),
+            running: HashMap::new(),
             events_tx,
             events_rx,
         }
@@ -504,7 +509,11 @@ impl SessionActor {
         // Kept after every finished call too, so a host stopped mid-answer
         // loses none of the work it did.
         let checkpoint = finished || matches!(event, AgentEvent::ToolCallFinished { .. });
+        let described = self.describe(&event);
         self.upload(event).await;
+        if let Some(described) = described {
+            self.send(described).await;
+        }
         if checkpoint {
             self.keep();
         }
@@ -512,6 +521,41 @@ impl SessionActor {
             println!("[{}] done", self.short());
             self.state(SessionState::Idle).await;
         }
+    }
+
+    /// A tool call in words, after it starts and again, timed, after it
+    /// finishes (`describe.rs`); nothing for any other event.
+    fn describe(&mut self, event: &AgentEvent) -> Option<ControlEvent> {
+        let (call_id, described, duration_ms) = match event {
+            AgentEvent::ToolCallStarted(call) => {
+                let described = describe::describe(&call.name, &call.args);
+                self.running
+                    .insert(call.id.clone(), (Instant::now(), described.clone()));
+                (call.id.clone(), described, None)
+            }
+            AgentEvent::ToolCallFinished { call_id, .. } => {
+                let (started, described) = self.running.remove(call_id)?;
+                let ran = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                (call_id.clone(), described, Some(ran))
+            }
+            _ => return None,
+        };
+        Some(ControlEvent::ToolCallDescribed {
+            session_id: self.id,
+            call_id,
+            action: described.action,
+            title: described.title,
+            category: described.category,
+            duration_ms,
+        })
+    }
+
+    async fn send(&self, event: ControlEvent) {
+        let _ = self
+            .context
+            .uploads
+            .send(Upload::Event(Box::new(event)))
+            .await;
     }
 
     /// Keeps the session's conversation as it is now.

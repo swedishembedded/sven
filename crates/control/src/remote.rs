@@ -287,6 +287,36 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_call_is_described_in_the_shape_a_server_reads() {
+        let session = Uuid::parse_str(SESSION).unwrap();
+        let started = ControlEvent::ToolCallDescribed {
+            session_id: session,
+            call_id: "c1".into(),
+            action: "Shell".into(),
+            title: "ls -la".into(),
+            category: "shell".into(),
+            duration_ms: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&started).unwrap(),
+            serde_json::json!({"type": "tool_call_described", "session_id": SESSION,
+                "call_id": "c1", "action": "Shell", "title": "ls -la", "category": "shell"})
+        );
+        let finished = ControlEvent::ToolCallDescribed {
+            session_id: session,
+            call_id: "c1".into(),
+            action: "Shell".into(),
+            title: "ls -la".into(),
+            category: "shell".into(),
+            duration_ms: Some(1_250),
+        };
+        assert_eq!(
+            serde_json::to_value(&finished).unwrap()["duration_ms"],
+            1_250
+        );
+    }
+
+    #[test]
     fn an_event_batch_has_the_shape_a_server_reads() {
         let session = Uuid::parse_str(SESSION).unwrap();
         let run = Uuid::parse_str("0b5f3c2e-1d4a-4e8b-9f10-2a3b4c5d6e7f").unwrap();

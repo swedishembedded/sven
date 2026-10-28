@@ -149,6 +149,26 @@ pub enum ControlEvent {
         args: serde_json::Value,
     },
 
+    /// A tool call as a person reads it, for a surface that only has the
+    /// raw call: what it did (`action`), its title (the tool's own one-line
+    /// summary of its arguments: a command line, a path, a query; for a tool
+    /// with none, its first short text argument), its category (`file`,
+    /// `shell`, `search`, `web`, `system`), and, once it has finished, how
+    /// long it ran. Sent after the call's `ToolCallStarted`, and again with
+    /// `duration_ms` after its `ToolCallFinished`. Costs the model nothing:
+    /// every word comes from arguments it already wrote.
+    ToolCallDescribed {
+        session_id: Uuid,
+        call_id: String,
+        /// What the call did, readable: the tool's name as words ("Read
+        /// file", "Github: create issue"); for an MCP tool, all there is.
+        action: String,
+        title: String,
+        category: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+    },
+
     /// The session's lifecycle state changed.
     SessionState {
         session_id: Uuid,
