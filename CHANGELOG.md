@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-10-28
+
+### Fixed
+- **install**: `install.sh` installs the newest 4.x release that is complete for the machine (its `checksums.txt` lists the machine's build), skipping one whose binaries are not published yet or that has no build for it. A release exists on GitHub as soon as it is tagged and gets its binaries when its build finishes, so for that time the installer failed with "publishes no checksums".
+- **build**: a release is published only with its macOS (universal) build, which `install.sh` installs on a Mac. It was optional, and v4.0.1 and v4.1.0 went out before their macOS build finished, so the installer told Mac users there was no build.
+
 ## [4.1.0] - 2026-10-28
 
 ### Changed
@@ -802,7 +808,8 @@ Phase 3.7 closes here. **Another correction to the plan's premise, same pattern 
 - Circular delegation false-positive caused by empty peer ID in P2P
 - Agent stall nudge firing on legitimate single-tool-call + answer patterns
 
-[Unreleased]: https://github.com/swedishembedded/sven/compare/v4.1.0...HEAD
+[Unreleased]: https://github.com/swedishembedded/sven/compare/v4.1.1...HEAD
+[4.1.1]: https://github.com/swedishembedded/sven/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/swedishembedded/sven/compare/v4.0.1...v4.1.0
 [4.0.1]: https://github.com/swedishembedded/sven/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/swedishembedded/sven/compare/v3.0.0...v4.0.0
