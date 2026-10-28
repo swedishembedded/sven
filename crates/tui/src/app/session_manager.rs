@@ -269,6 +269,7 @@ impl SessionEntry {
                     tokens_after,
                     strategy,
                     turn,
+                    ..
                 } => Some(ConversationRecord::ContextCompacted {
                     tokens_before: *tokens_before,
                     tokens_after: *tokens_after,
@@ -411,6 +412,7 @@ impl SessionEntry {
                 tokens_after,
                 strategy,
                 turn,
+                summary,
             } => {
                 if let Some(chat) = &mut self.stored_chat {
                     chat.push_segment(crate::chat::segment::ChatSegment::ContextCompacted {
@@ -418,6 +420,7 @@ impl SessionEntry {
                         tokens_after: *tokens_after,
                         strategy: strategy.clone(),
                         turn: *turn,
+                        summary: summary.clone(),
                     });
                 }
             }

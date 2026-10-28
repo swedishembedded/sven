@@ -5,7 +5,10 @@
 //! window: the model writes notes on the conversation (a fork of it), and
 //! the notes replace the history they cover.
 
-use sven_hsm::{CompactionStrategyUsed, ObservationSink, UiEvent};
+use sven_hsm::{
+    CompactionStrategyUsed, Event, InternalEvent, ObservationSink, UiEvent, COMPACTION_FINISHED,
+};
+use sven_kernel::EventSink;
 use sven_model::Message;
 use sven_turn::{apply_summary, plan_fork, stream_turn, ForkPlan};
 use sven_vocab::CompactionRecord;
@@ -122,6 +125,7 @@ impl TurnExecutor {
             tokens_after,
             strategy: CompactionStrategyUsed::Emergency,
             turn: 0,
+            summary: None,
         });
     }
 
@@ -386,13 +390,7 @@ impl TurnExecutor {
         fit: Fit,
         obs: &ObservationSink,
     ) -> Vec<Message> {
-        // The task and one more message: nothing a summary could shrink.
-        if messages
-            .iter()
-            .filter(|m| m.role != sven_model::Role::System)
-            .count()
-            < 3
-        {
+        if !summarisable(&messages) {
             return messages;
         }
         let tokens_before: usize = messages.iter().map(Message::approx_tokens).sum();
@@ -408,6 +406,9 @@ impl TurnExecutor {
 
         let mut history = messages;
         let mut strategy = CompactionStrategyUsed::Fork;
+        // The notes the thread now starts from: those of the last fork round,
+        // which carry the earlier rounds' notes with them.
+        let mut summary: Option<String> = None;
         let mut calibration = fit.calibration;
         let (mut rounds, mut misjudged) = (0, 0);
         while rounds < MAX_ROUNDS {
@@ -447,6 +448,7 @@ impl TurnExecutor {
             };
             rounds += 1;
             history = apply_summary(&history, &plan, &notes, &todos);
+            summary = Some(notes.clone());
             let after = estimate(&history, calibration);
             tracing::info!(
                 thread = %thread_id, rounds, whole = plan.whole, before, after,
@@ -478,13 +480,89 @@ impl TurnExecutor {
         // The count the server gave for the old conversation is of no use
         // for the new one: the next request is counted from nothing.
         self.prompt_counts.forget(thread_id);
+        // An emergency trim has no notes: whatever an earlier round wrote
+        // was dropped with the history it summarised.
+        let summary = summary.filter(|_| strategy == CompactionStrategyUsed::Fork);
         obs.emit(UiEvent::ContextCompacted {
             tokens_before,
             tokens_after,
             strategy,
             turn: 0,
+            summary,
         });
         history
+    }
+
+    /// Answers [`sven_hsm::Effect::CompactContext`]: compacts the thread, or,
+    /// when the machine declined (`refusal`), only says why. A compaction ends
+    /// like a turn does - `COMPACTION_FINISHED` to the machine, then
+    /// `UiEvent::TurnComplete` - so a surface waiting for the answer to its
+    /// request is never left waiting; one stopped half way ends with
+    /// `UiEvent::Aborted`, the thread untouched (it is replaced in one step
+    /// after the last model call).
+    pub(super) async fn answer_compaction(
+        &self,
+        thread_id: &str,
+        refusal: Option<String>,
+        sink: &EventSink,
+        obs: &ObservationSink,
+    ) {
+        if let Some(reason) = refusal {
+            obs.emit(UiEvent::Warning(format!("cannot compact now: {reason}")));
+            return;
+        }
+        let mut ending = AbortedOnDrop::new(obs);
+        self.compact_on_demand(thread_id, obs).await;
+        let _ = sink
+            .emit(Event::Internal(InternalEvent::Custom {
+                name: COMPACTION_FINISHED.to_string(),
+                payload: serde_json::Value::Null,
+            }))
+            .await;
+        ending.finish();
+        obs.emit(UiEvent::TurnComplete);
+    }
+
+    /// Compacts the whole of `thread_id` now, because the person asked, even
+    /// when the conversation still fits the model's window: the same fork,
+    /// notes and fallbacks as [`Self::compact_thread`], whose
+    /// `UiEvent::ContextCompacted` carries the notes. A thread too short to
+    /// summarise is reported as a warning and left as it is.
+    pub(super) async fn compact_on_demand(&self, thread_id: &str, obs: &ObservationSink) {
+        let messages = snapshot_thread(&self.store, thread_id);
+        if !summarisable(&messages) {
+            obs.emit(UiEvent::Warning(
+                "nothing to compact yet: the conversation is too short to summarise".into(),
+            ));
+            return;
+        }
+        let model = self.resolve_model(&None);
+        let context_window = model.catalog_context_window();
+        let configured_max_output = self
+            .limits
+            .cap_output(limits::response_cap(model.as_ref(), context_window));
+        let fit = self
+            .compaction_fit(context_window, configured_max_output)
+            .unwrap_or_else(|| self.whole_thread_fit(&messages));
+        // The person asked for it: no size is small enough to stop at, so
+        // the rounds go on until the notes cover the whole conversation.
+        let fit = Fit { limit: 0, ..fit };
+        self.compact_thread(thread_id, messages, model.as_ref(), fit, obs)
+            .await;
+    }
+
+    /// The window to plan a compaction against when the model's is not
+    /// known: one just large enough that the whole thread, the notes and the
+    /// instruction go to the model in a single fork. A server that cannot
+    /// take it refuses it, and the compaction then falls back to the trim.
+    fn whole_thread_fit(&self, messages: &[Message]) -> Fit {
+        let thread_tokens: usize = messages.iter().map(Message::approx_tokens).sum();
+        let room = self.compaction.summary_tokens as usize * 4 + 1024;
+        Fit {
+            window: u32::try_from(thread_tokens + room).unwrap_or(u32::MAX),
+            limit: 0,
+            calibration: 1.0,
+        }
     }
 
     /// The last resort: drop older history without a summary. Says how much.
@@ -586,6 +664,47 @@ impl TurnExecutor {
         }
         Notes::None
     }
+}
+
+/// Ends the answer to a compaction with `UiEvent::Aborted` if it is dropped
+/// before it [finishes](Self::finish): the kernel drops the effect of a turn
+/// that is stopped, and a surface waiting for the answer must still be told.
+struct AbortedOnDrop<'a> {
+    obs: &'a ObservationSink,
+    finished: bool,
+}
+
+impl<'a> AbortedOnDrop<'a> {
+    fn new(obs: &'a ObservationSink) -> Self {
+        Self {
+            obs,
+            finished: false,
+        }
+    }
+
+    fn finish(&mut self) {
+        self.finished = true;
+    }
+}
+
+impl Drop for AbortedOnDrop<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.obs.emit(UiEvent::Aborted {
+                partial_text: String::new(),
+            });
+        }
+    }
+}
+
+/// Whether a summary could shrink `messages`: more than the task and one
+/// more message.
+fn summarisable(messages: &[Message]) -> bool {
+    messages
+        .iter()
+        .filter(|m| m.role != sven_model::Role::System)
+        .count()
+        >= 3
 }
 
 fn estimate(messages: &[Message], calibration: f32) -> usize {

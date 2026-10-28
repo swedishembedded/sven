@@ -390,6 +390,7 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             tokens_after,
             strategy,
             turn,
+            ..
         } => {
             write_progress(&format!(
                 "[sven:compact] strategy={strategy} turn={turn} {tokens_before}->{tokens_after}"

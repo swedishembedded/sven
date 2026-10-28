@@ -204,6 +204,29 @@ impl fmt::Display for SubmitError {
 
 impl std::error::Error for SubmitError {}
 
+/// Why a conversation could not be compacted on request.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CompactError {
+    /// The session's machine does not compact on request (only the
+    /// conversational machines do); the mode is named.
+    Unsupported(String),
+    /// The kernel's event queue is closed: the session is over.
+    QueueClosed,
+}
+
+impl fmt::Display for CompactError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported(machine) => {
+                write!(f, "the {machine} mode cannot compact the conversation")
+            }
+            Self::QueueClosed => f.write_str("kernel queue closed"),
+        }
+    }
+}
+
+impl std::error::Error for CompactError {}
+
 /// A live session and everything needed to rebuild it.
 ///
 /// Dropping it shuts the session down.
@@ -344,6 +367,26 @@ impl SessionController {
     /// Interrupts the turn in flight. `false` when the session is over.
     pub async fn cancel(&self) -> bool {
         self.session.cancel().await
+    }
+
+    /// Compacts the conversation now: it is summarised, `ContextCompacted`
+    /// carries the notes, and the answer ends with `TurnComplete`. A turn
+    /// running is not interrupted and nothing is queued (a warning says so).
+    ///
+    /// # Errors
+    ///
+    /// [`CompactError::Unsupported`] when the session's machine does not
+    /// compact on request, so nothing would ever answer;
+    /// [`CompactError::QueueClosed`] when the session is over.
+    pub async fn compact(&self) -> Result<(), CompactError> {
+        if self.spec.machine == machine_for(AgentMode::Sdlc) {
+            return Err(CompactError::Unsupported(self.spec.machine.clone()));
+        }
+        if self.session.compact().await {
+            Ok(())
+        } else {
+            Err(CompactError::QueueClosed)
+        }
     }
 
     /// Replaces the conversation with `messages`, for the next turn.

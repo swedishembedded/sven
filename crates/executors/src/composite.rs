@@ -121,6 +121,15 @@ impl EffectExecutor for CompositeExecutor {
                 }
             }
 
+            // The turn executor owns the conversation threads it compacts.
+            EffectKind::CompactContext => {
+                if let Some(exec) = &mut self.turn {
+                    exec.execute(effect, sink, obs).await;
+                } else {
+                    answer_undeliverable(&effect, sink, "no turn executor is configured").await;
+                }
+            }
+
             EffectKind::CallTool => {
                 if let Some(exec) = &mut self.tool {
                     exec.execute(effect, sink, obs).await;

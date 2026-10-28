@@ -665,13 +665,21 @@ pub enum SessionEvent {
     /// A long-running tool is reporting incremental progress. Consumers
     /// should update the spinner/status bar without adding a chat segment.
     ToolProgress { call_id: String, message: String },
-    /// Context was compacted; statistics for the UI.
+    /// Context was compacted; statistics for the UI, and the summary the
+    /// conversation now starts from.
     ContextCompacted {
         tokens_before: usize,
         tokens_after: usize,
         strategy: CompactionStrategyUsed,
         /// Agentic loop round in which compaction fired (0 = pre-submit).
         turn: u32,
+        /// The notes that now stand in for the history they replaced: the
+        /// message every later turn of the conversation stems from. `None`
+        /// when nothing was summarised (an emergency trim drops history
+        /// without notes). With several fork rounds, the notes that ended up
+        /// in the thread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
     },
     /// Current token usage update.
     ///

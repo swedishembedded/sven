@@ -107,6 +107,25 @@ pub enum Effect {
         /// Opaque descriptor naming which machine to build (a factory key).
         descriptor: Value,
     },
+    /// Answer a request to compact a conversation thread now
+    /// ([`Event::CompactRequested`](crate::event::Event::CompactRequested)).
+    ///
+    /// With no `refusal`, the executor summarises the whole thread into
+    /// notes that replace it (announced as `ContextCompacted`, whose summary
+    /// is the message the rest of the conversation stems from), or says that
+    /// it is too short to summarise, and then posts
+    /// [`COMPACTION_FINISHED`](crate::event::COMPACTION_FINISHED). With a
+    /// `refusal` the machine declined (a turn is running): the executor only
+    /// tells the person why and touches nothing. Requires no capability: it
+    /// reads and rewrites the session's own conversation, as the automatic
+    /// compaction before a request does.
+    CompactContext {
+        /// The conversation thread to compact.
+        thread: String,
+        /// Why the machine declined, shown to the person; `None` to compact.
+        #[serde(default)]
+        refusal: Option<String>,
+    },
     /// Evaluate a declarative predicate against the real world and report the
     /// verdict as `Event::VerificationComplete`.
     ///
@@ -135,6 +154,7 @@ impl Effect {
             Effect::PersistAudit => EffectKind::PersistAudit,
             Effect::EmitInternal { .. } => EffectKind::EmitInternal,
             Effect::InstantiateSubmachine { .. } => EffectKind::InstantiateSubmachine,
+            Effect::CompactContext { .. } => EffectKind::CompactContext,
             Effect::Verify { .. } => EffectKind::Verify,
         }
     }
@@ -177,6 +197,8 @@ pub enum EffectKind {
     EmitInternal,
     /// See [`Effect::InstantiateSubmachine`].
     InstantiateSubmachine,
+    /// See [`Effect::CompactContext`].
+    CompactContext,
     /// See [`Effect::Verify`].
     Verify,
 }

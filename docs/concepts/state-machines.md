@@ -84,6 +84,7 @@ but no built-in machine or executor produces them.
 
 | Event | Payload | Meaning |
 |-------|---------|---------|
+| `CompactRequested` | - | A person asked for the conversation to be compacted now; a machine accepts it at rest and refuses it, with a reason, while busy |
 | `Timeout` | `timer_id` | A scheduled timer elapsed |
 | `VerificationComplete` | `verdict` | An `Effect::Verify` finished: `Passed`, `Failed`, `NeedsHuman` or `Unknown` |
 | `EffectFailed` | `kind`, `error` | An effect was refused or had no executor and no more specific failure event exists |
@@ -110,6 +111,7 @@ directly; it asks the kernel to do it by returning an effect
 | `PersistAudit` | - | Flush the audit trail to durable storage |
 | `EmitInternal` | `name`, `payload` | Re-enter a domain signal into the event queue as `Internal(Custom)` |
 | `InstantiateSubmachine` | `machine`, `descriptor` | Start a child run ([Parallel Submachine Fan-out](../internals/parallel-submachines.md)) |
+| `CompactContext` | `thread`, `refusal?` | Answer a `CompactRequested`: summarise the thread into notes now (`ContextCompacted` carries them, then `TurnComplete`; the machine is told with `Internal(Custom "context.compaction_finished")`), or, with a `refusal`, only tell the person why not |
 | `Verify` | `spec` | Evaluate a declarative verifier against the real world; the verdict arrives as `VerificationComplete` |
 
 ### `CallLlm` requests
@@ -177,7 +179,8 @@ Used by modes `agent`, `reactive` and `chat`
 Top (root, never active leaf)
 └── Session (composite)
     ├── Idle       <- waiting for the user's next message
-    └── Generating <- model turn in flight; tools run in-state
+    ├── Generating <- model turn in flight; tools run in-state
+    └── Compacting <- the conversation is being summarised on request
 ```
 
 ### Permission Policy
@@ -191,7 +194,7 @@ removed, so the kernel refuses a file write even if the model proposes one (see
 
 ### State Transitions
 
-#### `Session` (composite parent of `Idle` and `Generating`)
+#### `Session` (composite parent of `Idle`, `Generating` and `Compacting`)
 
 | Event | -> State | Effects emitted |
 |-------|----------|-----------------|
@@ -204,11 +207,29 @@ removed, so the kernel refuses a file write even if the model proposes one (see
 | Event | -> State | Effects emitted |
 |-------|----------|-----------------|
 | `UserMessage { text }` | `Generating` | `CallLlm` on thread `chat` with `text` as the instruction (every tool the session offers) |
+| `CompactRequested` | `Compacting` | `CompactContext` on thread `chat` |
 | _(any other)_ | `Session` (super) | - |
 
 The round budget of the loop is the `agent.max_tool_rounds` configuration value
 (default 200), handed to the machine as a context fact. Without the fact the
 built-in budget is 16.
+
+#### `Compacting`
+
+Waits for the turn executor to summarise the thread (`/compact`).
+
+| Event | -> State | Effects emitted |
+|-------|----------|-----------------|
+| `Internal(Custom "context.compaction_finished")` | `Idle` | - |
+| `EffectFailed` of `CompactContext` | `Idle` | - (stores `last_error`) |
+| `CompactRequested` | _(stay)_ | `CompactContext` with a `refusal`: the executor only says why |
+| `UserCancelled` | `Idle` (via `Session`) | - |
+| _(any other)_ | `Session` (super) | - |
+
+A `CompactRequested` while `Generating` (tools running) is refused the same
+way: the person asked for it now. Events are dispatched one at a time, so one
+posted while the model is being awaited reaches the machine after the turn's
+completion event; the TUI and `sven rc` check that the session is idle first.
 
 #### `Generating`
 

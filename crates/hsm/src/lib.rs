@@ -80,8 +80,8 @@ pub use dispatch::{DispatchOutcome, Hsm};
 pub use effect::{Effect, EffectKind, GatedCall};
 pub use error::{MachineError, Result};
 pub use event::{
-    Event, EventKind, InternalEvent, ProposedToolCall, CONTEXT_EXHAUSTED, TRANSIENT,
-    TURN_TRUNCATED, TURN_WATCHDOG,
+    Event, EventKind, InternalEvent, ProposedToolCall, COMPACTION_FINISHED, CONTEXT_EXHAUSTED,
+    TRANSIENT, TURN_TRUNCATED, TURN_WATCHDOG,
 };
 pub use ids::{ApprovalId, CorrelationId, MachineId, QuestionId, TaskId, TimerId, ToolCallId};
 pub use machine::Machine;

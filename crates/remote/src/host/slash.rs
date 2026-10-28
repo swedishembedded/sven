@@ -25,6 +25,8 @@ pub(super) enum Typed {
     Mode(AgentMode),
     /// `/clear`: the session starts over with no conversation.
     Clear,
+    /// `/compact`: the session summarises its conversation now.
+    Compact,
     /// A command used wrongly: say this back, send nothing.
     Usage(String),
 }
@@ -45,6 +47,9 @@ pub(super) fn interpret(text: &str, project_root: &Path) -> Typed {
         Some(ImmediateAction::ClearChat | ImmediateAction::NewConversation)
     ) {
         return Typed::Clear;
+    }
+    if matches!(result.immediate_action, Some(ImmediateAction::Compact)) {
+        return Typed::Compact;
     }
     if let Some(message) = result.message_to_send {
         return Typed::Expanded(message);
@@ -110,6 +115,13 @@ mod tests {
     }
 
     #[test]
+    fn clear_and_compact_are_commands_the_host_runs_itself() {
+        let project = project_with_command();
+        assert_eq!(interpret("/clear", project.path()), Typed::Clear);
+        assert_eq!(interpret("/compact", project.path()), Typed::Compact);
+    }
+
+    #[test]
     fn a_line_that_only_looks_like_a_command_is_a_message() {
         let project = project_with_command();
         for line in ["hello", "/etc/hosts is empty?", "/quit"] {
@@ -121,6 +133,19 @@ mod tests {
     }
 
     #[test]
+    fn compact_is_offered_with_a_one_line_description() {
+        let project = project_with_command();
+        let compact = available(project.path())
+            .into_iter()
+            .find(|c| c.name == "compact")
+            .expect("compact is listed");
+        assert_eq!(
+            compact.description,
+            "Summarise the conversation so far to free context"
+        );
+    }
+
+    #[test]
     fn lists_what_a_session_here_can_run() {
         let project = project_with_command();
         let names: Vec<String> = available(project.path())
@@ -129,6 +154,7 @@ mod tests {
             .collect();
         assert!(names.contains(&"review-pr".to_string()));
         assert!(names.contains(&"mode".to_string()));
+        assert!(names.contains(&"compact".to_string()));
         assert!(!names.contains(&"quit".to_string()));
     }
 }

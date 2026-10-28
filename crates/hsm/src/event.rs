@@ -56,6 +56,14 @@ pub enum Event {
     },
     /// The human asked to cancel the in-flight work.
     UserCancelled,
+    /// The human asked for the conversation to be compacted now: summarised
+    /// into notes the rest of it stems from, whether or not the context is
+    /// nearly full. A machine accepts it only at rest and refuses it, saying
+    /// so, while a turn is running; it never waits for the turn. The kernel
+    /// dispatches events one at a time, so a request posted while a model
+    /// call is awaited is dispatched after that call's completion event: a
+    /// surface that wants the refusal checks that it is idle first.
+    CompactRequested,
 
     /// The LLM proposed a natural-language response to the user.
     LlmProposedResponse {
@@ -312,6 +320,14 @@ pub const CONTEXT_EXHAUSTED: &str = "context_exhausted";
 /// may not happen again (a dropped connection, a busy server).
 pub const TRANSIENT: &str = "transient";
 
+/// The name of the [`InternalEvent::Custom`] the turn executor sends when it
+/// has answered an [`Effect::CompactContext`] (compacted the conversation, or
+/// found nothing to compact), so the machine that asked leaves the state in
+/// which it waited.
+///
+/// [`Effect::CompactContext`]: crate::effect::Effect::CompactContext
+pub const COMPACTION_FINISHED: &str = "context.compaction_finished";
+
 /// The name of the [`InternalEvent::Custom`] a turn executor sends, just
 /// before the turn's completion, when the provider cut the reply off at its
 /// output-token limit.
@@ -373,6 +389,7 @@ impl Event {
             Event::UserMessage { .. } => EventKind::UserMessage,
             Event::UserProvidedArtifact { .. } => EventKind::UserProvidedArtifact,
             Event::UserCancelled => EventKind::UserCancelled,
+            Event::CompactRequested => EventKind::CompactRequested,
             Event::LlmProposedResponse { .. } => EventKind::LlmProposedResponse,
             Event::LlmProposedToolCall { .. } => EventKind::LlmProposedToolCall,
             Event::LlmProposedPlan { .. } => EventKind::LlmProposedPlan,
@@ -416,6 +433,8 @@ pub enum EventKind {
     UserProvidedArtifact,
     /// See [`Event::UserCancelled`].
     UserCancelled,
+    /// See [`Event::CompactRequested`].
+    CompactRequested,
     /// See [`Event::LlmProposedResponse`].
     LlmProposedResponse,
     /// See [`Event::LlmProposedToolCall`].

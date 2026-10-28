@@ -103,6 +103,11 @@ impl App {
                         return false;
                     }
 
+                    if matches!(result.immediate_action, Some(ImmediateAction::Compact)) {
+                        self.compact_conversation().await;
+                        return false;
+                    }
+
                     if matches!(
                         result.immediate_action,
                         Some(ImmediateAction::NewConversation)
@@ -380,6 +385,26 @@ impl App {
             }
         }
         false
+    }
+
+    /// `/compact`: ask the agent to summarise the conversation now. The
+    /// answer is a `ContextCompacted` segment holding the summary, then
+    /// `TurnComplete`, which ends the busy state set here. A running turn is
+    /// not interrupted: the person is told instead.
+    async fn compact_conversation(&mut self) {
+        if self.agent.busy {
+            self.agent.notice =
+                Some("warning: cannot compact now: a turn is running; /abort it or wait".into());
+            return;
+        }
+        let Some(tx) = &self.agent.tx else {
+            return;
+        };
+        if tx.send(AgentRequest::Compact).await.is_ok() {
+            self.agent.busy = true;
+        } else {
+            self.agent.notice = Some("warning: the agent session has stopped".into());
+        }
     }
 
     pub(crate) async fn send_to_agent(&mut self, qm: QueuedMessage) {

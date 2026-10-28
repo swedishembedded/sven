@@ -534,6 +534,7 @@ impl Agent {
                             tokens_after,
                             strategy,
                             turn,
+                            ..
                         } = &event
                         {
                             run_marks.push(crate::state::CompactionMark {

@@ -43,6 +43,9 @@ pub enum ChatSegment {
         tokens_after: usize,
         strategy: CompactionStrategyUsed,
         turn: u32,
+        /// The notes the conversation continues from, to view; `None` for a
+        /// trim that wrote none.
+        summary: Option<String>,
     },
     Error(String),
     Thinking {

@@ -238,6 +238,7 @@ pub(crate) fn conversation_record_to_chat_segment(
                 tokens_after,
                 strategy,
                 turn: turn.unwrap_or(0),
+                summary: None,
             })
         }
     }

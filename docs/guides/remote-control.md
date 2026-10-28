@@ -56,7 +56,10 @@ as if each were a separate `sven`.
 
 A message that starts with `/` is a slash command, run as the terminal runs
 it: a custom command sends its instructions, and the mode and model ones
-change the session. `sven rc` tells the server which commands it can run
+change the session; `/clear` starts the conversation over and `/compact`
+summarises it to free context (the server receives `ContextCompacted` with
+the `summary`, or a notice when there was nothing to compact or a turn was
+running, and then the end of the answer). `sven rc` tells the server which commands it can run
 (when it connects and when asked), so the server's interface can offer
 them as you type.
 

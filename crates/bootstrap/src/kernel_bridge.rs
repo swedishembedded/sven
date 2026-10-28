@@ -299,6 +299,12 @@ impl KernelAgentSession {
         self.handle.cancel().await
     }
 
+    /// Compact the conversation now (see [`RuntimeHandle::compact`]). Returns
+    /// `false` if the kernel queue is closed.
+    pub async fn compact(&self) -> bool {
+        self.handle.compact().await
+    }
+
     /// A cheap clone of the underlying [`RuntimeHandle`] for callers that need
     /// direct access to the event sink, status watch, or observation stream.
     #[must_use]

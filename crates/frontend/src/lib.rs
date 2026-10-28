@@ -57,7 +57,8 @@ pub use sven_commands as commands;
 
 pub use agent::{kernel_session_task, AgentRequest};
 pub use controller::{
-    machine_for, AbortSlot, Gates, SessionController, SessionOptions, SessionSpec, SubmitError,
+    machine_for, AbortSlot, CompactError, Gates, SessionController, SessionOptions, SessionSpec,
+    SubmitError,
 };
 pub use projection::{
     projection_channel, projection_to_session_state, MachineProjection, ProjectionRx, ProjectionTx,

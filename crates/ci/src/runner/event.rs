@@ -282,6 +282,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             tokens_after,
             strategy,
             turn,
+            ..
         } => {
             let turn_note = if turn > 0 {
                 format!(" (tool round {turn})")

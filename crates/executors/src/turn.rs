@@ -293,8 +293,12 @@ impl TurnExecutor {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl EffectExecutor for TurnExecutor {
     async fn execute(&mut self, effect: Effect, sink: &EventSink, obs: &ObservationSink) {
-        let Effect::CallLlm { request } = effect else {
-            return;
+        let request = match effect {
+            Effect::CallLlm { request } => request,
+            Effect::CompactContext { thread, refusal } => {
+                return self.answer_compaction(&thread, refusal, sink, obs).await;
+            }
+            _ => return,
         };
 
         if !TurnRequest::is_turn(&request) {

@@ -5,6 +5,7 @@
 
 pub mod abort;
 pub mod clear;
+pub mod compact;
 pub mod inspect;
 pub mod mode;
 pub mod model;

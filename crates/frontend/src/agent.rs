@@ -15,7 +15,9 @@ use sven_bootstrap::{McpManager, RuntimeContext};
 use sven_model_drivers::ModelConfig;
 use sven_vocab::{AgentMode, ApprovalMode};
 
-use crate::controller::{Gates, ProviderFactory, SessionController, SessionOptions, SessionSpec};
+use crate::controller::{
+    CompactError, Gates, ProviderFactory, SessionController, SessionOptions, SessionSpec,
+};
 use sven_machines::AgentEvent;
 use sven_mcp_client::McpEvent;
 use sven_model::{CompletionRequest, Message};
@@ -57,6 +59,9 @@ pub enum AgentRequest {
     GenerateTitle { user_text: String },
     /// Refresh MCP tools from the manager (e.g. when ToolsChanged fires).
     RefreshMcpTools,
+    /// Compact the conversation now (`/compact`). The answer is a
+    /// `ContextCompacted` event carrying the summary, then `TurnComplete`.
+    Compact,
 }
 
 /// Lightweight helper to generate a title from a given model configuration.
@@ -279,6 +284,22 @@ pub(crate) async fn run_kernel_session_task(
                     let final_title = title.unwrap_or_else(|| make_title(&user_text));
                     let _ = event_tx.send(AgentEvent::TitleGenerated(final_title)).await;
                 });
+            }
+
+            AgentRequest::Compact => {
+                match session.compact().await {
+                    Ok(()) => {}
+                    // Nothing in the kernel will answer: say so, and end the
+                    // answer the way a compaction would.
+                    Err(e @ CompactError::Unsupported(_)) => {
+                        let _ = tx.send(AgentEvent::Warning(e.to_string())).await;
+                        let _ = tx.send(AgentEvent::TurnComplete).await;
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                        break;
+                    }
+                }
             }
 
             AgentRequest::RefreshMcpTools => {

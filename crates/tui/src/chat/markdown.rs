@@ -61,6 +61,7 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
             tokens_after,
             strategy,
             turn,
+            summary,
         } => {
             use sven_machines::CompactionStrategyUsed;
             let label = match strategy {
@@ -74,7 +75,17 @@ pub fn segment_to_markdown(seg: &ChatSegment, tool_args_cache: &HashMap<String, 
             } else {
                 String::new()
             };
-            format!("\n---\n*{label}: {tokens_before} → {tokens_after} tokens{turn_note}*\n\n")
+            let mut out =
+                format!("\n---\n*{label}: {tokens_before} → {tokens_after} tokens{turn_note}*\n\n");
+            // The notes every later turn stems from, quoted so they read as
+            // the compacted message rather than as the agent speaking.
+            if let Some(summary) = summary {
+                for line in summary.lines() {
+                    out.push_str(&format!("> {line}\n"));
+                }
+                out.push('\n');
+            }
+            out
         }
         ChatSegment::Error(msg) => format!("\n**Error**: {msg}\n\n"),
         ChatSegment::Thinking { content } => {

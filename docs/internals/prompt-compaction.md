@@ -293,8 +293,28 @@ ContextCompacted {
     tokens_after:  usize,             // history estimate after rebuild
     strategy: CompactionStrategyUsed, // Fork | Emergency (Structured and Narrative: older sessions)
     turn: u32,                        // 0 for compaction before a model turn
+    summary: Option<String>,          // the notes the conversation now stems from; None for an emergency trim
 }
 ```
+
+Serialized (`SessionEvent` is externally tagged), `summary` is omitted when
+absent, so a consumer that predates it reads the event unchanged:
+
+```json
+{"ContextCompacted": {"tokens_before": 60674, "tokens_after": 7144,
+  "strategy": "Fork", "turn": 0, "summary": "Goal: ..."}}
+```
+
+Compaction on request (`/compact`, `Event::CompactRequested`) runs the same
+code with no size to stop at: the whole thread is summarised even when it
+still fits. The answer ends like a turn: `ContextCompacted`, then
+`TurnComplete`. A thread too short to summarise is reported as a warning
+(then `TurnComplete`) and left as it is; a request while a turn runs is
+refused with a warning by the machine (the surfaces check first that the
+session is idle, because the kernel dispatches events one at a time). Stopping the turn stops the
+compaction before the thread is replaced and ends the answer with `Aborted`.
+Persisted conversation records keep the counts but not the summary; the
+summary is the first message of the thread itself.
 
 The TUI displays this in the chat pane. CI logs it to stderr as:
 

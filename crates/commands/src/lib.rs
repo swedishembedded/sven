@@ -87,6 +87,9 @@ pub enum ImmediateAction {
     Abort,
     RefreshSkills,
     ClearChat,
+    /// `/compact`: summarise the conversation now, whether or not the
+    /// context is nearly full.
+    Compact,
     NewConversation,
     ApprovePlan {
         task_id: String,

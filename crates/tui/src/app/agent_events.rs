@@ -210,12 +210,14 @@ impl App {
                 tokens_after,
                 strategy,
                 turn,
+                summary,
             } => {
                 self.chat.push_segment(ChatSegment::ContextCompacted {
                     tokens_before,
                     tokens_after,
                     strategy,
                     turn,
+                    summary,
                 });
                 self.save_history_async();
                 self.rerender_chat().await;

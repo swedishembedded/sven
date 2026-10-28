@@ -25,7 +25,7 @@ use futures::StreamExt;
 use sven_bootstrap::{Config, RuntimeContext};
 use sven_control::remote::{EventBatch, EventEnvelope};
 use sven_control::{ControlCommand, ControlEvent, HistoryEntry, SessionState};
-use sven_frontend::{SessionController, SessionOptions, SessionSpec};
+use sven_frontend::{CompactError, SessionController, SessionOptions, SessionSpec};
 use sven_machines::AgentEvent;
 use sven_model::Message;
 use sven_model_drivers::ModelConfig;
@@ -349,6 +349,9 @@ struct SessionActor {
     /// from before a restart; asked again, it continues that answer.
     unfinished: Option<String>,
     controller: Option<SessionController>,
+    /// A turn or a compaction is running: the last state told to the server
+    /// was `Running`.
+    working: bool,
     /// Closed: nothing is kept for it any more, even by an answer that was
     /// still finishing.
     closed: bool,
@@ -372,6 +375,7 @@ impl SessionActor {
             history: Vec::new(),
             unfinished: None,
             controller: None,
+            working: false,
             closed: false,
             approvals: PendingApprovals::default(),
             running: HashMap::new(),
@@ -464,6 +468,10 @@ impl SessionActor {
                     self.reply("Conversation cleared.").await;
                     return;
                 }
+                slash::Typed::Compact => {
+                    self.compact().await;
+                    return;
+                }
             }
         };
         if let Err(e) = self.submit(text).await {
@@ -471,18 +479,45 @@ impl SessionActor {
         }
     }
 
-    async fn submit(&mut self, text: String) -> anyhow::Result<()> {
+    /// The model this conversation talks to, through the server.
+    fn model_config(&self) -> anyhow::Result<ModelConfig> {
         let name = self
             .model
             .clone()
             .ok_or_else(|| anyhow::anyhow!("no model was chosen for this conversation"))?;
-        let model = ModelConfig {
+        Ok(ModelConfig {
             provider: "openai".into(),
             name,
             base_url: Some(self.context.openai_base_url.clone()),
             api_key: Some(self.context.token.clone()),
             ..ModelConfig::default()
-        };
+        })
+    }
+
+    /// Opens the live session on the conversation kept so far.
+    async fn open_controller(&mut self, model: ModelConfig) -> anyhow::Result<SessionController> {
+        let mut runtime = RuntimeContext::auto_detect_at(Some(self.context.working_dir.clone()));
+        runtime.project_root = Some(self.context.working_dir.clone());
+        let mut options = SessionOptions::new(
+            Arc::clone(&self.context.config),
+            runtime,
+            self.events_tx.clone(),
+        );
+        // A tool that asks first asks the person at the server.
+        options.permission_requester = Some(Arc::new(RemoteApprovals {
+            session_id: self.id,
+            pending: self.approvals.clone(),
+            ask: self.context.asks.clone(),
+            timeout: APPROVAL_TIMEOUT,
+        }));
+        let spec = SessionSpec::for_mode(self.mode, model);
+        let history = std::mem::take(&mut self.history);
+        let (controller, _mcp_events) = SessionController::open(options, spec, history).await?;
+        Ok(controller)
+    }
+
+    async fn submit(&mut self, text: String) -> anyhow::Result<()> {
+        let model = self.model_config()?;
         self.state(SessionState::Running).await;
         match &mut self.controller {
             Some(controller) => {
@@ -491,30 +526,48 @@ impl SessionActor {
                     .await?
             }
             None => {
-                let mut runtime =
-                    RuntimeContext::auto_detect_at(Some(self.context.working_dir.clone()));
-                runtime.project_root = Some(self.context.working_dir.clone());
-                let mut options = SessionOptions::new(
-                    Arc::clone(&self.context.config),
-                    runtime,
-                    self.events_tx.clone(),
-                );
-                // A tool that asks first asks the person at the server.
-                options.permission_requester = Some(Arc::new(RemoteApprovals {
-                    session_id: self.id,
-                    pending: self.approvals.clone(),
-                    ask: self.context.asks.clone(),
-                    timeout: APPROVAL_TIMEOUT,
-                }));
-                let spec = SessionSpec::for_mode(self.mode, model);
-                let history = std::mem::take(&mut self.history);
-                let (controller, _mcp_events) =
-                    SessionController::open(options, spec, history).await?;
+                let controller = self.open_controller(model).await?;
                 controller.post(text).await?;
                 self.controller = Some(controller);
             }
         }
         Ok(())
+    }
+
+    /// `/compact`: the session summarises its conversation now. The answer
+    /// is the kernel's own: `ContextCompacted` with the summary, or a warning
+    /// when there is nothing to summarise, then `TurnComplete`. What the
+    /// kernel cannot answer is answered here, so the server never waits for
+    /// an ending that will not come: a turn still running (the request is
+    /// refused, never queued) and a mode that cannot compact.
+    async fn compact(&mut self) {
+        if self.working {
+            self.reply("Cannot compact now: a turn is running. Stop it or wait for it to finish.")
+                .await;
+            return;
+        }
+        if let Err(e) = self.start_compaction().await {
+            self.fail(&format!("{e:#}")).await;
+        }
+    }
+
+    async fn start_compaction(&mut self) -> anyhow::Result<()> {
+        if self.controller.is_none() {
+            let model = self.model_config()?;
+            self.controller = Some(self.open_controller(model).await?);
+        }
+        self.state(SessionState::Running).await;
+        let Some(controller) = &self.controller else {
+            return Ok(());
+        };
+        match controller.compact().await {
+            Ok(()) => Ok(()),
+            Err(e @ CompactError::Unsupported(_)) => {
+                self.reply(&format!("{e}.")).await;
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Starts the session over with no conversation: the live one is let go
@@ -642,7 +695,8 @@ impl SessionActor {
             .await;
     }
 
-    async fn state(&self, state: SessionState) {
+    async fn state(&mut self, state: SessionState) {
+        self.working = state == SessionState::Running;
         let event = ControlEvent::SessionState {
             session_id: self.id,
             state,

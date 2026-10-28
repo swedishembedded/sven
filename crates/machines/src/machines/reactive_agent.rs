@@ -14,8 +14,21 @@
 //! Top (root)
 //! └── Session
 //!     ├── Idle        ← waiting for the user's next message
-//!     └── Generating  ← LLM turn in flight; tools executed in-state
+//!     ├── Generating  ← LLM turn in flight; tools executed in-state
+//!     └── Compacting  ← the conversation is being summarised on request
 //! ```
+//!
+//! # Compaction on request
+//!
+//! `CompactRequested` at rest emits `Effect::CompactContext` and enters
+//! `Compacting` until the turn executor reports `COMPACTION_FINISHED` (or the
+//! effect fails, or the user cancels). While a turn is running its tools, or
+//! another compaction is running, the request is refused with a reason the
+//! executor shows, and the machine does not wait for the turn: the person
+//! asked for it now, and "after the turn" is a different request they can
+//! make then. (Events are dispatched one at a time, so a request posted
+//! while the model is being awaited reaches the machine after the turn's
+//! completion event; surfaces check that the session is idle first.)
 //!
 //! # In-state tool loop
 //!
@@ -52,8 +65,8 @@
 use serde_json::json;
 use sven_hsm::{
     context::Context,
-    effect::Effect,
-    event::{Event, InternalEvent},
+    effect::{Effect, EffectKind},
+    event::{Event, InternalEvent, COMPACTION_FINISHED},
     ids::{MachineId, ToolCallId},
     machine::Machine,
     permissions::{PermissionPolicy, ToolCapability},
@@ -156,6 +169,9 @@ pub enum ReactiveState {
     Idle,
     /// LLM turn in flight; tool calls executed in-state.
     Generating,
+    /// The conversation is being compacted on request; a turn cannot start
+    /// until the executor reports back.
+    Compacting,
 }
 
 /// The default streaming coding-agent machine.
@@ -227,6 +243,15 @@ impl ReactiveAgentMachine {
             None,
             None,
         )
+    }
+
+    /// The answer to a compaction request: compact the chat thread, or (with
+    /// a `refusal`) say why the request was declined.
+    fn compact_effect(refusal: Option<&str>) -> Effect {
+        Effect::CompactContext {
+            thread: CHAT_THREAD.to_string(),
+            refusal: refusal.map(str::to_string),
+        }
     }
 
     /// Build a continuation turn from the current `LoopState`.
@@ -418,7 +443,9 @@ impl Machine for ReactiveAgentMachine {
         match state {
             ReactiveState::Top => ReactiveState::Top,
             ReactiveState::Session => ReactiveState::Top,
-            ReactiveState::Idle | ReactiveState::Generating => ReactiveState::Session,
+            ReactiveState::Idle | ReactiveState::Generating | ReactiveState::Compacting => {
+                ReactiveState::Session
+            }
         }
     }
 
@@ -444,6 +471,11 @@ impl Machine for ReactiveAgentMachine {
 
             // Idle: a user message starts a new turn.
             Idle => match event {
+                Event::CompactRequested => Reaction::transition(
+                    Compacting,
+                    vec![Self::compact_effect(None)],
+                    "compaction requested; summarising the conversation",
+                ),
                 Event::UserMessage { text } => {
                     init_loop(
                         ctx,
@@ -480,6 +512,26 @@ impl Machine for ReactiveAgentMachine {
                 _ => Reaction::Super(Session),
             },
 
+            // Compacting: waits for the executor; a second request is refused.
+            Compacting => match event {
+                Event::Internal(InternalEvent::Custom { name, .. })
+                    if name == COMPACTION_FINISHED =>
+                {
+                    Reaction::transition(Idle, vec![], "compaction finished")
+                }
+                Event::EffectFailed {
+                    kind: EffectKind::CompactContext,
+                    error,
+                } => {
+                    ctx.set_fact("last_error", json!(error));
+                    Reaction::transition(Idle, vec![], "compaction failed")
+                }
+                Event::CompactRequested => Reaction::effects(vec![Self::compact_effect(Some(
+                    "the conversation is already being compacted",
+                ))]),
+                _ => Reaction::Super(Session),
+            },
+
             // Generating: LLM turn in flight; tool loop handled in-state.
             Generating => {
                 // ── 1. Delegate tool/approval events to the shared helper ──────
@@ -492,6 +544,9 @@ impl Machine for ReactiveAgentMachine {
 
                 // ── 2. LLM and other events ───────────────────────────────────
                 match event {
+                    Event::CompactRequested => Reaction::effects(vec![Self::compact_effect(Some(
+                        "a turn is running; stop it or wait for it to finish, then compact",
+                    ))]),
                     Event::LlmTurnComplete { .. } => match on_llm_turn_complete(ctx, event) {
                         GeneratingAction::FinalAnswer { text, .. } => {
                             match Self::clarification_effect(ctx, &text) {
@@ -542,6 +597,7 @@ impl Machine for ReactiveAgentMachine {
             ReactiveState::Session,
             ReactiveState::Idle,
             ReactiveState::Generating,
+            ReactiveState::Compacting,
         ]
     }
 }
@@ -630,6 +686,63 @@ mod tests {
     fn initial_state_is_idle() {
         let (hsm, _) = make_hsm();
         assert_eq!(hsm.state(), ReactiveState::Idle);
+    }
+
+    fn compaction_effect(effects: &[Effect]) -> (&str, Option<&str>) {
+        match effects {
+            [Effect::CompactContext { thread, refusal }] => (thread, refusal.as_deref()),
+            other => panic!("expected one CompactContext, got {other:?}"),
+        }
+    }
+
+    /// A request to compact at rest asks the executor to compact the chat
+    /// thread and waits for it; the executor's report (or its failure, or a
+    /// cancel) brings the machine back to rest.
+    #[test]
+    fn compaction_requested_at_rest_waits_for_the_executor() {
+        let (mut hsm, mut ctx) = make_hsm();
+        let out = hsm.dispatch(&Event::CompactRequested, &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Compacting);
+        assert_eq!(compaction_effect(&out.effects), (CHAT_THREAD, None));
+
+        hsm.dispatch(
+            &Event::Internal(InternalEvent::Custom {
+                name: COMPACTION_FINISHED.to_string(),
+                payload: serde_json::Value::Null,
+            }),
+            &mut ctx,
+        );
+        assert_eq!(hsm.state(), ReactiveState::Idle);
+
+        for leaving in [
+            Event::UserCancelled,
+            Event::EffectFailed {
+                kind: EffectKind::CompactContext,
+                error: "no model".into(),
+            },
+        ] {
+            hsm.dispatch(&Event::CompactRequested, &mut ctx);
+            hsm.dispatch(&leaving, &mut ctx);
+            assert_eq!(hsm.state(), ReactiveState::Idle, "left by {leaving:?}");
+        }
+    }
+
+    /// A running turn, or a compaction already running, is not interrupted
+    /// and nothing is queued: the request is refused with a reason.
+    #[test]
+    fn compaction_requested_while_busy_is_refused_not_queued() {
+        let (mut hsm, mut ctx) = make_hsm();
+        hsm.dispatch(&Event::user_message("fix the bug"), &mut ctx);
+        let out = hsm.dispatch(&Event::CompactRequested, &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Generating);
+        let (_, refusal) = compaction_effect(&out.effects);
+        assert!(refusal.is_some_and(|r| r.contains("turn is running")));
+
+        let (mut hsm, mut ctx) = make_hsm();
+        hsm.dispatch(&Event::CompactRequested, &mut ctx);
+        let out = hsm.dispatch(&Event::CompactRequested, &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Compacting);
+        assert!(compaction_effect(&out.effects).1.is_some());
     }
 
     #[test]

@@ -333,6 +333,17 @@ impl RuntimeHandle {
         self.sink.emit(Event::UserCancelled).await
     }
 
+    /// Asks the session to compact its conversation now: summarise it into
+    /// notes the rest of the conversation stems from (announced as
+    /// `ContextCompacted`, carrying the summary), whether or not the context
+    /// is nearly full. The answer ends like a turn, with `TurnComplete`; a
+    /// conversation too short to summarise, or a turn already running, is
+    /// reported as a warning and nothing is queued. Returns `false` if the
+    /// kernel queue is closed.
+    pub async fn compact(&self) -> bool {
+        self.sink.emit(Event::CompactRequested).await
+    }
+
     /// The latest published status snapshot.
     #[must_use]
     pub fn status(&self) -> RuntimeStatus {

@@ -104,6 +104,7 @@ pub fn build_active_trajectory(
                     tokens_after,
                     strategy,
                     turn,
+                    ..
                 } => Some(sven_session_store::ConversationRecord::ContextCompacted {
                     tokens_before: *tokens_before,
                     tokens_after: *tokens_after,
