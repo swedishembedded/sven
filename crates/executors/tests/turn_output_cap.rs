@@ -149,3 +149,63 @@ async fn a_request_with_no_room_left_for_a_response_is_never_sent() {
         sent.map(|r| r.max_output_tokens_override)
     );
 }
+
+/// The request a one-message turn sends to `model` under `limits`.
+async fn first_request(
+    model: Arc<dyn sven_model::ModelProvider>,
+    last: &Arc<Mutex<Option<sven_model::CompletionRequest>>>,
+    limits: sven_turn::TurnLimits,
+    prompt: String,
+) -> sven_model::CompletionRequest {
+    let turn = TurnExecutor::new(
+        model,
+        None,
+        Arc::new(sven_tool_registry::ToolRegistry::new()),
+        Arc::new(std::sync::Mutex::new(ThreadStore::new())),
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        Arc::new(tokio::sync::Mutex::new(None)),
+    )
+    .with_turn_limits(limits);
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(ReactiveAgentMachine::new())) as Box<dyn ErasedMachine>,
+        Context::new(),
+        PermissionPolicy::builder().build(),
+        CompositeExecutorBuilder::default().with_turn(turn).build(),
+        64,
+    );
+    rt.post(Event::user_message(prompt)).await;
+    for _ in 0..200 {
+        if last.lock().unwrap().is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    rt.abort();
+    let sent = last.lock().unwrap().take();
+    sent.expect("the model was called")
+}
+
+/// A response bounded only by what the prompt leaves of the window carries
+/// that bound as the room, not as a limit: the room is sven's estimate, and a
+/// server that ends a reply at its own context knows it exactly. A limit
+/// someone set stays a limit.
+#[tokio::test]
+async fn a_budget_bound_only_by_the_window_is_marked_as_the_room() {
+    let last = Arc::new(Mutex::new(None));
+    let window = || {
+        Arc::new(SmallWindow {
+            window: 8000,
+            last: Arc::clone(&last),
+        })
+    };
+    let roomy = first_request(window(), &last, Default::default(), "word ".repeat(2000)).await;
+    assert!(
+        roomy.output_limit_is_room,
+        "{:?}",
+        roomy.max_output_tokens_override
+    );
+    let capped = sven_turn::TurnLimits::default().with_max_output_tokens(Some(123));
+    let limited = first_request(window(), &last, capped, "ping".into()).await;
+    assert_eq!(limited.max_output_tokens_override, Some(123));
+    assert!(!limited.output_limit_is_room);
+}

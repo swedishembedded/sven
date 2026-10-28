@@ -460,7 +460,10 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         } else {
             "max_tokens"
         };
-        let max_tokens = req.max_output_tokens_override.unwrap_or(self.max_tokens);
+        // Only the estimated room left: the server bounds the reply by its
+        // context exactly, which an estimate can only overshoot.
+        let max_tokens = (!req.output_limit_is_room)
+            .then(|| req.max_output_tokens_override.unwrap_or(self.max_tokens));
 
         // GPT-5 models only support temperature=1 (the default)
         // Reasoning models (o1, o3) don't support temperature parameter at all
@@ -476,9 +479,11 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             "model": self.model,
             "messages": messages,
             "stream": req.stream,
-            max_tokens_key: max_tokens,
             "stream_options": { "include_usage": true },
         });
+        if let Some(max_tokens) = max_tokens {
+            body[max_tokens_key] = json!(max_tokens);
+        }
         // A per-request temperature overrides the configured one; with
         // neither the server's own default applies.
         if let Some(temperature) = crate::temperature(&req, self.temperature) {

@@ -471,12 +471,11 @@ impl EffectExecutor for TurnExecutor {
         let sizing = self
             .prompt_counts
             .sizing_estimate(&thread_id, &messages, estimate);
-        let max_output_tokens_override =
-            limits.output_budget(context_window, configured_max_output, sizing);
+        let output_limit = limits.output_limit(context_window, configured_max_output, sizing);
         // The server's count can exceed the estimate the gate above used, and
         // then nothing is left: a request asking for no tokens is refused by
         // every server, so it fails here, saying why, instead.
-        if max_output_tokens_override == Some(0) {
+        if output_limit.tokens == Some(0) {
             let msg = no_room(sizing, input_budget.unwrap_or(0));
             obs.emit(UiEvent::Error(msg.clone()));
             let _ = sink.emit(Event::LlmFailed { error: msg }).await;
@@ -620,7 +619,7 @@ impl EffectExecutor for TurnExecutor {
                 cache_key: Some(thread_id.clone()),
                 dynamic_suffix: req.dynamic_suffix.clone(),
                 response_format,
-                max_output_tokens_override,
+                output_limit,
             }
             .stream_retrying_overflow(model.as_ref(), limits, &tx, obs) => r,
         };
@@ -665,7 +664,7 @@ impl EffectExecutor for TurnExecutor {
         }
 
         let sent = compaction::Sent {
-            output_budget: max_output_tokens_override,
+            output_budget: output_limit.tokens,
             plain_estimate: estimate,
             fit: recoverable,
         };

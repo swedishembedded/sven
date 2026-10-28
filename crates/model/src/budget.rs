@@ -173,6 +173,41 @@ pub fn dynamic_output_budget(
     Some(cap.min(remaining as u32))
 }
 
+/// The output-token limit one request carries: `tokens` to ask for (`None`:
+/// the provider's own default), and whether that number is only the room the
+/// prompt is estimated to leave of the window rather than a limit anyone set
+/// (see `CompletionRequest::output_limit_is_room`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OutputLimit {
+    pub tokens: Option<u32>,
+    pub is_room: bool,
+}
+
+impl From<Option<u32>> for OutputLimit {
+    /// A limit that was set: sent as it is.
+    fn from(tokens: Option<u32>) -> Self {
+        OutputLimit {
+            tokens,
+            is_room: false,
+        }
+    }
+}
+
+/// [`dynamic_output_budget`], saying whether the window's room, not
+/// `max_output_tokens` (or the fallback cap without one), is what bounds it.
+pub fn output_limit(
+    context_window: Option<u32>,
+    max_output_tokens: Option<u32>,
+    prompt_tokens: usize,
+) -> OutputLimit {
+    let tokens = dynamic_output_budget(context_window, max_output_tokens, prompt_tokens);
+    let cap = max_output_tokens.unwrap_or(DEFAULT_OUTPUT_FALLBACK);
+    OutputLimit {
+        tokens,
+        is_room: tokens.is_some_and(|n| n < cap),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

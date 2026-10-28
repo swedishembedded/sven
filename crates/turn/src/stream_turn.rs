@@ -158,6 +158,23 @@ impl TurnLimits {
         self
     }
 
+    /// [`Self::output_budget`], saying whether the window's room is what
+    /// bounds it ([`sven_model::budget::output_limit`]).
+    #[must_use]
+    pub fn output_limit(
+        &self,
+        context_window: Option<u32>,
+        model_cap: Option<u32>,
+        prompt_tokens: usize,
+    ) -> sven_model::budget::OutputLimit {
+        let room = sven_model::budget::output_limit(context_window, model_cap, prompt_tokens);
+        let tokens = self.cap_output(room.tokens);
+        sven_model::budget::OutputLimit {
+            tokens,
+            is_room: room.is_room && tokens == room.tokens,
+        }
+    }
+
     /// The output tokens one request may ask for: what the prompt leaves of
     /// the context window under `model_cap`
     /// (`sven_model::budget::dynamic_output_budget`), held to this limit.
@@ -384,11 +401,11 @@ pub struct StreamedTurn {
 ///
 /// `tx` receives [`AgentEvent`]s for UI bridging while the stream runs.
 ///
-/// `max_output_tokens_override`, when set, is forwarded verbatim as the
-/// request's output-token limit (see [`sven_model::budget::dynamic_output_budget`]
-/// for how callers typically compute it — scaled to the actual prompt size
-/// rather than a fixed reservation). `None` lets the provider apply its own
-/// built-in default, unchanged from before this parameter existed.
+/// `output_limit` is the request's output-token limit (see
+/// [`TurnLimits::output_limit`] for how callers typically compute it — scaled
+/// to the actual prompt size rather than a fixed reservation); an
+/// `Option<u32>` is a limit that was set. `None` tokens let the provider apply
+/// its own built-in default.
 ///
 /// `limits` bounds the turn - see [`TurnLimits`]. A stream silent for longer
 /// than `limits.stream_idle` fails the turn, and so does a server that
@@ -412,11 +429,12 @@ pub async fn stream_turn(
     cache_key: Option<String>,
     dynamic_suffix: Option<String>,
     response_format: Option<ResponseFormat>,
-    max_output_tokens_override: Option<u32>,
+    output_limit: impl Into<sven_model::budget::OutputLimit>,
     limits: impl Into<TurnLimits>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> anyhow::Result<StreamedTurn> {
     let limits = limits.into();
+    let output_limit = output_limit.into();
     let core_tool_count = tools.iter().filter(|s| !s.is_mcp).count();
     let modalities = model.input_modalities();
     let messages = sven_model::sanitize::strip_images_if_unsupported(messages, &modalities);
@@ -431,7 +449,8 @@ pub async fn stream_turn(
         stream: true,
         system_dynamic_suffix: dynamic_suffix,
         cache_key,
-        max_output_tokens_override,
+        max_output_tokens_override: output_limit.tokens,
+        output_limit_is_room: output_limit.is_room,
         core_tool_count,
         response_format,
         sampling: limits.sampling,

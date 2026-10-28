@@ -8,7 +8,8 @@
 // info@swedishembedded.com.
 //! Sampling controls and token-level capture on the OpenAI-compatible wire:
 //! what the driver sends for `CompletionRequest::sampling` / `want_logprobs`
-//! and which `Tokens` / `Served` events it derives from the reply.
+//! and the output limit, and which `Tokens` / `Served` events it derives from
+//! the reply.
 
 use futures::StreamExt;
 use serde_json::Value;
@@ -261,4 +262,40 @@ async fn openai_compat_parses_token_ids_logprobs_and_the_served_model() {
     }
     assert_eq!(ids, vec![11, 12, 13]);
     assert_eq!(lps, vec![-0.5, -0.25, -1.0]);
+}
+/// The room a prompt leaves of the window is sven's estimate; an
+/// OpenAI-compatible server bounds an unlimited reply by its context exactly,
+/// so the request carries no limit then. A limit that was set is sent.
+#[tokio::test]
+async fn openai_compat_sends_no_limit_when_the_budget_is_only_the_room_left() {
+    for (is_room, expect) in [(true, None), (false, Some(9000))] {
+        let sse = sse_body(&[r#"{"choices":[{"delta":{"content":"hi"}}]}"#]);
+        let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
+        let cfg = ModelConfig {
+            provider: "openai".into(),
+            name: "gpt-4o-mini".into(),
+            api_key: Some("sk-test".into()),
+            base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+            ..ModelConfig::default()
+        };
+        let provider = from_config(&cfg).unwrap();
+        let mut stream = provider
+            .complete(CompletionRequest {
+                messages: vec![Message::user("hello")],
+                stream: true,
+                max_output_tokens_override: Some(9000),
+                output_limit_is_room: is_room,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        let body = req_rx.await.unwrap().body;
+        assert_eq!(
+            body.get("max_completion_tokens").and_then(|v| v.as_u64()),
+            expect,
+            "{body}"
+        );
+        assert!(body.get("max_tokens").is_none(), "{body}");
+    }
 }

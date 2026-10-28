@@ -174,7 +174,13 @@ impl DbusProvider {
 
         let mut params = serde_json::Map::new();
         params.insert("messages".to_string(), json!(messages_str));
-        if let Some(max) = req.max_output_tokens_override.or(self.max_tokens) {
+        // Only the estimated room left: brain bounds the reply by its context.
+        let limit = if req.output_limit_is_room {
+            None
+        } else {
+            req.max_output_tokens_override.or(self.max_tokens)
+        };
+        if let Some(max) = limit {
             params.insert("max_new".to_string(), json!(max));
         }
         // brain's generate action calls it `temp`. Without one brain samples
@@ -802,6 +808,22 @@ mod tests {
         };
         let params: Value = serde_json::from_str(&p.build_params(&req).unwrap()).unwrap();
         assert!(params.get("max_new").is_none());
+    }
+
+    #[test]
+    fn a_limit_that_is_only_the_room_left_is_not_sent() {
+        let p = DbusProvider::new("brain/omni", DbusOptions::default(), Some(512), None);
+        let req = CompletionRequest {
+            messages: vec![Message::user("hi")],
+            max_output_tokens_override: Some(9000),
+            output_limit_is_room: true,
+            ..Default::default()
+        };
+        let params: Value = serde_json::from_str(&p.build_params(&req).unwrap()).unwrap();
+        assert!(
+            params.get("max_new").is_none(),
+            "the server ends the reply at its context: {params}"
+        );
     }
 
     #[test]

@@ -592,6 +592,13 @@ pub struct CompletionRequest {
     /// title generation). When set, providers use this instead of their
     /// configured default for this request only.
     pub max_output_tokens_override: Option<u32>,
+    /// `max_output_tokens_override` is no limit anyone set, only the room this
+    /// prompt is estimated to leave of the context window. A driver whose
+    /// server ends an unlimited reply at its own context (OpenAI-compatible
+    /// servers, brain over D-Bus) then sends no limit and leaves the exact
+    /// count to the server; one whose API requires a limit sends the estimate.
+    #[serde(default)]
+    pub output_limit_is_room: bool,
     /// Number of "core" (non-MCP) tools at the start of `tools`.
     ///
     /// When > 0 and `tools.len() > core_tool_count`, the Anthropic provider

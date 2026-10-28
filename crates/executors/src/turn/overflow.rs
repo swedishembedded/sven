@@ -42,7 +42,7 @@ pub(super) struct Request {
     pub(super) cache_key: Option<String>,
     pub(super) dynamic_suffix: Option<String>,
     pub(super) response_format: Option<ResponseFormat>,
-    pub(super) max_output_tokens_override: Option<u32>,
+    pub(super) output_limit: sven_model::budget::OutputLimit,
 }
 
 impl Request {
@@ -59,7 +59,7 @@ impl Request {
             self.cache_key,
             self.dynamic_suffix,
             self.response_format,
-            self.max_output_tokens_override,
+            self.output_limit,
             limits,
             tx,
         )
@@ -84,12 +84,12 @@ impl Request {
             cache_key: self.cache_key.clone(),
             dynamic_suffix: self.dynamic_suffix.clone(),
             response_format: self.response_format.clone(),
-            max_output_tokens_override: self.max_output_tokens_override,
+            output_limit: self.output_limit,
         };
         match self.stream(model, limits, tx).await {
             Err(e) if sven_model::budget::is_context_overflow(&format!("{e:#}")) => {
                 let lowered = overshoot_tokens(&format!("{e:#}"))
-                    .zip(again.max_output_tokens_override)
+                    .zip(again.output_limit.tokens)
                     .and_then(|(over, out)| out.checked_sub(over + 256))
                     .filter(|&out| out >= 1024);
                 let Some(out) = lowered else {
@@ -100,7 +100,8 @@ impl Request {
                      response budget to {out} tokens and retrying once"
                 )));
                 Request {
-                    max_output_tokens_override: Some(out),
+                    // Lowered from the server's own count: a limit now.
+                    output_limit: Some(out).into(),
                     ..again
                 }
                 .stream(model, limits, tx)
