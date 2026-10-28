@@ -210,7 +210,13 @@ async fn the_shell_starts_in_the_root_and_refuses_a_workdir_outside_it() {
     )
     .await;
 
-    assert_eq!(results[0].trim(), ws.root.display().to_string());
+    // The output, before the result's closing `Exit: ... | Duration: ...` line.
+    assert_eq!(
+        results[0].lines().next().unwrap_or_default(),
+        ws.root.display().to_string(),
+        "{}",
+        results[0]
+    );
     assert!(
         results[1].contains("outside the project root"),
         "{}",

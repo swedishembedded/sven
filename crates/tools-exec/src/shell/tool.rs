@@ -235,12 +235,9 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Run a shell command; returns stdout + stderr interleaved.\n\
-         bash on Unix, cmd.exe on Windows. Non-interactive only: stdin is empty (EOF) and\n\
-         CI=1, so a command needing a TTY or a prompt fails or hangs.\n\
-         The result shows ~80 lines (first 20, last 60) and ends with the exit code and\n\
-         duration. Longer output is kept under a buffer handle named in the result; filter\n\
-         at the source (`tail -200`, `grep -E 'error:|warning:'`) or raise max_lines."
+        "Run a non-interactive shell command (bash; cmd.exe on Windows); stdin is empty,\n\
+         so prompts fail. Shows the first 20 and last 60 lines, then the exit code; the\n\
+         rest is kept under a buffer handle. Filter at the source or raise max_lines."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -255,12 +252,12 @@ impl Tool for ShellTool {
                 },
                 "workdir": {
                     "type": "string",
-                    "description": "Working directory (default: cwd)"
+                    "description": "Default: cwd"
                 },
                 "timeout_secs": {
                     "type": "integer",
                     "description": format!(
-                        "Seconds before the command is killed (default {}, max {})",
+                        "Seconds before kill (default {}, max {})",
                         self.timeout_secs.min(self.max_timeout_secs),
                         self.max_timeout_secs
                     )
@@ -268,13 +265,13 @@ impl Tool for ShellTool {
                 "max_lines": {
                     "type": "integer",
                     "description": format!(
-                        "Output lines to show (default {DEFAULT_VISIBLE_LINES}, max {MAX_VISIBLE_LINES})"
+                        "Lines shown (default {DEFAULT_VISIBLE_LINES}, max {MAX_VISIBLE_LINES})"
                     )
                 },
                 "output_mode": {
                     "type": "string",
                     "enum": ["auto", "head", "tail", "head_tail"],
-                    "description": "Which lines of long output to show (default auto: first 25%, last 75%)"
+                    "description": "auto: first 25%, last 75%"
                 }
             },
             "required": ["shell_command"],
