@@ -194,7 +194,7 @@ pub fn conversation_doc_endpoint(id: Uuid) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{HistoryEntry, HistoryRole};
+    use crate::{HistoryEntry, HistoryRole, SlashCommandInfo};
     use sven_vocab::{AgentMode, SessionEvent, ToolCall};
 
     const SESSION: &str = "6f1c1d1e-6c1a-4d43-9a43-6f2a9d3b2a10";
@@ -265,6 +265,27 @@ mod tests {
     }
 
     /// The exact JSON a host uploads, as a server will parse it.
+    #[test]
+    fn slash_commands_are_asked_for_and_listed_in_the_shape_a_server_uses() {
+        let asked: CommandEnvelope =
+            serde_json::from_str(r#"{"seq":3,"command":{"type":"list_slash_commands"}}"#).unwrap();
+        assert!(matches!(asked.command, ControlCommand::ListSlashCommands));
+
+        let listed = ControlEvent::SlashCommands {
+            commands: vec![SlashCommandInfo {
+                name: "review-pr".into(),
+                description: "Review a pull request".into(),
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(&listed).unwrap(),
+            serde_json::json!({
+                "type": "slash_commands",
+                "commands": [{"name": "review-pr", "description": "Review a pull request"}],
+            })
+        );
+    }
+
     #[test]
     fn an_event_batch_has_the_shape_a_server_reads() {
         let session = Uuid::parse_str(SESSION).unwrap();

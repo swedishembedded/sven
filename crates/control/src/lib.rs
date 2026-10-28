@@ -110,6 +110,10 @@ pub enum ControlCommand {
     ///
     /// The node responds with a [`ControlEvent::ToolList`] broadcast.
     ListTools,
+
+    /// Request the slash commands a session on this host can run, custom
+    /// ones included. The host answers with [`ControlEvent::SlashCommands`].
+    ListSlashCommands,
 }
 
 // ── Agent → Operator events ───────────────────────────────────────────────────
@@ -159,6 +163,10 @@ pub enum ControlEvent {
 
     /// Response to a [`ControlCommand::ListTools`] request.
     ToolList { tools: Vec<ToolSchemaInfo> },
+
+    /// The slash commands a session on this host can run: in answer to
+    /// [`ControlCommand::ListSlashCommands`], and once when the host attaches.
+    SlashCommands { commands: Vec<SlashCommandInfo> },
 
     /// Reply to [`ControlCommand::Attach`]: the conversation transcript so far.
     ///
@@ -245,6 +253,15 @@ impl SessionState {
             Self::Cancelled => "cancelled",
         }
     }
+}
+
+/// One slash command as [`ControlEvent::SlashCommands`] lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlashCommandInfo {
+    /// The name typed after the slash.
+    pub name: String,
+    /// One line of help: a custom command's frontmatter `description`.
+    pub description: String,
 }
 
 /// Tool schema entry returned by [`ControlEvent::ToolList`].

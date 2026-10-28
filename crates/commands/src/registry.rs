@@ -4,11 +4,17 @@
 //! Command registry: central store for all registered slash commands.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use sven_workspace::{AgentInfo, SkillInfo};
 
 use super::SlashCommand;
+
+/// The built-in commands a session driven from elsewhere (`sven rc`) can
+/// carry out whole: none needs a terminal, and none changes what the
+/// controlling side owns (the model is chosen there).
+pub const REMOTE_BUILTINS: &[&str] = &["mode"];
 
 /// Central registry of all available slash commands.
 pub struct CommandRegistry {
@@ -48,6 +54,22 @@ impl CommandRegistry {
         reg.register(Arc::new(builtin::inspect::ToolsCommand));
         reg.register(Arc::new(builtin::inspect::McpCommand));
         reg.register(Arc::new(builtin::think_limit::ThinkLimitCommand));
+        reg
+    }
+
+    /// The commands a session driven from elsewhere offers in
+    /// `project_root`: [`REMOTE_BUILTINS`], the project's and the user's own
+    /// commands, and one per subagent.
+    pub fn for_remote(project_root: Option<&Path>) -> Self {
+        let builtins = Self::with_builtins();
+        let mut reg = Self::empty();
+        for name in REMOTE_BUILTINS {
+            if let Some(command) = builtins.get(name) {
+                reg.register(command);
+            }
+        }
+        reg.register_commands(&sven_workspace::discover_commands(project_root));
+        reg.register_agents(&sven_workspace::discover_agents(project_root));
         reg
     }
 
@@ -111,5 +133,27 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
+    }
+
+    #[test]
+    fn a_remote_session_offers_what_it_can_run_and_the_projects_own_commands() {
+        let project = tempfile::tempdir().unwrap();
+        let commands = project.path().join(".sven/commands");
+        std::fs::create_dir_all(&commands).unwrap();
+        std::fs::write(
+            commands.join("review-pr.md"),
+            "---\ndescription: Review a pull request\n---\nReview it carefully.\n",
+        )
+        .unwrap();
+
+        let reg = CommandRegistry::for_remote(Some(project.path()));
+        assert!(reg.get("mode").is_some());
+        let custom = reg.get("review-pr").expect("the project's own command");
+        assert_eq!(custom.description(), "Review a pull request");
+        // Nothing that needs a terminal, nor the model, which the
+        // controlling server chooses.
+        for name in ["quit", "clear", "abort", "model", "context", "resume"] {
+            assert!(reg.get(name).is_none(), "{name} is offered remotely");
+        }
     }
 }

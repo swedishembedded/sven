@@ -38,6 +38,8 @@ use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused};
 use crate::login::RemoteLogin;
 use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
 
+mod slash;
+
 /// Events waiting for the uploader. Full means the server has stopped
 /// taking them; sessions then wait rather than grow memory without bound.
 const UPLOAD_QUEUE: usize = 4096;
@@ -136,6 +138,9 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
         sessions: options.sessions,
         asks,
     });
+
+    // What a session here can run, so the server can offer it as it is typed.
+    list_slash_commands(&context).await;
 
     let (routed, routed_rx) = mpsc::channel(SESSION_QUEUE);
     tokio::spawn(router(routed_rx, Arc::clone(&context)));
@@ -245,6 +250,10 @@ async fn route(
                 approved: false,
             },
         ),
+        ControlCommand::ListSlashCommands => {
+            list_slash_commands(context).await;
+            return;
+        }
         other => {
             tracing::debug!("rc ignores {other:?}");
             return;
@@ -257,6 +266,21 @@ async fn route(
     });
     if actor.send(message).await.is_err() {
         tracing::warn!("session {session_id} has stopped; its command is dropped");
+    }
+}
+
+/// Tells the server which slash commands a session here can run. The list
+/// is read again each time: a command file added since shows up.
+async fn list_slash_commands(context: &SessionContext) {
+    let commands = slash::available(&context.working_dir);
+    let event = ControlEvent::SlashCommands { commands };
+    if context
+        .uploads
+        .send(Upload::Event(Box::new(event)))
+        .await
+        .is_err()
+    {
+        tracing::warn!("the uploader has stopped; the slash command list is dropped");
     }
 }
 
@@ -381,7 +405,18 @@ impl SessionActor {
             println!("[{}]   continuing the interrupted answer", self.short());
             CONTINUE_INTERRUPTED.to_string()
         } else {
-            text
+            match slash::interpret(&text, &self.context.working_dir) {
+                slash::Typed::Message(text) | slash::Typed::Expanded(text) => text,
+                slash::Typed::Mode(mode) => {
+                    self.mode = mode;
+                    self.reply(&format!("Mode is now {mode}.")).await;
+                    return;
+                }
+                slash::Typed::Usage(message) => {
+                    self.reply(&message).await;
+                    return;
+                }
+            }
         };
         if let Err(e) = self.submit(text).await {
             self.fail(&format!("{e:#}")).await;
@@ -432,6 +467,14 @@ impl SessionActor {
             }
         }
         Ok(())
+    }
+
+    /// Answers a command the host carried out itself, ending the answer.
+    async fn reply(&mut self, text: &str) {
+        println!("[{}]   {text}", self.short());
+        self.upload(AgentEvent::TextDelta(text.to_string())).await;
+        self.upload(AgentEvent::TurnComplete).await;
+        self.state(SessionState::Idle).await;
     }
 
     /// Reports a failure the session itself never saw, ending the answer.
