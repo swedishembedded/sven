@@ -32,6 +32,19 @@ pub struct RemoteLogin {
     pub account: String,
 }
 
+impl RemoteLogin {
+    /// Where this host's searches go: the server's API, with its key, so
+    /// the server runs and bills them (`tools.web.search.provider` can still
+    /// choose Brave). Lives only in this process, never in a config file.
+    #[must_use]
+    pub fn search_endpoint(&self) -> sven_tools_web::SvenEndpoint {
+        sven_tools_web::SvenEndpoint {
+            base_url: self.openai_base_url.clone(),
+            api_key: self.token.clone(),
+        }
+    }
+}
+
 /// The login file of this user.
 #[must_use]
 pub fn path() -> Option<PathBuf> {

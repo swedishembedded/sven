@@ -120,9 +120,7 @@ pub fn build_mcp_registry(
         reg.register(WebFetchTool::default());
     }
     if allow("web_search") {
-        reg.register(WebSearchTool {
-            api_key: web_search_api_key,
-        });
+        reg.register(WebSearchTool::brave(web_search_api_key));
     }
     if allow("write_file") {
         reg.register(WriteTool::new(scope));

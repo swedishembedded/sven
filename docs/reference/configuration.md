@@ -417,6 +417,9 @@ tools:
     fetch_max_chars: 20000
 
     search:
+      # Where web_search runs: auto (the sven service when one is known,
+      # Brave otherwise), sven, or brave.
+      # provider: auto
       # API key for the Brave Search backend.
       # Can also be set with BRAVE_API_KEY environment variable.
       # api_key: BSA...
@@ -1053,6 +1056,7 @@ is listed at all. How it works and what it saves:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `fetch_max_chars` | `20000` | Maximum characters fetched from a URL |
+| `search.provider` | `auto` | `auto`: the sven service `sven rc` signed in to, else a `providers.sven` entry with `base_url` and a key, else Brave. `sven` or `brave` to choose one |
 | `search.api_key` | - | Brave Search API key (also `BRAVE_API_KEY` env var) |
 
 ---
@@ -1486,7 +1490,7 @@ tui:
 | `XDG_RUNTIME_DIR` | Where a running brain server's connection record is looked for (`$XDG_RUNTIME_DIR/brain`, else `<tmpdir>/brain-<uid>`) |
 | `SVEN_MODEL` | Default for `--model` |
 | `SVEN_MOCK_RESPONSES` | Responses file for the mock provider |
-| `BRAVE_API_KEY` | Key of the `web_search` tool when `tools.web.search.api_key` is unset |
+| `BRAVE_API_KEY` | Key of the `web_search` tool's Brave backend when `tools.web.search.api_key` is unset |
 | `AWS_DEFAULT_REGION`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | Credentials and region of the Bedrock provider |
 | `SVEN_ASCII_BORDERS=1` | Same as `tui.ascii_borders: true` |
 | `SVEN_LOG_FILE`, `RUST_LOG` | Logging; see the [command-line reference](cli.md#environment) |

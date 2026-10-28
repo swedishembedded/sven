@@ -17,11 +17,11 @@ pub mod read_lints;
 pub mod web_fetch;
 pub mod web_search;
 
-pub use config::{LintsConfig, WebConfig, WebSearchConfig};
+pub use config::{LintsConfig, SearchProvider, SvenEndpoint, WebConfig, WebSearchConfig};
 pub use grep::GrepTool;
 pub use read_lints::ReadLintsTool;
 pub use web_fetch::WebFetchTool;
-pub use web_search::WebSearchTool;
+pub use web_search::{SearchBackend, WebSearchTool};
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //
@@ -52,7 +52,7 @@ mod output_category_tests {
 
     #[test]
     fn web_search_is_generic() {
-        let t = super::WebSearchTool { api_key: None };
+        let t = super::WebSearchTool::brave(None);
         assert_eq!(t.output_category(), OutputCategory::Generic);
     }
 }

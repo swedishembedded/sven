@@ -118,8 +118,11 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
             }
         }
     });
+    // Searches go to this server, which runs and bills them.
+    let mut config = (*options.config).clone();
+    config.tools.web.search.sven = Some(options.login.search_endpoint());
     let context = Arc::new(SessionContext {
-        config: options.config,
+        config: Arc::new(config),
         working_dir: options.working_dir,
         hosted: options.hosted,
         openai_base_url: options.login.openai_base_url,
@@ -786,6 +789,31 @@ mod tests {
 
     use super::*;
     use sven_control::HistoryRole;
+
+    /// A host searches through the server it signed in to, with its key:
+    /// the server runs the search and bills that account.
+    #[test]
+    fn a_signed_in_host_searches_through_its_server() {
+        let mut config = sven_bootstrap::Config::default();
+        config.tools.web.search.api_key = Some("brave-key".into());
+        let login = RemoteLogin {
+            server: "https://sven.example".into(),
+            control_url: "https://sven.example/api/control".into(),
+            openai_base_url: "https://sven.example/v1".into(),
+            token: "server_minted_key".into(),
+            workspace_id: Uuid::nil(),
+            workspace_name: "Workspace".into(),
+            account: "a@example.com".into(),
+        };
+        config.tools.web.search.sven = Some(login.search_endpoint());
+        assert_eq!(
+            config.tools.web.search_tool(None).backend,
+            sven_tools_web::SearchBackend::Sven(sven_tools_web::SvenEndpoint {
+                base_url: "https://sven.example/v1".into(),
+                api_key: "server_minted_key".into(),
+            })
+        );
+    }
 
     /// A hosted conversation's system message is the configured prompt, or
     /// sven's hosted default, and nothing else: no project root, sandbox

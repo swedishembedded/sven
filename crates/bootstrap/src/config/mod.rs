@@ -99,6 +99,24 @@ pub struct Config {
 }
 
 impl Config {
+    /// The sven service a `providers.sven` entry names, when it has a base
+    /// URL and a key: where `web_search` searches unless `sven rc` signed in
+    /// to another one (see `WebSearchConfig::backend`).
+    #[must_use]
+    pub fn sven_search_endpoint(&self) -> Option<sven_tools_web::SvenEndpoint> {
+        let entry = self.providers.get("sven")?;
+        Some(sven_tools_web::SvenEndpoint {
+            base_url: entry.base_url.clone()?,
+            api_key: sven_model_drivers::provider_key(entry)?,
+        })
+    }
+
+    /// The `web_search` tool this configuration gives a session.
+    #[must_use]
+    pub fn web_search_tool(&self) -> sven_tools_web::WebSearchTool {
+        self.tools.web.search_tool(self.sven_search_endpoint())
+    }
+
     /// The keys of the sections this type reads.
     #[must_use]
     pub fn schema() -> Schema {
@@ -209,6 +227,36 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    /// "A sven API key has been provided": a `providers.sven` entry with its
+    /// base URL and a key makes it the search service; without a key, or
+    /// without the entry, there is none.
+    #[test]
+    fn a_sven_provider_with_a_key_is_the_search_service() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.sven_search_endpoint(), None);
+        cfg.providers.insert(
+            "sven".into(),
+            sven_model_drivers::ProviderEntry {
+                name: "openai".into(),
+                base_url: Some("https://sven.example/v1".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            cfg.sven_search_endpoint(),
+            None,
+            "no key, no search service"
+        );
+        cfg.providers.get_mut("sven").unwrap().api_key = Some("whale_key".into());
+        assert_eq!(
+            cfg.sven_search_endpoint(),
+            Some(sven_tools_web::SvenEndpoint {
+                base_url: "https://sven.example/v1".into(),
+                api_key: "whale_key".into(),
+            })
+        );
+    }
+
     use super::*;
 
     fn document(yaml: &str) -> ConfigDocument {

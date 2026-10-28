@@ -15,6 +15,19 @@
 use crate::config::ModelConfig;
 use sven_model::registry;
 
+/// The key a `providers:` entry is used with, if it has one: the same
+/// sources, in the same order, as a model on that entry.
+#[must_use]
+pub fn provider_key(entry: &crate::config::ProviderEntry) -> Option<String> {
+    resolve_api_key(&ModelConfig {
+        provider: entry.name.clone(),
+        base_url: entry.base_url.clone(),
+        api_key: entry.api_key.clone(),
+        api_key_file: entry.api_key_file.clone(),
+        ..ModelConfig::default()
+    })
+}
+
 /// The key `cfg` is used with, if it has one.
 pub(crate) fn resolve_api_key(cfg: &ModelConfig) -> Option<String> {
     if let Some(k) = &cfg.api_key {

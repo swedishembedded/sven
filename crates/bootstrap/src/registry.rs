@@ -471,7 +471,7 @@ fn build_profile_research(
     reg.register(FindFileTool::new(paths.clone()));
     reg.register(GrepTool::new(paths.clone()));
     reg.register(cfg.tools.web.fetch_tool());
-    reg.register(cfg.tools.web.search_tool());
+    reg.register(cfg.web_search_tool());
     reg.register(cfg.tools.memory.tool(runtime.knowledge.clone()));
     reg.register(SkillTool::new(runtime.skills.clone()));
     reg.register(system_tool(
@@ -625,7 +625,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
 
     // ── Web ───────────────────────────────────────────────────────────────────
     reg.register(cfg.tools.web.fetch_tool());
-    reg.register(cfg.tools.web.search_tool());
+    reg.register(cfg.web_search_tool());
 
     // ── Memory (KV + project knowledge) ──────────────────────────────────────
     // Compound tool: set|get|delete|list|search_knowledge|list_knowledge
@@ -704,7 +704,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
 
     // ── Web ───────────────────────────────────────────────────────────────────
     reg.register(cfg.tools.web.fetch_tool());
-    reg.register(cfg.tools.web.search_tool());
+    reg.register(cfg.web_search_tool());
 
     // ── System ────────────────────────────────────────────────────────────────
     reg.register(cfg.tools.shell_tool(sven_tool_api::PathScope::default()));
