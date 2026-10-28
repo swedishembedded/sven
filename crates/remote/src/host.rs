@@ -17,12 +17,12 @@
 //! keeps serving; nothing one session does can stop another.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use sven_bootstrap::{Config, RuntimeContext};
+use sven_bootstrap::Config;
 use sven_control::{ControlCommand, ControlEvent, HistoryEntry, SessionState};
 use sven_frontend::{CompactError, SessionController, SessionOptions, SessionSpec};
 use sven_machines::AgentEvent;
@@ -39,8 +39,12 @@ use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
 use upload::{upload_loop, Upload};
 
 mod describe;
+mod hosted;
 mod slash;
 mod upload;
+
+use hosted::session_runtime;
+pub use hosted::{restrict_to_hosted, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
 
 /// Events waiting for the uploader. Full means the server has stopped
 /// taking them; sessions then wait rather than grow memory without bound.
@@ -62,54 +66,6 @@ pub struct HostOptions {
     /// A server's hosted host: attaches as the `hosted` environment, not as
     /// a directory of a person's machine.
     pub hosted: bool,
-}
-
-/// The only tools a hosted host's sessions have (`sven rc --hosted`): none
-/// of them reads, writes or runs anything on the machine the host runs on.
-pub const HOSTED_TOOLS: &[&str] = &["web_search", "web_fetch", "skill"];
-
-/// The system prompt of a hosted conversation when the site configures none
-/// (`agent.system_prompt` in the file `sven --config` reads).
-pub const HOSTED_SYSTEM_PROMPT: &str = "You are sven, a helpful assistant. Answer clearly and \
-     concisely, and say so when you are not sure. You can search the web and read public web \
-     pages; say which sources you used. You have no access to the person's computer or files.";
-
-/// What a session works with. On a person's computer: the project it runs in,
-/// whose root, git state and context file the built-in prompt describes, with
-/// a configured `agent.system_prompt` as its identity. Hosted: the configured
-/// prompt (or [`HOSTED_SYSTEM_PROMPT`]) and nothing else, since the working
-/// directory is the site's own sandbox, not something to tell a visitor about.
-fn session_runtime(config: &Config, working_dir: &Path, hosted: bool) -> RuntimeContext {
-    let mut runtime = RuntimeContext::auto_detect_at(Some(working_dir.to_path_buf()));
-    runtime.project_root = Some(working_dir.to_path_buf());
-    if hosted {
-        runtime.no_system = true;
-        runtime.system_prompt_override = Some(
-            config
-                .agent
-                .system_prompt
-                .clone()
-                .unwrap_or_else(|| HOSTED_SYSTEM_PROMPT.to_string()),
-        );
-    } else {
-        runtime.system_prompt_override = config.agent.system_prompt.clone();
-    }
-    runtime
-}
-
-/// What a hosted host's sessions may do, applied to its configuration: only
-/// [`HOSTED_TOOLS`] (an allow list, so a tool added later is never offered
-/// unless named there), and `web_fetch` reaching only the public internet,
-/// never the server's own network (its services, its database, a cloud
-/// metadata service).
-pub fn restrict_to_hosted(config: &mut Config) {
-    config.tools.only = Some(
-        HOSTED_TOOLS
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect(),
-    );
-    config.tools.web.public_only = true;
 }
 
 /// Runs until interrupted, or until the server stops accepting the token.
@@ -836,7 +792,7 @@ mod tests {
     /// path, git or tool index, which are the site's internals.
     #[test]
     fn a_hosted_session_is_prompted_with_its_configured_prompt_alone() {
-        let dir = std::path::Path::new("/var/lib/whale/hosted/acct/conv/work");
+        let dir = std::path::Path::new("/var/lib/site/hosted/acct/conv/work");
         let mut config = Config::default();
         config.agent.system_prompt = Some("You are a helpful assistant.".into());
         let runtime = session_runtime(&config, dir, true);
@@ -852,7 +808,7 @@ mod tests {
 
     #[test]
     fn a_hosted_session_without_a_configured_prompt_gets_one_that_names_no_path() {
-        let dir = std::path::Path::new("/var/lib/whale/hosted/acct/conv/work");
+        let dir = std::path::Path::new("/var/lib/site/hosted/acct/conv/work");
         let runtime = session_runtime(&Config::default(), dir, true);
         assert!(runtime.no_system);
         let prompt = runtime
@@ -866,7 +822,8 @@ mod tests {
 
     #[test]
     fn a_session_on_a_persons_computer_keeps_its_project_context() {
-        let dir = std::path::Path::new("/home/someone/project");
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path();
         let mut config = Config::default();
         config.agent.system_prompt = Some("Be terse.".into());
         let runtime = session_runtime(&config, dir, false);

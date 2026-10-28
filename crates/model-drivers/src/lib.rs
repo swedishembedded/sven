@@ -740,6 +740,25 @@ fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
 #[cfg(test)]
 pub(crate) static TEST_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Run `f` with the user's configuration directory at `dir`, holding
+/// [`TEST_ENV`]: no stored key or config file of the machine running the
+/// tests is seen.
+#[cfg(test)]
+pub(crate) fn with_config_dir<T>(dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
+    let _guard = TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let prior = std::env::var_os("XDG_CONFIG_HOME");
+    // SAFETY (test-only, serialized by TEST_ENV).
+    unsafe { std::env::set_var("XDG_CONFIG_HOME", dir) };
+    let out = f();
+    unsafe {
+        match prior {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -954,22 +973,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    /// Run `f` with the user's configuration directory at `dir`.
-    fn with_config_dir<T>(dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
-        let _guard = crate::TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
-        let prior = std::env::var_os("XDG_CONFIG_HOME");
-        // SAFETY (test-only, serialized by crate::TEST_ENV).
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", dir) };
-        let out = f();
-        unsafe {
-            match prior {
-                Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-                None => std::env::remove_var("XDG_CONFIG_HOME"),
-            }
-        }
-        out
     }
 
     #[test]

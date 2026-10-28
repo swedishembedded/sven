@@ -746,11 +746,14 @@ mod tests {
     /// endpoint lends nothing.
     #[test]
     fn a_driver_reached_by_its_id_uses_the_key_of_its_entry() {
-        // Resolution reads the process-wide config directory and stored keys,
-        // which other tests repoint under this lock.
-        let _env = crate::TEST_ENV
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Resolution reads the user's configuration directory and stored
+        // keys: an empty one, so a machine with a key stored for openrouter
+        // (`sven auth set`) does not answer before the entry.
+        let config_home = tempfile::tempdir().unwrap();
+        crate::with_config_dir(config_home.path(), the_entry_key_reaches_its_driver);
+    }
+
+    fn the_entry_key_reaches_its_driver() {
         let model = ModelConfig::default();
         let mut providers = Providers::new();
         providers.insert(

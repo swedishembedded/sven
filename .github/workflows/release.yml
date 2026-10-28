@@ -86,8 +86,8 @@ jobs:
 
   # ── Linux, static (musl): x86_64 and aarch64 ────────────────────────────────
   # Binaries with no libc dependency, so they run on any distribution: what
-  # install.sh installs on Linux, and what whale runs as hosted agents inside
-  # its Alpine gateway (pinned by version and checksum). Both are required.
+  # install.sh installs on Linux, and what a server hosting sven runs on a
+  # minimal (Alpine) image, pinned by version and checksum. Both are required.
   build-linux-musl:
     name: Linux ${{ matrix.arch }} (static, musl)
     runs-on: ubuntu-latest
@@ -252,7 +252,7 @@ jobs:
     # The glibc aarch64 build and Windows are excluded from needs so their
     # failures never block the release.  e2e-basic must pass - if any basic test
     # fails the release is aborted - and both static Linux binaries must
-    # build, since install.sh and whale's hosted agents install them.
+    # build, since install.sh and servers hosting sven install them.
     needs: [e2e-basic, build-linux-x86_64, build-linux-musl, build-macos]
     steps:
       - uses: actions/checkout@v4
