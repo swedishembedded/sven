@@ -189,10 +189,11 @@ jobs:
   # reliable strategy when cross-compiling from the Apple Silicon (aarch64)
   # macos-latest runner to x86_64, because Homebrew does not ship x86_64
   # bottles on that architecture.
+  # Required: install.sh installs it on macOS, so a release without it would
+  # tell every Mac user there is no build.
   build-macos:
-    name: macOS (universal) [experimental]
+    name: macOS (universal)
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -248,11 +249,11 @@ jobs:
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    # aarch64, macOS, and Windows are excluded from needs so their failures
-    # never block the Linux release.  e2e-basic must pass - if any basic test
+    # The glibc aarch64 build and Windows are excluded from needs so their
+    # failures never block the release.  e2e-basic must pass - if any basic test
     # fails the release is aborted - and both static Linux binaries must
     # build, since install.sh and whale's hosted agents install them.
-    needs: [e2e-basic, build-linux-x86_64, build-linux-musl]
+    needs: [e2e-basic, build-linux-x86_64, build-linux-musl, build-macos]
     steps:
       - uses: actions/checkout@v4
 
@@ -276,9 +277,8 @@ jobs:
           name: linux-aarch64
           path: dist
 
-      - name: Download macOS artifact (if available)
+      - name: Download macOS artifact
         uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           name: macos
           path: dist
