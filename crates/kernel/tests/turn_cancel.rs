@@ -87,6 +87,9 @@ impl Drop for Stopped {
 struct SlowTool {
     scope: CancelScope,
     stopped: Arc<AtomicUsize>,
+    /// Told each time a call starts: an inline call holds the runtime until
+    /// it ends, so the state it has entered is not published before then.
+    started: Arc<tokio::sync::Notify>,
     inline: bool,
 }
 
@@ -102,6 +105,7 @@ impl EffectExecutor for SlowTool {
         };
         let guard = Stopped(Arc::clone(&self.stopped));
         let sink = sink.clone();
+        self.started.notify_one();
         if self.inline {
             tokio::time::sleep(Duration::from_secs(60)).await;
             std::mem::forget(guard);
@@ -130,6 +134,7 @@ impl EffectExecutor for SlowTool {
 
 async fn cancelling_a_turn(inline: bool) {
     let stopped = Arc::new(AtomicUsize::new(0));
+    let started = Arc::new(tokio::sync::Notify::new());
     let rt = ErasedRuntime::spawn(
         Box::new(Hsm::new(OneTool {
             id: sven_hsm::MachineId::new(),
@@ -141,13 +146,16 @@ async fn cancelling_a_turn(inline: bool) {
         SlowTool {
             scope: CancelScope::new(),
             stopped: Arc::clone(&stopped),
+            started: Arc::clone(&started),
             inline,
         },
         16,
     );
 
     assert!(rt.post(Event::user_message("go")).await);
-    rt.wait_for_state("Busy").await;
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .expect("the turn's work started");
 
     // What a person pressing Stop does: stop the turn's work, then tell the
     // machine.
@@ -167,7 +175,9 @@ async fn cancelling_a_turn(inline: bool) {
 
     // The next turn starts with nothing cancelled: its work runs on.
     assert!(rt.post(Event::user_message("again")).await);
-    rt.wait_for_state("Busy").await;
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .expect("the next turn's work started");
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(
         stopped.load(Ordering::SeqCst),
