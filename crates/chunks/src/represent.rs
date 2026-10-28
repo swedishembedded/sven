@@ -158,19 +158,29 @@ pub fn indicates_failure(text: &str) -> bool {
     static FAILURE: OnceLock<Regex> = OnceLock::new();
     let re = FAILURE.get_or_init(|| {
         Regex::new(
-            r"(?m)^(?:error: )?\[exit [1-9]\d*\]|^error: |^\s*test result: FAILED|^FAILED\b|^not ok\b|^=+ .*\b[1-9]\d* failed\b|^error(?:\[E\d+\])?:",
+            r"(?m)^(?:error: )?\[exit [1-9]\d*\]|^Exit: (?:[1-9]\d*|-\d+|[a-z])|^error: |^\s*test result: FAILED|^FAILED\b|^not ok\b|^=+ .*\b[1-9]\d* failed\b|^error(?:\[E\d+\])?:",
         )
         .expect("failure pattern is valid")
     });
     re.is_match(text)
 }
 
+/// The exit status a shell result reports: the `Exit:` line of the `shell`
+/// tool's footer (`-1` when the command did not exit with a code: timed out,
+/// killed by a signal), else a leading `[exit N]` marker.
 fn exit_status(raw: &str) -> Option<i32> {
-    static EXIT: OnceLock<Regex> = OnceLock::new();
-    let re = EXIT.get_or_init(|| {
+    static FOOTER: OnceLock<Regex> = OnceLock::new();
+    static MARKER: OnceLock<Regex> = OnceLock::new();
+    let footer = FOOTER.get_or_init(|| {
+        Regex::new(r"(?m)^Exit: (-?\d+|[a-z][^|\n]*?)(?: \||$)").expect("exit pattern is valid")
+    });
+    if let Some(c) = footer.captures_iter(raw).last() {
+        return Some(c[1].parse().unwrap_or(-1));
+    }
+    let marker = MARKER.get_or_init(|| {
         Regex::new(r"^(?:error: )?\[exit (-?\d+)\]").expect("exit pattern is valid")
     });
-    re.captures(raw).and_then(|c| c[1].parse().ok())
+    marker.captures(raw).and_then(|c| c[1].parse().ok())
 }
 
 fn expand_hint(id: &ChunkId) -> String {

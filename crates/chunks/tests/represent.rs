@@ -69,6 +69,19 @@ fn shell_output_reports_its_exit_status() {
 }
 
 #[test]
+fn shell_footer_exit_status_is_reported() {
+    for (footer, shown) in [
+        ("Exit: 101 | Duration: 2.0s | Buffer: buf_0001", "exit: 101"),
+        ("Exit: timed out, killed | Duration: 5.0s", "exit: -1"),
+        ("Exit: 0 | Duration: 0.1s", "exit: 0"),
+    ] {
+        let raw = format!("{}\n\n{footer}", log_with_one_error());
+        let r = render(&request(ChunkKind::CommandOutput, &raw), Visibility::Short);
+        assert!(r.text.contains(shown), "{}", r.text);
+    }
+}
+
+#[test]
 fn short_diff_lists_files_and_hunk_headers_only() {
     let raw = "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,3 +1,4 @@ fn a\n ctx\n-old\n+new\n+newer\ndiff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -9 +9 @@\n-x\n+y\n";
     let r = render(&request(ChunkKind::Diff, raw), Visibility::Short);
@@ -155,6 +168,11 @@ fn failure_is_recognised_from_the_text_a_tool_returns() {
     use sven_chunks::indicates_failure;
     assert!(indicates_failure("error: [exit 2]\nboom"));
     assert!(indicates_failure("[exit 1]\nno matches"));
+    assert!(indicates_failure("boom\n\nExit: 2 | Duration: 0.1s"));
+    assert!(indicates_failure(
+        "Exit: timed out, killed | Duration: 5.0s"
+    ));
+    assert!(!indicates_failure("ok\n\nExit: 0 | Duration: 0.1s"));
     assert!(indicates_failure(
         "running 3 tests\ntest result: FAILED. 2 passed; 1 failed"
     ));

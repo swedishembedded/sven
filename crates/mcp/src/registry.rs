@@ -19,7 +19,6 @@
 use sven_bootstrap::ToolsConfig;
 use sven_tool_api::PathScope;
 use sven_tool_registry::ToolRegistry;
-use sven_tools_exec::ShellTool;
 use sven_tools_fs::{EditFileTool, FindFileTool, ReadFileTool, WriteTool};
 use sven_tools_web::{GrepTool, ReadLintsTool, WebFetchTool, WebSearchTool};
 
@@ -115,12 +114,7 @@ pub fn build_mcp_registry(
         reg.register(ReadLintsTool);
     }
     if allow("shell") {
-        reg.register(ShellTool {
-            timeout_secs: tools.timeout_secs,
-            max_timeout_secs: tools.max_timeout_secs,
-            scope: scope.clone(),
-            policy: std::sync::Arc::new(tools.policy()),
-        });
+        reg.register(tools.shell_tool(scope.clone()));
     }
     if allow("web_fetch") {
         reg.register(WebFetchTool::default());

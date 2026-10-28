@@ -156,19 +156,41 @@ that leaves the file unchanged is an error, not a success.
 
 ### `shell`
 
-Run a shell command and return stdout and stderr: `bash -c` on Unix, `cmd /C` on
-Windows. Commands are non-interactive (stdin is `/dev/null`) and run in their
-own session, so a timeout kills the whole process group. Output over about
-20 KB keeps its first and last 100 lines. Exit code 1 is reported as output, not
-as an error; other non-zero codes are errors. This is also how files are deleted
-and directories listed.
+Run a shell command and return stdout and stderr, interleaved in arrival order:
+`bash -c` on Unix, `cmd /C` on Windows. Commands are non-interactive: stdin is
+`/dev/null` (a read gets end of file at once) and `CI=1`,
+`GIT_TERMINAL_PROMPT=0`, `PAGER=cat`, `GIT_PAGER=cat`, `GIT_EDITOR=true` and
+`NO_COLOR=1` are set. A command runs in its own session, so a timeout, or the
+turn being cancelled, kills and reaps the whole process group. This is also how
+files are deleted and directories listed.
+
+Output is read as it arrives and its whole text is kept in a per-session output
+buffer (at most 16 MiB per command; later bytes are drained and counted, not
+kept). The result is bounded: 80 lines by default (the first 20 and the last 60),
+at most 1,000; 8 KiB by default (64 KiB when `max_lines` asks for more than the
+default); a line over 2 KiB is cut. It always ends with a footer:
+
+```
+[output truncated]
+Lines: 8,420 total, 80 shown, 8,340 omitted | Bytes: 384,220 captured
+Exit: 0 | Duration: 18.4s | Buffer: buf_0042
+Use task(action="grep", handle="buf_0042", pattern="error|FAILED") or task(action="read", handle="buf_0042", start_line=21, end_line=220).
+```
+
+When nothing was cut the result is the output and one `Exit: N | Duration: Ts`
+line. Past the buffer's quota the footer reports bytes observed against
+retained, and the end of the output is still shown. Sub-agents have no `task`
+tool, so their results carry no buffer advice. Exit 1 with no output at all
+("no match", "false") is not an error; any other non-zero code, and exit 1 with
+output, is.
 
 | Parameter | Description |
 |-----------|-------------|
 | `shell_command` (required) | The command line |
-| `description` | One line shown to you |
 | `workdir` | Working directory; must stay inside the path scope (default: the scope root or the working directory) |
-| `timeout_secs` | Default `tools.timeout_secs` (30), at most `tools.max_timeout_secs` (1800); a larger request is cut to the ceiling. A command that runs out of time is killed and the result names the limit |
+| `timeout_secs` | Default `tools.timeout_secs` (30), at most `tools.max_timeout_secs` (1800); a larger request is cut to the ceiling. A command that runs out of time is killed, the output it wrote before is kept, and the result names the limit |
+| `max_lines` | Lines to show (default 80, at most 1000) |
+| `output_mode` | `auto` (default: first 25%, last 75%), `head`, `tail` or `head_tail` (half each) |
 
 The path scope sets where a command starts, not what it may touch. A command
 matching `tools.deny_patterns` is refused and never runs.

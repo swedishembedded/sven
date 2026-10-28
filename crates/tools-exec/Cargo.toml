@@ -8,6 +8,7 @@ license     = "Apache-2.0"
 [dependencies]
 sven-tool-api = { path = "../tool-api" }
 sven-tool-registry = { path = "../tool-registry" }
+sven-tools-fs = { path = "../tools-fs", default-features = false }
 sven-hsm      = { path = "../hsm" }
 sven-vocab    = { path = "../vocab" }
 sven-harness-spec = { path = "../harness-spec" }

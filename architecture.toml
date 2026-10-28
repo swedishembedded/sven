@@ -322,6 +322,19 @@ browser's clock in a browser, where std's panics). sven-rt has no sven
 dependencies of its own, so this can never become a cycle.
 """
 
+[[same_layer]]
+from = "sven-tools-exec"
+to   = "sven-tools-fs"
+why  = """
+Both are "domain" tier tool packages. The shell tool streams every command's
+output into the session's OutputBufferStore, which sven-tools-fs owns and
+serves back through its buf_read / buf_grep / buf_status tools. Reusing that
+store keeps one buffer implementation (one quota, one line index, one handle
+namespace per session) instead of a second one inside the shell tool.
+sven-tools-fs does not depend on sven-tools-exec, so this can never become a
+cycle.
+"""
+
 # ── Known upward (illegal) edges, each with a fix owner and a why. ─────────
 # None currently outstanding.
 

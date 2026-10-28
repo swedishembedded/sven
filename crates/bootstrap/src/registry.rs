@@ -31,7 +31,6 @@ use sven_tools_agent::{AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool
 use sven_tools_ctx::{ChunkExpandTool, ChunkExpander, ContextStore};
 #[cfg(feature = "document")]
 use sven_tools_document::{DocumentConvertTool, DocumentLocateTool};
-use sven_tools_exec::ShellTool;
 #[cfg(feature = "media")]
 use sven_tools_fs::AttachFileTool;
 use sven_tools_fs::{EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool};
@@ -419,6 +418,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
             tool_event_tx: p.tool_event_tx.clone(),
             runtime: p.runtime,
             buffer_store: Arc::clone(&p.buffer_store),
+            buffers_readable: true,
             include_full: p.include_gdb_context,
             expansion: p.expansion,
         },
@@ -533,7 +533,8 @@ fn build_profile_subagent(
             tool_event_tx: tool_event_tx.clone(),
             runtime,
             buffer_store,
-            include_full: false, // No GDB/context in sub-agents
+            buffers_readable: false, // No `task` tool to read them with
+            include_full: false,     // No GDB/context in sub-agents
             expansion: None,
         },
     );
@@ -552,6 +553,8 @@ struct BaseTools<'a> {
     tool_event_tx: mpsc::Sender<ToolEvent>,
     runtime: &'a AgentRuntimeContext,
     buffer_store: Arc<Mutex<OutputBufferStore>>,
+    /// Whether `task` can read buffers back, so `shell` names its buffer.
+    buffers_readable: bool,
     include_full: bool,
     /// Lets the `context` tool expand shortened results; only the Full
     /// profile has that tool.
@@ -570,6 +573,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
         tool_event_tx,
         runtime,
         buffer_store,
+        buffers_readable,
         include_full,
         expansion,
     } = params;
@@ -610,13 +614,14 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
 
     // ── Shell ─────────────────────────────────────────────────────────────────
     // shell covers: run commands, delete files, list dirs, run linters. The
-    // scope sets where a command starts, not what it may touch.
-    reg.register(ShellTool {
-        timeout_secs: cfg.tools.timeout_secs,
-        max_timeout_secs: cfg.tools.max_timeout_secs,
-        scope: paths.clone(),
-        policy: Arc::new(cfg.tools.policy()),
-    });
+    // scope sets where a command starts, not what it may touch. Its output
+    // goes to the session's buffer store, where the model reads what a result
+    // left out.
+    reg.register(
+        cfg.tools
+            .shell_tool(paths.clone())
+            .with_buffers(buffer_store, buffers_readable),
+    );
 
     // ── Web ───────────────────────────────────────────────────────────────────
     reg.register(cfg.tools.web.fetch_tool());
@@ -657,8 +662,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
             );
         }
     } else {
-        // Suppress unused warnings for the buffer_store in SubAgent path.
-        let _ = buffer_store;
+        // Suppress the unused warning for the event channel in the SubAgent path.
         let _ = tool_event_tx;
     }
 }
@@ -703,12 +707,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     reg.register(cfg.tools.web.search_tool());
 
     // ── System ────────────────────────────────────────────────────────────────
-    reg.register(ShellTool {
-        timeout_secs: cfg.tools.timeout_secs,
-        max_timeout_secs: cfg.tools.max_timeout_secs,
-        policy: Arc::new(cfg.tools.policy()),
-        ..ShellTool::default()
-    });
+    reg.register(cfg.tools.shell_tool(sven_tool_api::PathScope::default()));
 
     let (event_tx, _event_rx) = mpsc::channel::<ToolEvent>(16);
     let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));

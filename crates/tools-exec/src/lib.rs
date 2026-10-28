@@ -19,11 +19,11 @@ mod output_category_tests {
     use sven_tool_api::tool::{OutputCategory, Tool};
 
     #[test]
-    fn shell_tool_is_headtail() {
+    fn shell_tool_is_bounded() {
         let t = super::ShellTool {
             timeout_secs: 30,
             ..Default::default()
         };
-        assert_eq!(t.output_category(), OutputCategory::HeadTail);
+        assert_eq!(t.output_category(), OutputCategory::Bounded);
     }
 }

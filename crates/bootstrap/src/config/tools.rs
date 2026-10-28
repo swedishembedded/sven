@@ -15,10 +15,14 @@
 //! agent may run then you can procure our services by sending an email to
 //! info@swedishembedded.com.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use sven_config::Schema;
+use sven_tool_api::PathScope;
 use sven_tool_registry::ToolPolicy;
 use sven_tools_ctx::MemoryConfig;
+use sven_tools_exec::ShellTool;
 use sven_tools_fs::AsrConfig;
 use sven_tools_gdb::GdbConfig;
 use sven_tools_web::{LintsConfig, WebConfig};
@@ -88,6 +92,20 @@ impl ToolsConfig {
         .with("asr", AsrConfig::schema())
         .with("context", ContextConfig::schema())
         .with("disclosure", DisclosureConfig::schema())
+    }
+
+    /// The `shell` tool this section configures, starting commands in `scope`.
+    /// It has its own output buffers; a session gives it its own with
+    /// [`ShellTool::with_buffers`].
+    #[must_use]
+    pub fn shell_tool(&self, scope: PathScope) -> ShellTool {
+        ShellTool {
+            timeout_secs: self.timeout_secs,
+            max_timeout_secs: self.max_timeout_secs,
+            scope,
+            policy: Arc::new(self.policy()),
+            ..ShellTool::default()
+        }
     }
 
     /// What decides whether a shell command runs, asks, or is refused.
