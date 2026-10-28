@@ -88,11 +88,9 @@ impl Tool for ShellTool {
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
+            // No `description` for the model to write: a surface shows the
+            // command itself, so a paraphrase of it would only spend tokens.
             "properties": {
-                "description": {
-                    "type": "string",
-                    "description": "One short line naming what the command does, shown to the user"
-                },
                 "shell_command": {
                     "type": "string",
                     "description": "The command line to run"
@@ -688,6 +686,17 @@ mod tests {
     }
 
     // ── Schema ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn schema_asks_for_nothing_but_the_command_and_how_to_run_it() {
+        let tool = ShellTool::default();
+        let schema = tool.parameters_schema();
+        let properties = schema["properties"].as_object().unwrap();
+        assert!(
+            !properties.contains_key("description"),
+            "the model is asked to describe its own call"
+        );
+    }
 
     #[test]
     fn schema_has_required_command_field() {
