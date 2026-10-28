@@ -121,7 +121,7 @@ signed the machine in again.
 ### In a sandbox container
 
 ```bash
-sven rc --hosted --container --state /home/sven --egress-socket /run/whale/egress.sock
+sven rc --hosted --container --state /var/lib/sven --egress-socket /run/egress/egress.sock
 ```
 
 A server that runs each conversation in a container of its own starts the
