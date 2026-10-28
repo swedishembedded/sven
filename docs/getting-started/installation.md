@@ -11,8 +11,15 @@
 
 ## Option 0 - Install script (quickest)
 
-Downloads the release binary for your platform from GitHub, checks that it runs,
-and installs it:
+Downloads the newest sven 4.x release for your platform from GitHub, checks it
+against the release's published SHA-256 and that it runs, and installs it. On
+Linux (x86_64 or aarch64) it installs the static build, which runs on any
+distribution, glibc or musl; on macOS the universal build. Any other platform
+is told plainly that it is not supported.
+
+The script follows patch and minor releases by itself but never moves to a new
+major version, which may change what you built on: a new major version comes
+with a new script.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://agentsven.com/install.sh | sh
@@ -22,7 +29,7 @@ Environment variables:
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `SVEN_VERSION` | latest | Install a specific version, e.g. `0.2.1` |
+| `SVEN_VERSION` | newest 4.x | Install exactly this version, e.g. `4.0.0` |
 | `SVEN_INSTALL_DIR` | `/usr/local/bin` | Where to put the binary |
 | `SVEN_NO_SUDO` | unset | Set to `1` to never use sudo (fails if the directory is not writable) |
 

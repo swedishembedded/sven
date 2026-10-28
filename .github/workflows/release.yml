@@ -84,10 +84,59 @@ jobs:
           name: linux-x86_64
           path: dist/
 
+  # ── Linux, static (musl): x86_64 and aarch64 ────────────────────────────────
+  # Binaries with no libc dependency, so they run on any distribution: what
+  # install.sh installs on Linux, and what whale runs as hosted agents inside
+  # its Alpine gateway (pinned by version and checksum). Both are required.
+  build-linux-musl:
+    name: Linux ${{ matrix.arch }} (static, musl)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+            platform: linux/amd64
+          - arch: aarch64
+            target: aarch64-unknown-linux-musl
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+
+      - name: Build static release binary (cross)
+        run: cross build --release --target ${{ matrix.target }} -p sven
+
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.arch != 'x86_64'
+
+      - name: Check it is static and runs without glibc
+        run: |
+          bin=target/${{ matrix.target }}/release/sven
+          file "$bin" | grep -q "static" || { file "$bin"; exit 1; }
+          docker run --rm --platform ${{ matrix.platform }} -v "$PWD/$bin:/sven:ro" alpine:3.20 /sven --version
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/sven dist/sven-linux-${{ matrix.arch }}-musl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}-musl
+          path: dist/
+
   # ── Linux aarch64 ────────────────────────────────────────────────────────────
   # Cross-compiles via `cross` (Docker-based), reuses completions from x86 job.
-  # Cross.toml installs `perl` in the cross container (required by OpenSSL's
-  # ./Configure script during a vendored source build).
+  # Cross.toml installs `perl` and `pkg-config` in the cross container, for
+  # native build scripts (the workspace links no OpenSSL; TLS is rustls).
   # continue-on-error: the x86_64 release is never blocked by an aarch64 failure.
   build-linux-aarch64:
     name: Linux aarch64 [experimental]
@@ -201,8 +250,9 @@ jobs:
     runs-on: ubuntu-latest
     # aarch64, macOS, and Windows are excluded from needs so their failures
     # never block the Linux release.  e2e-basic must pass - if any basic test
-    # fails the release is aborted.
-    needs: [e2e-basic, build-linux-x86_64]
+    # fails the release is aborted - and both static Linux binaries must
+    # build, since install.sh and whale's hosted agents install them.
+    needs: [e2e-basic, build-linux-x86_64, build-linux-musl]
     steps:
       - uses: actions/checkout@v4
 
@@ -210,6 +260,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-x86_64
+          path: dist
+
+      - name: Download the static (musl) artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*-musl
+          merge-multiple: true
           path: dist
 
       - name: Download aarch64 artifact (if available)

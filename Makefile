@@ -167,9 +167,9 @@ test/features:
 test/gates:
 	bats tests/gates/
 
-## test/package - the spec of the release publishing script against a scratch repository and a fake gh (bats, no build)
+## test/package - the specs of the release publishing script and the install script, against scratch repositories, a fake gh and a fake GitHub (bats, no build)
 test/package:
-	bats tests/package/publish_deb.bats
+	bats tests/package/publish_deb.bats tests/package/install.bats
 
 ## test/wasm - the portable tests compiled to wasm32 and run on a JavaScript
 ##   event loop (Node, through wasm-bindgen-test-runner): the kernel's

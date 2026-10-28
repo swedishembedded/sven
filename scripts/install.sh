@@ -1,143 +1,117 @@
 #!/usr/bin/env sh
-# install.sh - Install sven from the latest GitHub release.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 #
-# One-liner usage:
+# Swedish Embedded AB implements solutions for shipping command-line tools
+# that install cleanly everywhere for its clients. If your team needs
+# expertise in release engineering then you can procure our services by
+# sending an email to info@swedishembedded.com.
+#
+# install.sh - install sven from its GitHub releases.
+#
 #   curl -fsSL https://agentsven.com/install.sh | sh
 #
-# Options (set as env vars before piping):
-#   SVEN_VERSION   - install a specific version (e.g. "0.2.1"), default: latest
-#   SVEN_INSTALL_DIR - install directory, default: /usr/local/bin
-#   SVEN_NO_SUDO   - set to 1 to never use sudo (fail if dir not writable)
+# Installs the newest release of sven ${SVEN_MAJOR}.x: patch and minor
+# releases arrive with no change here, a new major version never does (it
+# may break what you built on this one). Moving this script to the next
+# major version is a deliberate edit of SVEN_MAJOR, made with that release.
+#
+# Linux on x86_64 and aarch64 gets the static build, which runs on any
+# distribution (glibc or musl); macOS gets the universal build. The download
+# is checked against the release's published SHA-256 before it is installed.
+#
+# Environment:
+#   SVEN_VERSION      install exactly this version (e.g. 4.1.0)
+#   SVEN_INSTALL_DIR  where to install (default /usr/local/bin)
+#   SVEN_NO_SUDO=1    never use sudo
 set -eu
 
-REPO="swedishembedded/sven"
-INSTALL_DIR="${SVEN_INSTALL_DIR:-/usr/local/bin}"
-BIN="sven"
+SVEN_MAJOR=4
 
-# ── Colours (only when stdout is a terminal) ──────────────────────────────────
+REPO="swedishembedded/sven"
+RELEASES_API="${SVEN_RELEASES_API:-https://api.github.com/repos/${REPO}/releases?per_page=100}"
+DOWNLOAD_BASE="${SVEN_DOWNLOAD_BASE:-https://github.com/${REPO}/releases/download}"
+INSTALL_DIR="${SVEN_INSTALL_DIR:-/usr/local/bin}"
+
 if [ -t 1 ]; then
-    BOLD="\033[1m"; GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
+	BOLD="$(printf '\033[1m')" GREEN="$(printf '\033[32m')" RED="$(printf '\033[31m')" RESET="$(printf '\033[0m')"
 else
-    BOLD=""; GREEN=""; YELLOW=""; RED=""; RESET=""
+	BOLD="" GREEN="" RED="" RESET=""
+fi
+info() { printf '%s==>%s %s\n' "$GREEN" "$RESET" "$*"; }
+fail() {
+	printf '%serror:%s %s\n' "$RED" "$RESET" "$*" >&2
+	exit 1
+}
+
+for cmd in curl uname; do
+	command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required"
+done
+if command -v sha256sum >/dev/null 2>&1; then
+	sha256() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+	sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+	fail "sha256sum or shasum is required to verify the download"
 fi
 
-info()    { printf "${GREEN}▶${RESET}  %s\n" "$*"; }
-warn()    { printf "${YELLOW}⚠${RESET}  %s\n" "$*" >&2; }
-error()   { printf "${RED}✖${RESET}  %s\n" "$*" >&2; exit 1; }
-section() { printf "\n${BOLD}%s${RESET}\n" "$*"; }
-
-# ── Dependency checks ─────────────────────────────────────────────────────────
-for cmd in curl uname; do
-    command -v "$cmd" >/dev/null 2>&1 || error "Required command not found: $cmd"
-done
-
-# ── Detect OS and architecture ────────────────────────────────────────────────
-section "Detecting platform..."
-
-OS=$(uname -s)
-ARCH=$(uname -m)
-
-case "${OS}" in
-    Linux)
-        case "${ARCH}" in
-            x86_64)          ASSET="sven-linux-x86_64" ;;
-            aarch64|arm64)   ASSET="sven-linux-aarch64" ;;
-            *)
-                error "Unsupported Linux architecture: ${ARCH}
-  Supported: x86_64, aarch64
-  Visit https://github.com/${REPO}/releases for manual download."
-                ;;
-        esac
-        ;;
-    Darwin)
-        ASSET="sven-darwin-universal"
-        ;;
-    *)
-        error "Unsupported OS: ${OS}
-  Supported: Linux, macOS
-  Visit https://github.com/${REPO}/releases for manual download."
-        ;;
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+case "$OS/$ARCH" in
+Linux/x86_64 | Linux/amd64) ASSET=sven-linux-x86_64-musl ;;
+Linux/aarch64 | Linux/arm64) ASSET=sven-linux-aarch64-musl ;;
+Darwin/x86_64 | Darwin/arm64) ASSET=sven-darwin-universal ;;
+*)
+	fail "$OS on $ARCH is not supported. sven runs on Linux (x86_64, aarch64) and macOS;
+  other builds, if any, are at https://github.com/${REPO}/releases"
+	;;
 esac
 
-info "Platform: ${OS}/${ARCH} → ${ASSET}"
-
-# ── Resolve version ───────────────────────────────────────────────────────────
-section "Resolving version..."
-
 if [ -n "${SVEN_VERSION:-}" ]; then
-    VERSION="${SVEN_VERSION}"
-    # Normalise: accept both "0.2.1" and "v0.2.1"
-    case "${VERSION}" in
-        v*) TAG="${VERSION}" ;;
-        *)  TAG="v${VERSION}" ;;
-    esac
-    info "Requested version: ${TAG}"
+	TAG="v${SVEN_VERSION#v}"
 else
-    info "Fetching latest release..."
-    TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-        | grep '"tag_name"' \
-        | sed 's/.*"tag_name": *"\(.*\)".*/\1/')
-    [ -n "${TAG}" ] || error "Could not determine latest release. Check your internet connection."
-    VERSION="${TAG#v}"
-    info "Latest version: ${TAG}"
+	# The newest vMAJOR.MINOR.PATCH; pre-releases (a suffix) never match.
+	TAG="$(curl -fsSL "$RELEASES_API" |
+		sed -n 's/.*"tag_name": *"\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' |
+		grep "^v${SVEN_MAJOR}\." |
+		sort -t. -k1,1 -k2,2n -k3,3n | tail -n 1)" ||
+		fail "could not read sven's releases from GitHub"
+	[ -n "$TAG" ] || fail "no release of sven v${SVEN_MAJOR} is published yet: https://github.com/${REPO}/releases"
 fi
+info "Installing sven ${TAG} (${ASSET})"
 
-# ── Download ──────────────────────────────────────────────────────────────────
-section "Downloading sven ${TAG}..."
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT INT TERM
+curl -fsSL "${DOWNLOAD_BASE}/${TAG}/checksums.txt" -o "$TMP/checksums.txt" ||
+	fail "sven ${TAG} publishes no checksums: https://github.com/${REPO}/releases/tag/${TAG}"
+curl -fsSL "${DOWNLOAD_BASE}/${TAG}/${ASSET}" -o "$TMP/sven" ||
+	fail "sven ${TAG} has no ${ASSET} build: https://github.com/${REPO}/releases/tag/${TAG}"
 
-URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
-info "URL: ${URL}"
+expected="$(awk -v a="$ASSET" '$2 == a || $2 == "*" a { print $1 }' "$TMP/checksums.txt")"
+[ -n "$expected" ] || fail "sven ${TAG}'s checksums do not list ${ASSET}"
+[ "$(sha256 "$TMP/sven")" = "$expected" ] ||
+	fail "the download does not match its published checksum; nothing was installed"
+chmod +x "$TMP/sven"
+"$TMP/sven" --version >/dev/null 2>&1 || fail "the downloaded sven does not run on this machine"
 
-TMP=$(mktemp /tmp/sven.XXXXXX)
-trap 'rm -f "${TMP}"' EXIT INT TERM
-
-if ! curl -fsSL --progress-bar "${URL}" -o "${TMP}"; then
-    error "Download failed.
-  URL: ${URL}
-  Check that version ${TAG} exists: https://github.com/${REPO}/releases"
-fi
-
-chmod +x "${TMP}"
-
-# ── Verify the binary runs ────────────────────────────────────────────────────
-if ! "${TMP}" --version >/dev/null 2>&1; then
-    error "Downloaded binary failed to execute. This may be a platform compatibility issue."
-fi
-
-INSTALLED_VERSION=$("${TMP}" --version 2>/dev/null | head -1 || echo "unknown")
-info "Binary OK: ${INSTALLED_VERSION}"
-
-# ── Install ───────────────────────────────────────────────────────────────────
-section "Installing to ${INSTALL_DIR}/${BIN}..."
-
-if [ -w "${INSTALL_DIR}" ]; then
-    mv "${TMP}" "${INSTALL_DIR}/${BIN}"
-elif [ "${SVEN_NO_SUDO:-0}" = "1" ]; then
-    error "Install directory ${INSTALL_DIR} is not writable and SVEN_NO_SUDO=1 is set."
+if [ -w "$INSTALL_DIR" ]; then
+	mv "$TMP/sven" "$INSTALL_DIR/sven"
+elif [ "${SVEN_NO_SUDO:-0}" = 1 ]; then
+	fail "$INSTALL_DIR is not writable and SVEN_NO_SUDO=1 forbids sudo; set SVEN_INSTALL_DIR"
 elif command -v sudo >/dev/null 2>&1; then
-    info "Using sudo to install (directory not writable by current user)..."
-    sudo mv "${TMP}" "${INSTALL_DIR}/${BIN}"
-    sudo chmod +x "${INSTALL_DIR}/${BIN}"
+	info "Installing to $INSTALL_DIR with sudo"
+	sudo install -m 0755 "$TMP/sven" "$INSTALL_DIR/sven"
 else
-    # Fallback: install to ~/.local/bin
-    LOCAL_BIN="${HOME}/.local/bin"
-    warn "Cannot write to ${INSTALL_DIR} and sudo is not available."
-    warn "Installing to ${LOCAL_BIN} instead."
-    mkdir -p "${LOCAL_BIN}"
-    mv "${TMP}" "${LOCAL_BIN}/${BIN}"
-    INSTALL_DIR="${LOCAL_BIN}"
+	INSTALL_DIR="$HOME/.local/bin"
+	info "Installing to $INSTALL_DIR (the default directory is not writable)"
+	mkdir -p "$INSTALL_DIR"
+	mv "$TMP/sven" "$INSTALL_DIR/sven"
 fi
 
-# ── PATH check ────────────────────────────────────────────────────────────────
-printf "\n${BOLD}${GREEN}✔  sven ${TAG} installed to ${INSTALL_DIR}/${BIN}${RESET}\n\n"
-
-if ! command -v sven >/dev/null 2>&1; then
-    warn "sven is not yet in your PATH."
-    warn "Add this to your shell profile (~/.bashrc / ~/.zshrc):"
-    printf "\n    export PATH=\"%s:\$PATH\"\n\n" "${INSTALL_DIR}"
-fi
-
-printf "Get started:\n"
-printf "  sven --help\n"
-printf "  sven --version\n\n"
-printf "Documentation: https://swedishembedded.com/docs/sven\n\n"
+printf '\n%s%ssven %s is installed in %s%s\n\n' "$BOLD" "$GREEN" "${TAG#v}" "$INSTALL_DIR" "$RESET"
+# shellcheck disable=SC2016 # $PATH is printed for the person to copy
+case ":$PATH:" in
+*":$INSTALL_DIR:"*) ;;
+*) printf 'Add it to your PATH:\n  export PATH="%s:$PATH"\n\n' "$INSTALL_DIR" ;;
+esac
+printf 'Get started: sven --help\nDocumentation: https://swedishembedded.com/docs/sven\n'
