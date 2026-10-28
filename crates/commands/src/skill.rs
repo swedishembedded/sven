@@ -81,8 +81,11 @@ impl SlashCommand for SkillCommand {
                 };
             }
         };
+        // The instructions, not the frontmatter: its description and
+        // metadata are for listing the command, not for the model.
+        let body = sven_workspace::parse_skill_file(&content).map_or(content, |parsed| parsed.body);
         CommandResult {
-            message_to_send: Some(build_content_message(&content, &args)),
+            message_to_send: Some(build_content_message(&body, &args)),
             ..Default::default()
         }
     }
@@ -260,6 +263,19 @@ mod tests {
         assert_eq!(
             result.message_to_send.as_deref(),
             Some("## Instructions\n\nDo things.")
+        );
+    }
+
+    #[test]
+    fn execute_sends_the_instructions_without_their_frontmatter() {
+        let (cmd, _guard) = make_cmd(
+            "review",
+            "Review.",
+            "---\ndescription: Review a pull request\n---\nReview it carefully.\n",
+        );
+        assert_eq!(
+            cmd.execute(vec![]).message_to_send.as_deref(),
+            Some("Review it carefully.")
         );
     }
 
