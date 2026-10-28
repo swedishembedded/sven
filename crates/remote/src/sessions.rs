@@ -84,6 +84,46 @@ impl SessionStore {
         )
     }
 
+    /// Forgets what was kept for `session`: its conversation was archived
+    /// or deleted. Nothing kept is not an error.
+    ///
+    /// # Errors
+    ///
+    /// The file exists but cannot be removed.
+    pub fn forget(&self, session: Uuid) -> anyhow::Result<()> {
+        match std::fs::remove_file(self.file(session)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(anyhow::anyhow!("{}: {e}", self.file(session).display())),
+        }
+    }
+
+    /// Forgets every kept session not used for `unused`, and returns how many
+    /// went. Only kept sessions (`<uuid>.json`) are touched.
+    pub fn prune(&self, unused: std::time::Duration) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return 0;
+        };
+        let now = std::time::SystemTime::now();
+        let mut pruned = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_kept = path.extension().is_some_and(|ext| ext == "json")
+                && path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| Uuid::parse_str(stem).is_ok());
+            let stale = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|modified| now.duration_since(modified).unwrap_or_default() > unused);
+            if is_kept && stale && std::fs::remove_file(&path).is_ok() {
+                pruned += 1;
+            }
+        }
+        pruned
+    }
+
     /// The directory, for messages.
     #[must_use]
     pub fn dir(&self) -> &Path {
@@ -179,6 +219,41 @@ mod tests {
 
     fn scratch() -> PathBuf {
         std::env::temp_dir().join(format!("sven-remote-sessions-{}", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn a_closed_session_is_forgotten_and_a_month_unused_one_pruned() {
+        let dir = scratch();
+        let store = SessionStore::new(&dir);
+        let (closed, stale, recent) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        for session in [closed, stale, recent] {
+            store.save(session, &[Message::user("hi")]).unwrap();
+        }
+        let other = dir.join("notes.json");
+        std::fs::write(&other, "{}").unwrap();
+
+        store.forget(closed).unwrap();
+        assert!(store.load(closed).is_none());
+        store.forget(closed).expect("nothing kept is not an error");
+
+        let month_ago =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 60 * 60);
+        for path in [store.file(stale), other.clone()] {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(month_ago)
+                .unwrap();
+        }
+        assert_eq!(
+            store.prune(std::time::Duration::from_secs(30 * 24 * 60 * 60)),
+            1
+        );
+        assert!(store.load(stale).is_none());
+        assert!(store.load(recent).is_some(), "used recently: kept");
+        assert!(other.exists(), "only kept sessions are touched");
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

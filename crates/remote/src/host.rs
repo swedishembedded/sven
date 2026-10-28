@@ -56,6 +56,8 @@ const HEARTBEAT: Duration = Duration::from_secs(15);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Commands queued for one session while it works.
 const SESSION_QUEUE: usize = 64;
+/// A kept session unused this long is forgotten when the host starts.
+const KEPT_UNUSED: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// What `sven rc` runs with.
 pub struct HostOptions {
@@ -106,6 +108,11 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
         options.working_dir.display().to_string()
     };
     client.attach_environment(&path, run).await?;
+    // What it kept for conversations nobody has used for a month goes.
+    let pruned = options.sessions.prune(KEPT_UNUSED);
+    if pruned > 0 {
+        tracing::info!("forgot {pruned} session(s) unused for 30 days");
+    }
     println!(
         "Connected to {} as \"{}\" for {}. Sessions work in {}. Ctrl-C stops.",
         options.login.server,
@@ -255,6 +262,21 @@ async fn route(
             list_slash_commands(context).await;
             return;
         }
+        ControlCommand::CloseSession { session_id } => {
+            // A session this run started ends itself; one it never started
+            // has only what an earlier run kept.
+            match sessions.remove(&session_id) {
+                Some(actor) => {
+                    let _ = actor.send(SessionCommand::Close).await;
+                }
+                None => {
+                    if let Err(e) = context.sessions.forget(session_id) {
+                        tracing::warn!("session {session_id}: could not forget it: {e:#}");
+                    }
+                }
+            }
+            return;
+        }
         other => {
             tracing::debug!("rc ignores {other:?}");
             return;
@@ -311,6 +333,8 @@ enum SessionCommand {
         approved: bool,
     },
     Cancel,
+    /// Its conversation was archived or deleted: end it and forget it.
+    Close,
 }
 
 /// One session: its controller, created on the first input, and what it
@@ -325,6 +349,9 @@ struct SessionActor {
     /// from before a restart; asked again, it continues that answer.
     unfinished: Option<String>,
     controller: Option<SessionController>,
+    /// Closed: nothing is kept for it any more, even by an answer that was
+    /// still finishing.
+    closed: bool,
     /// This session's tool calls waiting for the server's permission.
     approvals: PendingApprovals,
     /// Each running tool call's description and when it started, to tell
@@ -345,6 +372,7 @@ impl SessionActor {
             history: Vec::new(),
             unfinished: None,
             controller: None,
+            closed: false,
             approvals: PendingApprovals::default(),
             running: HashMap::new(),
             events_tx,
@@ -398,6 +426,16 @@ impl SessionActor {
                 if let Some(controller) = &self.controller {
                     controller.cancel().await;
                 }
+            }
+            SessionCommand::Close => {
+                self.closed = true;
+                if let Some(controller) = &self.controller {
+                    controller.cancel().await;
+                }
+                if let Err(e) = self.context.sessions.forget(self.id) {
+                    tracing::warn!("session {}: could not forget it: {e:#}", self.id);
+                }
+                println!("[{}] closed", self.short());
             }
         }
     }
@@ -579,6 +617,9 @@ impl SessionActor {
 
     /// Keeps the session's conversation as it is now.
     fn keep(&self) {
+        if self.closed {
+            return;
+        }
         if let Some(controller) = &self.controller {
             if let Err(e) = self.context.sessions.save(self.id, &controller.history()) {
                 tracing::warn!(

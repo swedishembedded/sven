@@ -114,6 +114,10 @@ pub enum ControlCommand {
     /// Request the slash commands a session on this host can run, custom
     /// ones included. The host answers with [`ControlEvent::SlashCommands`].
     ListSlashCommands,
+
+    /// The session's conversation was archived or deleted: the host ends the
+    /// session and forgets what it kept for it.
+    CloseSession { session_id: Uuid },
 }
 
 // ── Agent → Operator events ───────────────────────────────────────────────────
