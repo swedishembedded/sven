@@ -14,9 +14,22 @@
 //! accepts a connection. Everything is plain HTTPS with a bearer token:
 //!
 //! 1. **Discovery.** `GET {server}/.well-known/sven-remote` answers a
-//!    [`RemoteDiscovery`]: where a person approves a new host
-//!    (`authorize_url`), where the host talks to the server (`control_url`),
-//!    and the OpenAI-compatible endpoint its sessions call models through.
+//!    [`RemoteDiscovery`]: where a person types the code that approves a new
+//!    host (`authorize_url`), the two endpoints of the device authorization
+//!    grant (`device_authorization_url`, `device_token_url`), where the host
+//!    talks to the server (`control_url`), and the OpenAI-compatible endpoint
+//!    its sessions call models through.
+//!    **Signing in** is RFC 8628: the host `POST`s `{"name"}` to
+//!    `device_authorization_url` and gets `{device_code, user_code,
+//!    verification_uri, expires_in, interval}`; the person types `user_code`
+//!    at `verification_uri` and approves; meanwhile the host `POST`s
+//!    `{"device_code"}` to `device_token_url` every `interval` seconds. A
+//!    `400` answers `authorization_pending` (go on), `slow_down` (add 5 s to
+//!    the interval), `access_denied` (optional `error_description`) or
+//!    `expired_token` (also an unknown or redeemed code); `200` answers
+//!    `{"token", "account"}` exactly once. The request endpoint answers `429`
+//!    with `Retry-After` when called too often. The device code never leaves
+//!    the host's process; the token never appears in a browser.
 //! 2. **Identity.** `GET {control_url}/whoami` with the token answers a
 //!    [`WhoAmI`]; `401` means the token is not (or no longer) valid.
 //! 3. **Environment.** `POST {control_url}/environment` with
@@ -84,9 +97,16 @@ pub const DISCOVERY_PATH: &str = "/.well-known/sven-remote";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteDiscovery {
     pub protocol_version: u32,
-    /// The page a person opens to let a host act for them. The host appends
-    /// `?name=<host name>`.
+    /// The page where a person types the code a host shows, to let that host
+    /// act for them (the grant's `verification_uri`).
     pub authorize_url: String,
+    /// Where a host asks for a device code. Absent on a server that predates
+    /// the device grant, which `sven auth login` then refuses.
+    #[serde(default)]
+    pub device_authorization_url: Option<String>,
+    /// Where a host polls for the token once the person approved.
+    #[serde(default)]
+    pub device_token_url: Option<String>,
     /// The base of `whoami`, `commands` and `events`.
     pub control_url: String,
     /// The OpenAI-compatible API (ending in `/v1`) the host's sessions call
@@ -389,6 +409,31 @@ mod tests {
                 "working": [SESSION]
             })
         );
+    }
+
+    #[test]
+    fn discovery_device_fields_are_optional() {
+        let with: RemoteDiscovery = serde_json::from_str(
+            r#"{"protocol_version":1,"authorize_url":"https://s/connect/sven",
+                "device_authorization_url":"https://s/api/w/device",
+                "device_token_url":"https://s/api/w/device/token",
+                "control_url":"https://s/api/w","openai_base_url":"https://s/v1"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            with.device_authorization_url.as_deref(),
+            Some("https://s/api/w/device")
+        );
+        assert_eq!(
+            with.device_token_url.as_deref(),
+            Some("https://s/api/w/device/token")
+        );
+        let without: RemoteDiscovery = serde_json::from_str(
+            r#"{"protocol_version":1,"authorize_url":"https://s/connect/sven",
+                "control_url":"https://s/api/w","openai_base_url":"https://s/v1"}"#,
+        )
+        .unwrap();
+        assert!(without.device_authorization_url.is_none() && without.device_token_url.is_none());
     }
 
     #[test]

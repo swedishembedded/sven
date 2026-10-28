@@ -123,7 +123,7 @@ pub fn normalize_server(server: &str) -> anyhow::Result<String> {
     ))
 }
 
-fn http() -> anyhow::Result<reqwest::Client> {
+pub(crate) fn http() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .user_agent(concat!("sven/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))

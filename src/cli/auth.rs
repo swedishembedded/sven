@@ -29,8 +29,8 @@ pub enum AuthCommands {
         provider: String,
     },
     /// Sign this machine in to a remote-control server, so `sven rc` can run
-    /// sessions for it. Prints an address to approve the connection at, then
-    /// reads the token that page shows (pasted, not echoed).
+    /// sessions for it. Prints an address and a code: open the address, sign in
+    /// and enter the code to approve this machine; sven waits for it.
     ///
     ///   sven auth login --server localhost:3000
     ///   sven auth login --server https://example.com --name build-box

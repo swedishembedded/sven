@@ -31,6 +31,7 @@ pub mod attach;
 pub mod client;
 pub mod container;
 pub mod host;
+pub mod device;
 pub mod login;
 pub mod sandbox;
 pub mod sessions;

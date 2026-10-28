@@ -66,13 +66,8 @@ pub(crate) async fn run_auth_command(command: &AuthCommands) -> anyhow::Result<(
             let name = name
                 .clone()
                 .unwrap_or_else(sven_remote::login::machine_name);
-            let login = sven_remote::login::sign_in(
-                server,
-                &name,
-                |line| println!("{line}"),
-                || read_secret("Token: "),
-            )
-            .await?;
+            let login =
+                sven_remote::login::sign_in(server, &name, |line| println!("{line}")).await?;
             println!(
                 "Authentication successful. Signed in to {} as \"{}\" for {}. \
                  Run `sven rc` to take sessions.",

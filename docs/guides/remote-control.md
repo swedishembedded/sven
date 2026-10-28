@@ -18,10 +18,14 @@ out; nothing on it listens for connections.
 sven auth login --server https://example.com
 ```
 
-sven prints an address. Open it, sign in to the server if asked, and approve
-the connection; the page then shows a token. Paste it back into the waiting
-`sven auth login` (it is not echoed). sven checks the token with the server
-and says `Authentication successful`.
+sven prints an address and a code, for example `Open https://example.com/connect/sven
+and enter the code WDJB-MJHT`. Open the address, sign in to the server if
+asked, type the code and approve the connection; sven waits for it, then
+checks the key the server issued and says `Authentication successful`. The
+key never passes through the browser or your clipboard, and only the terminal
+that asked for the code can collect it. A code works for ten minutes; if it
+expires or the connection is denied, run `sven auth login` again. Ctrl-C
+cancels the wait. A server that predates this sign-in must be updated first.
 
 `--server` without a scheme means `http://` for this machine
 (`--server localhost:3000`) and `https://` for any other. `--name` sets what

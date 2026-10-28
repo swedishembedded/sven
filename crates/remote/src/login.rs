@@ -10,6 +10,8 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+use crate::device::{self, Pacing};
 use uuid::Uuid;
 
 /// A signed-in host: where its server is and the token that proves it.
@@ -21,7 +23,7 @@ pub struct RemoteLogin {
     /// From the server's discovery document at sign-in.
     pub control_url: String,
     pub openai_base_url: String,
-    /// The token the person copied from the server. A secret.
+    /// The key the server minted when the person approved this host. A secret.
     pub token: String,
     /// What the server calls this host.
     pub workspace_id: Uuid,
@@ -109,43 +111,86 @@ pub fn machine_name() -> String {
     }
 }
 
-/// Signs this host in to `server`: shows the person where to approve it,
-/// takes the token they copy back through `read_token`, checks it with the
-/// server and stores it.
+/// Signs this host in to `server` with the device grant: shows the person
+/// the page and the code to type there, waits for the approval, checks the
+/// token the server then hands over and stores it.
 ///
-/// `say` receives the lines to show the person.
+/// `say` receives the lines to show the person. Ctrl-C ends the wait.
 ///
 /// # Errors
 ///
-/// The server cannot be reached or is not a remote-control server, or it
-/// does not accept the token.
+/// The server cannot be reached, is not a remote-control server or predates
+/// the device grant; the person denied the connection or let the code
+/// expire; or the server does not accept the token.
 pub async fn sign_in(
     server: &str,
     name: &str,
+    say: impl FnMut(&str),
+) -> anyhow::Result<RemoteLogin> {
+    let cancel = async {
+        // If the signal cannot be listened for, never cancel.
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    sign_in_with(server, name, say, Pacing::default(), cancel, |login| {
+        save(login).map(drop)
+    })
+    .await
+}
+
+/// [`sign_in`] with its clock, interruption and storage supplied.
+///
+/// # Errors
+///
+/// As [`sign_in`], and `store` failed.
+pub async fn sign_in_with(
+    server: &str,
+    name: &str,
     mut say: impl FnMut(&str),
-    read_token: impl FnOnce() -> anyhow::Result<String>,
+    pacing: Pacing,
+    cancel: impl std::future::Future<Output = ()>,
+    store: impl FnOnce(&RemoteLogin) -> anyhow::Result<()>,
 ) -> anyhow::Result<RemoteLogin> {
     let server = crate::client::normalize_server(server)?;
     let found = crate::client::discover(&server).await?;
-    let mut link = reqwest::Url::parse(&found.authorize_url)
-        .map_err(|e| anyhow::anyhow!("{server} gave an unusable approval address: {e}"))?;
-    link.query_pairs_mut().append_pair("name", name);
-    say("Open this address, approve the connection, and paste the token it shows:");
-    say(&format!("  {link}"));
-    let token = read_token()?.trim().to_string();
-    anyhow::ensure!(!token.is_empty(), "no token was pasted");
-    let who = crate::client::RemoteClient::new(&found.control_url, &token)?
+    let (Some(request_url), Some(token_url)) = (
+        found.device_authorization_url.as_deref(),
+        found.device_token_url.as_deref(),
+    ) else {
+        anyhow::bail!(
+            "{server} does not offer device sign-in; the server must be updated before `sven auth login` can connect to it"
+        );
+    };
+    let http = crate::client::http()?;
+    let grant = device::request(&http, request_url, name).await?;
+    say(&format!(
+        "Open {} and enter the code",
+        grant.verification_uri
+    ));
+    say("");
+    say(&format!("    {}", grant.user_code));
+    say("");
+    say(&format!(
+        "Waiting for approval (the code works for {} minutes; Ctrl-C cancels)...",
+        grant.expires_in.div_ceil(60)
+    ));
+    let granted = device::await_token(&http, token_url, &grant, pacing, cancel).await?;
+    let who = crate::client::RemoteClient::new(&found.control_url, &granted.token)?
         .whoami()
         .await?;
     let login = RemoteLogin {
         server,
         control_url: found.control_url,
         openai_base_url: found.openai_base_url,
-        token,
+        token: granted.token,
         workspace_id: who.workspace_id,
         workspace_name: who.workspace_name,
         account: who.account,
     };
-    save(&login)?;
+    store(&login)?;
     Ok(login)
 }
+
+#[cfg(test)]
+mod tests;
