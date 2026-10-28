@@ -17,7 +17,7 @@
 //! keeps serving; nothing one session does can stop another.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -67,6 +67,35 @@ pub struct HostOptions {
 /// The only tools a hosted host's sessions have (`sven rc --hosted`): none
 /// of them reads, writes or runs anything on the machine the host runs on.
 pub const HOSTED_TOOLS: &[&str] = &["web_search", "web_fetch", "skill"];
+
+/// The system prompt of a hosted conversation when the site configures none
+/// (`agent.system_prompt` in the file `sven --config` reads).
+pub const HOSTED_SYSTEM_PROMPT: &str = "You are sven, a helpful assistant. Answer clearly and \
+     concisely, and say so when you are not sure. You can search the web and read public web \
+     pages; say which sources you used. You have no access to the person's computer or files.";
+
+/// What a session works with. On a person's computer: the project it runs in,
+/// whose root, git state and context file the built-in prompt describes, with
+/// a configured `agent.system_prompt` as its identity. Hosted: the configured
+/// prompt (or [`HOSTED_SYSTEM_PROMPT`]) and nothing else, since the working
+/// directory is the site's own sandbox, not something to tell a visitor about.
+fn session_runtime(config: &Config, working_dir: &Path, hosted: bool) -> RuntimeContext {
+    let mut runtime = RuntimeContext::auto_detect_at(Some(working_dir.to_path_buf()));
+    runtime.project_root = Some(working_dir.to_path_buf());
+    if hosted {
+        runtime.no_system = true;
+        runtime.system_prompt_override = Some(
+            config
+                .agent
+                .system_prompt
+                .clone()
+                .unwrap_or_else(|| HOSTED_SYSTEM_PROMPT.to_string()),
+        );
+    } else {
+        runtime.system_prompt_override = config.agent.system_prompt.clone();
+    }
+    runtime
+}
 
 /// What a hosted host's sessions may do, applied to its configuration: only
 /// [`HOSTED_TOOLS`] (an allow list, so a tool added later is never offered
@@ -136,6 +165,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
     let context = Arc::new(SessionContext {
         config: options.config,
         working_dir: options.working_dir,
+        hosted: options.hosted,
         openai_base_url: options.login.openai_base_url,
         token: options.login.token,
         uploads: uploads.clone(),
@@ -318,6 +348,8 @@ async fn list_slash_commands(context: &SessionContext) {
 struct SessionContext {
     config: Arc<Config>,
     working_dir: PathBuf,
+    /// Run by a site for its own web conversations (`sven rc --hosted`).
+    hosted: bool,
     openai_base_url: String,
     token: String,
     uploads: mpsc::Sender<Upload>,
@@ -544,8 +576,11 @@ impl SessionActor {
 
     /// Opens the live session on the conversation kept so far.
     async fn open_controller(&mut self, model: ModelConfig) -> anyhow::Result<SessionController> {
-        let mut runtime = RuntimeContext::auto_detect_at(Some(self.context.working_dir.clone()));
-        runtime.project_root = Some(self.context.working_dir.clone());
+        let runtime = session_runtime(
+            &self.context.config,
+            &self.context.working_dir,
+            self.context.hosted,
+        );
         let mut options = SessionOptions::new(
             Arc::clone(&self.context.config),
             runtime,
@@ -796,6 +831,53 @@ mod tests {
     use super::*;
     use sven_control::HistoryRole;
 
+    /// A hosted conversation's system message is the configured prompt, or
+    /// sven's hosted default, and nothing else: no project root, sandbox
+    /// path, git or tool index, which are the site's internals.
+    #[test]
+    fn a_hosted_session_is_prompted_with_its_configured_prompt_alone() {
+        let dir = std::path::Path::new("/var/lib/whale/hosted/acct/conv/work");
+        let mut config = Config::default();
+        config.agent.system_prompt = Some("You are a helpful assistant.".into());
+        let runtime = session_runtime(&config, dir, true);
+        assert!(
+            runtime.no_system,
+            "the built-in prompt and its context sections are left out"
+        );
+        assert_eq!(
+            runtime.system_prompt_override.as_deref(),
+            Some("You are a helpful assistant.")
+        );
+    }
+
+    #[test]
+    fn a_hosted_session_without_a_configured_prompt_gets_one_that_names_no_path() {
+        let dir = std::path::Path::new("/var/lib/whale/hosted/acct/conv/work");
+        let runtime = session_runtime(&Config::default(), dir, true);
+        assert!(runtime.no_system);
+        let prompt = runtime
+            .system_prompt_override
+            .expect("a hosted session always has a prompt");
+        assert!(
+            !prompt.contains('/'),
+            "no path in the hosted default: {prompt}"
+        );
+    }
+
+    #[test]
+    fn a_session_on_a_persons_computer_keeps_its_project_context() {
+        let dir = std::path::Path::new("/home/someone/project");
+        let mut config = Config::default();
+        config.agent.system_prompt = Some("Be terse.".into());
+        let runtime = session_runtime(&config, dir, false);
+        assert!(
+            !runtime.no_system,
+            "the project context stays for a local session"
+        );
+        assert_eq!(runtime.project_root.as_deref(), Some(dir));
+        assert_eq!(runtime.system_prompt_override.as_deref(), Some("Be terse."));
+    }
+
     fn turn(role: HistoryRole, text: &str) -> HistoryEntry {
         HistoryEntry {
             role,
@@ -816,6 +898,7 @@ mod tests {
         let context = Arc::new(SessionContext {
             config: Arc::new(config),
             working_dir: dir.to_path_buf(),
+            hosted: false,
             openai_base_url: String::new(),
             token: String::new(),
             uploads,

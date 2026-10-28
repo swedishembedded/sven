@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **sven-remote**: a hosted conversation (`sven rc --hosted`) is prompted with the configured `agent.system_prompt` alone, or a short built-in assistant prompt when none is configured: the built-in coding prompt and its project root, sandbox path, git and context sections are no longer sent, since they are the site's internals. A session on a person's computer keeps its project context, and now honours `agent.system_prompt` as its identity, as `sven` headless runs do.
 - **install**: the installer's address is `https://sven.swedishembedded.com/install.sh`, served by the site at the release it runs, and the documented command is `curl -fsSL https://sven.swedishembedded.com/install.sh | sh` (no `--proto`/`--tlsv1.2`: the site serves only TLS 1.2 and 1.3 and never redirects it to plain HTTP).
 
 ## [4.0.1] - 2026-10-28
