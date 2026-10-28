@@ -77,6 +77,26 @@ run_install() {
   [ "$("$DEST/sven" --version)" = "sven $MAJOR.10.0" ]
 }
 
+@test "skips a release whose binaries are not published yet, for the newest complete one" {
+  # A release exists as soon as it is tagged; its binaries and checksums
+  # arrive when its build finishes. Until then it is not installable.
+  releases "v$MAJOR.2.0" "v$MAJOR.1.0"
+  mkdir -p "$GH/download/v$MAJOR.2.0"
+  publish "v$MAJOR.1.0" sven-linux-x86_64-musl
+  run_install
+  [ "$status" -eq 0 ]
+  [ "$("$DEST/sven" --version)" = "sven $MAJOR.1.0" ]
+}
+
+@test "skips a release that does not build for this platform" {
+  releases "v$MAJOR.2.0" "v$MAJOR.1.0"
+  publish "v$MAJOR.2.0" sven-linux-aarch64-musl
+  publish "v$MAJOR.1.0" sven-linux-x86_64-musl
+  run_install
+  [ "$status" -eq 0 ]
+  [ "$("$DEST/sven" --version)" = "sven $MAJOR.1.0" ]
+}
+
 @test "picks the static aarch64 build on arm64" {
   fake_uname Linux aarch64
   releases "v$MAJOR.1.0"

@@ -67,25 +67,44 @@ Darwin/x86_64 | Darwin/arm64) ASSET=sven-darwin-universal ;;
 	;;
 esac
 
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT INT TERM
+
+# Whether release $1 is complete for this platform: it publishes its
+# checksums and they list $ASSET. A release exists as soon as it is tagged;
+# its binaries arrive when its build finishes.
+release_complete() {
+	curl -fsSL "${DOWNLOAD_BASE}/$1/checksums.txt" -o "$TMP/checksums.txt" 2>/dev/null &&
+		awk -v a="$ASSET" '$2 == a || $2 == "*" a { found = 1 } END { exit !found }' "$TMP/checksums.txt"
+}
+
 if [ -n "${SVEN_VERSION:-}" ]; then
 	TAG="v${SVEN_VERSION#v}"
+	release_complete "$TAG" ||
+		fail "sven ${TAG} publishes no ${ASSET} build (yet): https://github.com/${REPO}/releases/tag/${TAG}"
 else
-	# The newest vMAJOR.MINOR.PATCH; pre-releases (a suffix) never match.
-	TAG="$(curl -fsSL "$RELEASES_API" |
+	# The vMAJOR.MINOR.PATCH releases, newest first; pre-releases (a suffix)
+	# never match. The newest complete one of the ten newest is installed.
+	CANDIDATES="$(curl -fsSL "$RELEASES_API" |
 		sed -n 's/.*"tag_name": *"\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' |
 		grep "^v${SVEN_MAJOR}\." |
-		sort -t. -k1,1 -k2,2n -k3,3n | tail -n 1)" ||
+		sort -t. -k1,1 -k2,2nr -k3,3nr | head -n 10)" ||
 		fail "could not read sven's releases from GitHub"
-	[ -n "$TAG" ] || fail "no release of sven v${SVEN_MAJOR} is published yet: https://github.com/${REPO}/releases"
+	[ -n "$CANDIDATES" ] || fail "no release of sven v${SVEN_MAJOR} is published yet: https://github.com/${REPO}/releases"
+	TAG=""
+	for candidate in $CANDIDATES; do
+		if release_complete "$candidate"; then
+			TAG="$candidate"
+			break
+		fi
+		info "sven ${candidate} has no ${ASSET} build yet; trying the release before it"
+	done
+	[ -n "$TAG" ] || fail "no release of sven v${SVEN_MAJOR} has a ${ASSET} build yet: https://github.com/${REPO}/releases"
 fi
 info "Installing sven ${TAG} (${ASSET})"
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT INT TERM
-curl -fsSL "${DOWNLOAD_BASE}/${TAG}/checksums.txt" -o "$TMP/checksums.txt" ||
-	fail "sven ${TAG} publishes no checksums: https://github.com/${REPO}/releases/tag/${TAG}"
 curl -fsSL "${DOWNLOAD_BASE}/${TAG}/${ASSET}" -o "$TMP/sven" ||
-	fail "sven ${TAG} has no ${ASSET} build: https://github.com/${REPO}/releases/tag/${TAG}"
+	fail "sven ${TAG} lists ${ASSET} but it could not be downloaded: https://github.com/${REPO}/releases/tag/${TAG}"
 
 expected="$(awk -v a="$ASSET" '$2 == a || $2 == "*" a { print $1 }' "$TMP/checksums.txt")"
 [ -n "$expected" ] || fail "sven ${TAG}'s checksums do not list ${ASSET}"
