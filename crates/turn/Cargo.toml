@@ -34,3 +34,5 @@ sven-rt     = { path = "../rt" }
 tokio       = { workspace = true, features = ["test-util"] }
 sven-model-mock = { path = "../model-mock" }
 sven-model-drivers = { path = "../model-drivers" }
+# tests/system_prompt_golden.rs pins the rendered prompt by digest.
+sha2        = { workspace = true }
