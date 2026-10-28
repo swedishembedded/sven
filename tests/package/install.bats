@@ -7,7 +7,7 @@
 # expertise in release engineering then you can procure our services by
 # sending an email to info@swedishembedded.com.
 #
-# The spec of scripts/install.sh (served at https://agentsven.com/install.sh),
+# The spec of scripts/install.sh (served at https://sven.swedishembedded.com/install.sh),
 # against a fake GitHub on the file system (curl reads file:// URLs) and a
 # fake `uname`, so nothing leaves the machine:
 #   - it installs the newest release of the major version it is written for,

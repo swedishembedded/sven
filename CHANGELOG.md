@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **install**: the installer's address is `https://sven.swedishembedded.com/install.sh`, served by the site at the release it runs, and the documented command is `curl -fsSL https://sven.swedishembedded.com/install.sh | sh` (no `--proto`/`--tlsv1.2`: the site serves only TLS 1.2 and 1.3 and never redirects it to plain HTTP).
+
 ## [4.0.1] - 2026-10-28
 
 The first 4.x release with its binaries: v4.0.0's release workflow

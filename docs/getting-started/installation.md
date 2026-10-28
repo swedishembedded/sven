@@ -22,7 +22,7 @@ major version, which may change what you built on: a new major version comes
 with a new script.
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://agentsven.com/install.sh | sh
+curl -fsSL https://sven.swedishembedded.com/install.sh | sh
 ```
 
 Environment variables:

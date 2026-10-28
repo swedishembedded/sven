@@ -86,7 +86,7 @@ recorded run without one. See the [harness guide](docs/guides/harnesses.md).
 ## Install
 
 ```sh
-curl -fsSL https://agentsven.com/install.sh | sh
+curl -fsSL https://sven.swedishembedded.com/install.sh | sh
 ```
 
 or build from source (a recent stable Rust toolchain is all you need):

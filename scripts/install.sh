@@ -9,7 +9,7 @@
 #
 # install.sh - install sven from its GitHub releases.
 #
-#   curl -fsSL https://agentsven.com/install.sh | sh
+#   curl -fsSL https://sven.swedishembedded.com/install.sh | sh
 #
 # Installs the newest release of sven ${SVEN_MAJOR}.x: patch and minor
 # releases arrive with no change here, a new major version never does (it
