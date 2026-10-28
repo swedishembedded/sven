@@ -347,12 +347,13 @@ assert extra['sven_outcome_unknown_reason'] == 'no_verifier', extra
 
 @test "08.34 tool errors do not change an unverified success's unscored outcome" {
     # A claimed success is unscored regardless of how it went - the missing
-    # verifier, not the tool-error count, is what makes it unknown.
-    # Exit 3 is EXIT_TOOL_WARNINGS: a warning, not an agent failure.
+    # verifier, not the tool-error count, is what makes it unknown. A single
+    # prompt's failed tool call is the agent's ordinary work: exit 0 (exit 3,
+    # EXIT_TOOL_WARNINGS, is for workflow-file runs only).
     local trace_file
     trace_file="$(tmp_file)"
     run bash -c 'echo "read nonexistent file" | "$BIN" --headless --model mock --output-trace "$1"' -- "${trace_file}"
-    [ "${status}" -eq 3 ]
+    [ "${status}" -eq 0 ]
     run python3 -c "
 import json, sys
 extra = json.load(open(sys.argv[1]))['final_metrics']['extra']

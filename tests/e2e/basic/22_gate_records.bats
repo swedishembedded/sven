@@ -65,8 +65,9 @@ teardown() {
 @test "22.02 a call with arguments that break the tool's schema records a typed violation" {
     run timeout 120 "${BIN}" --headless --model mock \
         --output-trace "${WORKDIR}/trace.json" "read without a path" </dev/null
-    # The run completes, with the tool error reported as exit 3.
-    [ "${status}" -eq 3 ]
+    # The run completes; a single prompt's tool error is recorded in the
+    # trace, not reported in the exit code (exit 3 is for workflow files).
+    [ "${status}" -eq 0 ]
     grep -q '"schema": "sven.gate.v1"' "${WORKDIR}/trace.json"
     grep -q '"call_id": "tc-bad-read"' "${WORKDIR}/trace.json"
     grep -q '"rule": "required"' "${WORKDIR}/trace.json"
