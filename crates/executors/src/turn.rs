@@ -91,6 +91,7 @@ mod cost_gate;
 
 pub use cost_gate::CostPolicy;
 mod instructions;
+mod interrupted;
 mod limits;
 mod overflow;
 mod replies;
@@ -597,6 +598,12 @@ impl EffectExecutor for TurnExecutor {
         // Install a fresh cancel channel.
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         *self.cancel_handle.lock().await = Some(cancel_tx);
+        let mut cut_off = interrupted::RecordOnDrop::new(
+            Arc::clone(&self.store),
+            thread_id.clone(),
+            Arc::clone(&partial_text),
+            obs.clone(),
+        );
 
         let result = tokio::select! {
             biased;
@@ -628,6 +635,9 @@ impl EffectExecutor for TurnExecutor {
             .stream_retrying_overflow(model.as_ref(), limits, &tx, obs) => r,
         };
 
+        // The request ended here, whatever its outcome: what follows handles
+        // it, an abort included.
+        cut_off.disarm();
         self.cancel_handle.lock().await.take();
         drop(tx);
         let _ = forwarder.await;
