@@ -29,6 +29,7 @@
 pub mod approvals;
 pub mod attach;
 pub mod client;
+pub mod container;
 pub mod host;
 pub mod login;
 pub mod sandbox;

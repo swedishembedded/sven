@@ -50,6 +50,16 @@ do: one line per message, tool call and finished answer. To write to a
 conversation, attach to it (below). Ctrl-C stops `sven rc` and any answer
 in progress.
 
+One `sven rc` runs every conversation of its directory at once, each a
+session of its own with its own history, model, mode and tool approvals,
+as if each were a separate `sven`.
+
+A message that starts with `/` is a slash command, run as the terminal runs
+it: a custom command sends its instructions, and the mode and model ones
+change the session. `sven rc` tells the server which commands it can run
+(when it connects and when asked), so the server's interface can offer
+them as you type.
+
 Each session calls models through the server, with the token, so the
 server's model list and its billing apply.
 
@@ -68,12 +78,12 @@ over.
 ## Hosted
 
 ```bash
-sven rc --hosted --sandbox /srv/hosted/<account>
+sven rc --hosted --sandbox /srv/hosted/<account>/<conversation>
 ```
 
 A server that answers conversations nobody's machine runs starts `sven rc
---hosted` for them, one per account, each with a sandbox directory of its
-own that it never shares. Two walls keep a hosted host to itself:
+--hosted` for them, one per conversation, each with a sandbox directory of
+its own that it never shares. Two walls keep a hosted host to itself:
 
 - **Its tools.** Its sessions have only tools that never touch the machine
   the host runs on - web search, web fetch and finding skills. It is an
@@ -107,6 +117,23 @@ another took its place, the server refuses it and it stops.
 Starting `sven rc` again in the same directory of the same machine
 reconnects every conversation that ran there, even after `sven auth login`
 signed the machine in again.
+
+### In a sandbox container
+
+```bash
+sven rc --hosted --container --state /home/sven --egress-socket /run/whale/egress.sock
+```
+
+A server that runs each conversation in a container of its own starts the
+host there instead. The container is the boundary, so its sessions get a
+shell and the file tools as well. They work in `/workspace` (the
+conversation's own files) and can use `/artifacts` (the account's shared
+files); the host keeps its sessions under `--state`. The sign-in is read from
+standard input, as above. The container has no network: the host listens
+on its loopback and passes every connection to `--egress-socket`, the
+server's proxy, and points its own clients and every command it runs at
+that listener (`HTTP_PROXY`/`HTTPS_PROXY`). The server decides what the
+proxy reaches.
 
 ## Read a conversation
 

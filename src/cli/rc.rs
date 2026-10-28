@@ -15,10 +15,10 @@ pub struct RcArgs {
     #[arg(long)]
     pub working_dir: Option<PathBuf>,
 
-    /// Run as a server's hosted host, confined to --sandbox DIR.
+    /// Run as a server's hosted host, in --sandbox DIR or in a --container.
     /// The sign-in is read from standard input (written there by the server
     /// that starts it).
-    #[arg(long, requires = "sandbox")]
+    #[arg(long)]
     pub hosted: bool,
 
     /// A hosted host's own directory, and the only one it can reach: its
@@ -26,8 +26,25 @@ pub struct RcArgs {
     /// One per hosted host; never shared. Sessions get only tools that never
     /// touch this machine (web search, web fetch, finding skills), and the
     /// kernel confines the whole process to this directory.
-    #[arg(long, requires = "hosted", conflicts_with = "working_dir")]
+    #[arg(long, requires = "hosted", conflicts_with_all = ["working_dir", "container"])]
     pub sandbox: Option<PathBuf>,
+
+    /// A hosted host inside a sandbox container the server started for one
+    /// conversation: sessions work in /workspace with a shell and file
+    /// tools, /artifacts holds the account's shared files, and --state what
+    /// the host keeps. The container is the boundary.
+    #[arg(long, requires = "hosted", conflicts_with = "working_dir")]
+    pub container: bool,
+
+    /// Inside --container: where the host keeps what it must between runs
+    /// (its sessions), on the conversation's own disk.
+    #[arg(long, requires = "container")]
+    pub state: Option<PathBuf>,
+
+    /// Inside --container: the server's egress socket, the only way out.
+    /// Every HTTP client in the container is pointed at it as its proxy.
+    #[arg(long, requires = "container")]
+    pub egress_socket: Option<PathBuf>,
 
     #[command(subcommand)]
     pub action: Option<RcAction>,

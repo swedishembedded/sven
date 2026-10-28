@@ -112,31 +112,41 @@ pub(crate) fn attached_agent(conversation: uuid::Uuid) -> anyhow::Result<sven_tu
 }
 
 /// A hosted host, confined and ready to run: what it read before the
-/// confinement, and its sandbox.
+/// confinement, and where it runs.
 pub(crate) struct HostedStart {
     config: Config,
     login: sven_remote::login::RemoteLogin,
-    sandbox: PathBuf,
+    place: HostedPlace,
+}
+
+/// Where a hosted host runs.
+enum HostedPlace {
+    /// Confined by the kernel to its own directory (`--sandbox DIR`).
+    Sandbox(PathBuf),
+    /// Inside a sandbox container (`--container`), reaching out only through
+    /// the server's egress socket, when one is given.
+    Container {
+        egress: Option<PathBuf>,
+        state: PathBuf,
+    },
 }
 
 /// The most a hosted host reads of its sign-in.
 const MAX_HOSTED_LOGIN: u64 = 64 * 1024;
 
-/// For `sven rc --hosted --sandbox DIR`: reads the configuration and the
-/// sign-in, then confines this process to `DIR` (`sven_remote::sandbox`).
-/// Must run before any thread is started. None for every other command.
+/// For `sven rc --hosted`: reads the configuration and the sign-in, then
+/// either confines this process to `--sandbox DIR` (`sven_remote::sandbox`)
+/// or, in a sandbox container (`--container`), points it and everything it
+/// runs at the egress proxy. Must run before any thread is started. None for
+/// every other command.
 pub(crate) fn confine_hosted(cli: &crate::cli::Cli) -> anyhow::Result<Option<HostedStart>> {
     let Some(crate::cli::Commands::Rc(args)) = &cli.command else {
         return Ok(None);
     };
-    let (true, Some(sandbox)) = (args.hosted, &args.sandbox) else {
+    if !args.hosted {
         return Ok(None);
-    };
-    let sandbox = sandbox
-        .canonicalize()
-        .with_context(|| format!("the sandbox {}", sandbox.display()))?;
+    }
     let mut config = sven_frontend::Settings::load(cli.config.as_deref())?.runtime;
-    sven_remote::restrict_to_hosted(&mut config);
     // The server that starts it writes the sign-in to its standard input,
     // so the key is never in a file anything it runs could read.
     let mut login = String::new();
@@ -146,29 +156,89 @@ pub(crate) fn confine_hosted(cli: &crate::cli::Cli) -> anyhow::Result<Option<Hos
     )
     .context("reading the sign-in from standard input")?;
     let login = sven_remote::login::parse(&login, "the sign-in on standard input")?;
-    sven_remote::sandbox::confine(&sandbox)?;
+    let place = match (&args.sandbox, args.container) {
+        (Some(sandbox), false) => {
+            let sandbox = sandbox
+                .canonicalize()
+                .with_context(|| format!("the sandbox {}", sandbox.display()))?;
+            sven_remote::restrict_to_hosted(&mut config);
+            sven_remote::sandbox::confine(&sandbox)?;
+            HostedPlace::Sandbox(sandbox)
+        }
+        (None, true) => {
+            sven_remote::container::restrict_to_container(&mut config);
+            if args.egress_socket.is_some() {
+                let proxy = sven_remote::container::proxy_url();
+                for name in [
+                    "HTTP_PROXY",
+                    "HTTPS_PROXY",
+                    "http_proxy",
+                    "https_proxy",
+                    "ALL_PROXY",
+                ] {
+                    // SAFETY: no other thread exists yet (this runs before
+                    // the runtime starts), so nothing reads the environment
+                    // while it changes.
+                    unsafe { std::env::set_var(name, &proxy) };
+                }
+                for name in ["NO_PROXY", "no_proxy"] {
+                    // SAFETY: as above.
+                    unsafe { std::env::remove_var(name) };
+                }
+            }
+            let state = args
+                .state
+                .clone()
+                .context("a hosted container host needs --state, where it keeps its sessions")?;
+            HostedPlace::Container {
+                egress: args.egress_socket.clone(),
+                state,
+            }
+        }
+        _ => anyhow::bail!("a hosted host runs either in --sandbox DIR or in a --container"),
+    };
     Ok(Some(HostedStart {
         config,
         login,
-        sandbox,
+        place,
     }))
 }
 
-/// Runs a hosted host confined by [`confine_hosted`]: everything it keeps is
-/// in its sandbox.
+/// Runs a hosted host prepared by [`confine_hosted`].
 pub(crate) async fn run_hosted_host(start: HostedStart) -> anyhow::Result<()> {
     let HostedStart {
         config,
         login,
-        sandbox,
+        place,
     } = start;
-    let working_dir = sandbox.join("work");
+    let (working_dir, kept) = match place {
+        HostedPlace::Sandbox(sandbox) => (sandbox.join("work"), sandbox.join("sessions")),
+        HostedPlace::Container { egress, state } => {
+            if let Some(socket) = egress {
+                let listener = tokio::net::TcpListener::bind((
+                    "127.0.0.1",
+                    sven_remote::container::EGRESS_PORT,
+                ))
+                .await
+                .context("listening for the egress relay")?;
+                tokio::spawn(async move {
+                    if let Err(e) = sven_remote::container::relay(listener, &socket).await {
+                        tracing::error!("the egress relay stopped: {e:#}");
+                    }
+                });
+            }
+            (
+                PathBuf::from(sven_remote::container::WORKSPACE),
+                state.join("sessions"),
+            )
+        }
+    };
     std::fs::create_dir_all(&working_dir).with_context(|| format!("{}", working_dir.display()))?;
     sven_remote::run_host(sven_remote::HostOptions {
         config: Arc::new(config),
         working_dir,
         login,
-        sessions: sven_remote::SessionStore::new(sandbox.join("sessions")),
+        sessions: sven_remote::SessionStore::new(kept),
         hosted: true,
     })
     .await
