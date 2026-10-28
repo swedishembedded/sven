@@ -89,6 +89,10 @@ pub fn restrict_to_hosted(config: &mut Config) {
 ///
 /// The token is refused, at start or later.
 pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
+    // One host serves one directory: its sessions' commands start there and
+    // their relative paths resolve there, wherever this process started.
+    std::env::set_current_dir(&options.working_dir)
+        .map_err(|e| anyhow::anyhow!("cannot work in {}: {e}", options.working_dir.display()))?;
     let mut client = RemoteClient::new(&options.login.control_url, &options.login.token)?;
     let who = client.whoami().await?;
     // This run, which the environment is held for and the uploads are
