@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use sven_control::SlashCommandInfo;
-use sven_frontend::commands::{try_dispatch, CommandRegistry};
+use sven_frontend::commands::{try_dispatch, CommandRegistry, ImmediateAction};
 use sven_vocab::AgentMode;
 
 /// What a line typed at a session means.
@@ -23,6 +23,8 @@ pub(super) enum Typed {
     Expanded(String),
     /// `/mode <mode>`: the session's mode from the next turn.
     Mode(AgentMode),
+    /// `/clear`: the session starts over with no conversation.
+    Clear,
     /// A command used wrongly: say this back, send nothing.
     Usage(String),
 }
@@ -37,6 +39,12 @@ pub(super) fn interpret(text: &str, project_root: &Path) -> Typed {
     };
     if let Some(mode) = result.mode_override {
         return Typed::Mode(mode);
+    }
+    if matches!(
+        result.immediate_action,
+        Some(ImmediateAction::ClearChat | ImmediateAction::NewConversation)
+    ) {
+        return Typed::Clear;
     }
     if let Some(message) = result.message_to_send {
         return Typed::Expanded(message);

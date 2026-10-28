@@ -421,6 +421,11 @@ impl SessionActor {
                     self.reply(&message).await;
                     return;
                 }
+                slash::Typed::Clear => {
+                    self.clear();
+                    self.reply("Conversation cleared.").await;
+                    return;
+                }
             }
         };
         if let Err(e) = self.submit(text).await {
@@ -472,6 +477,20 @@ impl SessionActor {
             }
         }
         Ok(())
+    }
+
+    /// Starts the session over with no conversation: the live one is let go
+    /// and its kept copy emptied, so a restart does not bring it back.
+    fn clear(&mut self) {
+        self.controller = None;
+        self.history.clear();
+        self.unfinished = None;
+        if let Err(e) = self.context.sessions.save(self.id, &[]) {
+            tracing::warn!(
+                "session {}: could not clear its kept conversation: {e:#}",
+                self.id
+            );
+        }
     }
 
     /// Answers a command the host carried out itself, ending the answer.

@@ -14,7 +14,7 @@ use super::SlashCommand;
 /// The built-in commands a session driven from elsewhere (`sven rc`) can
 /// carry out whole: none needs a terminal, and none changes what the
 /// controlling side owns (the model is chosen there).
-pub const REMOTE_BUILTINS: &[&str] = &["mode"];
+pub const REMOTE_BUILTINS: &[&str] = &["clear", "mode"];
 
 /// Central registry of all available slash commands.
 pub struct CommandRegistry {
@@ -148,11 +148,12 @@ mod tests {
 
         let reg = CommandRegistry::for_remote(Some(project.path()));
         assert!(reg.get("mode").is_some());
+        assert!(reg.get("clear").is_some());
         let custom = reg.get("review-pr").expect("the project's own command");
         assert_eq!(custom.description(), "Review a pull request");
         // Nothing that needs a terminal, nor the model, which the
         // controlling server chooses.
-        for name in ["quit", "clear", "abort", "model", "context", "resume"] {
+        for name in ["quit", "abort", "model", "context", "resume"] {
             assert!(reg.get(name).is_none(), "{name} is offered remotely");
         }
     }
