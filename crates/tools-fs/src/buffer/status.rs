@@ -112,13 +112,21 @@ impl Tool for BufStatusTool {
                      Status: {status}\n\
                      Lines: {lines}\n\
                      Bytes: {bytes}\n\
-                     Elapsed: {elapsed:.1}s",
+                     Elapsed: {elapsed:.1}s{discarded}",
                     handle = meta.handle_id,
                     desc = meta.description,
                     status = status_detail,
-                    lines = meta.total_lines,
-                    bytes = meta.total_bytes,
+                    lines = meta.observed_lines,
+                    bytes = meta.observed_bytes,
                     elapsed = meta.elapsed_secs,
+                    discarded = if meta.observed_bytes > meta.total_bytes {
+                        format!(
+                            "\nRetained: {} lines, {} bytes (the rest was discarded at the capture quota)",
+                            meta.total_lines, meta.total_bytes
+                        )
+                    } else {
+                        String::new()
+                    },
                 );
 
                 ToolOutput::ok(&call.id, content)

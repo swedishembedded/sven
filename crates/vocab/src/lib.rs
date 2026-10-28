@@ -352,6 +352,12 @@ pub enum OutputCategory {
     /// end (recent changes).
     /// Suitable for: read_file, fs read operations.
     FileContent,
+    /// Output the tool already bounded itself and ended with a footer that
+    /// the model needs (a handle to the full output, an exit code). The
+    /// footer is the final block, after the last blank line; global
+    /// truncation, when it still applies, cuts the body and keeps the footer.
+    /// Suitable for: shell.
+    Bounded,
     /// Generic text: hard-truncate at the character boundary.
     /// Used for all tools that do not fit the categories above.
     #[default]

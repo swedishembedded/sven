@@ -16,6 +16,19 @@
 //! lock momentarily; writers also lock momentarily on each `append` call.
 //! Because both operations are O(data_since_last_append), no long-held locks
 //! are needed.
+//!
+//! # Bounds
+//!
+//! Every buffer has a capture quota ([`DEFAULT_CAPTURE_QUOTA_BYTES`] unless the
+//! creator names one). Bytes past the quota are counted (bytes and lines) but
+//! not retained, so a writer can keep draining a pipe without growing memory;
+//! the buffer then reports observed against retained totals. A small rolling
+//! window of the newest bytes is kept beyond the quota ([`TAIL_WINDOW_BYTES`])
+//! because the end of a stream is where errors and summaries are. The whole
+//! store is bounded too: creating a buffer evicts the oldest finished buffers
+//! once retained bytes exceed [`STORE_RETAINED_BUDGET_BYTES`].
+//!
+//! Buffers are not spilled to disk; the quota is the memory bound.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -26,6 +39,16 @@ pub use sven_tool_api::grep_match::GrepMatch;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
+/// Bytes a buffer retains unless its creator names another quota.
+pub const DEFAULT_CAPTURE_QUOTA_BYTES: usize = 16 * 1024 * 1024;
+
+/// Newest bytes kept past the quota so the end of a long stream stays visible.
+pub const TAIL_WINDOW_BYTES: usize = 256 * 1024;
+
+/// Retained bytes across all buffers of one store above which creating a
+/// buffer evicts the oldest finished ones.
+pub const STORE_RETAINED_BUDGET_BYTES: usize = 256 * 1024 * 1024;
+
 /// What process created this buffer.
 #[derive(Debug, Clone)]
 pub enum BufferSource {
@@ -35,7 +58,7 @@ pub enum BufferSource {
         mode: String,
         description: String,
     },
-    /// A shell command spawned via the `shell` tool (future use).
+    /// A shell command spawned via the `shell` tool.
     Shell { command: String, workdir: String },
 }
 
@@ -68,8 +91,14 @@ impl BufferStatus {
 #[derive(Debug, Clone)]
 pub struct BufferMetadata {
     pub handle_id: String,
+    /// Bytes retained in the buffer (readable through `buf_read`/`buf_grep`).
     pub total_bytes: usize,
+    /// Lines retained in the buffer.
     pub total_lines: usize,
+    /// Bytes the writer produced, retained or not.
+    pub observed_bytes: usize,
+    /// Lines the writer produced, retained or not.
+    pub observed_lines: usize,
     pub status: BufferStatus,
     pub elapsed_secs: f32,
     /// Short human-readable description of the source.
@@ -78,37 +107,131 @@ pub struct BufferMetadata {
 
 /// A single growing output buffer backed by an in-memory `Vec<u8>`.
 pub struct OutputBuffer {
-    /// Accumulated raw bytes from the subprocess stdout (and stderr mixed in).
+    /// Retained raw bytes (at most `quota`), stdout and stderr interleaved in
+    /// arrival order.
     pub(crate) data: Vec<u8>,
-    /// Byte offset of the start of each line (0-indexed).
+    /// Byte offset of the start of each retained line (0-indexed).
     pub(crate) line_index: Vec<usize>,
     pub status: BufferStatus,
     pub created_at: Instant,
     pub source: BufferSource,
+    quota: usize,
+    observed_bytes: usize,
+    observed_newlines: usize,
+    last_observed_byte: Option<u8>,
+    /// Rolling window of the newest bytes seen after the quota was reached.
+    tail_window: Vec<u8>,
+    /// True once the window dropped bytes from its front.
+    tail_window_trimmed: bool,
 }
 
 impl OutputBuffer {
-    fn new(source: BufferSource) -> Self {
+    fn new(source: BufferSource, quota: usize) -> Self {
         Self {
             data: Vec::new(),
             line_index: Vec::new(),
             status: BufferStatus::Running { pid: None },
             created_at: Instant::now(),
             source,
+            quota,
+            observed_bytes: 0,
+            observed_newlines: 0,
+            last_observed_byte: None,
+            tail_window: Vec::new(),
+            tail_window_trimmed: false,
         }
     }
 
-    /// Append bytes and update the line index.
-    ///
-    /// Rebuilds the line index over all accumulated data after each append.
-    /// This is O(total_bytes) per call but correct for all cases, including
-    /// chunks that end exactly at a `\n` boundary.
+    /// Append bytes: retain up to the quota, count the rest, and index only
+    /// the newly retained bytes, so a stream of many small appends costs
+    /// O(total bytes), not O(appends x total bytes).
     pub fn append(&mut self, bytes: &[u8]) {
-        if bytes.is_empty() {
+        let Some(&last) = bytes.last() else {
             return;
+        };
+        self.observed_bytes += bytes.len();
+        self.observed_newlines += bytes.iter().filter(|&&b| b == b'\n').count();
+        self.last_observed_byte = Some(last);
+
+        let room = self.quota.saturating_sub(self.data.len());
+        let (kept, discarded) = bytes.split_at(room.min(bytes.len()));
+        if !kept.is_empty() {
+            self.index_and_retain(kept);
+        }
+        if !discarded.is_empty() {
+            self.roll_tail_window(discarded);
+        }
+    }
+
+    fn index_and_retain(&mut self, bytes: &[u8]) {
+        let old_len = self.data.len();
+        // A line starts at the first byte, and after every newline that has a
+        // byte following it (a trailing newline opens no empty line). The
+        // newline that ended the previously retained bytes has its follower
+        // in `bytes`, so its line start is recorded here.
+        if old_len == 0 || self.data[old_len - 1] == b'\n' {
+            self.line_index.push(old_len);
         }
         self.data.extend_from_slice(bytes);
-        self.line_index = build_line_index(&self.data);
+        let end = self.data.len();
+        for (i, &b) in self.data[old_len..].iter().enumerate() {
+            let next = old_len + i + 1;
+            if b == b'\n' && next < end {
+                self.line_index.push(next);
+            }
+        }
+    }
+
+    fn roll_tail_window(&mut self, bytes: &[u8]) {
+        self.tail_window.extend_from_slice(bytes);
+        if self.tail_window.len() > 2 * TAIL_WINDOW_BYTES {
+            let drop = self.tail_window.len() - TAIL_WINDOW_BYTES;
+            self.tail_window.drain(..drop);
+            self.tail_window_trimmed = true;
+        }
+    }
+
+    /// Whether bytes were counted but not retained.
+    pub fn is_truncated(&self) -> bool {
+        self.observed_bytes > self.data.len()
+    }
+
+    /// Lines the writer produced: a trailing partial line counts as a line.
+    pub fn observed_lines(&self) -> usize {
+        match self.last_observed_byte {
+            None => 0,
+            Some(b'\n') => self.observed_newlines,
+            Some(_) => self.observed_newlines + 1,
+        }
+    }
+
+    /// The last `n` lines the writer produced, as far as they were kept: the
+    /// retained lines while nothing was discarded, else the rolling window
+    /// (whose first line is dropped unless it is known to start a line).
+    pub fn tail_lines(&self, n: usize) -> Vec<String> {
+        if !self.is_truncated() {
+            let total = self.line_index.len();
+            return self.lines(total.saturating_sub(n), total);
+        }
+        let window = &self.tail_window[..];
+        let starts_a_line = !self.tail_window_trimmed && self.data.last() == Some(&b'\n');
+        let mut lines: Vec<&[u8]> = window.split(|&b| b == b'\n').collect();
+        if window.last() == Some(&b'\n') {
+            lines.pop();
+        }
+        if !starts_a_line && !lines.is_empty() {
+            lines.remove(0);
+        }
+        let from = lines.len().saturating_sub(n);
+        lines[from..].iter().map(|l| decode_line(l)).collect()
+    }
+
+    /// Retained lines `[start_idx, end_idx)` (0-indexed) as plain text.
+    pub fn lines(&self, start_idx: usize, end_idx: usize) -> Vec<String> {
+        let end = end_idx.min(self.line_index.len());
+        (start_idx..end)
+            .map(|i| line_at(&self.data, &self.line_index, i).0)
+            .collect()
     }
 
     fn source_description(&self) -> String {
@@ -126,6 +249,8 @@ impl OutputBuffer {
             handle_id: handle_id.to_string(),
             total_bytes: self.data.len(),
             total_lines: self.line_index.len(),
+            observed_bytes: self.observed_bytes,
+            observed_lines: self.observed_lines(),
             status: self.status.clone(),
             elapsed_secs: self.created_at.elapsed().as_secs_f32(),
             description: self.source_description(),
@@ -158,11 +283,59 @@ impl OutputBufferStore {
         format!("buf_{:04x}", self.counter)
     }
 
-    /// Create a new buffer and return its handle ID.
+    /// Create a new buffer with the default capture quota and return its
+    /// handle ID.
     pub fn create(&mut self, source: BufferSource) -> String {
+        self.create_with_quota(source, DEFAULT_CAPTURE_QUOTA_BYTES)
+    }
+
+    /// Create a new buffer that retains at most `quota_bytes` and return its
+    /// handle ID. Evicts the oldest finished buffers first when the store as a
+    /// whole holds more than [`STORE_RETAINED_BUDGET_BYTES`].
+    pub fn create_with_quota(&mut self, source: BufferSource, quota_bytes: usize) -> String {
+        self.evict_over_budget();
         let id = self.next_id();
-        self.buffers.insert(id.clone(), OutputBuffer::new(source));
+        self.buffers
+            .insert(id.clone(), OutputBuffer::new(source, quota_bytes));
         id
+    }
+
+    /// Drop the oldest buffers whose writer is done until the store fits its
+    /// budget. A running buffer is never dropped: its writer still appends.
+    fn evict_over_budget(&mut self) {
+        let mut retained: usize = self.buffers.values().map(|b| b.data.len()).sum();
+        if retained <= STORE_RETAINED_BUDGET_BYTES {
+            return;
+        }
+        let mut finished: Vec<(u64, String)> = self
+            .buffers
+            .iter()
+            .filter(|(_, b)| !matches!(b.status, BufferStatus::Running { .. }))
+            .filter_map(|(id, _)| Some((handle_number(id)?, id.clone())))
+            .collect();
+        finished.sort();
+        for (_, id) in finished {
+            if retained <= STORE_RETAINED_BUDGET_BYTES {
+                break;
+            }
+            if let Some(b) = self.buffers.remove(&id) {
+                retained -= b.data.len();
+            }
+        }
+    }
+
+    /// Plain-text retained lines `[start_idx, end_idx)` (0-indexed) of a
+    /// buffer, or `None` for an unknown handle.
+    pub fn lines(&self, handle_id: &str, start_idx: usize, end_idx: usize) -> Option<Vec<String>> {
+        self.buffers
+            .get(handle_id)
+            .map(|b| b.lines(start_idx, end_idx))
+    }
+
+    /// The last `n` lines the writer produced (see [`OutputBuffer::tail_lines`]),
+    /// or `None` for an unknown handle.
+    pub fn tail_lines(&self, handle_id: &str, n: usize) -> Option<Vec<String>> {
+        self.buffers.get(handle_id).map(|b| b.tail_lines(n))
     }
 
     /// Append bytes to an existing buffer.  No-ops for unknown handles.
@@ -229,7 +402,17 @@ impl OutputBufferStore {
             .get(handle_id)
             .ok_or_else(|| format!("unknown buffer handle '{}'", handle_id))?;
 
-        read_lines_from(&buf.data, &buf.line_index, start_line, end_line)
+        read_lines_from(&buf.data, &buf.line_index, start_line, end_line).map_err(|e| {
+            if buf.is_truncated() {
+                format!(
+                    "{e} (the buffer retained {} of {} lines; the rest was discarded at the capture quota)",
+                    buf.line_index.len(),
+                    buf.observed_lines()
+                )
+            } else {
+                e
+            }
+        })
     }
 
     /// Regex-search the buffer for up to `limit` matches with `context_lines`
@@ -270,38 +453,13 @@ impl OutputBufferStore {
     /// Return the last `n` lines from a buffer as a plain string (for TUI
     /// streaming preview).  Does not include line-number prefixes.
     pub fn tail(&self, handle_id: &str, n: usize) -> String {
-        let buf = match self.buffers.get(handle_id) {
-            Some(b) => b,
-            None => return String::new(),
-        };
-        if buf.line_index.is_empty() {
-            return String::new();
-        }
-        let total = buf.line_index.len();
-        let start_idx = total.saturating_sub(n);
-        extract_lines(&buf.data, &buf.line_index, start_idx, total)
+        self.tail_lines(handle_id, n)
+            .map(|lines| lines.join("\n"))
+            .unwrap_or_default()
     }
 }
 
 // ─── Internal line helpers ────────────────────────────────────────────────────
-
-/// Build a line-start byte index from a byte slice.
-///
-/// The returned vector contains the byte offset of the first byte of each line.
-/// Line 0 always starts at byte 0.  A trailing `\n` at the very end of `data`
-/// does NOT add an extra empty-line entry (matching the context/store behaviour).
-fn build_line_index(data: &[u8]) -> Vec<usize> {
-    if data.is_empty() {
-        return vec![];
-    }
-    let mut idx = vec![0usize];
-    for (i, &b) in data.iter().enumerate() {
-        if b == b'\n' && i + 1 < data.len() {
-            idx.push(i + 1);
-        }
-    }
-    idx
-}
 
 /// Extract lines `[start_line, end_line]` (1-indexed, inclusive) and return
 /// them formatted as `L{n}:{content}\n...`.
@@ -334,15 +492,14 @@ fn read_lines_from(
     Ok(out)
 }
 
-/// Extract lines [start_idx, end_idx) (0-indexed) as plain strings joined by
-/// newlines (used by `tail`).
-fn extract_lines(data: &[u8], line_index: &[usize], start_idx: usize, end_idx: usize) -> String {
-    let mut parts = Vec::with_capacity(end_idx.saturating_sub(start_idx));
-    for i in start_idx..end_idx {
-        let (text, _) = line_at(data, line_index, i);
-        parts.push(text);
-    }
-    parts.join("\n")
+/// The numeric part of a `buf_XXXX` handle, for age ordering.
+fn handle_number(id: &str) -> Option<u64> {
+    u64::from_str_radix(id.strip_prefix("buf_")?, 16).ok()
+}
+
+fn decode_line(raw: &[u8]) -> String {
+    let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+    String::from_utf8_lossy(raw).into_owned()
 }
 
 /// Return the text of line `idx` (0-indexed) stripped of CR/LF.
@@ -355,8 +512,7 @@ fn line_at(data: &[u8], line_index: &[usize], idx: usize) -> (String, usize) {
     };
     let raw = &data[byte_start..byte_end];
     let raw = raw.strip_suffix(b"\n").unwrap_or(raw);
-    let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
-    (String::from_utf8_lossy(raw).into_owned(), byte_end)
+    (decode_line(raw), byte_end)
 }
 
 /// Regex-search a buffer; append up to `limit` new `GrepMatch` entries to
@@ -499,5 +655,99 @@ mod tests {
         assert!(store.read_range("nope", 1, 5).is_err());
         assert!(store.grep("nope", "x", 0, 10).is_err());
         assert!(store.metadata("nope").is_none());
+    }
+
+    fn shell_buffer(store: &mut OutputBufferStore, quota: usize) -> String {
+        store.create_with_quota(
+            BufferSource::Shell {
+                command: "x".into(),
+                workdir: "/".into(),
+            },
+            quota,
+        )
+    }
+
+    #[test]
+    fn chunked_appends_index_like_one_append() {
+        let text = "alpha\nbeta\n\ngamma\ndelta";
+        let mut whole = OutputBufferStore::new();
+        let w = shell_buffer(&mut whole, 1 << 20);
+        whole.append(&w, text.as_bytes());
+        for chunk in [1usize, 2, 3, 7] {
+            let mut parts = OutputBufferStore::new();
+            let p = shell_buffer(&mut parts, 1 << 20);
+            for piece in text.as_bytes().chunks(chunk) {
+                parts.append(&p, piece);
+            }
+            assert_eq!(
+                parts.read_range(&p, 1, 99),
+                whole.read_range(&w, 1, 99),
+                "chunk size {chunk}"
+            );
+            assert_eq!(parts.metadata(&p).unwrap().total_lines, 5);
+        }
+    }
+
+    #[test]
+    fn trailing_newline_opens_no_empty_line() {
+        let (store, id) = make_store_with_buf("a\nb\n");
+        let meta = store.metadata(&id).unwrap();
+        assert_eq!((meta.total_lines, meta.observed_lines), (2, 2));
+    }
+
+    #[test]
+    fn quota_retains_a_prefix_and_counts_the_rest() {
+        let mut store = OutputBufferStore::new();
+        let id = shell_buffer(&mut store, 10);
+        for i in 0..100 {
+            store.append(&id, format!("line{i}\n").as_bytes());
+        }
+        let meta = store.metadata(&id).unwrap();
+        assert_eq!(meta.total_bytes, 10);
+        assert_eq!(meta.observed_lines, 100);
+        assert_eq!(meta.observed_bytes, 10 * 6 + 90 * 7);
+        assert!(meta.total_lines < meta.observed_lines);
+        assert!(store.read_range(&id, 1, 1).unwrap().contains("L1:line0"));
+        let err = store.read_range(&id, 50, 60).unwrap_err();
+        assert!(err.contains("discarded"), "{err}");
+    }
+
+    #[test]
+    fn tail_after_quota_is_the_newest_lines() {
+        let mut store = OutputBufferStore::new();
+        let id = shell_buffer(&mut store, 64);
+        for i in 0..1000 {
+            store.append(&id, format!("row {i}\n").as_bytes());
+        }
+        let tail = store.tail_lines(&id, 3).unwrap();
+        assert_eq!(tail, ["row 997", "row 998", "row 999"]);
+    }
+
+    #[test]
+    fn tail_window_stays_bounded() {
+        let mut store = OutputBufferStore::new();
+        let id = shell_buffer(&mut store, 0);
+        let chunk = vec![b'x'; 100_000];
+        for _ in 0..50 {
+            store.append(&id, &chunk);
+        }
+        let buf = store.buffers.get(&id).unwrap();
+        assert!(buf.tail_window.len() <= 2 * TAIL_WINDOW_BYTES);
+        assert_eq!(store.metadata(&id).unwrap().observed_bytes, 5_000_000);
+    }
+
+    #[test]
+    fn finished_buffers_are_evicted_oldest_first_over_budget() {
+        let mut store = OutputBufferStore::new();
+        let big = vec![b'x'; STORE_RETAINED_BUDGET_BYTES / 2 + 1];
+        let first = shell_buffer(&mut store, usize::MAX);
+        store.append(&first, &big);
+        store.finish(&first, 0);
+        let second = shell_buffer(&mut store, usize::MAX);
+        store.append(&second, &big);
+        let running = shell_buffer(&mut store, usize::MAX);
+        assert!(!store.contains(&first), "oldest finished buffer evicted");
+        assert!(store.contains(&second), "a running buffer is never evicted");
+        assert!(store.contains(&running));
     }
 }

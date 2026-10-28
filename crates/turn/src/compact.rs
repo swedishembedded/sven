@@ -123,6 +123,8 @@ pub fn emergency_compact(
 ///   first); the tail is not preserved because later matches are less relevant.
 /// - [`OutputCategory::FileContent`]: balanced head + tail with a separator,
 ///   preserving both the imports/declarations and the most recent changes.
+/// - [`OutputCategory::Bounded`]: cut the body like `HeadTail`, but keep the
+///   tool's footer (the block after the last blank line) intact.
 /// - [`OutputCategory::Generic`]: hard-truncate at the nearest line boundary.
 ///
 /// Every truncated result ends with an explicit notice so the model knows
@@ -162,6 +164,7 @@ pub fn smart_truncate(content: &str, category: OutputCategory, cap_tokens: usize
                      use read_file with offset/limit to see more ...]"
             ),
         ),
+        OutputCategory::Bounded => bounded(content, cap_chars, omitted_bytes),
         OutputCategory::Generic => {
             // `cap_chars` is a byte budget derived from a token estimate, so it
             // lands wherever it lands; slicing there splits a multi-byte
@@ -179,6 +182,39 @@ pub fn smart_truncate(content: &str, category: OutputCategory, cap_tokens: usize
             )
         }
     }
+}
+
+/// Longest footer [`OutputCategory::Bounded`] protects; a longer final block
+/// is treated as body so a tool cannot exempt unbounded text from the cap.
+const MAX_FOOTER_BYTES: usize = 1024;
+
+/// Cut the body of a self-bounded result to fit `cap_chars` and append its
+/// footer unchanged.
+fn bounded(content: &str, cap_chars: usize, omitted_bytes: usize) -> String {
+    let split = content
+        .rfind("\n\n")
+        .map(|p| p + 2)
+        .filter(|&at| content.len() - at <= MAX_FOOTER_BYTES);
+    let Some(at) = split else {
+        return head_tail_lines(
+            content,
+            cap_chars,
+            60,
+            40,
+            &format!("[... {{lines}} lines / {omitted_bytes} bytes omitted ...]"),
+        );
+    };
+    let (body, footer) = content.split_at(at);
+    let body = body.trim_end_matches('\n');
+    let budget = cap_chars.saturating_sub(footer.len() + 2);
+    let cut = head_tail_lines(
+        body,
+        budget,
+        60,
+        40,
+        &format!("[... {{lines}} lines / {omitted_bytes} bytes omitted ...]"),
+    );
+    format!("{cut}\n\n{footer}")
 }
 
 fn head_lines(content: &str, cap_chars: usize, notice_template: &str) -> String {
@@ -299,6 +335,7 @@ mod truncation_boundary_tests {
             OutputCategory::HeadTail,
             OutputCategory::MatchList,
             OutputCategory::FileContent,
+            OutputCategory::Bounded,
         ];
         for content in &corpora {
             for category in categories {
@@ -473,6 +510,29 @@ mod tests {
     }
 
     // ── smart_truncate ────────────────────────────────────────────────────────
+
+    /// A tool that bounds its own output ends it with a footer (handle, exit
+    /// code). When the global cap still applies, the body is cut and the
+    /// footer survives byte for byte.
+    #[test]
+    fn bounded_category_keeps_the_footer() {
+        let footer = "[output truncated]\nLines: 900 total\nExit: 3 | Buffer: buf_0001";
+        let body: String = (0..900).map(|i| format!("row {i}\n")).collect();
+        let content = format!("{body}\n{footer}");
+        let out = smart_truncate(&content, OutputCategory::Bounded, 100);
+        assert!(out.ends_with(footer), "{out}");
+        assert!(out.len() < content.len() / 4, "body was cut: {}", out.len());
+        assert!(out.contains("row 0\n") && out.contains("row 899"));
+    }
+
+    #[test]
+    fn bounded_category_under_cap_is_untouched() {
+        let content = "ok\n\nExit: 0 | Duration: 0.1s";
+        assert_eq!(
+            smart_truncate(content, OutputCategory::Bounded, 100),
+            content
+        );
+    }
 
     /// Build a multi-line string of exactly `n` lines, each of the form "line N".
     fn make_lines(n: usize) -> String {

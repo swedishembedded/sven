@@ -14,6 +14,7 @@ pub mod file;
 
 pub use asr_config::AsrConfig;
 
+pub use buffer::store::DEFAULT_CAPTURE_QUOTA_BYTES;
 pub use buffer::{
     BufGrepTool, BufReadTool, BufStatusTool, BufferSource, BufferStatus, OutputBufferStore,
 };
