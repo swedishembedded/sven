@@ -96,6 +96,59 @@ impl Drop for DeadlineTimer {
     }
 }
 
+/// The scope of the turn in flight within a run, shared between the run's
+/// loop and whoever may stop the turn.
+///
+/// A run can outlive many turns (a session that answers message after
+/// message). Stopping a turn cancels only the current turn scope - a child
+/// of the run's - which ends what that turn started (a spawned tool call, an
+/// effect awaited inline) while the run goes on; the loop then
+/// [renews](Self::renew) the scope so the next turn starts with nothing
+/// cancelled.
+#[derive(Clone, Debug)]
+pub struct TurnScope {
+    current: std::sync::Arc<std::sync::Mutex<CancelScope>>,
+}
+
+impl TurnScope {
+    /// A turn scope under `run`.
+    #[must_use]
+    pub fn new(run: &CancelScope) -> Self {
+        Self {
+            current: std::sync::Arc::new(std::sync::Mutex::new(run.child())),
+        }
+    }
+
+    /// The scope of the turn in flight now.
+    #[must_use]
+    pub fn current(&self) -> CancelScope {
+        self.current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Stops the turn in flight: everything started under its scope.
+    pub fn cancel(&self) {
+        self.current().cancel();
+    }
+
+    /// When the current turn was stopped, starts a fresh one under `run` and
+    /// returns its scope; `None` while the current one is still live, or
+    /// once the run itself is over.
+    pub fn renew(&self, run: &CancelScope) -> Option<CancelScope> {
+        let mut current = self
+            .current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !current.is_cancelled() || run.is_cancelled() {
+            return None;
+        }
+        *current = run.child();
+        Some(current.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

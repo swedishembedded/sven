@@ -15,7 +15,7 @@ use sven_hsm::{
 use crate::abort_on_drop::AbortOnDrop;
 use crate::children::{ChildRun, ChildSpawner, Children};
 use crate::{
-    publish_cancelled, run_effects, CancelScope, EffectExecutor, EventSink, InFlight,
+    publish_cancelled, run_effects, CancelScope, EffectExecutor, EventSink, InFlight, TurnScope,
     OBSERVATION_CAPACITY,
 };
 
@@ -33,6 +33,8 @@ pub struct ErasedRuntime {
     capture_tx: mpsc::Sender<oneshot::Sender<Snapshot>>,
     tap: watch::Sender<Option<Arc<Snapshot>>>,
     cancel: CancelScope,
+    /// The turn in flight, which [`cancel_turn`](Self::cancel_turn) stops.
+    turn: TurnScope,
     handle: AbortOnDrop<ErasedReport>,
 }
 
@@ -161,6 +163,7 @@ impl ErasedRuntime {
         let sink = EventSink { tx };
         let obs = ObservationSink::new(OBSERVATION_CAPACITY);
         let cancel = children.scope();
+        let turn = TurnScope::new(&cancel);
 
         let handle = crate::rt::spawn(erased_consumer_loop(
             machine,
@@ -175,6 +178,7 @@ impl ErasedRuntime {
             tap.clone(),
             trail.clone(),
             children,
+            turn.clone(),
         ));
 
         Self {
@@ -185,6 +189,7 @@ impl ErasedRuntime {
             capture_tx,
             tap,
             cancel,
+            turn,
             handle: AbortOnDrop::new(handle),
         }
     }
@@ -200,6 +205,22 @@ impl ErasedRuntime {
     /// `done` with [`RUN_CANCELLED`](crate::RUN_CANCELLED) in `last_error`.
     pub fn cancel(&self) {
         self.cancel.cancel();
+    }
+
+    /// Stops the turn in flight and nothing else: the work it started (a
+    /// spawned tool call, an effect being awaited such as a model stream)
+    /// ends, the run goes on, and the next turn starts with nothing
+    /// cancelled. Tell the machine too (`Event::UserCancelled`): this stops
+    /// the work, the event moves the machine.
+    pub fn cancel_turn(&self) {
+        self.turn.cancel();
+    }
+
+    /// A handle that stops the turn in flight, for a holder that does not
+    /// own the runtime (see [`cancel_turn`](Self::cancel_turn)).
+    #[must_use]
+    pub fn turn_scope(&self) -> TurnScope {
+        self.turn.clone()
     }
 
     /// A sink for posting events into this runtime (cloneable; share with executors).
@@ -343,6 +364,7 @@ async fn erased_consumer_loop<E>(
     tap: watch::Sender<Option<Arc<Snapshot>>>,
     trail: AuditTrailHandle,
     mut children: Children,
+    turn: TurnScope,
 ) -> ErasedReport
 where
     E: EffectExecutor + 'static,
@@ -350,7 +372,9 @@ where
     let mut processed: u64 = 0;
     let mut last_error: Option<String> = None;
     let cancel = children.scope();
-    executor.bind_cancel(&cancel);
+    // Executors start work under the turn's scope, a child of the run's: it
+    // ends with the run, and also when the turn alone is stopped.
+    executor.bind_cancel(&turn.current());
     // Whatever ends this loop - a cancellation, the queue closing, the
     // runtime being dropped - ends the work started on the run's behalf.
     let _run_over = cancel.cancel_on_drop();
@@ -454,9 +478,13 @@ where
         // The transition is complete and its effects have not begun: the tap
         // shows a long effect (a model turn) as in flight, not as over.
         tap_snapshot(&tap, machine.state_label(), &ctx);
+        let this_turn = turn.current();
         tokio::select! {
             biased;
             () = cancel.cancelled() => {}
+            // A stopped turn drops the effects awaited for it (a model
+            // stream); what it spawned stops through the same scope.
+            () = this_turn.cancelled() => {}
             () = run_effects(
                 &policy,
                 StateLabel(machine.state_label()),
@@ -493,6 +521,10 @@ where
 
         if machine.is_done() || cancel.is_cancelled() {
             break;
+        }
+        // A turn stopped since: the next starts with nothing cancelled.
+        if let Some(fresh) = turn.renew(&cancel) {
+            executor.bind_cancel(&fresh);
         }
     }
     if cancel.is_cancelled() {

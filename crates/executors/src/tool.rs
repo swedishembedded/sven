@@ -415,6 +415,15 @@ impl EffectExecutor for ToolExecutor {
                     biased;
                     () = cancel.cancelled() => {
                         abort.abort();
+                        // The turn was stopped (or the run is over, when
+                        // nothing hears this): the call is answered, so it
+                        // is not left in flight.
+                        let _ = sink
+                            .emit(Event::ToolFailed {
+                                call_id,
+                                error: "stopped: the turn was cancelled".to_string(),
+                            })
+                            .await;
                         return;
                     }
                     finished = sven_rt::timeout(tool_timeout, task) => finished,

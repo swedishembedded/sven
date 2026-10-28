@@ -42,7 +42,7 @@ use sven_hsm::{
 };
 
 mod cancel;
-pub use cancel::{CancelScope, DeadlineTimer};
+pub use cancel::{CancelScope, DeadlineTimer, TurnScope};
 mod children;
 use children::Children;
 pub use children::{ChildRun, ChildSpawner};

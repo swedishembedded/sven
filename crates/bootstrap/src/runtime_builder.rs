@@ -887,6 +887,7 @@ impl RuntimeBuilder {
             ),
             conv_store: conv_store_for_handle,
             tool_registry: tool_registry_for_handle,
+            turn: erased_runtime.turn_scope(),
         };
 
         let channels = KernelChannels {

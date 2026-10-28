@@ -258,6 +258,8 @@ pub struct RuntimeHandle {
     pub(crate) tool_registry: Arc<ToolRegistry>,
     /// Where gate decisions made outside the session's executors are filed.
     pub(crate) gate_journal: sven_executors::GateJournal,
+    /// The turn in flight, which [`cancel`](Self::cancel) stops.
+    pub(crate) turn: sven_kernel::TurnScope,
 }
 
 impl RuntimeHandle {
@@ -323,8 +325,11 @@ impl RuntimeHandle {
         self.sink.emit(Event::UserMessage { text }).await
     }
 
-    /// Posts `Event::UserCancelled` into the kernel queue.
+    /// Stops the turn in flight: what it started (a running tool, the model
+    /// stream) ends at once, then `Event::UserCancelled` tells the machine.
+    /// The session goes on; the next turn starts with nothing cancelled.
     pub async fn cancel(&self) -> bool {
+        self.turn.cancel();
         self.sink.emit(Event::UserCancelled).await
     }
 
