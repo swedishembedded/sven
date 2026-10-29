@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.1] - 2026-10-29
+
+### Fixed
+- **tests**: the SDK's deferred-tools test and the basic suite's token ledger expect `find_file` among the deferred tools, where 4.2.0 moved it, not among the core tools; `make test` and `make test/e2e/basic` pass again.
+
 ## [4.2.0] - 2026-10-29
 
 ### Removed
