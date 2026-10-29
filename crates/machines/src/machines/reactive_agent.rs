@@ -5,7 +5,7 @@
 //!
 //! [`ReactiveAgentMachine`] models the full turn lifecycle of a streaming,
 //! native-tool-calling coding agent.  It uses the shared [`super::loop_core`]
-//! helpers and runs the tool loop **in-state** — there are no separate
+//! helpers and runs the tool loop **in-state** - there are no separate
 //! `RunningTools` or `AwaitingApproval` states.
 //!
 //! # State hierarchy
@@ -40,13 +40,13 @@
 //! (tool) / `HumanRejected` (tool) are all handled by the shared
 //! [`handle_tool_event`] helper which
 //! drains the pending set, requests human approval, and emits continuation
-//! turns — all while staying in `Generating`.
+//! turns - all while staying in `Generating`.
 //!
 //! A tool-free `LlmTurnComplete` transitions the machine to `Idle`.
 //!
 //! # The bounded clarification post-check
 //!
-//! `Generating` has no separate "needs clarification" state — adding one would
+//! `Generating` has no separate "needs clarification" state - adding one would
 //! contradict the shape above. Instead the `FinalAnswer` branch runs a bounded
 //! post-check: when the model's own final answer leaves the request unresolved,
 //! the machine emits one `ask_question` `CallTool` and **stays** in
@@ -58,8 +58,8 @@
 //! when the model **itself** asked the user a question and **itself** listed,
 //! *after asking*, the alternatives that answer it (see
 //! `clarification_question`). The machine supplies neither.
-//! Anything else — a plain answer, a rhetorical question, a bare "I'm not sure"
-//! with no alternatives — is left byte-identical to the previous behaviour,
+//! Anything else - a plain answer, a rhetorical question, a bare "I'm not sure"
+//! with no alternatives - is left byte-identical to the previous behaviour,
 //! because this path is on every turn of the default mode.
 
 use serde_json::json;
@@ -134,7 +134,7 @@ const ASK_QUESTION_TOOL: &str = "ask_question";
 ///
 /// Mirrors `AskQuestionTool::kernel_capability()`; the same reason as
 /// [`ASK_QUESTION_TOOL`] keeps it a literal here rather than a lookup. The
-/// kernel still enforces it — this only declares which bucket the call falls in.
+/// kernel still enforces it - this only declares which bucket the call falls in.
 const ASK_QUESTION_CAPABILITY: ToolCapability = ToolCapability::ReadFile;
 
 /// Bounds on how many alternatives make a sensible multiple-choice question.
@@ -157,7 +157,7 @@ const USER_DIRECTED_OPENERS: &[&str] = &[
 
 /// States of the reactive agent machine.
 ///
-/// `Generating` now owns the full tool loop — no separate `RunningTools` or
+/// `Generating` now owns the full tool loop - no separate `RunningTools` or
 /// `AwaitingApproval` states.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ReactiveState {
@@ -261,8 +261,8 @@ impl ReactiveAgentMachine {
 
     /// The bounded clarification post-check on the `FinalAnswer` branch.
     ///
-    /// Returns the single `ask_question` `CallTool` to emit — registered as
-    /// pending so the shared tool loop resumes the turn when the user answers —
+    /// Returns the single `ask_question` `CallTool` to emit - registered as
+    /// pending so the shared tool loop resumes the turn when the user answers -
     /// or `None` to finish the turn exactly as before.
     fn clarification_effect(ctx: &mut Context, text: &str) -> Option<Effect> {
         let mut ls = LoopState::load(ctx);
@@ -334,9 +334,9 @@ fn derive_call_id(thread: &str, round: u32) -> ToolCallId {
 ///
 /// Both halves must come from the model: a question it addressed to the user,
 /// and between [`MIN_ALTERNATIVES`] and [`MAX_ALTERNATIVES`] alternatives it
-/// enumerated itself. Requiring both is what keeps a resolved answer — including
+/// enumerated itself. Requiring both is what keeps a resolved answer - including
 /// one that happens to contain a rhetorical question, or a bullet list of work
-/// done — untouched.
+/// done - untouched.
 fn clarification_question(text: &str) -> Option<(String, Vec<String>)> {
     // Only what the model enumerated *after* asking counts. A list is the
     // answer set to a question when it follows one; a list that precedes a
@@ -543,6 +543,9 @@ impl Machine for ReactiveAgentMachine {
                 }
 
                 // ── 2. LLM and other events ───────────────────────────────────
+                if matches!(event, Event::LlmTurnComplete { .. }) {
+                    reset_transient_retries(ctx);
+                }
                 match event {
                     Event::CompactRequested => Reaction::effects(vec![Self::compact_effect(Some(
                         "a turn is running; stop it or wait for it to finish, then compact",
@@ -575,6 +578,16 @@ impl Machine for ReactiveAgentMachine {
                         }
                     },
 
+                    Event::LlmFailed { error } if error.starts_with(sven_hsm::TRANSIENT) => {
+                        match retry_transient(ctx) {
+                            Some(again) => Reaction::effects(vec![again]),
+                            None => {
+                                ctx.set_fact("last_error", json!(error));
+                                Reaction::transition(Idle, vec![], "turn failed")
+                            }
+                        }
+                    }
+
                     Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                         ctx.set_fact("last_error", json!(error));
                         Reaction::transition(Idle, vec![], "turn failed")
@@ -600,6 +613,43 @@ impl Machine for ReactiveAgentMachine {
             ReactiveState::Compacting,
         ]
     }
+}
+
+/// Times a turn that failed for a reason that may not recur (a dropped
+/// connection, a busy server) is asked again before the turn ends.
+const TRANSIENT_RETRIES: u64 = 3;
+/// The pause before the first repeat; each next one is three times longer.
+const TRANSIENT_FIRST_DELAY_MS: u64 = 5_000;
+const TRANSIENT_RETRIES_FACT: &str = "transient_retries";
+
+fn transient_retries(ctx: &Context) -> u64 {
+    ctx.fact(TRANSIENT_RETRIES_FACT)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn reset_transient_retries(ctx: &mut Context) {
+    if transient_retries(ctx) != 0 {
+        ctx.set_fact(TRANSIENT_RETRIES_FACT, json!(0));
+    }
+}
+
+/// The turn asked again after a transient failure, with its backoff, or
+/// `None` once the repeats are spent. The thread already holds everything
+/// the failed request carried, so the repeat is a continuation.
+fn retry_transient(ctx: &mut Context) -> Option<Effect> {
+    let done = transient_retries(ctx);
+    if done >= TRANSIENT_RETRIES {
+        return None;
+    }
+    ctx.set_fact(TRANSIENT_RETRIES_FACT, json!(done + 1));
+    let mut ls = LoopState::load(ctx);
+    let mut effect = ls.continuation_turn();
+    ls.store(ctx);
+    if let Effect::CallLlm { request } = &mut effect {
+        request["delay_ms"] = json!(TRANSIENT_FIRST_DELAY_MS * 3u64.pow(done as u32));
+    }
+    Some(effect)
 }
 
 #[cfg(test)]
@@ -850,6 +900,69 @@ mod tests {
         assert!(out.transitioned);
     }
 
+    /// A dropped connection or a busy server is no reason to end a run that
+    /// has done an hour's work: the turn is asked again, after a growing
+    /// pause, a bounded number of times.
+    #[test]
+    fn a_transient_failure_is_asked_again_with_backoff_then_ends() {
+        let (mut hsm, mut ctx) = make_hsm();
+        hsm.dispatch(&Event::user_message("hi"), &mut ctx);
+        let transient = Event::LlmFailed {
+            error: format!("{}: error sending request", sven_hsm::TRANSIENT),
+        };
+        let mut delays = Vec::new();
+        for _ in 0..TRANSIENT_RETRIES {
+            let out = hsm.dispatch(&transient, &mut ctx);
+            assert_eq!(hsm.state(), ReactiveState::Generating);
+            assert_eq!(out.effects.len(), 1);
+            let Effect::CallLlm { request } = &out.effects[0] else {
+                panic!("expected a model call: {:?}", out.effects);
+            };
+            delays.push(request["delay_ms"].as_u64().expect("a backoff"));
+        }
+        assert!(delays.windows(2).all(|w| w[0] < w[1]), "{delays:?}");
+        hsm.dispatch(&transient, &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Idle);
+    }
+
+    #[test]
+    fn a_good_turn_resets_the_transient_retries() {
+        let (mut hsm, mut ctx) = make_hsm();
+        hsm.dispatch(&Event::user_message("hi"), &mut ctx);
+        let transient = Event::LlmFailed {
+            error: format!("{}: busy", sven_hsm::TRANSIENT),
+        };
+        for _ in 0..TRANSIENT_RETRIES {
+            hsm.dispatch(&transient, &mut ctx);
+        }
+        let call_id = ToolCallId::new();
+        hsm.dispatch(
+            &Event::LlmTurnComplete {
+                thread: CHAT_THREAD.to_string(),
+                text: String::new(),
+                tool_calls: vec![sven_hsm::ProposedToolCall {
+                    call_id,
+                    name: "shell".to_string(),
+                    args: json!({}),
+                    capability: ToolCapability::ExecuteShell,
+                }],
+            },
+            &mut ctx,
+        );
+        hsm.dispatch(
+            &Event::ToolSucceeded {
+                call_id,
+                observation: json!("ok"),
+            },
+            &mut ctx,
+        );
+        // The budget is whole again: the next failures are asked again too.
+        for _ in 0..TRANSIENT_RETRIES {
+            hsm.dispatch(&transient, &mut ctx);
+            assert_eq!(hsm.state(), ReactiveState::Generating);
+        }
+    }
+
     /// A refused or undeliverable effect (an approval request, a
     /// clarification question) ends the turn instead of leaving the agent
     /// generating forever.
@@ -876,7 +989,7 @@ mod tests {
         assert_eq!(hsm.state(), ReactiveState::Idle);
     }
 
-    /// A final answer that leaves the request genuinely unresolved — the model
+    /// A final answer that leaves the request genuinely unresolved - the model
     /// itself asks the user a question and itself enumerates the alternatives.
     const UNRESOLVED_ANSWER: &str = "I can do this two ways.\n\
          Which approach should I take?\n\

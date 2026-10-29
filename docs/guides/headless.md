@@ -465,6 +465,11 @@ steps; a step's limit is shortened to the time the run has left. `--run-timeout
 something else bounds the job. A single-prompt run takes `--step-timeout` as its
 limit when `--run-timeout` is not given.
 
+A model request that fails for a reason that may not recur - a dropped
+connection, a busy server - is asked again after 5, 15 and 45 seconds before
+the turn ends; a good reply resets the count. Other failures end the turn at
+once.
+
 On a timeout sven writes the partial trajectory, when one is being written,
 stamped `timeout` with reward `0.0`, before it exits.
 
