@@ -153,16 +153,21 @@ alone.
 When **no model is configured at all** (no `model:` block, no `--model`,
 no `SVEN_MODEL`), sven picks a provider, in priority order:
 
-1. **`brain`**: a brain server running on this machine, found without network
+1. **`sven`**, once `sven auth login` signed this machine in: the default
+   model of your account on that server (chosen in its settings; the
+   server's recommended model until you choose one). When the server does
+   not answer, and a key for 3-5 is stored, that hosted provider is used
+   instead.
+2. **`brain`**: a brain server running on this machine, found without network
    I/O from the connection record it publishes (see
    [Brain](#brain-local-edge-ai-server)). The model name is left empty and
    resolved by asking brain's `/v1/models`. When brain does not answer or
-   serves no model, and a key for 2-4 is stored, that hosted provider is used
+   serves no model, and a key for 3-5 is stored, that hosted provider is used
    instead.
-2. **OpenRouter** (`openrouter/auto`) when its key is stored.
-3. **Anthropic** (`claude-sonnet-4-6`) when its key is stored.
-4. **OpenAI** (`gpt-5.2`) when its key is stored.
-5. **A local server** when none of the above applies: `brain` (8788),
+3. **OpenRouter** (`openrouter/auto`) when its key is stored.
+4. **Anthropic** (`claude-sonnet-4-6`) when its key is stored.
+5. **OpenAI** (`gpt-5.2`) when its key is stored.
+6. **A local server** when none of the above applies: `brain` (8788),
    `ollama` (11434), `vllm` (8000) and `lmstudio` (1234) are probed on
    localhost concurrently for one second, and the first in that order that
    serves a model is used. See
@@ -179,20 +184,26 @@ many models behind one account, billed from its credit. Sign in once and its
 models are yours, with what it serves them for:
 
 ```bash
-sven auth login             # stores the key as the `sven` provider's
+sven auth login             # signs this machine in to the hosted service
+sven                        # starts with your account's default model
 sven list-models            # what it serves now, with prices
 sven --model sven/deepseek/v4 "..."
 ```
 
-Its model list, limits and prices are what it serves (see
-[Served models](#served-models)); `web_search` searches through it too,
-billed per search. `sven auth logout` forgets the key.
+The provider is whichever server `sven auth login` signed in to, with the key
+it minted: `sven auth login --server localhost:3000` makes `sven/<model>` a
+development server's models. With no `model:` configured and no `--model`,
+sven starts with your account's default model (see
+[Default provider auto-detection](#default-provider-auto-detection)). Its
+model list, limits and prices are what it serves (see
+[Served models](#served-models)); `web_search` searches through it too, billed
+per search. `sven auth logout` signs out.
 
 | Setting    | Value                                      |
 |------------|--------------------------------------------|
 | Provider id | `sven`                                    |
-| Auth       | The key `sven auth login` stores (or `sven auth set sven`) |
-| Default URL | `https://sven.swedishembedded.com/v1`     |
+| Auth       | The sign-in `sven auth login` stores (or `sven auth set sven`) |
+| Default URL | The server signed in to; `https://sven.swedishembedded.com/v1` otherwise |
 
 Another sven server is the same provider with its own `base_url` (and a key
 only if it needs one); the stored sign-in is never sent to it:

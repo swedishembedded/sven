@@ -448,3 +448,59 @@ async fn the_servers_output_cap_applies_unless_the_configuration_sets_one() {
     let set = bounded(Swappable::serving(capped()), Some(512), live);
     assert_eq!(set.catalog_max_output_tokens(), Some(512));
 }
+
+fn signed_in_start(base_url: String, fallback: Option<ModelConfig>) -> ModelConfig {
+    ModelConfig {
+        provider: "sven".into(),
+        name: String::new(),
+        base_url: Some(base_url),
+        api_key: Some("sk-signed-in".into()),
+        detection_fallback: fallback.map(Box::new),
+        ..ModelConfig::default()
+    }
+}
+
+/// A signed-in start uses the default model the account names, whatever
+/// the list's order.
+#[tokio::test]
+async fn a_signed_in_start_uses_the_accounts_default_model() {
+    let url = serve(
+        json!({"data": [{"id": "first", "context_length": 8192}, {"id": "deepseek/deepseek-v4.1-flash"}],
+               "default_model": "deepseek/deepseek-v4.1-flash"})
+        .to_string(),
+    )
+    .await;
+    let cfg = resolve_sven_default(&signed_in_start(url, None)).await;
+    assert_eq!(cfg.name, "deepseek/deepseek-v4.1-flash");
+    assert!(cfg.detection_fallback.is_none());
+}
+
+/// A server that names no default (or one it does not list) leaves the
+/// choice to the list, as for any server.
+#[tokio::test]
+async fn without_a_listed_default_the_list_chooses() {
+    let url = serve(
+        json!({"data": [{"id": "chat", "context_length": 8192}], "default_model": "gone"})
+            .to_string(),
+    )
+    .await;
+    assert_eq!(
+        resolve_sven_default(&signed_in_start(url, None)).await.name,
+        "chat"
+    );
+}
+
+/// A server that does not answer yields to the cloud choice held in reserve.
+#[tokio::test]
+async fn an_unreachable_server_yields_to_the_reserve() {
+    let reserve = ModelConfig {
+        provider: "anthropic".into(),
+        name: "claude-sonnet-4-6".into(),
+        ..ModelConfig::default()
+    };
+    let cfg = resolve_sven_default(&signed_in_start(closed().await, Some(reserve))).await;
+    assert_eq!(
+        (cfg.provider.as_str(), cfg.name.as_str()),
+        ("anthropic", "claude-sonnet-4-6")
+    );
+}

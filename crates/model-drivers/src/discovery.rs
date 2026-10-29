@@ -111,11 +111,16 @@ pub(crate) async fn fetch_served_models(
     req: reqwest::RequestBuilder,
     timeout: Duration,
 ) -> Option<ServedModels> {
+    parse_served_models(&fetch_models_body(req, timeout).await?)
+}
+
+/// Send `req` (a `GET /models`) and return its JSON body within `timeout`.
+async fn fetch_models_body(req: reqwest::RequestBuilder, timeout: Duration) -> Option<Value> {
     let resp = req.timeout(timeout).send().await.ok()?;
     if !resp.status().is_success() {
         return None;
     }
-    parse_served_models(&resp.json::<Value>().await.ok()?)
+    resp.json::<Value>().await.ok()
 }
 
 // ── Choosing ──────────────────────────────────────────────────────────────────
@@ -162,13 +167,16 @@ pub(crate) fn is_local_endpoint(url: &str) -> bool {
 }
 
 /// The base URL a config resolves to: its own, else for `brain` the server
-/// running here (its connection record), else the driver's default.
+/// running here (its connection record) and for `sven` the server signed in
+/// to, else the driver's default.
 pub(crate) fn effective_base_url(cfg: &ModelConfig) -> Option<String> {
     cfg.base_url.clone().or_else(|| {
-        let running = (cfg.provider == "brain")
-            .then(|| crate::brain_local::find(None))
-            .flatten();
-        running.map(|b| b.base_url).or_else(|| {
+        let running = match cfg.provider.as_str() {
+            "brain" => crate::brain_local::find(None).map(|b| b.base_url),
+            crate::sven_service::PROVIDER => crate::sven_service::signed_in().map(|s| s.base_url),
+            _ => None,
+        };
+        running.or_else(|| {
             registry::get_driver(&cfg.provider)
                 .and_then(|m| m.default_base_url)
                 .map(str::to_string)
@@ -432,6 +440,62 @@ pub(crate) async fn resolve_detected_brain(cfg: &ModelConfig) -> ModelConfig {
         fallback.name
     );
     fallback.clone()
+}
+
+/// How long a signed-in start waits for its server to name the account's
+/// default model.
+const SIGNED_IN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Settle a signed-in start (`sven` with an empty name, see
+/// [`crate::sven_service`]): the account's default model, as the server's
+/// model list names it (`default_model`) among the models it lists, else the
+/// list's own choice ([`choose_model`]). A server that does not answer with
+/// a model yields to the cloud choice in [`ModelConfig::detection_fallback`];
+/// with none the configuration is returned as it was, and the first request
+/// reports the server's own error.
+pub(crate) async fn resolve_sven_default(cfg: &ModelConfig) -> ModelConfig {
+    if cfg.provider != crate::sven_service::PROVIDER || !cfg.name.is_empty() {
+        return cfg.clone();
+    }
+    let kept = ModelConfig {
+        detection_fallback: None,
+        ..cfg.clone()
+    };
+    let chosen = match effective_base_url(&kept) {
+        Some(base) => {
+            let req = models_request(&base, resolve_api_key(&kept).as_deref());
+            fetch_models_body(req, SIGNED_IN_TIMEOUT)
+                .await
+                .and_then(|body| account_default(&body))
+        }
+        None => None,
+    };
+    match (chosen, cfg.detection_fallback.as_deref()) {
+        (Some(name), _) => {
+            tracing::info!("using the account's model sven/{name}");
+            ModelConfig { name, ..kept }
+        }
+        (None, Some(fallback)) => {
+            tracing::warn!(
+                "the sven server signed in to did not list its models; using {}/{} instead",
+                fallback.provider,
+                fallback.name
+            );
+            fallback.clone()
+        }
+        (None, None) => kept,
+    }
+}
+
+/// The model a server's model list names as the account's default, while it
+/// lists it; else the one [`choose_model`] picks from the list.
+fn account_default(body: &Value) -> Option<String> {
+    let models = parse_served_models(body)?;
+    let named = body.get("default_model").and_then(Value::as_str);
+    named
+        .filter(|id| models.iter().any(|m| m.id == *id))
+        .map(str::to_string)
+        .or_else(|| choose_model(&models).map(|m| m.id.clone()))
 }
 
 /// A local endpoint that answered a zero-config probe.

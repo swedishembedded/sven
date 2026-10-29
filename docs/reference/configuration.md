@@ -95,8 +95,9 @@ contents of `tools.context` are accepted as written and not checked for
 misspelt keys.
 
 **The model is chosen for you when the file names none.** With no `model:`
-section, sven picks the model of a brain server running on this machine (found
-from the connection record brain publishes), then OpenRouter, Anthropic or
+section, sven picks your account's default model once `sven auth login`
+signed this machine in, else the model of a brain server running on this
+machine (found from the connection record brain publishes), then OpenRouter, Anthropic or
 OpenAI according to which key is stored (`sven auth set`). With no key for any
 of them, sven looks for a local server (see
 [Local model discovery](#local-model-discovery)). The order and the models

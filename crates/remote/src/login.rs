@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The remote-control server this user signed in to.
 //!
-//! `sven auth login --server URL` writes `<config dir>/sven/remote.yaml`,
-//! owner-only (`0600`) like the provider keys next to it. One server at a
-//! time: signing in again replaces it.
+//! `sven auth login` writes `<config dir>/sven/remote.yaml`, owner-only
+//! (`0600`) like the provider keys next to it. One server at a time: signing
+//! in again replaces it. The `sven` model provider reads its server and key
+//! from the same file (`sven_model_drivers::sven_service`), so a sign-in also
+//! gives this machine that server's models.
 
 use std::path::PathBuf;
 
@@ -33,17 +35,6 @@ pub struct RemoteLogin {
 }
 
 impl RemoteLogin {
-    /// Whether this is a sign-in to the hosted sven service, whose key is
-    /// then the `sven` provider's: its models and web search run on it.
-    #[must_use]
-    pub fn is_the_sven_service(&self) -> bool {
-        sven_model::get_driver(SVEN_PROVIDER)
-            .and_then(|driver| driver.default_base_url)
-            .is_some_and(|url| {
-                url.trim_end_matches('/') == self.openai_base_url.trim_end_matches('/')
-            })
-    }
-
     /// The TCP ports this sign-in's server, control API and model API are
     /// reached on, for a host that may connect nowhere else.
     ///
@@ -77,29 +68,10 @@ impl RemoteLogin {
     }
 }
 
-/// The model provider whose stored key a sign-in to the hosted sven service
-/// is (`sven auth set sven` stores the same).
-pub const SVEN_PROVIDER: &str = "sven";
-
-/// Stores a sign-in to the hosted sven service as the `sven` provider's key,
-/// so sessions here use its models and web search; true when it did. A
-/// sign-in to another server stores nothing.
-///
-/// # Errors
-///
-/// The key could not be written.
-pub fn remember_as_provider(login: &RemoteLogin) -> anyhow::Result<bool> {
-    if !login.is_the_sven_service() {
-        return Ok(false);
-    }
-    sven_model_drivers::credentials::set(SVEN_PROVIDER, &login.token)?;
-    Ok(true)
-}
-
 /// The login file of this user.
 #[must_use]
 pub fn path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("sven").join("remote.yaml"))
+    sven_model_drivers::sven_service::path()
 }
 
 /// The stored login, if this user signed in.

@@ -45,10 +45,11 @@ mod provider_check;
 pub mod reachable;
 pub mod request_log;
 mod resolve;
+pub mod sven_service;
 mod thinking;
 
 pub use anthropic::AnthropicProvider;
-pub use api_key::provider_key;
+pub use api_key::{provider_base_url, provider_key};
 pub use config::{providers_schema, ModelConfig, ModelParams, ProviderEntry, Providers};
 #[cfg(not(target_arch = "wasm32"))]
 pub use embedding::OpenAiEmbedder;
@@ -534,19 +535,11 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
                 cfg.driver_options.clone(),
             ))
         }
-        // "sven" is a user-defined alias for a local OpenAI-compatible server
-        // (e.g. a vLLM / llama.cpp / Ollama instance running on a custom host).
-        // It behaves identically to "vllm" but is kept as a distinct id so
-        // users who wrote `provider: sven` in their config don't hit an
-        // "unknown provider" error.  base_url must be set in config.
-        // The hosted sven service (its key is the one `sven auth login`
-        // stores), or another sven server at `base_url`.
+        // The sven server signed in to (`sven auth login`), the hosted
+        // service by default, or another one at `base_url`; see
+        // `sven_service`.
         "sven" => {
-            let base = cfg
-                .base_url
-                .as_deref()
-                .or(registry::get_driver("sven").and_then(|m| m.default_base_url))
-                .unwrap_or_default();
+            let base = discovery::effective_base_url(cfg).unwrap_or_default();
             let k = key();
             let auth = if k.is_some() {
                 AuthStyle::Bearer
@@ -557,7 +550,7 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
                 "sven",
                 cfg.name.clone(),
                 k,
-                base,
+                &base,
                 resolved_max_tokens,
                 cfg.temperature,
                 vec![],
@@ -680,9 +673,12 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
 /// serving (see [`ModelProvider::discover`]), so no model name has to be
 /// written down for a local server.
 ///
-/// 0. A brain that was only *detected* (see `ModelConfig::detection_fallback`)
-///    and does not answer is replaced by the hosted model a stored key
-///    implies, so a server that stopped answering strands no one.
+/// 0. A signed-in start (`sven`, empty name; see [`sven_service`]) takes the
+///    default model the account's server names, or, when the server does
+///    not answer, the hosted model a stored key implies. A brain that was
+///    only *detected* (see `ModelConfig::detection_fallback`) and does not
+///    answer is replaced the same way, so a server that stopped answering
+///    strands no one.
 /// 1. Nothing configured (the built-in default with no key for it anywhere):
 ///    the first of the default local endpoints that answers (brain, ollama,
 ///    vllm, lmstudio, probed together within one second) is used, with the
@@ -725,10 +721,11 @@ pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn Mod
 }
 
 /// Steps 0-2 of [`from_config_probed`]: the configuration a session actually
-/// runs with, once a detected brain, an unconfigured start and an empty model
-/// name are settled against what answers.
+/// runs with, once a signed-in start, a detected brain, an unconfigured start
+/// and an empty model name are settled against what answers.
 pub(crate) async fn resolve_probed(cfg: &ModelConfig) -> ModelConfig {
-    let cfg = discovery::resolve_detected_brain(cfg).await;
+    let cfg = discovery::resolve_sven_default(cfg).await;
+    let cfg = discovery::resolve_detected_brain(&cfg).await;
     let cfg = discovery::resolve_unconfigured(&cfg).await;
     discovery::resolve_empty_model_name(&cfg).await
 }

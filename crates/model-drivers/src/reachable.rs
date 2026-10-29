@@ -12,8 +12,9 @@
 //! The sources are the local servers that answer (a brain server found from
 //! its connection record, and ollama, vLLM and LM Studio on their default
 //! ports), every `providers:` entry, and every hosted provider with a stored
-//! key (`sven auth set`). Each is asked for its model list; one that does not
-//! answer, or refuses its key, is reported as a problem rather than dropped.
+//! key (`sven auth set`) or a sign-in (`sven auth login`, as `sven`). Each
+//! is asked for its model list; one that does not answer, or refuses its key,
+//! is reported as a problem rather than dropped.
 
 use std::time::Duration;
 
@@ -92,7 +93,7 @@ pub async fn reachable_models(providers: &Providers) -> Reachable {
     for alias in aliases {
         sources.push((alias.clone(), providers[alias].to_model_config(""), true));
     }
-    for id in crate::credentials::providers() {
+    for id in crate::sven_service::keyed_providers() {
         if !LOCAL_DRIVERS.contains(&id.as_str()) && registry::get_driver(&id).is_some() {
             let cfg = ModelConfig {
                 provider: id.clone(),

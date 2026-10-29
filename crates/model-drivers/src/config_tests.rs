@@ -10,6 +10,8 @@ struct Machine<'a> {
     stored: &'a [&'a str],
     /// Whether a brain server's connection record is published.
     brain: bool,
+    /// Whether this user signed in to a sven server (`sven auth login`).
+    signed_in: bool,
     /// Variables set in the environment, which detection must not read.
     environment: &'a [(&'a str, &'a str)],
 }
@@ -36,6 +38,13 @@ fn detected_on(machine: &Machine) -> ModelConfig {
         .map(|p| format!("{p}: sk-{p}\n"))
         .collect();
     std::fs::write(config.join("sven/credentials.yaml"), keys).unwrap();
+    if machine.signed_in {
+        std::fs::write(
+            config.join("sven/remote.yaml"),
+            "openai_base_url: http://127.0.0.1:3000/v1\ntoken: sk-signed-in\n",
+        )
+        .unwrap();
+    }
     if machine.brain {
         let record = runtime.join(format!("brain/serve-{}.json", std::process::id()));
         let body = serde_json::json!({"pid": std::process::id(), "surfaces": [
@@ -330,6 +339,23 @@ fn a_running_brain_wins_over_stored_keys() {
         m.name, "",
         "empty is the deliberate sentinel resolved later by from_config_probed"
     );
+}
+
+/// A signed-in user starts with their account's default model: the sven
+/// provider, with the name left for the server to say
+/// (`from_config_probed`), ahead of a running brain and stored keys, which
+/// stay in reserve for a server that does not answer.
+#[test]
+fn a_sign_in_wins_and_keeps_the_cloud_choice_in_reserve() {
+    let m = detected_on(&Machine {
+        stored: &["anthropic"],
+        brain: true,
+        signed_in: true,
+        ..Machine::default()
+    });
+    assert_eq!((m.provider.as_str(), m.name.as_str()), ("sven", ""));
+    let reserve = m.detection_fallback.expect("a stored key is a fallback");
+    assert_eq!(reserve.provider, "anthropic");
 }
 
 // ── Schema ───────────────────────────────────────────────────────────────

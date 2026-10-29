@@ -572,7 +572,8 @@ const API_KEY_ENV_REMOVED: &str =
 /// limits that cannot hold.
 ///
 /// With no `model:` section (`model_configured` false), the model is chosen
-/// from what the environment offers: a locally served brain, then
+/// from what the environment offers: the sven server signed in to, then a
+/// locally served brain, then
 /// OpenRouter, Anthropic and OpenAI keys, in that order. A `model.provider`
 /// naming one of `providers` is then expanded into that endpoint's settings
 /// with its per-model overrides.
@@ -613,7 +614,9 @@ pub fn model_reference(model: &ModelConfig, providers: &Providers) -> String {
 /// Chooses the model when the configuration names none, from what the
 /// environment offers.
 ///
-/// Priority: brain (local) > OpenRouter > Anthropic > OpenAI. A locally
+/// Priority: the sven server signed in to (`sven auth login`), with the
+/// account's default model > brain (local) > OpenRouter > Anthropic >
+/// OpenAI. A locally
 /// running brain wins over hosted providers when detectable - getting started
 /// on a brain-enabled machine should need zero config - but ONLY when one is
 /// running, so a user with no brain server sees the stored-key choice alone.
@@ -625,7 +628,15 @@ pub fn model_reference(model: &ModelConfig, providers: &Providers) -> String {
 /// no such choice fails loudly.
 fn detect_model(model: &mut ModelConfig) {
     let cloud = detect_cloud_model(model);
-    if brain_is_locally_detectable() {
+    if crate::sven_service::signed_in().is_some() {
+        // The account's default model, which only the server knows: the
+        // empty name is resolved by `from_config_probed`, which asks it. The
+        // cloud choice is kept for a server that does not answer.
+        let reserve = cloud.then(|| Box::new(model.clone()));
+        model.provider = crate::sven_service::PROVIDER.into();
+        model.name = String::new();
+        model.detection_fallback = reserve;
+    } else if brain_is_locally_detectable() {
         // The cloud choice, when a key offers one, is kept in reserve: the
         // brain hint is only a record, and a server that stopped answering
         // must not strand a user whose cloud provider works. Probed at build time by

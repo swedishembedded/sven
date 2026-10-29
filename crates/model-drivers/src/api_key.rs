@@ -28,6 +28,18 @@ pub fn provider_key(entry: &crate::config::ProviderEntry) -> Option<String> {
     })
 }
 
+/// The base URL a `providers:` entry reaches: its own, else the server its
+/// driver finds (a running brain, the sven server signed in to), else the
+/// driver's default. The URL [`provider_key`]'s key is meant for.
+#[must_use]
+pub fn provider_base_url(entry: &crate::config::ProviderEntry) -> Option<String> {
+    crate::discovery::effective_base_url(&ModelConfig {
+        provider: entry.name.clone(),
+        base_url: entry.base_url.clone(),
+        ..ModelConfig::default()
+    })
+}
+
 /// The key `cfg` is used with, if it has one.
 pub(crate) fn resolve_api_key(cfg: &ModelConfig) -> Option<String> {
     if let Some(k) = &cfg.api_key {
@@ -35,6 +47,18 @@ pub(crate) fn resolve_api_key(cfg: &ModelConfig) -> Option<String> {
     }
     if let Some(file) = &cfg.api_key_file {
         return read_key_file(file).ok();
+    }
+    if cfg.provider == crate::sven_service::PROVIDER {
+        // The sign-in's key goes only to the server it was minted by.
+        if let Some(signed_in) = crate::sven_service::signed_in() {
+            if cfg
+                .base_url
+                .as_deref()
+                .is_none_or(|url| crate::sven_service::same_url(url, &signed_in.base_url))
+            {
+                return Some(signed_in.key);
+            }
+        }
     }
     if at_default_endpoint(cfg) {
         if let Some(k) = crate::credentials::get(&cfg.provider) {

@@ -353,13 +353,22 @@ fn signed_in_to(openai_base_url: &str) -> RemoteLogin {
     }
 }
 
-/// A sign-in to the hosted sven service is that provider's key (its models
-/// and web search run on it); a sign-in to another server is not.
+/// The sign-in this crate writes is the one the `sven` model provider reads
+/// (`sven_model_drivers::sven_service`): its server's models, with its key,
+/// wherever that server is.
 #[test]
-fn only_the_hosted_service_is_the_sven_providers_key() {
-    assert!(signed_in_to("https://sven.swedishembedded.com/v1").is_the_sven_service());
-    assert!(signed_in_to("https://sven.swedishembedded.com/v1/").is_the_sven_service());
-    assert!(!signed_in_to("http://localhost:3000/v1").is_the_sven_service());
+fn a_saved_sign_in_is_the_sven_providers_server_and_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("remote.yaml");
+    let login = signed_in_to("http://localhost:3000/v1");
+    std::fs::write(&file, serde_yaml::to_string(&login).unwrap()).unwrap();
+    assert_eq!(
+        sven_model_drivers::sven_service::signed_in_from(&file),
+        Some(sven_model_drivers::sven_service::SignedIn {
+            base_url: login.openai_base_url,
+            key: login.token,
+        })
+    );
 }
 
 #[test]

@@ -73,22 +73,20 @@ pub(crate) async fn run_auth_command(command: &AuthCommands) -> anyhow::Result<(
                  Run `sven rc` to take sessions.",
                 login.server, login.workspace_name, login.account
             );
-            if sven_remote::login::remember_as_provider(&login)? {
-                println!(
-                    "Its models are yours here too: `sven list-models` shows them, `--model \
-                     sven/<model>` uses one, and web search runs through it."
-                );
-            }
+            println!(
+                "Its models are yours here too: `sven` starts with your account's default model, \
+                 `sven list-models` shows the others, `--model sven/<model>` uses one, and web \
+                 search runs through it."
+            );
         }
         #[cfg(feature = "network")]
         AuthCommands::Logout => {
-            // The sign-in's key stored as the sven provider's goes with it.
+            // Earlier versions also stored the sign-in's key as the sven
+            // provider's; that copy goes with it.
             if let Some(login) = sven_remote::login::load()? {
-                if login.is_the_sven_service()
-                    && credentials::get(sven_remote::login::SVEN_PROVIDER).as_deref()
-                        == Some(login.token.as_str())
-                {
-                    credentials::remove(sven_remote::login::SVEN_PROVIDER)?;
+                let provider = sven_model_drivers::sven_service::PROVIDER;
+                if credentials::get(provider).as_deref() == Some(login.token.as_str()) {
+                    credentials::remove(provider)?;
                 }
             }
             if sven_remote::login::forget()? {

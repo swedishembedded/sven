@@ -100,9 +100,9 @@ pub struct Config {
 
 impl Config {
     /// The sven service a key has been provided for: a `providers.sven`
-    /// entry with a key, or the hosted service once `sven auth login` stored
-    /// its key. Where `web_search` searches unless `sven rc` signed in to
-    /// another one (see `WebSearchConfig::backend`).
+    /// entry with a key, or the server `sven auth login` signed in to. Where
+    /// `web_search` searches unless `sven rc` signed in to another one (see
+    /// `WebSearchConfig::backend`).
     #[must_use]
     pub fn sven_search_endpoint(&self) -> Option<sven_tools_web::SvenEndpoint> {
         self.sven_search_endpoint_with(sven_model_drivers::provider_key)
@@ -119,11 +119,7 @@ impl Config {
                 ..Default::default()
             }
         });
-        let base_url = entry.base_url.clone().or_else(|| {
-            sven_model::get_driver(&entry.name)
-                .and_then(|driver| driver.default_base_url)
-                .map(str::to_string)
-        })?;
+        let base_url = sven_model_drivers::provider_base_url(&entry)?;
         Some(sven_tools_web::SvenEndpoint {
             base_url,
             api_key: key_of(&entry)?,
