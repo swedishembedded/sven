@@ -33,7 +33,7 @@ const HOSTED_TIMEOUT: Duration = Duration::from_secs(15);
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Local servers asked even when nothing names them, by driver id.
-const LOCAL_DRIVERS: [&str; 4] = ["brain", "ollama", "vllm", "lmstudio"];
+pub const LOCAL_DRIVERS: [&str; 4] = ["brain", "ollama", "vllm", "lmstudio"];
 
 /// Drivers whose model list is not the OpenAI-shaped `GET /models` this
 /// module reads, so they are not asked.

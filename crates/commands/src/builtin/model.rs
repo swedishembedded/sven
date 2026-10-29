@@ -3,9 +3,32 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `/model` command - override the model for the next queued message.
 
-use sven_model::catalog;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 
+use sven_model::catalog;
+use sven_model_drivers::credentials;
+
+use super::model_menu;
 use crate::{CommandContext, CommandResult, CompletionItem, SlashCommand};
+
+/// Start a background listing for every source whose cache is missing or
+/// stale. Building the provider is what starts it (hosted providers with a
+/// key only; local servers are probed at start-up), and it needs a runtime.
+fn refresh_stale_listings(sources: &[model_menu::Source]) {
+    static REQUESTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    if tokio::runtime::Handle::try_current().is_err() {
+        return;
+    }
+    model_menu::request_stale_refreshes(
+        sources,
+        REQUESTED.get_or_init(Default::default),
+        catalog::is_cache_stale,
+        |config| {
+            let _ = sven_model_drivers::from_config(config);
+        },
+    );
+}
 
 pub struct ModelCommand;
 
@@ -27,80 +50,18 @@ impl SlashCommand for ModelCommand {
         if arg_index != 0 {
             return vec![];
         }
-
-        let current_value = format!("{}/{}", ctx.current_model_provider, ctx.current_model_name);
-        let current_item = CompletionItem::with_desc(
-            current_value.clone(),
-            format!("{} (current)", current_value),
-            "currently active model",
+        let stored_keys = credentials::providers();
+        let sources = model_menu::sources(ctx.providers, &ctx.current_model_provider, &stored_keys);
+        for source_driver in sources.iter().map(model_menu::Source::driver_id) {
+            catalog::load_disk_cache(source_driver);
+        }
+        refresh_stale_listings(&sources);
+        let rows = model_menu::rows(
+            &sources,
+            &catalog::served_models(),
+            (&ctx.current_model_provider, &ctx.current_model_name),
         );
-
-        let mut candidates: Vec<CompletionItem> = Vec::new();
-
-        // Named custom providers from config.providers.
-        let mut provider_names: Vec<&str> = ctx.providers.keys().map(|s| s.as_str()).collect();
-        provider_names.sort_unstable();
-        for name in provider_names {
-            let cfg = &ctx.providers[name];
-            let mut model_keys: Vec<&str> = cfg.models.keys().map(|s| s.as_str()).collect();
-            model_keys.sort_unstable();
-            if model_keys.is_empty() {
-                let value = name.to_string();
-                if value != current_value {
-                    let display = format!("{} (driver: {})", name, cfg.name);
-                    candidates.push(CompletionItem::with_desc(
-                        name,
-                        display,
-                        "custom provider from config",
-                    ));
-                }
-            } else {
-                for model_name in model_keys {
-                    let value = format!("{}/{}", name, model_name);
-                    if value == current_value {
-                        continue;
-                    }
-                    let display = format!("{}/{} (driver: {})", name, model_name, cfg.name);
-                    candidates.push(CompletionItem::with_desc(
-                        &value,
-                        display,
-                        "custom provider from config",
-                    ));
-                }
-            }
-        }
-
-        // Every model an endpoint has served, ordered by provider and id.
-        for entry in catalog::served_models() {
-            let value = format!("{}/{}", entry.provider, entry.id);
-            if value == current_value {
-                continue;
-            }
-            let display = if entry.description.is_empty() {
-                value.clone()
-            } else {
-                format!("{} - {}", value, entry.description)
-            };
-            let desc = [
-                entry.context_window.map(|n| format!("ctx:{n}")),
-                entry.max_output_tokens.map(|n| format!("max_out:{n}")),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" ");
-            candidates.push(CompletionItem::with_desc(value, display, desc));
-        }
-
-        let mut ranked = crate::completion::filter_and_rank(candidates, partial);
-
-        let current_matches =
-            partial.is_empty() || crate::completion::fuzzy_score(partial, &current_value).is_some();
-        if current_matches {
-            ranked.insert(0, current_item);
-        }
-
-        ranked
+        model_menu::items(rows, partial)
     }
 
     fn execute(&self, args: Vec<String>) -> CommandResult {
@@ -118,8 +79,6 @@ impl SlashCommand for ModelCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_mcp_client::McpServers;
-    use sven_model_drivers::Providers;
 
     #[test]
     fn execute_bare_model_name_sets_override() {
@@ -148,36 +107,5 @@ mod tests {
     fn execute_empty_string_arg_returns_no_override() {
         let result = ModelCommand.execute(vec!["".into()]);
         assert!(result.model_override.is_none());
-    }
-
-    #[test]
-    fn completion_lists_the_models_endpoints_served_with_the_figures_they_gave() {
-        catalog::cache_seed([
-            catalog::ModelCatalogEntry {
-                context_window: Some(32_768),
-                ..catalog::ModelCatalogEntry::bare("completion-test", "windowed")
-            },
-            catalog::ModelCatalogEntry::bare("completion-test", "bare"),
-        ]);
-        let ctx = CommandContext {
-            providers: &Providers::new(),
-            mcp_servers: &McpServers::new(),
-            current_model_provider: "openai".into(),
-            current_model_name: "gpt-4o".into(),
-        };
-        let items = ModelCommand.complete(0, "completion-test", &ctx);
-        let describe = |value: &str| {
-            items
-                .iter()
-                .find(|i| i.value == value)
-                .unwrap_or_else(|| panic!("{value} not offered"))
-                .description
-                .clone()
-        };
-        assert_eq!(
-            describe("completion-test/windowed").as_deref(),
-            Some("ctx:32768")
-        );
-        assert_eq!(describe("completion-test/bare").as_deref(), Some(""));
     }
 }

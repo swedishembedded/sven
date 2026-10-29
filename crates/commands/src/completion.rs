@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn get_completions_preserves_cmd_complete_ordering() {
+    fn get_completions_offers_the_active_model_marked() {
         use crate::{CommandContext, CommandRegistry, ParsedCommand};
         use std::sync::Arc;
         use sven_mcp_client::McpServers;
@@ -283,16 +283,14 @@ mod tests {
             current_model_name: "gpt-4o".into(),
         };
         let items = manager.get_completions(&parsed, &ctx);
-        assert!(!items.is_empty(), "must return completions for /model");
-        assert_eq!(
-            items[0].value,
-            "openai/gpt-4o",
-            "current model must be the first completion item, got: {:?}",
-            items.iter().take(3).map(|i| &i.value).collect::<Vec<_>>()
-        );
+        let current = items
+            .iter()
+            .find(|i| i.value == "openai/gpt-4o")
+            .expect("the active model must be offered");
         assert!(
-            items[0].display.contains("current"),
-            "first item display must mention (current)"
+            current.display.starts_with('*'),
+            "the active model must be marked: {}",
+            current.display
         );
     }
 }

@@ -13,6 +13,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget},
 };
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::overlay::completion::CompletionOverlay;
 
 use super::theme::border_type;
@@ -37,7 +39,20 @@ impl Widget for CompletionMenu<'_> {
         let list_h = self.overlay.items.len().min(8) as u16;
         // +1 description row + 2 borders = 3 overhead rows
         let popup_height = (list_h + 3).min(area.height.saturating_sub(2));
-        let popup_width = 52u16.min(area.width.saturating_sub(2)).max(24);
+        // Wide enough for the longest label (a model row carries provider,
+        // name, maker, context and price), never wider than the screen.
+        let widest = self
+            .overlay
+            .items
+            .iter()
+            .map(|i| UnicodeWidthStr::width(i.display.as_str()))
+            .max()
+            .unwrap_or(0);
+        let popup_width = u16::try_from(widest + 3)
+            .unwrap_or(u16::MAX)
+            .max(52)
+            .min(area.width.saturating_sub(2))
+            .max(24);
 
         // Anchor the popup so its bottom edge is just above the input pane top.
         let bottom = self.input_pane.y;
@@ -120,5 +135,58 @@ impl Widget for CompletionMenu<'_> {
                 .render(desc_area, buf);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::CompletionItem;
+    use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
+
+    use super::CompletionMenu;
+    use crate::overlay::completion::CompletionOverlay;
+
+    fn item(display: &str) -> CompletionItem {
+        CompletionItem {
+            value: "v".into(),
+            display: display.into(),
+            description: Some("sven/deepseek/deepseek-v4.1-flash  A fast model.".into()),
+            score: 0,
+        }
+    }
+
+    fn rendered(width: u16) -> String {
+        let mut overlay = CompletionOverlay::new(vec![
+            item("* sven       | DeepSeek V4.1 Flash | DeepSeek | 1049k ctx | $0.18 / $0.53"),
+            item("  sven       | GPT-5.5             | OpenAI   | 400k ctx  | $1.25 / $10.00"),
+            item("  openrouter | Claude Opus 4.6     | Anthropic| 200k ctx  | $15.00 / $75.00"),
+            item("  brain      | qwen3.8"),
+        ]);
+        let area = Rect::new(0, 0, width, 14);
+        let mut buf = Buffer::empty(area);
+        CompletionMenu {
+            overlay: &mut overlay,
+            input_pane: Rect::new(0, 12, width, 2),
+            ascii: true,
+        }
+        .render(area, &mut buf);
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A model row (provider, name, maker, context and price) is shown whole
+    /// on a terminal wide enough for it: its price is never cut off.
+    #[test]
+    fn a_model_row_shows_its_price_whole() {
+        let screen = rendered(100);
+        println!("{screen}");
+        assert!(screen.contains("$15.00 / $75.00"), "{screen}");
+        assert!(screen.contains("$0.18 / $0.53"), "{screen}");
     }
 }

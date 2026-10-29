@@ -9,6 +9,7 @@ pub mod compact;
 pub mod inspect;
 pub mod mode;
 pub mod model;
+mod model_menu;
 pub mod new;
 pub mod provider;
 pub mod quit;
