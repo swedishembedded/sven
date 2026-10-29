@@ -15,6 +15,7 @@ use ratatui::{
 
 use unicode_width::UnicodeWidthStr;
 
+use crate::commands::Light;
 use crate::overlay::completion::CompletionOverlay;
 
 use super::theme::border_type;
@@ -47,7 +48,12 @@ impl Widget for CompletionMenu<'_> {
             .iter()
             .map(|i| UnicodeWidthStr::width(i.display.as_str()))
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            + if self.overlay.items.iter().any(|i| i.light.is_some()) {
+                2
+            } else {
+                0
+            };
         let popup_width = u16::try_from(widest + 3)
             .unwrap_or(u16::MAX)
             .max(52)
@@ -90,7 +96,11 @@ impl Widget for CompletionMenu<'_> {
         let desc_area = Rect::new(inner.x, inner.y + list_rows, inner.width, 1);
 
         // ── Item list via ratatui List + ListState ────────────────────────────
-        let avail = (inner.width as usize).saturating_sub(1);
+        // A list where some item carries a light gives every item its column,
+        // so the labels stay aligned.
+        let lit = self.overlay.items.iter().any(|item| item.light.is_some());
+        let light_width = if lit { 2 } else { 0 };
+        let avail = (inner.width as usize).saturating_sub(1 + light_width);
         let items: Vec<ListItem> = self
             .overlay
             .items
@@ -102,7 +112,19 @@ impl Widget for CompletionMenu<'_> {
                     item.display.as_str()
                 };
                 let label = truncate_to_width_exact(raw_label, avail);
-                ListItem::new(Line::from(Span::raw(label)))
+                let mut spans = Vec::with_capacity(2);
+                if lit {
+                    let dot = if self.ascii { "o " } else { "\u{25cf} " };
+                    spans.push(match item.light {
+                        Some(Light::Green) => Span::styled(dot, Style::default().fg(Color::Green)),
+                        Some(Light::Orange) => {
+                            Span::styled(dot, Style::default().fg(Color::Rgb(255, 165, 0)))
+                        }
+                        None => Span::raw("  "),
+                    });
+                }
+                spans.push(Span::raw(label));
+                ListItem::new(Line::from(spans))
             })
             .collect();
 
@@ -152,6 +174,7 @@ mod tests {
             display: display.into(),
             description: Some("sven/deepseek/deepseek-v4.1-flash  A fast model.".into()),
             score: 0,
+            light: None,
         }
     }
 
@@ -188,5 +211,57 @@ mod tests {
         println!("{screen}");
         assert!(screen.contains("$15.00 / $75.00"), "{screen}");
         assert!(screen.contains("$0.18 / $0.53"), "{screen}");
+    }
+
+    /// A model that keeps no data is lit green, one that may keep it orange,
+    /// and every row keeps the light's column so the labels stay aligned.
+    #[test]
+    fn lights_are_coloured_and_keep_their_column() {
+        let lit = |display: &str, light| CompletionItem {
+            light,
+            ..item(display)
+        };
+        // The first row is the selected one, drawn in the highlight colours.
+        let mut overlay = CompletionOverlay::new(vec![
+            lit("  brain | qwen", None),
+            lit("  sven | Keeps none", Some(crate::commands::Light::Green)),
+            lit("  sven | May keep", Some(crate::commands::Light::Orange)),
+        ]);
+        let area = Rect::new(0, 0, 60, 10);
+        let mut buf = Buffer::empty(area);
+        CompletionMenu {
+            overlay: &mut overlay,
+            input_pane: Rect::new(0, 9, 60, 1),
+            ascii: true,
+        }
+        .render(area, &mut buf);
+        let row = |needle: &str| {
+            (0..area.height)
+                .find(|y| {
+                    (0..area.width)
+                        .map(|x| buf[(x, *y)].symbol().to_string())
+                        .collect::<String>()
+                        .contains(needle)
+                })
+                .unwrap()
+        };
+        let dot_x = |y: u16| {
+            (0..area.width)
+                .find(|x| buf[(*x, y)].symbol() == "o")
+                .unwrap()
+        };
+        let (green, orange) = (row("Keeps none"), row("May keep"));
+        assert_eq!(buf[(dot_x(green), green)].fg, ratatui::style::Color::Green);
+        assert_eq!(
+            buf[(dot_x(orange), orange)].fg,
+            ratatui::style::Color::Rgb(255, 165, 0)
+        );
+        let label_x = |y: u16, text: &str| {
+            let line: String = (0..area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect();
+            line.find(text).unwrap()
+        };
+        assert_eq!(label_x(green, "sven"), label_x(row("qwen"), "brain"));
     }
 }

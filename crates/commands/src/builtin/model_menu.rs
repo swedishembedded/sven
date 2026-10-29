@@ -13,22 +13,30 @@
 //! provider, by maker (alphabetically, models without a maker last). With a
 //! query they are fuzzy-ranked, best first, and no longer grouped. Each row
 //! shows the model's display name, its maker, its context window and its price
-//! as `$in / $out` per million tokens, each only when the endpoint reported it.
-//! The completion popup has no group headers, so the provider is a column of
-//! every row and the groups read as runs of the same provider.
+//! as `$in / $out` per million tokens, each only when the endpoint reported it,
+//! and a light before it where the endpoint says whether the model keeps your
+//! data: green when it keeps none, orange when it may. The completion popup
+//! has no group headers, so the provider is a column of every row and the
+//! groups read as runs of the same provider.
 //!
-//! The menu is built from the served-model cache; [`request_stale_refreshes`]
-//! asks providers whose cache is missing or stale to list again in the
-//! background, so the next opening is current.
+//! The menu offers only models an endpoint lists: it is built from the
+//! served-model cache, never from model names a configuration writes down.
+//! [`request_refreshes`] asks every source to list again in the background
+//! each time the menu opens (at most once per [`REFRESH_INTERVAL`]), and the
+//! models a listing adds appear as soon as it lands.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use sven_model::catalog::{ModelCatalogEntry, Pricing};
 use sven_model_drivers::reachable::LOCAL_DRIVERS;
 use sven_model_drivers::{ModelConfig, ProviderEntry, Providers};
 
-use crate::completion::{fuzzy_score, CompletionItem};
+use crate::completion::{fuzzy_score, CompletionItem, Light};
+
+/// How often one source is asked for its models while the menu is used.
+pub(crate) const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// One place models are offered from, under the name `--model` takes for it.
 pub(crate) struct Source {
@@ -36,10 +44,6 @@ pub(crate) struct Source {
     prefix: String,
     /// The driver id whose served models are cached for this source.
     driver: String,
-    /// Models the `providers:` entry names itself.
-    declared: Vec<String>,
-    /// The `providers:` entry, as a label for it, when this source is one.
-    entry_note: Option<String>,
     /// What a background listing is started from.
     config: ModelConfig,
 }
@@ -54,8 +58,6 @@ impl Source {
         Self {
             prefix: id.to_string(),
             driver: id.to_string(),
-            declared: Vec::new(),
-            entry_note: None,
             config: ModelConfig {
                 provider: id.to_string(),
                 name: String::new(),
@@ -65,16 +67,9 @@ impl Source {
     }
 
     fn entry(alias: &str, entry: &ProviderEntry) -> Self {
-        let mut declared: Vec<String> = entry.models.keys().cloned().collect();
-        declared.sort_unstable();
         Self {
             prefix: alias.to_string(),
             driver: entry.name.clone(),
-            declared,
-            entry_note: Some(format!(
-                "custom provider from config (driver: {})",
-                entry.name
-            )),
             config: entry.to_model_config(""),
         }
     }
@@ -107,6 +102,7 @@ pub(crate) struct Row {
     description: String,
     context_window: Option<u32>,
     pricing: Option<Pricing>,
+    light: Option<Light>,
     current: bool,
 }
 
@@ -126,16 +122,15 @@ fn maker_and_title(entry: &ModelCatalogEntry) -> (Option<String>, String) {
 }
 
 /// The rows of `sources`, taken from `served` (the cache), marking the model
-/// `current` (driver id, model id).
+/// `current` (driver id, model id). The current model is offered even when no
+/// listing has it yet: it is what the session runs.
 pub(crate) fn rows(
     sources: &[Source],
     served: &[ModelCatalogEntry],
     current: (&str, &str),
 ) -> Vec<Row> {
-    let is_current = |driver: &str, id: &str| (driver, id) == current;
     let mut rows = Vec::new();
     for source in sources {
-        let first = rows.len();
         for entry in served.iter().filter(|e| e.provider == source.driver) {
             let (maker, name) = maker_and_title(entry);
             rows.push(Row {
@@ -146,40 +141,15 @@ pub(crate) fn rows(
                 description: entry.description.clone(),
                 context_window: entry.context_window,
                 pricing: entry.pricing,
-                current: is_current(&source.driver, &entry.id),
+                light: entry.zero_data_retention.map(|none_kept| {
+                    if none_kept {
+                        Light::Green
+                    } else {
+                        Light::Orange
+                    }
+                }),
+                current: (source.driver.as_str(), entry.id.as_str()) == current,
             });
-        }
-        for id in &source.declared {
-            if served
-                .iter()
-                .any(|e| e.provider == source.driver && &e.id == id)
-            {
-                continue;
-            }
-            rows.push(Row {
-                provider: source.prefix.clone(),
-                maker: None,
-                name: id.clone(),
-                value: format!("{}/{id}", source.prefix),
-                description: source.entry_note.clone().unwrap_or_default(),
-                context_window: None,
-                pricing: None,
-                current: is_current(&source.driver, id),
-            });
-        }
-        if rows.len() == first {
-            if let Some(note) = &source.entry_note {
-                rows.push(Row {
-                    provider: source.prefix.clone(),
-                    maker: None,
-                    name: source.prefix.clone(),
-                    value: source.prefix.clone(),
-                    description: note.clone(),
-                    context_window: None,
-                    pricing: None,
-                    current: false,
-                });
-            }
         }
     }
     if !rows.iter().any(|r| r.current) && !current.1.is_empty() {
@@ -191,6 +161,7 @@ pub(crate) fn rows(
             description: "currently active model".into(),
             context_window: None,
             pricing: None,
+            light: None,
             current: true,
         });
     }
@@ -260,7 +231,10 @@ impl Row {
     }
 
     fn item(&self, provider_width: usize) -> CompletionItem {
-        CompletionItem::with_desc(&self.value, self.label(provider_width), self.detail())
+        CompletionItem {
+            light: self.light,
+            ..CompletionItem::with_desc(&self.value, self.label(provider_width), self.detail())
+        }
     }
 }
 
@@ -292,19 +266,23 @@ pub(crate) fn items(mut rows: Vec<Row>, query: &str) -> Vec<CompletionItem> {
     ranked.iter().map(|(_, r)| r.item(width)).collect()
 }
 
-/// Ask each source whose cache `is_stale` to list its models in the
-/// background (`start`), at most once per process per source, so that opening
-/// the menu never waits for the network and the next opening is current.
-/// `requested` remembers the sources already asked.
-pub(crate) fn request_stale_refreshes(
+/// Ask each source to list its models in the background (`start`), unless it
+/// was asked less than [`REFRESH_INTERVAL`] before `now`, so opening the menu
+/// never waits for the network and keeps what it shows current. `requested`
+/// remembers when each source was last asked.
+pub(crate) fn request_refreshes(
     sources: &[Source],
-    requested: &Mutex<HashSet<String>>,
-    is_stale: impl Fn(&str) -> bool,
+    requested: &Mutex<HashMap<String, Instant>>,
+    now: Instant,
     mut start: impl FnMut(&ModelConfig),
 ) {
     let mut requested = requested.lock().unwrap_or_else(|e| e.into_inner());
     for source in sources {
-        if is_stale(&source.driver) && requested.insert(source.prefix.clone()) {
+        let due = requested
+            .get(&source.prefix)
+            .is_none_or(|at| now.duration_since(*at) >= REFRESH_INTERVAL);
+        if due {
+            requested.insert(source.prefix.clone(), now);
             start(&source.config);
         }
     }
@@ -460,21 +438,62 @@ mod tests {
     }
 
     #[test]
-    fn stale_sources_are_asked_once_and_fresh_ones_never() {
-        let sources = [Source::driver("fresh"), Source::driver("stale")];
-        let requested = Mutex::new(HashSet::new());
+    fn each_opening_asks_every_source_again_at_most_once_an_interval() {
+        let sources = [Source::driver("a"), Source::driver("b")];
+        let requested = Mutex::new(HashMap::new());
         let mut started = Vec::new();
-        for _ in 0..2 {
-            request_stale_refreshes(
-                &sources,
-                &requested,
-                |d| d == "stale",
-                |c| {
-                    started.push(c.provider.clone());
-                },
-            );
+        let start = Instant::now();
+        for at in [
+            start,
+            start + Duration::from_secs(1),
+            start + REFRESH_INTERVAL,
+        ] {
+            request_refreshes(&sources, &requested, at, |c| {
+                started.push(c.provider.clone());
+            });
         }
-        assert_eq!(started, ["stale"]);
+        assert_eq!(started, ["a", "b", "a", "b"]);
+    }
+
+    /// A model a configuration names but no endpoint lists is not offered:
+    /// choosing it could only fail.
+    #[test]
+    fn only_listed_models_are_offered() {
+        let mut entry = entry_of("hosted");
+        entry
+            .models
+            .insert("written-down".into(), Default::default());
+        let providers = Providers::from([("mine".to_string(), entry)]);
+        let sources = sources(&providers, "", &[]);
+        let found = items(rows(&sources, &catalog_of_two_providers(), ("", "")), "");
+        assert!(!values(&found).contains(&"mine/written-down"));
+        assert!(values(&found).contains(&"mine/zeta"));
+    }
+
+    #[test]
+    fn a_model_that_keeps_no_data_is_green_and_one_that_may_is_orange() {
+        let mut keeps_none = served("svc", "a", "a", None);
+        keeps_none.zero_data_retention = Some(true);
+        let mut may_keep = served("svc", "b", "b", None);
+        may_keep.zero_data_retention = Some(false);
+        let unknown = served("svc", "c", "c", None);
+        let found = items(
+            rows(
+                &[Source::driver("svc")],
+                &[keeps_none, may_keep, unknown],
+                ("", ""),
+            ),
+            "",
+        );
+        let lights: Vec<_> = found.iter().map(|i| (i.value.as_str(), i.light)).collect();
+        assert_eq!(
+            lights,
+            [
+                ("svc/a", Some(Light::Green)),
+                ("svc/b", Some(Light::Orange)),
+                ("svc/c", None)
+            ]
+        );
     }
 
     #[test]

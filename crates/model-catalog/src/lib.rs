@@ -81,6 +81,10 @@ pub struct ModelCatalogEntry {
     /// What the endpoint charges, when it says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pricing: Option<Pricing>,
+    /// Whether a call to it keeps no data anywhere, when the endpoint says
+    /// (the sven service's `zero_data_retention`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zero_data_retention: Option<bool>,
 }
 
 impl ModelCatalogEntry {
@@ -96,6 +100,7 @@ impl ModelCatalogEntry {
             description: String::new(),
             input_modalities: default_input_modalities(),
             pricing: None,
+            zero_data_retention: None,
         }
     }
 

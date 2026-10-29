@@ -37,7 +37,7 @@ mod discovery;
 #[cfg(not(target_arch = "wasm32"))]
 mod embedding;
 mod google;
-mod listing;
+pub mod listing;
 mod openai;
 pub(crate) mod openai_compat;
 mod openrouter;

@@ -274,6 +274,12 @@ impl App {
                 Some(toast) = toast_rx.recv() => {
                     self.ui.push_toast(toast);
                 }
+                // A model list refreshed in the background (`/model` asks for
+                // one each time it opens): an open menu shows the new models.
+                () = sven_model_drivers::listing::listings_changed().notified(),
+                    if self.ui.completion.is_some() => {
+                    self.update_completion_overlay();
+                }
                 // Idle-must-be-stable invariant: this is the ONLY branch that can
                 // fire on a timer, and it is gated on a busy flag. When nothing is
                 // busy the `select!` blocks on real events, so `terminal.draw()`

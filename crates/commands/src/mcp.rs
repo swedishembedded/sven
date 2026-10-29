@@ -59,6 +59,7 @@ impl SlashCommand for McpPromptCommand {
                         Some(arg.description.clone())
                     },
                     score: 0,
+                    light: None,
                 }];
             }
         }

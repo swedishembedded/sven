@@ -19,7 +19,7 @@ pub mod parser;
 pub mod registry;
 pub mod skill;
 
-pub use completion::{CompletionItem, CompletionManager};
+pub use completion::{CompletionItem, CompletionManager, Light};
 pub use parser::{parse, ParsedCommand};
 pub use registry::CommandRegistry;
 

@@ -24,6 +24,17 @@ pub struct CompletionItem {
 
     /// Fuzzy match score - higher is better.  Used for sorting.
     pub score: usize,
+
+    /// A coloured light shown before the label, when the item has one.
+    pub light: Option<Light>,
+}
+
+/// A coloured light before an item's label: for a model, whether it keeps no
+/// data (green) or may keep it (orange).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Light {
+    Green,
+    Orange,
 }
 
 impl CompletionItem {
@@ -36,6 +47,7 @@ impl CompletionItem {
             value: v,
             description: None,
             score: 0,
+            light: None,
         }
     }
 
@@ -50,6 +62,7 @@ impl CompletionItem {
             display: display.into(),
             description: Some(description.into()),
             score: 0,
+            light: None,
         }
     }
 }

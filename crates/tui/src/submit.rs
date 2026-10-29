@@ -43,6 +43,7 @@
 
 use std::sync::Arc;
 
+use sven_frontend::commands::builtin::model::unavailable_model;
 use sven_model::Message;
 
 use crate::{
@@ -319,7 +320,10 @@ impl App {
 
                     if let Some(model_str) = result.model_override {
                         let resolved = self.config.resolve_model(&model_str);
-                        self.session.stage_model(resolved);
+                        match unavailable_model(&resolved) {
+                            Some(why) => self.agent.notice = Some(format!("error: {why}")),
+                            None => self.session.stage_model(resolved),
+                        }
                     }
                     if let Some(mode) = result.mode_override {
                         self.session.stage_mode(mode);
@@ -378,7 +382,10 @@ impl App {
             }
             if let Some(model_str) = result.model_override {
                 let resolved = self.config.resolve_model(&model_str);
-                self.session.apply_model(resolved);
+                match unavailable_model(&resolved) {
+                    Some(why) => self.agent.notice = Some(format!("error: {why}")),
+                    None => self.session.apply_model(resolved),
+                }
             }
             if let Some(mode) = result.mode_override {
                 self.session.apply_mode(mode);

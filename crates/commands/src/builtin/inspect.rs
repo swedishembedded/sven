@@ -171,6 +171,7 @@ impl SlashCommand for McpCommand {
                     display: s.to_string(),
                     description: None,
                     score: 0,
+                    light: None,
                 })
                 .collect()
         } else if arg_index == 1 {
@@ -183,6 +184,7 @@ impl SlashCommand for McpCommand {
                     display: s.to_string(),
                     description: None,
                     score: 0,
+                    light: None,
                 })
                 .collect()
         } else {

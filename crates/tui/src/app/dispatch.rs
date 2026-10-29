@@ -544,6 +544,7 @@ impl App {
                 value: e.name.clone(),
                 description: Some(e.current_task.clone().unwrap_or_else(|| "idle".to_string())),
                 score: 0,
+                light: None,
             })
             .collect()
     }

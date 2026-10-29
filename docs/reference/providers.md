@@ -111,8 +111,9 @@ sven bundles no list of models, limits or prices. What it knows about a model is
 what the model's endpoint served, kept in a per-provider cache
 (`~/.config/sven/model-cache/<provider>.json`) that is refreshed after a
 successful model list and, for a hosted provider with a stored key, in the
-background when the file is older than 24 hours, so a start-up without network
-still knows the last served list. A list that fails is an error; sven never
+background when the file is older than 24 hours (and for every provider each
+time `/model` opens), so a start-up without network still knows the last
+served list. A list that fails is an error; sven never
 substitutes entries of its own.
 
 | figure | read from the endpoint's `GET /models` entry |
@@ -121,6 +122,7 @@ substitutes entries of its own.
 | output cap | `top_provider.max_completion_tokens`, else `max_output_tokens`; Google `outputTokenLimit` |
 | input modalities | `architecture.input_modalities`, else `capabilities`; otherwise text only |
 | price | `pricing` (below) |
+| keeps no data | `zero_data_retention` (a boolean; the sven service serves it) |
 
 A figure the endpoint does not serve is unknown, and the configuration is
 consulted instead (`model.max_tokens`, `max_output_tokens`, `input_modalities`,
@@ -196,7 +198,8 @@ development server's models. With no `model:` configured and no `--model`,
 sven starts with your account's default model (see
 [Default provider auto-detection](#default-provider-auto-detection)). Its
 model list, limits and prices are what it serves (see
-[Served models](#served-models)); `web_search` searches through it too, billed
+[Served models](#served-models)), along with whether each model keeps your
+data (the light in `/model`); `web_search` searches through it too, billed
 per search. `sven auth logout` signs out.
 
 | Setting    | Value                                      |

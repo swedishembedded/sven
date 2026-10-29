@@ -19,6 +19,7 @@
 //! | `max_output_tokens` | `top_provider.max_completion_tokens`, else `max_output_tokens` |
 //! | `input_modalities` | `architecture.input_modalities`, else `capabilities` |
 //! | `pricing` | `pricing` (see [`served_pricing_of`]) |
+//! | `zero_data_retention` | `zero_data_retention` (a boolean) |
 
 use serde_json::Value;
 
@@ -49,6 +50,7 @@ impl ModelCatalogEntry {
                 .to_string(),
             input_modalities: input_modalities_of(item),
             pricing: served_pricing_of(item),
+            zero_data_retention: item.get("zero_data_retention").and_then(Value::as_bool),
             name,
             id,
             provider: provider.to_string(),
@@ -167,7 +169,17 @@ mod tests {
         assert_eq!(e.context_window, None);
         assert_eq!(e.max_output_tokens, None);
         assert_eq!(e.pricing, None);
+        assert_eq!(e.zero_data_retention, None);
         assert_eq!(e.input_modalities, vec![InputModality::Text]);
+    }
+
+    #[test]
+    fn a_sven_entry_says_whether_it_keeps_no_data() {
+        for (served, read) in [(true, Some(true)), (false, Some(false))] {
+            let item = json!({"id": "m", "zero_data_retention": served});
+            let e = ModelCatalogEntry::from_served("sven", &item).unwrap();
+            assert_eq!(e.zero_data_retention, read);
+        }
     }
 
     #[test]

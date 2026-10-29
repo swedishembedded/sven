@@ -91,6 +91,39 @@ pub(crate) fn refresh_when_stale(provider: &Arc<dyn ModelProvider>, cfg: &ModelC
     });
 }
 
+/// Ask `cfg`'s endpoint for its models in the background, whatever the age of
+/// its cache: what a model menu does each time it opens, so the next look
+/// at it is current. Wakes [`listings_changed`] once the new list is
+/// recorded. Does nothing without a running tokio runtime, or for an
+/// endpoint that cannot be built (no key, no base URL); a failed listing is
+/// logged and leaves the cache as it was.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn refresh(cfg: &ModelConfig) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let Ok((provider, _, _)) = crate::build_inner(cfg) else {
+        return;
+    };
+    runtime.spawn(async move {
+        match provider.list_models().await {
+            Ok(_) => listings_changed().notify_one(),
+            Err(e) => {
+                tracing::debug!(provider = provider.name(), error = %e, "model list refresh failed")
+            }
+        }
+    });
+}
+
+/// Woken after a [`refresh`] records a provider's new model list, so a menu
+/// showing the cache can show the new models without waiting for a key.
+/// One waiter is woken per refresh (a missed wake is kept for the next wait).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn listings_changed() -> &'static tokio::sync::Notify {
+    static CHANGED: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+    CHANGED.get_or_init(tokio::sync::Notify::new)
+}
+
 /// A browser has no on-disk catalog to refresh.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn refresh_when_stale(_provider: &Arc<dyn ModelProvider>, _cfg: &ModelConfig) {}
