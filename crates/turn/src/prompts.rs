@@ -24,7 +24,7 @@ pub struct PromptContext<'a> {
     /// the stable prefix remains cacheable across sessions.
     pub git_context: Option<&'a str>,
     /// Path of the project context file (AGENTS.md / .sven/context.md), when
-    /// one exists. Referenced by path in the system prompt, not inlined — see
+    /// one exists. Referenced by path in the system prompt, not inlined - see
     /// `context_file_section`'s doc.
     pub project_context_file: Option<&'a Path>,
     /// Pre-formatted CI environment block.
@@ -126,74 +126,24 @@ impl<'a> PromptContext<'a> {
 // Modular guidelines for easier maintenance and testing
 
 mod guidelines {
-    pub fn general() -> &'static str {
-        "- Be concise and precise. Use tools instead of guessing.\n\
-         - Check `memory` (action=list) at session start for stored project context."
+    // Tool-agnostic working method. Guidance for one tool belongs in that
+    // tool's own description, which the model only sees while it has the tool.
+    pub fn working_method() -> &'static str {
+        "- Establish facts from the repository, its tests and command output instead of guessing.\n\
+         - Read the code a change touches (its callers, interfaces and tests) before editing it.\n\
+         - Reproduce a reported failure before fixing it when you can, and use the reproduction to prove the fix.\n\
+         - Make the smallest complete change; follow the existing style and structure; add files only when the task needs them.\n\
+         - Verify before finishing: build and run the relevant tests. Never claim a check you did not run.\n\
+         - When a command or tool fails, read the error and change the approach; never repeat a failing call unchanged.\n\
+         - Issue independent tool calls together in one turn.\n\
+         - Keep changes you did not make; never force-push, rewrite published history or skip hooks unless asked.\n\
+         - Finish with a short report: what changed, how it was verified, and anything left open."
     }
 
-    pub fn tool_usage() -> &'static str {
-        "- Prefer `edit_file` over `write` for modifying existing files (preserves surrounding context).\n\
-         - Use `shell` for all command execution (delete files, run linters, list directories, etc.).\n\
-         - Discovery workflow: `find_file` to locate files → `grep` to narrow → `read_file` with specific ranges for context.\n\
-         - Use `grep` output_mode='content' + context_lines for code-level inspection; use whole_project=true for codebase-wide sweeps.\n\
-         - Use `shell` one-liners (sed, awk) for replacements at scale.\n\
-         - Batch `read_file` calls in parallel - read all potentially relevant files in one turn.\n\
-         - A `shell` command without `timeout_secs` is killed after 30 seconds. Pass `timeout_secs: 600` for \
-         builds, test suites and long scripts. If a command is killed for time, retry it with a larger \
-         `timeout_secs` (up to the ceiling the result names, 1800 seconds by default) or take a different approach."
-    }
-
-    pub fn large_content() -> &'static str {
-        "- For files over ~500 lines, build logs, large codebases, or any content that would \
-         exceed your context window: use `context(action=open)` to get a memory-mapped handle, then \
-         `context(action=read/grep/query)` to analyze without loading it into your context.\n\
-         - Workflow: open → grep (locate sections) → read (inspect specific lines) → \
-         query (semantic analysis across chunks) → reduce (synthesize a final answer).\n\
-         - `context(action=query)` dispatches independent sub-agents over chunks in parallel; \
-         each receives ONLY the chunk plus your prompt. Design prompts to be self-contained.\n\
-         - `context(action=reduce)` applies tree reduction automatically when results are too large."
-    }
-
-    pub fn code_quality() -> &'static str {
-        "- Make sure all the code you generate is production quality and follows good separation of concerns and clean code principles.\n\
-         - NEVER create new files proactively unless explicitly requested. Do not create 'summary' md files unless requested.\n\
-         - Write tests when adding new functionality.\n\
-         - Preserve existing code structure and coding style patterns.\n\
-         - After completing a task, compile or build the component you changed (e.g. cargo build, make) to verify it works; fix any issues."
-    }
-
-    pub fn workflow_efficiency() -> &'static str {
-        "- Use `todo` for multi-step tasks (3+ steps): `action=read` (default) to inspect, `action=add` to append, `action=update` with just {id, status} to mark a single item done, `action=set` to replace all. Update silently.\n\
-         - Store project-specific conventions with `memory(action=set)`; retrieve with `memory(action=list)` at session start.\n\
-         - Batch independent tool calls in parallel to increase efficiency.\n\
-         - Before modifying a subsystem, call `memory(action=search_knowledge)` to retrieve any existing knowledge spec.\n\
-         - After significant structural changes, update the `.sven/knowledge/` doc's `updated:` date and relevant sections."
-    }
-
-    pub fn task_delegation() -> &'static str {
-        "- ALWAYS spin up subagents when a task can be split into larger chunks and parallelized: \
-         use the `task` tool to spawn multiple sub-agents in parallel for independent sub-tasks in the same turn.\n\
-         - Use `task` for isolated, well-defined sub-tasks that benefit from a fresh context window.\n\
-         - Good candidates: exploring a large unfamiliar codebase area; running a multi-step investigation; \
-         implementing a self-contained feature; running tests and analysing failures; any work that naturally \
-         decomposes into independent chunks (e.g. multiple files, modules, or search targets).\n\
-         - `task` returns a buffer handle immediately (e.g. `buf_0001`). Use `task(action=status)` to poll, \
-         `task(action=grep)` to search output, `task(action=read)` to inspect specific line ranges.\n\
-         - Do NOT spawn a sub-agent for simple tasks you can do directly with one or two tool calls.\n\
-         - Sub-agents cannot spawn further sub-agents."
-    }
-
-    pub fn error_handling() -> &'static str {
-        "- When a tool fails, try a different approach.\n\
-         - Use `shell` with an explicit `workdir` for commands that depend on location.\n\
-         - NEVER skip git hooks or force-push without explicit user permission."
-    }
-
-    pub fn debugging() -> &'static str {
-        "- When asked to debug, diagnose a crash, inspect runtime state, or step through code on a \
-           target device: you MUST use the `gdb` compound tool \
-           (`gdb(action=start_server)`, `gdb(action=connect)`, `gdb(action=command)`, `gdb(action=stop)`). \
-           Do NOT substitute reading source code for actual runtime debugging - GDB is a better source of truth."
+    pub fn core_tools() -> &'static str {
+        "- Locate code with `grep` and `find_file`, then read the relevant ranges with `read_file`.\n\
+         - Change existing files with `edit_file` and create new ones with `write_file`.\n\
+         - Use `shell` for builds, tests, git and running programs; pass `timeout_secs` for builds and test suites."
     }
 }
 
@@ -508,30 +458,12 @@ fn with_dormant_note(section: String, heading: &str, noun: &str, dormant: usize)
 fn build_guidelines_section() -> String {
     format!(
         "## Guidelines\n\n\
-         ### General Principles\n\
+         ### Working Method\n\
          {}\n\n\
-         ### Tool Usage Patterns\n\
-         {}\n\n\
-         ### Large Content Analysis\n\
-         {}\n\n\
-         ### Code Quality\n\
-         {}\n\n\
-         ### Workflow Efficiency\n\
-         {}\n\n\
-         ### Task Delegation (Sub-agents)\n\
-         {}\n\n\
-         ### Error Handling\n\
-         {}\n\n\
-         ### Debugging\n\
+         ### Tools\n\
          {}",
-        guidelines::general(),
-        guidelines::tool_usage(),
-        guidelines::large_content(),
-        guidelines::code_quality(),
-        guidelines::workflow_efficiency(),
-        guidelines::task_delegation(),
-        guidelines::error_handling(),
-        guidelines::debugging()
+        guidelines::working_method(),
+        guidelines::core_tools(),
     )
 }
 
@@ -553,15 +485,10 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
     // Volatile context (git branch, CI env, working directory) is injected
     // separately via system_dynamic_suffix and never touches this block.
     let agent_identity = format!(
-        "You are Sven, a specialized AI coding agent built for professional software engineering.\n\n\
-         Operating Mode: `{mode}`\n\n\
-         Core Capabilities:\n\
-         - Multi-mode operation (Research, Plan, Agent) with dynamic mode switching\n\
-         - Persistent memory across sessions\n\
-         - Integrated debugging support with GDB tools\n\
-         - Markdown-driven workflows with frontmatter configuration\n\
-         - Comprehensive linting and test integration\n\
-         - Full CI/CD pipeline integration and awareness");
+        "You are Sven, an autonomous software engineering agent working in a real development \
+         environment.\n\n\
+         Operating Mode: `{mode}`"
+    );
 
     let mode_instructions = match mode {
         AgentMode::Research => {
@@ -584,14 +511,8 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         }
         AgentMode::Agent => {
             "You are a capable coding agent.  You can read and write files, run shell commands, \
-             and search the codebase.  Work systematically, verify your changes, and report \
-             your progress clearly.\n\
-             Keep in mind the following:
-             - Maximize parallel tool calls.\n\
-             - When a task can be split into larger chunks and parallelized, always spin up \
-             subagents via the `task` tool (multiple tasks in one turn when sub-tasks are independent).\n\
-             - Always complete all todos before completing your turn.\n\
-             - Always complete the task requested by the user before completion your turn."
+             and search the codebase.  Complete the task the user asked for, including every \
+             todo you created, before ending your turn."
         }
         AgentMode::Chat => {
             "You are a conversational assistant. You can read files and answer questions. \
@@ -838,34 +759,6 @@ mod tests {
     }
 
     #[test]
-    fn guidelines_include_debugging_section_with_gdb() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            pr.contains("Debugging"),
-            "prompt should contain a Debugging section"
-        );
-        assert!(
-            pr.contains("gdb") || pr.contains("GDB"),
-            "debugging section must mention gdb"
-        );
-        assert!(
-            pr.contains("MUST use") || pr.contains("you MUST use"),
-            "debugging section must mandate GDB tool use"
-        );
-    }
-
-    #[test]
-    fn debugging_guideline_present_in_all_modes() {
-        for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
-            let pr = system_prompt(mode, None, empty());
-            assert!(
-                pr.contains("gdb") || pr.contains("GDB"),
-                "mode {mode} prompt should mention gdb in debugging guideline"
-            );
-        }
-    }
-
-    #[test]
     fn project_root_appears_in_prompt() {
         let root = p("/project/my-project");
         let ctx = PromptContext {
@@ -956,136 +849,32 @@ mod tests {
     }
 
     #[test]
-    fn enhanced_agent_identity_mentions_core_capabilities() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            pr.contains("specialized AI coding agent"),
-            "identity should emphasize specialization"
-        );
-        assert!(
-            pr.contains("Core Capabilities"),
-            "should list core capabilities"
-        );
-        assert!(
-            pr.contains("Multi-mode operation"),
-            "should mention mode switching"
-        );
-        assert!(
-            pr.contains("Persistent memory"),
-            "should mention memory feature"
-        );
-        assert!(pr.contains("GDB tools"), "should mention debugging support");
-    }
-
-    #[test]
-    fn guidelines_section_has_multiple_categories() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            pr.contains("### General Principles"),
-            "guidelines should have General Principles"
-        );
-        assert!(
-            pr.contains("### Tool Usage Patterns"),
-            "guidelines should have Tool Usage Patterns"
-        );
-        assert!(
-            pr.contains("### Code Quality"),
-            "guidelines should have Code Quality"
-        );
-        assert!(
-            pr.contains("### Workflow Efficiency"),
-            "guidelines should have Workflow Efficiency"
-        );
-        assert!(
-            pr.contains("### Error Handling"),
-            "guidelines should have Error Handling"
-        );
-    }
-
-    #[test]
-    fn guidelines_section_contains_minimum_items() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        // Count bullet points in guidelines section. Guidelines are rendered with
-        // Rust \n\ line continuations so each bullet starts with "\n- " (no indent).
-        let guidelines_section = pr.split("## Guidelines").nth(1).unwrap();
-        let bullet_count = guidelines_section.matches("\n- ").count();
-        assert!(
-            bullet_count >= 15,
-            "guidelines should contain at least 15 bullet points, found {}",
-            bullet_count
-        );
-    }
-
-    #[test]
-    fn the_prompt_asks_for_a_600_second_timeout_on_long_shell_commands() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            pr.contains("`timeout_secs: 600`")
-                && pr.contains("30 seconds")
-                && pr.contains("1800 seconds"),
-            "builds and test suites get 600 s, the bare default and the ceiling are stated"
-        );
-    }
-
-    #[test]
-    fn guidelines_mention_critical_tools() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            pr.contains("`edit_file`"),
-            "guidelines should mention edit_file"
-        );
-        assert!(pr.contains("`grep`"), "guidelines should mention grep");
-        assert!(
-            pr.contains("`find_file`"),
-            "guidelines should mention find_file"
-        );
-        assert!(
-            pr.contains("`read_file`"),
-            "guidelines should mention read_file"
-        );
-        assert!(pr.contains("`shell`"), "guidelines should mention shell");
-    }
-
-    #[test]
-    fn guidelines_include_git_safety_warning() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            pr.contains("NEVER") || pr.contains("never skip"),
-            "guidelines should include safety warnings"
-        );
-    }
-
-    #[test]
-    fn guidelines_mention_parallel_operations() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            pr.contains("parallel"),
-            "guidelines should mention parallel tool usage"
-        );
-    }
-
-    #[test]
-    fn guidelines_mention_mode_switching() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            pr.contains("Research") && pr.contains("Plan") && pr.contains("Agent"),
-            "guidelines should list all modes"
-        );
-    }
-
-    #[test]
-    fn all_modes_have_enhanced_identity() {
+    fn the_core_prompt_instructs_only_tools_every_session_has() {
+        // A tool that is deferred or not configured is absent from the tool
+        // list; instructing it costs tokens and invites calls that fail.
         for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
             let pr = system_prompt(mode, None, empty());
-            assert!(
-                pr.contains("specialized AI coding agent"),
-                "all modes should use enhanced identity"
-            );
-            assert!(
-                pr.contains("Core Capabilities"),
-                "all modes should list capabilities"
-            );
+            for absent in [
+                "`gdb`",
+                "`memory`",
+                "`context`",
+                "`task`",
+                "memory(",
+                "context(",
+                "task(",
+            ] {
+                assert!(!pr.contains(absent), "mode {mode} names {absent}");
+            }
         }
+    }
+
+    #[test]
+    fn the_core_prompt_asks_for_evidence_and_verification() {
+        let pr = system_prompt(AgentMode::Agent, None, empty());
+        assert!(pr.contains("instead of guessing"));
+        assert!(pr.contains("Verify before finishing"));
+        assert!(pr.contains("Never claim a check you did not run"));
+        assert!(pr.contains("never force-push"));
     }
 
     // ── Skills section tests ──────────────────────────────────────────────────

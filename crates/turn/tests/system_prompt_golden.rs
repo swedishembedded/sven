@@ -6,13 +6,12 @@
 // agents reproducible for its clients. If your team needs expertise in
 // attributing model behaviour to the exact prompt that caused it then you can
 // procure our services by sending an email to info@swedishembedded.com.
-//! Spec: the system prompt is byte-identical across refactors of how it is
-//! composed.
+//! Spec: the system prompt changes only on purpose.
 //!
-//! A model's behaviour depends on every byte of the system prompt, so
-//! restructuring the composer must not change one. Each case renders a prompt
-//! and compares its length and SHA-256 with the value captured from the
-//! composer before it was split into named sections.
+//! A model's behaviour depends on every byte of the system prompt, so a
+//! refactor of how it is composed must not change one, and a change of its
+//! text must show up here. Each case renders a prompt and compares its length
+//! and SHA-256 with the pinned value.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -183,18 +182,18 @@ fn rendered_prompts_are_byte_identical_to_the_captured_composer() {
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
-/// `(case, length in bytes, SHA-256)`, captured from the composer before it
-/// was split into sections.
+/// `(case, length in bytes, SHA-256)` of the current prompt. A change here is a
+/// deliberate change of what every model reads.
 const GOLDEN: &[(&str, usize, &str)] = &[
     (
         "append-only",
-        5634,
-        "3499494a770886ee62ce40654683bf55cfc116184f636c22bed93edc9a5af592",
+        1680,
+        "beeb02886d7bccfa12d429ef0dcccbaff12e1aa6fbcc3bc65d185e07192364e0",
     ),
     (
         "blank-volatile",
-        7377,
-        "e190106597bdcc98a6615beb7241c611f56bef2a025bf89f85f234f0ae96af4a",
+        3423,
+        "0c2401b8cfefb1539e63890b30d8d2878a08fcabfcacc5a817eb8f2935e4ba77",
     ),
     (
         "custom+append",
@@ -208,57 +207,57 @@ const GOLDEN: &[(&str, usize, &str)] = &[
     ),
     (
         "deferred",
-        7259,
-        "c24c881b1fe2851b73f30c658bf095e51f14a4d1d6bfaf19abf40724cb927052",
+        3305,
+        "9226528f6b7ad7722dd134503106372714689e580963d2b87ae6a8de21869258",
     ),
     (
         "empty/agent",
-        5622,
-        "7cb3edc20d8949fd8918361f1194b31c775791b4e8dca1f858c162ac272ad150",
+        1668,
+        "e585831cd66b1f27bac5cf05983c9deafff52b47f317f890f2998a539e794bf3",
     ),
     (
         "empty/chat",
-        5218,
-        "ae3bfea117806ffed2dba4dc031ed070c7b7a4482d1930048e63301b319fda6f",
+        1621,
+        "cc375ed67040a1890a3fe1c4d601a8fb146584146226e177a3a42fec47317ea8",
     ),
     (
         "empty/plan",
-        5792,
-        "e6d9f07e7bb8ba6298ee3212fcbee35ae7d7eb0d864025a63fc8bdf2ec80a053",
+        2195,
+        "ca70c56999aeac7fa8e4e6ef7df05d4923605563e2207a162007acf568b14104",
     ),
     (
         "empty/research",
-        5325,
-        "ee418d9497ebe70ebe78f4076b3cc098701e38a92072c9b44ad5170d5ffe6e88",
+        1728,
+        "a04d3fec8fedb7b13e994faad0e7d93a84a3ed1b6ffa68c64ba1b60d279e818b",
     ),
     (
         "empty/sdlc",
-        5353,
-        "28ce6e314c1dcc0dd9333823ebbf63aa0228e343814ac7f22d6db8606bcb2f10",
+        1756,
+        "c40cfa63980048a2c28b69dc8a3d975564924d02800a7c49b3cf55cdd551aa74",
     ),
     (
         "full/agent",
-        7414,
-        "e3b37111c1db69d9f3419e31decce5a1213ec4637284a0e92b8209bbeca2c5b2",
+        3460,
+        "c5cfb95dc3052494d6f6c524523f209a4341d609b85133ada85279e2a7dadf46",
     ),
     (
         "full/chat",
-        7010,
-        "dd0447f811aeb72c1ac3003f29a79e65c079d30e81067560e0c638f0b3c72cb4",
+        3413,
+        "f5d43e93579c3de3dc045a668b634bf6535741de3c7144b30d3657c1991d5eba",
     ),
     (
         "full/plan",
-        7584,
-        "da0e9d93300d5a2c3b642fa38e85a99f4c52dfc2fcf08147b4542e25baffe062",
+        3987,
+        "38680a951ea6d991bfaee1b09d2c7b877b9b75578a457c14f767e71786630f1e",
     ),
     (
         "full/research",
-        7117,
-        "ecd73550ab019fc88c6ca9452be6589c6acdc396d795140524570c6d99cb692a",
+        3520,
+        "9bbe700dc98bb8bd0798ec19ac8f45f010acd13ec47d0a59d9f087e355b1866a",
     ),
     (
         "full/sdlc",
-        7145,
-        "2f5ce943456b95539814fb651459e117f4fda2ebacdd1d829ca932d54e2a6282",
+        3548,
+        "178fa6baadcc73b15b6af3ab7bbfd00404f1d6a54490736631c7792004fa1c45",
     ),
 ];
