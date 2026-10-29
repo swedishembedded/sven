@@ -57,6 +57,9 @@ pub(super) struct Assembly {
     /// is never part of the engine's configuration, so no trace, recording,
     /// checkpoint or audit record can carry it.
     api_key: Option<String>,
+    /// The models that answer the roles the workflow names, served by the
+    /// same endpoint.
+    roles: Vec<RoleModel>,
     approvals: ApprovalsArg,
     first_byte_timeout_secs: Option<u64>,
     capabilities: Vec<ToolCapability>,
@@ -111,6 +114,22 @@ impl Assembly {
             .as_deref()
             .map(|file| read_api_key(file, provider, &workspace))
             .transpose()?;
+        let roles = role_models(&args.model_roles, &plan.model_roles())?
+            .into_iter()
+            .map(|(role, provider, model)| {
+                let api_key = args
+                    .api_key_file
+                    .as_deref()
+                    .map(|file| read_api_key(file, &provider, &workspace))
+                    .transpose()?;
+                Ok(RoleModel {
+                    role,
+                    provider,
+                    model,
+                    api_key,
+                })
+            })
+            .collect::<Result<_, Failure>>()?;
         let capabilities = if args.allow_capabilities.is_empty() {
             DEFAULT_CAPABILITIES.to_vec()
         } else {
@@ -176,6 +195,7 @@ impl Assembly {
             model: model.to_string(),
             endpoint: endpoint.to_string(),
             api_key,
+            roles,
             approvals,
             first_byte_timeout_secs: args.first_byte_timeout,
             capabilities,
@@ -220,7 +240,23 @@ impl Assembly {
             .map_err(|e| usage(format!("cannot build the model client: {e:#}")))?;
         // The client holds the key; the engine's configuration does not.
         model.api_key = None;
-        let builder = Engine::builder()
+        let mut builder = Engine::builder();
+        for role in self.roles {
+            let mut role_config = config.model.clone();
+            role_config.provider = role.provider;
+            role_config.name = role.model;
+            role_config.api_key = role.api_key;
+            let client = sven_sdk::drivers::from_config_probed(&role_config)
+                .await
+                .map_err(|e| {
+                    usage(format!(
+                        "cannot build the model client of role `{}`: {e:#}",
+                        role.role
+                    ))
+                })?;
+            builder = builder.model_role(role.role, Arc::from(client));
+        }
+        let builder = builder
             .config(config)
             .model_provider(Arc::from(client))
             .toolset(Toolset::coding())
@@ -280,6 +316,66 @@ fn write_atomically(file: &Path, checkpoint: &HarnessCheckpoint) -> std::io::Res
     let staging = PathBuf::from(staging);
     std::fs::write(&staging, serde_json::to_vec_pretty(checkpoint)?)?;
     std::fs::rename(&staging, file)
+}
+
+/// One `--model-role`: the model that answers `role`.
+struct RoleModel {
+    role: String,
+    provider: String,
+    model: String,
+    /// Held only until the role's client is built, like [`Assembly`]'s key.
+    api_key: Option<String>,
+}
+
+/// Parses the `--model-role ROLE=provider/name` flags into `(role, provider,
+/// name)`, refusing a malformed or repeated one, a role the workflow names
+/// that is left unmapped (its turn would fail mid-run) and a mapped role it
+/// does not name.
+fn role_models(
+    flags: &[String],
+    named: &std::collections::BTreeSet<&str>,
+) -> Result<Vec<(String, String, String)>, Failure> {
+    let mut mapped = std::collections::BTreeMap::new();
+    for flag in flags {
+        let parsed = flag.split_once('=').and_then(|(role, spec)| {
+            let (provider, model) = spec.split_once('/')?;
+            let filled = [role, provider, model]
+                .iter()
+                .all(|part| !part.trim().is_empty());
+            filled.then(|| (role.trim(), (provider.trim(), model.trim())))
+        });
+        let (role, spec) = parsed.ok_or_else(|| {
+            usage(format!(
+                "--model-role {flag} must be ROLE=<provider>/<name>"
+            ))
+        })?;
+        if mapped.insert(role, spec).is_some() {
+            return Err(usage(format!("--model-role {role} is given twice")));
+        }
+    }
+    let unmapped: Vec<&str> = named
+        .iter()
+        .copied()
+        .filter(|r| !mapped.contains_key(r))
+        .collect();
+    if !unmapped.is_empty() {
+        return Err(usage(format!(
+            "the workflow names model role(s) {}: map each with --model-role ROLE=<provider>/<name>",
+            unmapped.join(", ")
+        )));
+    }
+    if let Some(role) = mapped.keys().find(|r| !named.contains(*r)) {
+        return Err(usage(format!(
+            "--model-role {role}: the workflow names no such role (it names: {})",
+            named.iter().copied().collect::<Vec<_>>().join(", ")
+        )));
+    }
+    Ok(mapped
+        .into_iter()
+        .map(|(role, (provider, model))| {
+            (role.to_string(), provider.to_string(), model.to_string())
+        })
+        .collect())
 }
 
 fn capability_named(name: &str) -> Result<ToolCapability, Failure> {

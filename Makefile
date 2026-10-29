@@ -270,7 +270,7 @@ test/harness/sdk:
 
 ## test/harness/cli - the `sven harness` command line, against a loopback scripted model server
 test/harness/cli:
-	$(HARNESS_TEST) -p sven --test harness_cli --test harness_production --test harness_suspension --test harness_views --test harness_cli_outputs --test harness_isolation -- --test-threads=4
+	$(HARNESS_TEST) -p sven --test harness_cli --test harness_production --test harness_suspension --test harness_views --test harness_cli_outputs --test harness_isolation --test harness_model_roles -- --test-threads=4
 
 ## test/e2e/delegation - lists the delegation checks; runs nothing
 test/e2e/delegation:

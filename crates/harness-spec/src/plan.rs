@@ -344,6 +344,23 @@ impl HarnessPlan {
         self.steps.get(id)
     }
 
+    /// The model roles this plan's turns name: what a host must map to a
+    /// provider before the plan can run. A turn without a role uses the
+    /// host's default model and adds nothing here. Imported workflows are
+    /// plans of their own.
+    #[must_use]
+    pub fn model_roles(&self) -> std::collections::BTreeSet<&str> {
+        self.steps
+            .values()
+            .filter_map(|step| match &step.primitive {
+                PlanPrimitive::Predict { role, .. } | PlanPrimitive::Agent { role, .. } => {
+                    role.as_deref()
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Computes the canonical digest of a plan-shaped value: canonical JSON
     /// (sorted keys — `serde_json` with the `preserve_order` feature off is
     /// a `BTreeMap` under the hood) over a tagged envelope.

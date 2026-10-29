@@ -172,7 +172,7 @@ sven harness status   <PATH> --checkpoint FILE [--json]
 sven harness schema   [<PATH>]
 sven harness run      <PATH> [--input JSON | --input-file FILE] --workspace DIR
                       --model SPEC --model-endpoint URL --approvals auto|deny|ask
-                      [--allow-capability NAME]... [--api-key-file FILE]
+                      [--model-role ROLE=SPEC]... [--allow-capability NAME]... [--api-key-file FILE]
                       [--first-byte-timeout SECS] [--timeout SECS] [--max-output-tokens N]
                       [--scratchpad DIR] [--trace FILE] [--record FILE]
                       [--trajectory FILE] [--conversations DIR]
@@ -253,6 +253,13 @@ sven harness run ./c-repair --workspace ./repo \
   refused.
 - `--model` and `--model-endpoint` name a server you already run; sven never
   starts or pulls a model, and no environment variable supplies an endpoint.
+- `--model-role ROLE=provider/name` (repeatable) maps a model role the
+  workflow names (`agent.model`, a task's `model`) to its model, served by the
+  same `--model-endpoint` with the key `--api-key-file` holds for that
+  provider. A turn without a role goes to `--model`. Every role the workflow
+  names must be mapped and a mapped role it does not name is refused, both
+  before any model is asked. Roles in imported workflows are not checked up
+  front; an unmapped one fails its turn naming the role.
 - `--approvals` is `auto` (allowed calls run unasked), `deny` (every call
   that is not read-only is refused, including a harness's own
   gate steps, so a gate step fails the run rather than passing without running)

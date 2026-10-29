@@ -35,6 +35,8 @@ pub fn sample() -> PathBuf {
 pub struct Seen {
     pub authorization: Vec<String>,
     pub requests: usize,
+    /// The `model` each chat request named, in order.
+    pub models: Vec<String>,
 }
 
 /// A loopback chat-completions server that answers its n-th request with the
@@ -95,6 +97,12 @@ fn answer(mut stream: TcpStream, script: &[Turn], next: &AtomicUsize, log: &Mute
     {
         let mut seen = log.lock().unwrap();
         seen.requests += 1;
+        if let Some(model) = serde_json::from_slice::<Value>(&body)
+            .ok()
+            .and_then(|b| b["model"].as_str().map(str::to_string))
+        {
+            seen.models.push(model);
+        }
         if let Some(auth) = head
             .lines()
             .find(|l| l.to_ascii_lowercase().starts_with("authorization:"))

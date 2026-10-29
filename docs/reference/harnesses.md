@@ -98,8 +98,11 @@ with under `extra.sven.decoding` of its step. A setting that does not resolve
 fails the run with `invalid_setting`.
 **Model roles.** `agent.model` and a task's `model` name a *role*, never an
 endpoint or key. The host maps roles to providers
-(`EngineBuilder::model_role(role, provider)`); a role it does not provide fails the
+(`EngineBuilder::model_role(role, provider)`; on the command line
+`--model-role ROLE=provider/name`); a role it does not provide fails the
 turn with an error naming it, and there is no fallback to the default model.
+`HarnessPlan::model_roles()` lists the roles a plan names, so a host can refuse
+an unmapped one before the run starts.
 
 **Gate data.** A command gate may take `stdin` (a template, at most 32 MiB; it
 reaches the program verbatim). After a check runs, templates read

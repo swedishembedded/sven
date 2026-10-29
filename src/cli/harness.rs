@@ -212,6 +212,13 @@ pub struct HarnessRunArgs {
     /// Base URL of the model server you already run. Required.
     #[arg(long, value_name = "URL", requires = "model")]
     pub model_endpoint: Option<String>,
+    /// The model that answers a role the harness names (`agent.model` or a
+    /// task's `model`), `ROLE=provider/name` (repeatable). It is served by
+    /// `--model-endpoint` with the key `--api-key-file` holds for its
+    /// provider. Every role the workflow names must be mapped, and a mapped
+    /// role it does not name is refused as a likely typo.
+    #[arg(long = "model-role", value_name = "ROLE=SPEC", requires = "model")]
+    pub model_roles: Vec<String>,
     /// Whether calls wait for you. Required: a run never inherits an
     /// approval mode.
     #[arg(long, value_enum, value_name = "MODE")]

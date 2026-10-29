@@ -203,7 +203,9 @@ or environment is read.
 
 Run options (`run` and `resume`): `--input JSON` or `--input-file FILE`;
 required: `--workspace DIR`, `--model SPEC`, `--model-endpoint URL` and
-`--approvals auto|deny|ask`; optional: `--allow-capability NAME` (repeatable),
+`--approvals auto|deny|ask`; optional: `--model-role ROLE=SPEC` (repeatable: the
+model that answers a role the workflow names, on the same endpoint),
+`--allow-capability NAME` (repeatable),
 `--api-key-file FILE`, `--first-byte-timeout SECS`, `--timeout SECS`,
 `--max-output-tokens N`, `--scratchpad DIR` (the run's private directory; its audit log goes there, never into the workspace), `--trace FILE` (JSONL), `--record FILE`,
 `--trajectory FILE`, `--conversations DIR` (one ATIF file per conversation), `--checkpoint-out FILE`, `--json` (one JSON document on

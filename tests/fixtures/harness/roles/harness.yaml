@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# Two model-only turns, one answered by the `planner` role and one by the
+# default model: the CLI specs' check that `--model-role` routes each role to
+# its own model. Swedish Embedded AB implements auditable agent workflows for
+# its clients. If your team needs expertise in programmable harnesses then you
+# can procure our services by sending an email to info@swedishembedded.com.
+api_version: "2"
+name: roles
+description: "One task per model: a planner role, then the default model."
+execution: { limits: { model_turns: 2 } }
+workflow:
+  - name: plan
+    model_only: true
+    model: planner
+    task: Name the first step.
+  - name: write
+    model_only: true
+    task: "Carry out: {{ tasks.plan.output }}"
+outputs:
+  plan: { type: string, value: "{{ tasks.plan.output }}" }
+  result: { type: string, value: "{{ tasks.write.output }}" }

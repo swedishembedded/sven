@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **harness**: `sven harness run` and `resume` take `--model-role ROLE=provider/name` (repeatable), so a workflow whose tasks name model roles (`agent.model`, a task's `model`) runs from the command line with one model per role on the same endpoint. A role the workflow names but the flags leave unmapped, or a mapped role it does not name, is refused before any model is asked. `HarnessPlan::model_roles()` lists the roles a plan names.
+
 ## [4.2.1] - 2026-10-29
 
 ### Fixed
