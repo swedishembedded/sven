@@ -419,6 +419,30 @@ async fn the_servers_output_cap_and_tool_support_are_remembered_when_it_reports_
     assert_eq!(live.tool_support(), Some(false));
 }
 
+#[tokio::test]
+async fn the_input_modalities_a_server_reports_decide_whether_images_are_sent() {
+    use sven_model::catalog::InputModality::{Image, Text};
+
+    let vision = Swappable::serving(ServedModel {
+        input_modalities: Some(vec![Text, Image]),
+        ..model("m", Some(4096))
+    });
+    let live = LiveState::new("m", true);
+    live.refresh(&vision).await;
+    assert_eq!(live.input_modalities(), Some(vec![Text, Image]));
+    let provider = bounded(vision, None, live);
+    assert!(
+        provider.supports_images(),
+        "a local server that serves a vision model is sent images"
+    );
+
+    let silent = LiveState::new("m", true);
+    silent
+        .refresh(&Swappable::serving(model("m", Some(4096))))
+        .await;
+    assert_eq!(silent.input_modalities(), None, "not reported is unknown");
+}
+
 fn bounded(
     server: Swappable,
     configured_cap: Option<u32>,
@@ -503,4 +527,21 @@ async fn an_unreachable_server_yields_to_the_reserve() {
         (cfg.provider.as_str(), cfg.name.as_str()),
         ("anthropic", "claude-sonnet-4-6")
     );
+}
+
+#[tokio::test]
+async fn a_probed_client_of_a_local_vision_model_accepts_images() {
+    let url = serve(
+        json!({"data": [{"id": "vl", "architecture": {"input_modalities": ["text", "image"]}}]})
+            .to_string(),
+    )
+    .await;
+    let cfg = ModelConfig {
+        provider: "vllm".into(),
+        name: "vl".into(),
+        base_url: Some(url),
+        ..ModelConfig::default()
+    };
+    let client = crate::from_config_probed(&cfg).await.unwrap();
+    assert!(client.supports_images(), "{:?}", client.input_modalities());
 }

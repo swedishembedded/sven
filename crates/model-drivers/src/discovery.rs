@@ -94,6 +94,7 @@ fn parse_served_model(entry: &Value) -> Option<ServedModel> {
         max_output_tokens: entry.get("max_output_tokens").and_then(token_count),
         tools,
         capabilities,
+        input_modalities: sven_model::catalog::served_input_modalities(entry),
         adapter,
     })
 }
@@ -220,6 +221,8 @@ pub(crate) struct LiveState {
     max_output_tokens: AtomicU32,
     /// Tool support the server reported: [`TOOLS_UNKNOWN`], `NO` or `YES`.
     tools: AtomicU8,
+    /// What the model accepts, as the server reported it; `None` = unknown.
+    input_modalities: Mutex<Option<Vec<sven_model::catalog::InputModality>>>,
     /// The adapter seen on the last answering probe; the outer `None` until
     /// there is one, so the first answer is a baseline and not a change.
     adapter: Mutex<Option<Option<AdapterRef>>>,
@@ -237,6 +240,7 @@ impl LiveState {
             context_window: AtomicU32::new(0),
             max_output_tokens: AtomicU32::new(0),
             tools: AtomicU8::new(TOOLS_UNKNOWN),
+            input_modalities: Mutex::new(None),
             adapter: Mutex::new(None),
             pending_change: Mutex::new(None),
             last_probe: Mutex::new(None),
@@ -250,6 +254,13 @@ impl LiveState {
 
     pub(crate) fn max_output_tokens(&self) -> Option<u32> {
         Some(self.max_output_tokens.load(Ordering::Relaxed)).filter(|&n| n > 0)
+    }
+
+    pub(crate) fn input_modalities(&self) -> Option<Vec<sven_model::catalog::InputModality>> {
+        self.input_modalities
+            .lock()
+            .expect("modalities poisoned")
+            .clone()
     }
 
     pub(crate) fn tool_support(&self) -> Option<bool> {
@@ -317,6 +328,8 @@ impl LiveState {
                     .map_or(TOOLS_UNKNOWN, |t| if t { TOOLS_YES } else { TOOLS_NO }),
                 Ordering::Relaxed,
             );
+            *self.input_modalities.lock().expect("modalities poisoned") =
+                m.input_modalities.clone();
         }
         if served.is_some() {
             self.note_adapter(entry.and_then(|m| m.adapter.clone()));

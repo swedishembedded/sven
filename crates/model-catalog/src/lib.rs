@@ -27,7 +27,7 @@
 mod pricing;
 mod served;
 pub use pricing::{CachePricing, Pricing};
-pub use served::{served_pricing_of, token_count};
+pub use served::{served_input_modalities, served_pricing_of, token_count};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

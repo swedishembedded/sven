@@ -307,6 +307,7 @@ impl ModelProvider for ConfigBoundedProvider {
     fn input_modalities(&self) -> Vec<sven_model::catalog::InputModality> {
         self.input_modalities
             .clone()
+            .or_else(|| self.live.as_ref().and_then(|l| l.input_modalities()))
             .unwrap_or_else(|| self.inner.input_modalities())
     }
 
@@ -692,6 +693,11 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
 ///    `min(config, probed)` - never widened, only narrowed to what the server
 ///    can actually serve. With no probe answer the config value (or none) is
 ///    kept, identical to `from_config`.
+/// 4. A hosted model the catalog does not know yet is listed before the
+///    client is returned (one `GET /models`, bounded like any listing), so
+///    what it accepts (images, audio), its limits and its price are known
+///    from its first turn instead of guessed as text-only; a known model's
+///    stale list is refreshed in the background.
 ///
 /// On a local server the answer is kept fresh: a stale probe is refreshed in
 /// the background on the next turn, and a context-length-exceeded error
@@ -703,7 +709,7 @@ pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn Mod
     let cfg = &resolve_probed(cfg).await;
     let (inner, config_context_window, max_output_tokens) = build_inner(cfg)?;
     let inner: Arc<dyn ModelProvider> = Arc::from(inner);
-    listing::refresh_when_stale(&inner, cfg);
+    listing::settle_for_start(&inner, cfg).await;
     let local =
         discovery::effective_base_url(cfg).is_some_and(|u| discovery::is_local_endpoint(&u));
     let live = discovery::LiveState::new(&cfg.name, local);

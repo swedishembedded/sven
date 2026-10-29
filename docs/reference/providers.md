@@ -114,7 +114,12 @@ successful model list and, for a hosted provider with a stored key, in the
 background when the file is older than 24 hours (and for every provider each
 time `/model` opens), so a start-up without network still knows the last
 served list. A list that fails is an error; sven never
-substitutes entries of its own.
+substitutes entries of its own. A harness run (and `sven replay`) asks a hosted
+endpoint for its list before the first turn when the model is not in the cache
+yet, so a vision model is sent its images from the first turn instead of being
+taken for text-only until a background listing lands. A local server is not
+cached; what its `GET /models` entry states at the start-up probe (input
+modalities included) is used for the session.
 
 | figure | read from the endpoint's `GET /models` entry |
 |--------|-----------------------------------------------|

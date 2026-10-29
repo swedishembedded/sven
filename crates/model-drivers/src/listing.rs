@@ -91,6 +91,49 @@ pub(crate) fn refresh_when_stale(provider: &Arc<dyn ModelProvider>, cfg: &ModelC
     });
 }
 
+/// What a probed start does about a hosted endpoint's model list.
+#[derive(Debug, PartialEq, Eq)]
+enum StartListing {
+    /// Nothing: a local endpoint (probed live instead) or no key to ask with.
+    Skip,
+    /// The model is not in the catalog yet: ask now and wait, because what
+    /// it accepts (images, audio), its limits and its price are read from
+    /// that answer, and a guess would refuse an image the model can see.
+    Await,
+    /// The model is known: refresh a stale list in the background.
+    Background,
+}
+
+fn start_listing(hosted: bool, keyed: bool, model_known: bool) -> StartListing {
+    match (hosted && keyed, model_known) {
+        (false, _) => StartListing::Skip,
+        (true, false) => StartListing::Await,
+        (true, true) => StartListing::Background,
+    }
+}
+
+/// The model list a probed start needs: awaited when `cfg`'s model is not in
+/// the catalog yet, refreshed in the background when it is stale
+/// ([`refresh_when_stale`]). An awaited listing that fails is logged and
+/// leaves the model unknown (text only, no price), as before.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn settle_for_start(provider: &Arc<dyn ModelProvider>, cfg: &ModelConfig) {
+    let hosted = effective_base_url(cfg).is_some_and(|url| !is_local_endpoint(&url));
+    let known = catalog::lookup(&cfg.provider, &cfg.name).is_some();
+    match start_listing(hosted, resolve_api_key(cfg).is_some(), known) {
+        StartListing::Skip => {}
+        StartListing::Background => refresh_when_stale(provider, cfg),
+        StartListing::Await => {
+            if let Err(e) = provider.list_models().await {
+                tracing::warn!(provider = provider.name(), error = %e, "model list failed; the model's modalities and price stay unknown");
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn settle_for_start(_provider: &Arc<dyn ModelProvider>, _cfg: &ModelConfig) {}
+
 /// Ask `cfg`'s endpoint for its models in the background, whatever the age of
 /// its cache: what a model menu does each time it opens, so the next look
 /// at it is current. Wakes [`listings_changed`] once the new list is
@@ -127,3 +170,16 @@ pub fn listings_changed() -> &'static tokio::sync::Notify {
 /// A browser has no on-disk catalog to refresh.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn refresh_when_stale(_provider: &Arc<dyn ModelProvider>, _cfg: &ModelConfig) {}
+
+#[cfg(test)]
+mod tests {
+    use super::{start_listing, StartListing};
+
+    #[test]
+    fn an_unknown_hosted_model_is_listed_before_use() {
+        assert_eq!(start_listing(true, true, false), StartListing::Await);
+        assert_eq!(start_listing(true, true, true), StartListing::Background);
+        assert_eq!(start_listing(false, true, false), StartListing::Skip);
+        assert_eq!(start_listing(true, false, false), StartListing::Skip);
+    }
+}

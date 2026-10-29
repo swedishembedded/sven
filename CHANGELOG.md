@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **harness**: `sven harness run` and `resume` take `--model-role ROLE=provider/name` (repeatable), so a workflow whose tasks name model roles (`agent.model`, a task's `model`) runs from the command line with one model per role on the same endpoint. A role the workflow names but the flags leave unmapped, or a mapped role it does not name, is refused before any model is asked. `HarnessPlan::model_roles()` lists the roles a plan names.
 
+### Fixed
+- **providers**: a harness run (and `sven replay`) on a hosted model the model cache does not know yet lists the endpoint's models before the first turn instead of in the background, so a vision model on OpenRouter is sent the images `read_file` and `attach_file` produce instead of being taken for text-only.
+- **providers**: the input modalities a local server states for its model in `GET /models` (`architecture.input_modalities` or `capabilities`) are read by the start-up probe, so a vision model on brain or vLLM is sent images without an `input_modalities` setting. `ServedModel::input_modalities` and `sven_model::catalog::served_input_modalities` carry them.
+
 ## [4.2.1] - 2026-10-29
 
 ### Fixed

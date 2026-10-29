@@ -66,11 +66,20 @@ pub fn token_count(v: Option<&Value>) -> Option<u32> {
 }
 
 fn input_modalities_of(item: &Value) -> Vec<InputModality> {
+    served_input_modalities(item).unwrap_or_else(|| vec![InputModality::Text])
+}
+
+/// The input modalities one `GET /models` entry states, from
+/// `architecture.input_modalities`, else `capabilities`; `None` when it
+/// states neither (unknown, not text-only). Text is always included.
+#[must_use]
+pub fn served_input_modalities(item: &Value) -> Option<Vec<InputModality>> {
     let listed = |pointer: &str| item.pointer(pointer).and_then(Value::as_array);
     let names: Vec<&str> = listed("/architecture/input_modalities")
-        .or_else(|| listed("/capabilities"))
-        .map(|a| a.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
+        .or_else(|| listed("/capabilities"))?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     let mut out = vec![InputModality::Text];
     for (modality, spellings) in [
         (InputModality::Image, ["image", "vision"]),
@@ -80,7 +89,7 @@ fn input_modalities_of(item: &Value) -> Vec<InputModality> {
             out.push(modality);
         }
     }
-    out
+    Some(out)
 }
 
 /// The `pricing` object of a served model, converted to [`Pricing`].

@@ -50,6 +50,9 @@ pub struct ServedModel {
     pub tools: Option<bool>,
     /// The raw capability names the server advertised, unfiltered.
     pub capabilities: Option<Vec<String>>,
+    /// What the model accepts besides text, when the server says
+    /// (`architecture.input_modalities` or `capabilities`).
+    pub input_modalities: Option<Vec<InputModality>>,
     /// The adapter currently applied to this model, when the server reports one.
     pub adapter: Option<AdapterRef>,
 }
