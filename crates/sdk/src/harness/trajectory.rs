@@ -285,13 +285,40 @@ pub(super) fn build_trajectory(
                     .collect::<Vec<_>>(),
             }
         }));
-        trajectory.final_metrics = Some(atif::FinalMetrics {
-            total_prompt_tokens: evidence.outcome.usage.input_tokens,
-            total_completion_tokens: evidence.outcome.usage.output_tokens,
-            total_steps: Some(evidence.outcome.steps),
-            ..atif::FinalMetrics::default()
-        });
+        trajectory.final_metrics = Some(step_totals(&trajectory, evidence.outcome.steps));
         trajectory
+    }
+}
+
+/// The run's totals, summed over the steps of the shared thread and of every
+/// embedded conversation, so they mean what ATIF says they mean: prompt
+/// tokens include the cached part (the run's `Usage::input_tokens` does
+/// not), and the cached tokens and the cost are reported too. A total no
+/// step reports is `None`, never zero.
+fn step_totals(trajectory: &atif::Trajectory, steps: u64) -> atif::FinalMetrics {
+    let metrics: Vec<&atif::StepMetrics> = trajectory
+        .steps
+        .iter()
+        .chain(
+            trajectory
+                .subagent_trajectories
+                .iter()
+                .flatten()
+                .flat_map(|t| t.steps.iter()),
+        )
+        .filter_map(|s| s.metrics.as_ref())
+        .collect();
+    fn total<T: std::iter::Sum<T>>(values: impl Iterator<Item = Option<T>>) -> Option<T> {
+        let known: Vec<T> = values.flatten().collect();
+        (!known.is_empty()).then(|| known.into_iter().sum())
+    }
+    atif::FinalMetrics {
+        total_prompt_tokens: total(metrics.iter().map(|m| m.prompt_tokens)),
+        total_completion_tokens: total(metrics.iter().map(|m| m.completion_tokens)),
+        total_cached_tokens: total(metrics.iter().map(|m| m.cached_tokens)),
+        total_cost_usd: total(metrics.iter().map(|m| m.cost_usd)),
+        total_steps: Some(steps),
+        ..atif::FinalMetrics::default()
     }
 }
 

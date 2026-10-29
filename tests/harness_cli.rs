@@ -147,7 +147,9 @@ fn run_returns_json_and_exit_0() {
     assert!(report["steps"].as_u64().is_some_and(|n| n >= 2));
     assert!(report["plan_digest"].is_string());
     assert!(report["run_id"].is_string());
-    assert!(report["usage"].is_object());
+    for key in ["input_tokens", "cached_tokens", "output_tokens", "cost_usd"] {
+        assert!(report["usage"].get(key).is_some(), "usage reports {key}");
+    }
     assert!(
         stderr(&out).contains("[sven:harness]"),
         "progress goes to stderr: {}",

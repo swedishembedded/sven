@@ -68,8 +68,12 @@ pub(super) struct RunSummary {
     pub steps: u64,
     /// Start counts by step id (top-level run only).
     pub step_counts: BTreeMap<String, u64>,
-    /// Prompt tokens the provider reported, when it reported any.
+    /// Prompt tokens the provider reported, excluding prompt-cache hits.
     pub input_tokens: Option<u64>,
+    /// Prompt tokens served from the provider's cache.
+    pub cached_tokens: Option<u64>,
+    /// What the provider charged, in USD, when it says.
+    pub cost_usd: Option<f64>,
     /// Generated tokens the provider reported, when it reported any.
     pub output_tokens: Option<u64>,
     /// The plan's digest.
@@ -420,6 +424,8 @@ fn summarize(harness: &Harness, outcome: &HarnessOutcome) -> RunSummary {
         steps: outcome.steps,
         step_counts: outcome.step_counts(),
         input_tokens: outcome.usage.input_tokens,
+        cached_tokens: outcome.usage.cached_tokens,
+        cost_usd: outcome.usage.cost_usd,
         output_tokens: outcome.usage.output_tokens,
         plan_digest: harness.digest().to_string(),
     }

@@ -303,9 +303,16 @@ goes. `--json` replaces the stdout text with one JSON document:
 
 ```text
 harness, plan_digest, bundle_digest, run_id, status, conclusion, output,
-failure, usage {input_tokens, output_tokens}, steps, step_counts,
-duration_ms, corrections, refused_messages, checkpoint
+failure, usage {input_tokens, cached_tokens, output_tokens, cost_usd},
+steps, step_counts, duration_ms, corrections, refused_messages, checkpoint
 ```
+
+`usage.input_tokens` counts the prompt tokens the provider processed
+afresh; those served from its prompt cache are `cached_tokens`, so the
+prompt tokens the model read are their sum. `cost_usd` is what the
+provider charged (the sum of the per-request figures it reported), `null`
+when it reported none. The trajectory's `final_metrics` sum the same
+figures over every conversation's steps.
 
 `status` is `completed`, `failed`, `cancelled` or `suspended`. A suspended run
 without `--checkpoint-out` prints a note saying its checkpoint was dropped.

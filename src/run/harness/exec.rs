@@ -205,7 +205,9 @@ fn report(args: &HarnessRunArgs, result: &RunResult) -> Value {
         "failure": summary.failure,
         "usage": {
             "input_tokens": summary.input_tokens,
+            "cached_tokens": summary.cached_tokens,
             "output_tokens": summary.output_tokens,
+            "cost_usd": summary.cost_usd,
         },
         "steps": summary.steps,
         "step_counts": summary.step_counts,
