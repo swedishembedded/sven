@@ -26,6 +26,7 @@ pub(crate) mod questions;
 #[cfg(feature = "network")]
 pub(crate) mod remote;
 pub(crate) mod replay;
+mod replay_sample;
 pub(crate) mod secret;
 pub(crate) mod task;
 #[cfg(feature = "network")]
@@ -33,4 +34,5 @@ pub(crate) mod team;
 pub(crate) mod tool;
 #[cfg(feature = "tui")]
 pub(crate) mod tui;
+mod variant;
 pub(crate) mod workflow;

@@ -65,8 +65,8 @@ What limits success now:
 - Arms run concurrently on the same server (load is a confounder); at least 3
   samples per task; paired wins and losses per task with a sign test.
 - Fast inner loop: replay a recorded request at a failure point with one
-  section or tool description swapped (`--record-requests`, `sven replay`);
-  the request-manifest work this needs is parked as a patch.
+  section or tool description swapped, many samples
+  (`docs/guides/request-replay.md`); confirm a winner on tasks.
 - Gates: CI pins prompt bytes (`crates/turn/tests/system_prompt_golden.rs`),
   request cost and cache-prefix stability, zero harness aborts on scripted
   runs; a small real-model suite before a release must not lose to the
@@ -82,9 +82,7 @@ What limits success now:
    byte-identical (implemented, A/B next). Land what wins.
 2. Outcome classes for every run (solved, wrong, timeout, harness abort,
    server error) and a zero-harness-abort gate.
-3. Request replay with section and tool-description swaps, for decisions in
-   minutes instead of hours.
-4. One-call navigation (definition, callers, file outline) and project facts
+3. One-call navigation (definition, callers, file outline) and project facts
    found by a script (test runner, single-test command, build), each A/B'd.
-5. Multi-sample runs on the eval splits against the reference agents, then a
+4. Multi-sample runs on the eval splits against the reference agents, then a
    second model family.

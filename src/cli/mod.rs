@@ -5,7 +5,7 @@
 //! enum, and one module per subcommand group's own nested `*Commands` enum.
 //!
 //! This mirrors `src/run/` (see `src/main.rs`), which holds the *handler*
-//! for each of these groups — this module only declares the clap grammar.
+//! for each of these groups - this module only declares the clap grammar.
 //!
 //! Doc comments here are clap's `--help` text, printed verbatim, so their
 //! `<NAME>` placeholders are usage syntax, not HTML; rustdoc is told so.
@@ -461,6 +461,8 @@ pub enum Commands {
     /// Send a recorded model request (`--record-requests`) again, to
     /// reproduce what the model did there; no tool runs.
     ///   sven replay run.requests.jsonl --request 14 --repeat 5 --seed 7
+    ///   sven replay run.requests.jsonl --list
+    ///   sven replay run.requests.jsonl --request 14 --variant terse.yaml --repeat 10 --json
     Replay(ReplayArgs),
     /// Summarize the token ledger of a saved trajectory.
     ///

@@ -13,12 +13,15 @@
 //! against the current build of the model server and drivers, reproduces the
 //! fault without the agent, its tools or its workspace; no tool runs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 use futures::StreamExt;
 use sven_model::{CompletionRequest, ModelProvider};
 use sven_model_drivers::request_log::{read_log, Record, Response};
+
+use super::replay_sample;
+use super::variant::Variant;
 
 /// Which seed each replayed request carries.
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +32,18 @@ pub(crate) enum ReplaySeed {
     Reported,
     /// This seed.
     Fixed(u64),
+}
+
+/// What to send, how often, and what to change first.
+#[derive(Debug)]
+pub(crate) struct ReplayOptions {
+    /// The request to replay, 1-based; the last when `None`.
+    pub index: Option<usize>,
+    pub repeat: u32,
+    pub seed: ReplaySeed,
+    pub json: bool,
+    /// A variant file to apply to the request before sending it.
+    pub variant: Option<PathBuf>,
 }
 
 /// A recorded request with the response recorded for it.
@@ -70,7 +85,7 @@ fn tail(text: &str, chars: usize) -> String {
     if n <= chars {
         flat
     } else {
-        format!("…{}", flat.chars().skip(n - chars).collect::<String>())
+        format!("...{}", flat.chars().skip(n - chars).collect::<String>())
     }
 }
 
@@ -98,7 +113,27 @@ fn summary(r: &Response) -> String {
     line
 }
 
-/// Print the requests of `file`, one line each, numbered for `--request`.
+/// The sections and tools a recorded request is made of, on one line: each
+/// section id with the first eight hex digits of its hash.
+fn manifest_line(request: &CompletionRequest) -> String {
+    let Some(m) = &request.manifest else {
+        return "no manifest".into();
+    };
+    let sections: Vec<String> = m
+        .sections
+        .iter()
+        .map(|s| format!("{}#{}", s.id, &s.sha256[..8]))
+        .collect();
+    let sections = if sections.is_empty() {
+        "sections unknown".into()
+    } else {
+        sections.join(" ")
+    };
+    format!("{sections} | tools={}", m.tools.len())
+}
+
+/// Print the requests of `file`, one line each, numbered for `--request`,
+/// with the sections and tool count each is made of.
 pub(crate) fn list(file: &Path) -> anyhow::Result<()> {
     for (i, e) in entries(file)?.iter().enumerate() {
         let recorded = e
@@ -110,25 +145,25 @@ pub(crate) fn list(file: &Path) -> anyhow::Result<()> {
             i + 1,
             e.request.messages.len()
         );
+        println!("      {}", manifest_line(&e.request));
     }
     Ok(())
 }
 
 /// Send request `index` (1-based; the last one when `None`) of `file`
 /// `repeat` times to `model`, printing each response beside the recorded one.
+/// With a variant the request is changed first and each sample is one JSON
+/// line (see [`replay_sample`]).
 pub(crate) async fn replay(
     file: &Path,
-    index: Option<usize>,
-    repeat: u32,
-    seed: ReplaySeed,
-    json: bool,
+    options: &ReplayOptions,
     model: &dyn ModelProvider,
 ) -> anyhow::Result<()> {
     let all = entries(file)?;
     if all.is_empty() {
         bail!("{} holds no recorded request", file.display());
     }
-    let index = index.unwrap_or(all.len());
+    let index = options.index.unwrap_or(all.len());
     let Some(entry) = index.checked_sub(1).and_then(|i| all.get(i)) else {
         bail!(
             "{} holds requests 1 to {}, not {index}",
@@ -137,7 +172,7 @@ pub(crate) async fn replay(
         );
     };
     let mut request = entry.request.clone();
-    match seed {
+    match options.seed {
         ReplaySeed::AsRecorded => {}
         ReplaySeed::Fixed(s) => request.sampling.seed = Some(s),
         ReplaySeed::Reported => {
@@ -148,48 +183,60 @@ pub(crate) async fn replay(
             request.sampling.seed = Some(s);
         }
     }
-    if !json {
+    let variant = options.variant.as_deref().map(Variant::load).transpose()?;
+    if let Some(variant) = &variant {
+        variant.apply(&mut request).with_context(|| {
+            format!("applying variant {:?} to request {index}", variant.label())
+        })?;
+    }
+    let label = variant.as_ref().map_or("baseline", Variant::label);
+    if !options.json {
         let recorded = entry.response.as_ref().map_or("(none)".into(), summary);
         println!(
-            "request {index}: {} messages, recorded: {recorded}",
+            "request {index} ({label}): {} messages, recorded: {recorded}",
             request.messages.len()
         );
     }
-    for attempt in 1..=repeat {
-        let mut response = Response::default();
-        match model.complete(request.clone()).await {
-            Ok(mut stream) => {
-                while let Some(item) = stream.next().await {
-                    match item {
-                        Ok(event) => response.observe(&event),
-                        Err(e) => {
-                            response.error = Some(format!("{e:#}"));
-                            break;
-                        }
-                    }
-                }
-            }
-            Err(e) => response.error = Some(format!("{e:#}")),
-        }
-        if json {
-            let line =
-                serde_json::json!({"request": index, "attempt": attempt, "response": response});
-            println!("{line}");
+    for sample in 1..=options.repeat {
+        let response = send(model, &request).await;
+        if options.json {
+            println!(
+                "{}",
+                replay_sample::line(label, index, sample, &response, &request.tools)
+            );
         } else {
-            println!("attempt {attempt}: {}", summary(&response));
+            println!("sample {sample}: {}", summary(&response));
         }
     }
     Ok(())
+}
+
+/// One completion of `request`, folded into a [`Response`]; a failure is
+/// recorded in it, not raised, so the other samples still run.
+async fn send(model: &dyn ModelProvider, request: &CompletionRequest) -> Response {
+    let mut response = Response::default();
+    match model.complete(request.clone()).await {
+        Ok(mut stream) => {
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(event) => response.observe(&event),
+                    Err(e) => {
+                        response.error = Some(format!("{e:#}"));
+                        break;
+                    }
+                }
+            }
+        }
+        Err(e) => response.error = Some(format!("{e:#}")),
+    }
+    response
 }
 
 /// `sven replay`: list the requests of `file`, or replay one.
 pub(crate) async fn run_replay_command(
     file: &Path,
     list_only: bool,
-    index: Option<usize>,
-    repeat: u32,
-    seed: ReplaySeed,
-    json: bool,
+    options: &ReplayOptions,
     config: &sven_bootstrap::Config,
 ) -> anyhow::Result<()> {
     if list_only {
@@ -198,5 +245,5 @@ pub(crate) async fn run_replay_command(
     let model = sven_model_drivers::from_config_probed(&config.model)
         .await
         .context("building the model to replay against")?;
-    replay(file, index, repeat, seed, json, model.as_ref()).await
+    replay(file, options, model.as_ref()).await
 }

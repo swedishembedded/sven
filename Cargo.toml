@@ -205,6 +205,8 @@ tracing-subscriber = { workspace = true }
 dirs        = { workspace = true }
 serde_json  = { workspace = true }
 serde_yaml  = { workspace = true }
+# `sven replay`: does a replayed tool call satisfy the tool's parameter schema.
+jsonschema  = { version = "0.49", default-features = false }
 thiserror   = { workspace = true }
 async-trait = { workspace = true }
 serde       = { workspace = true }

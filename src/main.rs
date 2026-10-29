@@ -196,6 +196,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                 repeat,
                 seed,
                 reported_seed,
+                variant,
                 json,
             }) => {
                 let mut config = Settings::load(cli.config.as_deref())?.runtime;
@@ -207,10 +208,14 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                     (None, true) => run::replay::ReplaySeed::Reported,
                     (None, false) => run::replay::ReplaySeed::AsRecorded,
                 };
-                return run::replay::run_replay_command(
-                    file, *list, *request, *repeat, seed, *json, &config,
-                )
-                .await;
+                let options = run::replay::ReplayOptions {
+                    index: *request,
+                    repeat: *repeat,
+                    seed,
+                    json: *json,
+                    variant: variant.clone(),
+                };
+                return run::replay::run_replay_command(file, *list, &options, &config).await;
             }
             Commands::Ledger { file, json } => {
                 return run_ledger_command(file, *json);

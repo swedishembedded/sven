@@ -20,6 +20,7 @@ navigation:
       - docs/guides/pipe-composition.md
       - docs/guides/teams.md
       - docs/guides/debugging.md
+      - docs/guides/request-replay.md
       - docs/guides/skills.md
       - docs/guides/large-content.md
       - docs/guides/document-conversion.md

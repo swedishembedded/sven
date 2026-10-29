@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-/// `sven replay`: which recorded request to send again, how often, and with
-/// which seed.
+/// `sven replay`: which recorded request to send again, how often, with which
+/// seed and with which changes.
 #[derive(Args, Debug)]
 pub struct ReplayArgs {
     /// The request log (as written by `--record-requests`)
@@ -28,7 +28,13 @@ pub struct ReplayArgs {
     /// Sample with the seed the server reported for the recorded response
     #[arg(long)]
     pub reported_seed: bool,
-    /// One JSON object per attempt
+    /// Change the request before sending it: swap or remove prompt sections
+    /// and tool definitions, optionally append a message (YAML; see
+    /// docs/guides/request-replay.md)
+    #[arg(long, value_name = "FILE", conflicts_with = "list")]
+    pub variant: Option<PathBuf>,
+    /// One JSON line per sample: variant, sample, tool calls with argument
+    /// names and schema validity, text, output tokens, reasoning length
     #[arg(long)]
     pub json: bool,
 }
