@@ -37,9 +37,11 @@ pub(super) async fn tell_watchdog(sink: &EventSink, reason: &str) {
 /// Words in a transport error that say the failure is of the moment: the
 /// connection dropped, the server was busy or slow, or the provider broke a
 /// generation off (`finish_reason: error`, which OpenRouter sends when the
-/// upstream provider fails mid-stream). A content-filter stop is not one.
-const TRANSIENT_MARKERS: [&str; 10] = [
+/// upstream provider fails mid-stream), or the stream went silent past the
+/// stall watchdog's idle limit. A content-filter stop is not one.
+const TRANSIENT_MARKERS: [&str; 11] = [
     "stream stopped: error",
+    "stale connection",
     "connection closed",
     "connection reset",
     "connection refused",
@@ -74,6 +76,8 @@ mod tests {
         let broken = failure_text("model completion failed: stream stopped: error");
         assert!(broken.starts_with(TRANSIENT), "{broken}");
         assert!(failure_text("HTTP 503 Service Unavailable").starts_with(TRANSIENT));
+        let stale = failure_text("model stream idle for >300 s - stale connection");
+        assert!(stale.starts_with(TRANSIENT), "{stale}");
         let filtered = failure_text("stream stopped: content_filter");
         assert!(!filtered.starts_with(TRANSIENT), "{filtered}");
     }
