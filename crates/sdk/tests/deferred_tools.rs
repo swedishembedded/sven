@@ -90,7 +90,6 @@ async fn a_deferred_request_carries_the_core_tools_only() {
         names(&core_tools),
         [
             "edit_file",
-            "find_file",
             "grep",
             "read_file",
             "shell",
@@ -134,10 +133,9 @@ async fn a_loaded_tool_joins_the_next_request_after_the_core_tools() {
         "loaded tools follow the core tools in load order: {names:?}"
     );
     assert_eq!(
-        &names[..8],
+        &names[..7],
         [
             "edit_file",
-            "find_file",
             "grep",
             "read_file",
             "shell",

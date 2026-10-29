@@ -72,7 +72,7 @@ load helpers
 @test "20.07 every core tool is charged its own schema tokens" {
     run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger'
     ledger="$(grep '^\[sven:ledger\] ' <<<"${STDERR_OUT}")"
-    for tool in read_file write_file edit_file shell grep find_file; do
+    for tool in read_file write_file edit_file shell grep; do
         [[ "${ledger}" =~ \"${tool}\":[1-9][0-9]* ]]
     done
 }
@@ -80,10 +80,10 @@ load helpers
 @test "20.08 --tool-disclosure deferred charges the core tools and the tools tool, not the rest" {
     run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --token-ledger --tool-disclosure deferred'
     ledger="$(grep '^\[sven:ledger\] ' <<<"${STDERR_OUT}")"
-    for tool in read_file write_file edit_file shell grep find_file todo tools; do
+    for tool in read_file write_file edit_file shell grep todo tools; do
         [[ "${ledger}" =~ \"${tool}\":[1-9][0-9]* ]]
     done
-    for tool in task system web_fetch web_search skill memory; do
+    for tool in find_file task system web_fetch web_search skill memory; do
         [[ ! "${ledger}" =~ \"tool_schemas\":\{[^\}]*\"${tool}\": ]]
     done
     # What is not loaded is described once, in the system prompt.
