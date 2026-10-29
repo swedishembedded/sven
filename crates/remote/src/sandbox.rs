@@ -45,7 +45,7 @@ const SYSTEM_READ_ONLY: &[&str] = &[
 ];
 
 /// Confines this process, from now on, to `sandbox`: read, write and create
-/// anything inside it; read [`SYSTEM_READ_ONLY`]; nothing else. Irreversible.
+/// anything inside it; read the system paths in `SYSTEM_READ_ONLY`; nothing else. Irreversible.
 ///
 /// # Errors
 ///

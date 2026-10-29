@@ -38,7 +38,7 @@ pub enum AuthCommands {
     ///
     ///   sven auth login
     ///   sven auth login --server localhost:3000
-    ///   sven auth login --server https://example.com --name build-box
+    ///   sven auth login --server example.com --name build-box
     #[cfg(feature = "network")]
     Login {
         /// The server's address; the hosted sven service by default. Without
