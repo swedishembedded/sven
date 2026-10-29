@@ -362,6 +362,11 @@ impl EffectExecutor for TurnExecutor {
         // Snapshot the thread before any async I/O (guard is dropped immediately
         // by the helper so it is never held across an await boundary).
         let mut messages = snapshot_thread(&self.store, &thread_id);
+        let system_sections = self
+            .store
+            .lock()
+            .ok()
+            .and_then(|s| s.system_sections(&thread_id));
         instructions::announce(self.instructions.as_deref(), &mut req, &messages, sink).await;
 
         // Resolve tool schemas: named list takes priority; fall back to all-mode.
@@ -634,6 +639,7 @@ impl EffectExecutor for TurnExecutor {
                 dynamic_suffix: req.dynamic_suffix.clone(),
                 response_format,
                 output_limit,
+                system_sections,
             }
             .stream_retrying_overflow(model.as_ref(), limits, &tx, obs) => r,
         };

@@ -20,9 +20,10 @@ pub mod budget;
 /// (`sven_model::catalog::served_models()`, ...). The catalog itself
 /// (`ModelCatalogEntry`, `served_models()`, `lookup()`, the on-disk
 /// served-model cache) lives in `sven-model-catalog`, which has zero heavy
-/// dependencies (no reqwest, no cloud SDKs) — like `sven-model` itself — so
+/// dependencies (no reqwest, no cloud SDKs) - like `sven-model` itself - so
 /// re-exporting it here adds no heavy dependency.
 pub use sven_model_catalog as catalog;
+pub mod manifest;
 mod provider;
 pub mod registry;
 pub mod repeat;
@@ -31,6 +32,7 @@ mod turns;
 mod types;
 
 pub use catalog::{InputModality, ModelCatalogEntry};
+pub use manifest::{PromptManifest, PromptSections, SectionSpan, ToolDigest};
 pub use provider::{
     AdapterRef, ModelChange, ModelProvider, ResponseStream, ServedModel, ServedModels,
 };

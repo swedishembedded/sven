@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! [`RuntimeBuilder`] — constructs a kernel-based runtime from config.
+//! [`RuntimeBuilder`] - constructs a kernel-based runtime from config.
 //!
 //! This is the single entry point for constructing a runtime: it produces an
 //! [`ErasedRuntime`] driven by a machine fetched from
@@ -46,8 +46,8 @@ use crate::{context_wiring::ContextWiring, instruction_wiring::InstructionWiring
 /// given the `TurnExecutor`'s shared conversation store and `call_id → thread`
 /// registry.
 ///
-/// Installing a custom tool executor this way — instead of
-/// [`RuntimeBuilder::with_effect_executor`] — keeps every other default
+/// Installing a custom tool executor this way - instead of
+/// [`RuntimeBuilder::with_effect_executor`] - keeps every other default
 /// executor (turn/user/timer/audit) wired; only tool dispatch is
 /// replaced. A deployment can pass a factory that shares the store with its
 /// own executor so tool results append to the right thread. See
@@ -129,8 +129,8 @@ pub struct RuntimeBuilder {
     mode_registry: Option<Arc<sven_machines::ModeRegistry>>,
     /// The interactive [`AgentMode`] this session runs as (see
     /// [`Self::with_agent_mode`]). Narrows the mode's registered permission
-    /// policy — a `Plan`/`Research` session never writes files, whatever
-    /// machine runs — and seeds the tool registry's mode lock. `None`
+    /// policy - a `Plan`/`Research` session never writes files, whatever
+    /// machine runs - and seeds the tool registry's mode lock. `None`
     /// preserves the historical full-agent behaviour.
     agent_mode: Option<AgentMode>,
     /// A pre-built, already-connected [`McpManager`] to reuse instead of
@@ -203,8 +203,8 @@ impl RuntimeBuilder {
     ///
     /// The machine arrives with its own permission policy: the host that
     /// constructed it answers for what it may do, and no policy is guessed
-    /// from the mode name. Everything else — executors, tools, threads,
-    /// child spawning — is wired exactly as a mode-registered session. This
+    /// from the mode name. Everything else - executors, tools, threads,
+    /// child spawning - is wired exactly as a mode-registered session. This
     /// is the seam a harness run goes through: the harness machine is an
     /// ordinary kernel machine, assembled by the same builder.
     #[must_use]
@@ -228,9 +228,9 @@ impl RuntimeBuilder {
 
     /// Set the interactive [`AgentMode`] for this session.
     ///
-    /// The mode narrows the kernel machine's registered permission policy —
+    /// The mode narrows the kernel machine's registered permission policy -
     /// a `Plan`/`Research` session never holds `WriteFile`, whatever machine
-    /// runs — and seeds the tool registry's mode lock. It does not change
+    /// runs - and seeds the tool registry's mode lock. It does not change
     /// which kernel machine runs (that is the `mode` string passed to
     /// [`new`](Self::new)); `Plan` and `Agent` both drive the reactive
     /// machine.
@@ -393,8 +393,8 @@ impl RuntimeBuilder {
     /// Override only the composite's **tool slot** (`CallTool`), leaving every
     /// other default executor (turn/user/timer/audit) wired.
     ///
-    /// Unlike [`Self::with_effect_executor`] — which drops the entire default
-    /// composite — this substitutes just the tool executor. The `factory` is
+    /// Unlike [`Self::with_effect_executor`] - which drops the entire default
+    /// composite - this substitutes just the tool executor. The `factory` is
     /// handed the `TurnExecutor`'s shared [`ThreadStore`] and
     /// `call_id → thread` registry so a custom executor can append tool
     /// results to the exact thread the turn engine reads on its continuation
@@ -420,7 +420,7 @@ impl RuntimeBuilder {
     ///
     /// This is the structural seam gateway wrappers hang off: a deployment
     /// builds the config provider itself (`sven_model_drivers::from_config`),
-    /// wraps it, and injects the wrapped provider here — no kernel path can
+    /// wraps it, and injects the wrapped provider here - no kernel path can
     /// then reach the model unwrapped. Unlike [`Self::with_effect_executor`], all default
     /// executors (turn/tool/user/timer/audit) stay wired.
     pub fn with_model_provider(mut self, provider: Box<dyn sven_model::ModelProvider>) -> Self {
@@ -531,7 +531,7 @@ impl RuntimeBuilder {
         // ── Look up machine ───────────────────────────────────────────────────
         // Before anything starts: a session that cannot run as asked fails
         // here. The mode's policy comes from its registration, never guessed
-        // from its name, so an unregistered mode is refused outright —
+        // from its name, so an unregistered mode is refused outright -
         // unless the caller supplied its own machine, which carries its own
         // policy and answers for what it may do.
         let harness_session = self.machine_override.is_some();
@@ -552,14 +552,14 @@ impl RuntimeBuilder {
             .clone()
             .unwrap_or(self.config.model.clone());
         // An injected provider (see `with_model_provider`) wins over the
-        // config-constructed one — that is how metering/gateway wrappers get
+        // config-constructed one - that is how metering/gateway wrappers get
         // between the kernel and the model.
         let model: Arc<dyn sven_model::ModelProvider> = match self.model_provider_override.take() {
             Some(provider) => provider,
             // `_probed` additionally asks the live server for its actual
             // context window (a short-timeout, best-effort HTTP call) and
             // clamps a hand-written `max_tokens` down to what the server can
-            // really serve — this is what stops sven from building a prompt
+            // really serve - this is what stops sven from building a prompt
             // the server will reject after already admitting the request.
             // `build()` already does I/O two lines below (MCP connect), so
             // this adds no new purity concern; it is a builder, not a
@@ -692,11 +692,11 @@ impl RuntimeBuilder {
         let tool_registry_for_handle = Arc::clone(&tool_registry);
 
         // `tool_event_rx` is forwarded onto the kernel's `ObservationSink` once
-        // one exists — see the `spawn_tool_event_forwarder` call below, after
+        // one exists - see the `spawn_tool_event_forwarder` call below, after
         // `erased_runtime` is spawned. It is *not* dropped here; TurnExecutor
         // does not read `ToolEvent`s itself (only the kernel's own `UiEvent`
         // plane), but several tools (`task`, `todo`, `system`) still report
-        // through this side channel — see that function's doc comment for the
+        // through this side channel - see that function's doc comment for the
         // full history.
 
         // ── Shared TurnExecutor resources ─────────────────────────────────────
@@ -728,8 +728,8 @@ impl RuntimeBuilder {
         let seed_thread = sven_machines::mode::primary_thread(&self.mode);
         if let Ok(mut store) = conv_store.lock() {
             let mode = self.agent_mode.unwrap_or(AgentMode::Agent);
-            if let Some(system_msg) = runtime.build_system_message(mode) {
-                store.append(seed_thread, system_msg);
+            if let Some(system_prompt) = runtime.build_system_prompt(mode) {
+                store.append_system_prompt(seed_thread, system_prompt);
             }
             for msg in &ContextWiring::seed(&context, &self.config, &self.initial_history) {
                 store.append(seed_thread, msg.clone());
@@ -898,7 +898,7 @@ impl RuntimeBuilder {
         Ok((erased_runtime, handle, channels, mcp_manager, mcp_event_rx))
     }
 
-    /// Build a fully-wired [`SessionBundle`] — the natural unit a
+    /// Build a fully-wired [`SessionBundle`] - the natural unit a
     /// [`SessionSupervisor`](crate::supervisor::SessionSupervisor) manages.
     ///
     /// This is a thin convenience wrapper over [`build`](Self::build) that
@@ -1084,7 +1084,7 @@ mod tests {
     }
 
     /// `with_tool_executor_override` installs a custom executor as just the
-    /// composite's **tool slot** — `CallTool` reaches it, but the rest of the
+    /// composite's **tool slot** - `CallTool` reaches it, but the rest of the
     /// default composite (turn/user/timer/audit) stays wired, so a
     /// scripted tool-then-text turn still completes its second round.
     #[tokio::test]
@@ -1139,7 +1139,7 @@ mod tests {
     #[tokio::test]
     async fn injected_model_provider_replaces_config_construction() {
         // A config whose provider `from_config` cannot build: if the build
-        // succeeds, the injected provider — not the config — was used. This
+        // succeeds, the injected provider - not the config - was used. This
         // is the seam gateway wrappers hang off, so it must structurally
         // bypass config construction.
         let mut config = Config::default();

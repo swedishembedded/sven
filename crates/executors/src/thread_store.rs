@@ -18,7 +18,8 @@ use atif::{CallTiming, GateAuthority, GateDecision, GateOutcome, MemoryRetrieval
 use sven_hsm::{ProposedToolCall, ToolCallId, ToolCapability};
 use sven_tool_registry::ToolRegistry;
 
-use sven_model::{Message, MessageContent, Role};
+use sven_model::{Message, MessageContent, PromptSections, Role};
+use sven_turn::prompts::ComposedPrompt;
 use sven_vocab::{CompactionRecord, RequestRecord};
 
 /// Stable string identifier for a conversation thread (e.g. `"intake"`).
@@ -27,7 +28,7 @@ pub type ThreadId = String;
 /// Owns one append-only `Vec<Message>` per thread for the lifetime of a runtime.
 ///
 /// Threads are created lazily on first access.  The store never rewrites or
-/// removes earlier turns — only [`append`](ThreadStore::append) is
+/// removes earlier turns - only [`append`](ThreadStore::append) is
 /// exposed for mutation, preserving the cache-safety invariant.
 #[derive(Debug, Default)]
 pub struct ThreadStore {
@@ -73,6 +74,12 @@ pub struct ThreadStore {
     /// length when its response was complete (before the response's own
     /// messages were appended).
     requests: Vec<(ThreadId, usize, RequestRecord)>,
+    /// The named sections of the system message a thread was seeded with.
+    /// Kept beside the thread, not on its message: the message is what every
+    /// provider converts, and a rewrite of it (a compaction) must not carry
+    /// sections that no longer describe its text. The request manifest
+    /// checks the hash before it reports them.
+    system_sections: HashMap<ThreadId, PromptSections>,
 }
 
 impl ThreadStore {
@@ -122,6 +129,22 @@ impl ThreadStore {
     /// Takes the reason given by [`Self::set_stop_reason`].
     pub fn take_stop_reason(&mut self) -> Option<String> {
         self.stop_reason.take()
+    }
+
+    /// Appends a composed system prompt to a thread as its system message and
+    /// remembers the sections it is made of (see [`Self::system_sections`]).
+    pub fn append_system_prompt(&mut self, id: &str, prompt: ComposedPrompt) {
+        self.system_sections.insert(id.to_string(), prompt.sections);
+        self.append(id, Message::system(prompt.text));
+    }
+
+    /// The sections of the system prompt the thread was seeded with, if it
+    /// was seeded by [`Self::append_system_prompt`]. They describe the text as
+    /// seeded: whether the thread still holds that text is for the reader to
+    /// check against [`PromptSections::sha256`].
+    #[must_use]
+    pub fn system_sections(&self, id: &str) -> Option<PromptSections> {
+        self.system_sections.get(id).cloned()
     }
 
     /// Starts an empty thread with `system` as its system message. A thread
@@ -572,7 +595,7 @@ pub(crate) fn machine_answers(
 /// The `original_id` is the raw tool_call_id string returned by the LLM (e.g.
 /// `"call_HyZJn1bTtqVbmzzS3W4VM4xb"` for OpenAI).  It is preserved so that
 /// `ToolExecutor` can append tool results with the *same* id that appears in the
-/// assistant message — the API rejects mismatches.
+/// assistant message - the API rejects mismatches.
 pub(crate) fn register_calls(
     registry: &Mutex<HashMap<ToolCallId, (String, String)>>,
     thread_id: &str,

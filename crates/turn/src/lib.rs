@@ -7,7 +7,7 @@
 //!
 //! These are deliberately not part of the pure `Machine` state-transition
 //! layer in `sven-machines`: `stream_turn` makes the real async LLM call
-//! (`sven_model::ModelProvider`) and `compact` decides what to summarize —
+//! (`sven_model::ModelProvider`) and `compact` decides what to summarize -
 //! both are I/O-adjacent turn primitives, not machine transitions. Sits at
 //! "domain" tier, below `sven-executors` ("machines" tier), which drives
 //! them from effects; `architecture.toml` forbids `sven-machines` from
@@ -29,6 +29,7 @@ mod oneshot;
 mod repetition;
 mod tool_slots;
 
+mod prompt_composer;
 pub mod prompts;
 pub mod reconstruct;
 mod runtime_context;
@@ -45,6 +46,7 @@ pub use prompts::{system_prompt, CollabEvent};
 pub use runtime_context::AgentRuntimeContext;
 pub use stall::{StallLimits, NOTICE_INTERVAL};
 pub use stream_turn::{
-    set_thinking_budget_override, stream_turn, thinking_budget_override, to_model_schemas,
-    AbortedError, Decoding, ModelResolver, StreamedTurn, ThinkingBudget, TurnLimits,
+    set_thinking_budget_override, stream_turn, stream_turn_attributed, thinking_budget_override,
+    to_model_schemas, AbortedError, Decoding, ModelResolver, StreamedTurn, ThinkingBudget,
+    TurnLimits,
 };

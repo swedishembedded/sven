@@ -629,6 +629,12 @@ pub struct CompletionRequest {
     /// Providers that cannot supply them ignore the flag and emit no
     /// [`ResponseEvent::Tokens`]; consumers must treat absence as "unknown".
     pub want_logprobs: bool,
+    /// What this request is made of, with hashes (see [`crate::manifest`]).
+    ///
+    /// For the record only: it is serialized into a recorded request and
+    /// never sent to a provider. `None` when nothing described the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<crate::PromptManifest>,
 }
 
 /// A single streamed event from the model.

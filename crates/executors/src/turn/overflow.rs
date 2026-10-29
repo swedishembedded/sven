@@ -9,8 +9,8 @@
 //! One more try for a request the server says does not fit its context.
 
 use sven_hsm::{ObservationSink, UiEvent};
-use sven_model::{Message, ModelProvider, ResponseFormat, ToolSchema};
-use sven_turn::{stream_turn, StreamedTurn, TurnLimits};
+use sven_model::{Message, ModelProvider, PromptSections, ResponseFormat, ToolSchema};
+use sven_turn::{stream_turn_attributed, StreamedTurn, TurnLimits};
 use tokio::sync::mpsc;
 
 /// How many tokens over its capacity a server says a request was, from a
@@ -43,6 +43,9 @@ pub(super) struct Request {
     pub(super) dynamic_suffix: Option<String>,
     pub(super) response_format: Option<ResponseFormat>,
     pub(super) output_limit: sven_model::budget::OutputLimit,
+    /// The sections the system message was composed of; see
+    /// [`stream_turn_attributed`].
+    pub(super) system_sections: Option<PromptSections>,
 }
 
 impl Request {
@@ -52,7 +55,7 @@ impl Request {
         limits: TurnLimits,
         tx: &mpsc::Sender<UiEvent>,
     ) -> anyhow::Result<StreamedTurn> {
-        stream_turn(
+        stream_turn_attributed(
             model,
             self.messages,
             self.tools,
@@ -61,6 +64,7 @@ impl Request {
             self.response_format,
             self.output_limit,
             limits,
+            self.system_sections.as_ref(),
             tx,
         )
         .await
@@ -85,6 +89,7 @@ impl Request {
             dynamic_suffix: self.dynamic_suffix.clone(),
             response_format: self.response_format.clone(),
             output_limit: self.output_limit,
+            system_sections: self.system_sections.clone(),
         };
         match self.stream(model, limits, tx).await {
             Err(e) if sven_model::budget::is_context_overflow(&format!("{e:#}")) => {

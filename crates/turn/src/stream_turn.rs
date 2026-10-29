@@ -25,8 +25,8 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use sven_model::{
-    CompletionRequest, Message, ModelProvider, ResponseEvent, ResponseFormat, SamplingParams,
-    ToolSchema,
+    CompletionRequest, Message, ModelProvider, PromptManifest, ResponseEvent, ResponseFormat,
+    SamplingParams, ToolSchema,
 };
 use sven_tool_api::ToolCall;
 
@@ -433,6 +433,43 @@ pub async fn stream_turn(
     limits: impl Into<TurnLimits>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> anyhow::Result<StreamedTurn> {
+    stream_turn_attributed(
+        model,
+        messages,
+        tools,
+        cache_key,
+        dynamic_suffix,
+        response_format,
+        output_limit,
+        limits,
+        None,
+        tx,
+    )
+    .await
+}
+
+/// [`stream_turn`] for a system prompt whose composer reported its
+/// `sections`: the request's manifest names them while `messages[0]` is still
+/// the text they describe, and drops them, flagged stale, when it is not
+/// (a compaction rewrote it). Without `sections` the manifest still carries
+/// the hashes of the system text, the tools and the dynamic suffix.
+///
+/// # Errors
+///
+/// As [`stream_turn`].
+#[allow(clippy::too_many_arguments)]
+pub async fn stream_turn_attributed(
+    model: &dyn ModelProvider,
+    messages: Vec<Message>,
+    tools: Vec<ToolSchema>,
+    cache_key: Option<String>,
+    dynamic_suffix: Option<String>,
+    response_format: Option<ResponseFormat>,
+    output_limit: impl Into<sven_model::budget::OutputLimit>,
+    limits: impl Into<TurnLimits>,
+    sections: Option<&sven_model::PromptSections>,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> anyhow::Result<StreamedTurn> {
     let limits = limits.into();
     let output_limit = output_limit.into();
     let core_tool_count = tools.iter().filter(|s| !s.is_mcp).count();
@@ -443,6 +480,7 @@ pub async fn stream_turn(
         .unwrap_or(limits.thinking)
         .resolve();
 
+    let manifest = PromptManifest::describe(&messages, sections, &tools, dynamic_suffix.as_deref());
     let req = CompletionRequest {
         messages,
         tools: tools.clone(),
@@ -457,6 +495,7 @@ pub async fn stream_turn(
         enable_thinking: limits.enable_thinking,
         tool_choice: limits.tool_choice,
         want_logprobs: limits.want_logprobs,
+        manifest,
     };
 
     let mut ledger = LedgerRecorder::start(&req);

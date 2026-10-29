@@ -10,6 +10,8 @@ use sven_workspace::{find_workspace_root, AgentInfo, KnowledgeInfo, SkillInfo};
 
 use crate::instruction_index;
 use crate::instructions::{self, ListingDisclosure};
+pub use crate::prompt_composer::ComposedPrompt;
+use crate::prompt_composer::Composer;
 
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug)]
@@ -455,29 +457,71 @@ fn with_dormant_note(section: String, heading: &str, noun: &str, dormant: usize)
     }
 }
 
-fn build_guidelines_section() -> String {
-    format!(
-        "## Guidelines\n\n\
-         ### Working Method\n\
-         {}\n\n\
-         ### Tools\n\
-         {}",
-        guidelines::working_method(),
-        guidelines::core_tools(),
-    )
+/// The Guidelines block as its two named sections. The first carries the
+/// `## Guidelines` heading; each carries the blank line before it.
+fn guideline_sections() -> [(&'static str, String); 2] {
+    [
+        (
+            "guidelines.working_method",
+            format!(
+                "\n\n## Guidelines\n\n### Working Method\n{}",
+                guidelines::working_method()
+            ),
+        ),
+        (
+            "guidelines.tools",
+            format!("\n\n### Tools\n{}", guidelines::core_tools()),
+        ),
+    ]
+}
+
+/// A system prompt that is not the built-in one: `custom` (cut of trailing
+/// whitespace when text is appended after it) and `append`, whichever are
+/// given. `None` when neither is.
+pub(crate) fn compose_override(
+    custom: Option<&str>,
+    append: Option<&str>,
+) -> Option<ComposedPrompt> {
+    let mut composer = Composer::default();
+    match (custom, append) {
+        (None, None) => return None,
+        (Some(custom), Some(extra)) => {
+            composer.push("custom", custom.trim_end());
+            composer.push("append", format!("\n\n{extra}"));
+        }
+        (Some(custom), None) => {
+            composer.push("custom", custom);
+        }
+        (None, Some(extra)) => {
+            composer.push("append", extra);
+        }
+    }
+    Some(composer.finish())
 }
 
 /// Build the system prompt for the given agent mode.
 ///
 /// `ctx` carries optional project / CI / git context injected when running
-/// in headless mode.
+/// in headless mode. This is the text of [`compose_system_prompt`].
 pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'_>) -> String {
-    if let Some(custom) = custom {
+    compose_system_prompt(mode, custom, ctx).text
+}
+
+/// Build the system prompt for the given agent mode as named sections.
+///
+/// The sections tile the text (see [`sven_model::manifest`]); their ids are
+/// `identity`, `mode`, `project`, `git`, `project_instructions`, `tool_index`,
+/// `skills`, `agents`, `knowledge`, `knowledge_drift`, `ci`, the two
+/// `guidelines.*` and `append`, or `custom` and `append` for an override. A
+/// block with nothing to say has no section.
+pub fn compose_system_prompt(
+    mode: AgentMode,
+    custom: Option<&str>,
+    ctx: PromptContext<'_>,
+) -> ComposedPrompt {
+    if custom.is_some() {
         // Even with a custom prompt, honour append if set.
-        if let Some(extra) = ctx.append {
-            return format!("{}\n\n{}", custom.trim_end(), extra);
-        }
-        return custom.to_string();
+        return compose_override(custom, ctx.append).expect("a custom prompt is given");
     }
 
     // Agent identity - fully static so this block is stable across turns
@@ -644,22 +688,26 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
         String::new()
     };
 
-    let guidelines_section = build_guidelines_section();
+    let append_section = ctx.append.map(|extra| format!("\n\n{extra}"));
 
-    let append_section = if let Some(extra) = ctx.append {
-        format!("\n\n{extra}")
-    } else {
-        String::new()
-    };
-
-    format!(
-        "{agent_identity}\n\n\
-         {mode_instructions}{project_section}{git_section}\
-         {context_file_section}{tool_index_section}{skills_section}{agents_section}\
-         {knowledge_section}{knowledge_drift_section}{ci_section}\n\n\
-         {guidelines_section}\
-         {append_section}",
-    )
+    let mut composer = Composer::default();
+    composer
+        .push("identity", agent_identity)
+        .push("mode", format!("\n\n{mode_instructions}"))
+        .push("project", project_section)
+        .push("git", git_section)
+        .push("project_instructions", context_file_section)
+        .push("tool_index", tool_index_section)
+        .push("skills", skills_section)
+        .push("agents", agents_section)
+        .push("knowledge", knowledge_section)
+        .push("knowledge_drift", knowledge_drift_section)
+        .push("ci", ci_section);
+    for (id, section) in guideline_sections() {
+        composer.push(id, section);
+    }
+    composer.push("append", append_section.unwrap_or_default());
+    composer.finish()
 }
 
 // ─── Unit tests ──────────────────────────────────────────────────────────────

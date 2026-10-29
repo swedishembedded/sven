@@ -15,7 +15,7 @@ use sven_tool_api::PathScope;
 use sven_vocab::AgentMode;
 use sven_workspace::{SharedAgents, SharedKnowledge, SharedSkills};
 
-use crate::prompts::{system_prompt, PromptContext};
+use crate::prompts::{compose_override, compose_system_prompt, ComposedPrompt, PromptContext};
 
 /// Environment-detected context injected into an agent at construction time.
 #[derive(Debug, Default, Clone)]
@@ -93,9 +93,9 @@ impl AgentRuntimeContext {
     ///
     /// - Default (`no_system` unset): the full built-in identity/guidelines
     ///   prompt (or `system_prompt_override` in its place), plus project/git/CI
-    ///   context, skills, agents, and knowledge — exactly what
+    ///   context, skills, agents, and knowledge - exactly what
     ///   [`crate::prompts::system_prompt`] produces.
-    /// - `no_system` with neither override nor append text: `None` — no system
+    /// - `no_system` with neither override nor append text: `None` - no system
     ///   message at all, so zero tokens are spent before the first message.
     /// - `no_system` with `system_prompt_override` set: the override text
     ///   verbatim (plus `append_system_prompt` if also given), with none of
@@ -104,38 +104,38 @@ impl AgentRuntimeContext {
     ///   appended text alone becomes the entire system message.
     #[must_use]
     pub fn build_system_message(&self, mode: AgentMode) -> Option<Message> {
-        if self.no_system
-            && self.system_prompt_override.is_none()
-            && self.append_system_prompt.is_none()
-        {
-            return None;
+        self.build_system_prompt(mode)
+            .map(|composed| Message::system(composed.text))
+    }
+
+    /// [`Self::build_system_message`] with the named sections the text is
+    /// made of, for a caller that keeps them beside the message it seeds.
+    #[must_use]
+    pub fn build_system_prompt(&self, mode: AgentMode) -> Option<ComposedPrompt> {
+        if self.no_system {
+            return compose_override(
+                self.system_prompt_override.as_deref(),
+                self.append_system_prompt.as_deref(),
+            );
         }
-
-        let text = if self.no_system {
-            match (&self.system_prompt_override, &self.append_system_prompt) {
-                (Some(custom), Some(extra)) => format!("{}\n\n{extra}", custom.trim_end()),
-                (Some(custom), None) => custom.clone(),
-                (None, Some(extra)) => extra.clone(),
-                (None, None) => unreachable!("checked above"),
-            }
-        } else {
-            let ctx = PromptContext {
-                project_root: self.project_root.as_deref(),
-                git_context: self.git_context_note.as_deref(),
-                project_context_file: self.project_context_file.as_deref(),
-                ci_context: self.ci_context_note.as_deref(),
-                append: self.append_system_prompt.as_deref(),
-                skills: self.skills.get(),
-                agents: self.agents.get(),
-                knowledge: self.knowledge.get(),
-                knowledge_drift_note: self.knowledge_drift_note.as_deref(),
-                tool_index: self.tool_index.as_deref(),
-                disclosure: self.disclosure,
-            };
-            system_prompt(mode, self.system_prompt_override.as_deref(), ctx)
+        let ctx = PromptContext {
+            project_root: self.project_root.as_deref(),
+            git_context: self.git_context_note.as_deref(),
+            project_context_file: self.project_context_file.as_deref(),
+            ci_context: self.ci_context_note.as_deref(),
+            append: self.append_system_prompt.as_deref(),
+            skills: self.skills.get(),
+            agents: self.agents.get(),
+            knowledge: self.knowledge.get(),
+            knowledge_drift_note: self.knowledge_drift_note.as_deref(),
+            tool_index: self.tool_index.as_deref(),
+            disclosure: self.disclosure,
         };
-
-        Some(Message::system(text))
+        Some(compose_system_prompt(
+            mode,
+            self.system_prompt_override.as_deref(),
+            ctx,
+        ))
     }
 }
 
