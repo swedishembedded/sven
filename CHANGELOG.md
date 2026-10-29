@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.2] - 2026-10-29
+
 ### Added
 - **harness**: `sven harness run` and `resume` take `--model-role ROLE=provider/name` (repeatable), so a workflow whose tasks name model roles (`agent.model`, a task's `model`) runs from the command line with one model per role on the same endpoint. A role the workflow names but the flags leave unmapped, or a mapped role it does not name, is refused before any model is asked. `HarnessPlan::model_roles()` lists the roles a plan names.
 - **headless runs**: a run with a time limit (`--run-timeout`, `agent.max_run_timeout_secs`) tells the model how much of it is left. Every request ends with one line, `Time: 12 of 58 min used, 46 min left; leave time to verify and finish.`, appended to the newest message only, so the cached prompt prefix is untouched, and never stored in the session or trajectory. A subagent with its own limit is told its own time. Measured motivation: nearly every failed task on a local 27B model was a timeout after exploring for the whole budget.
