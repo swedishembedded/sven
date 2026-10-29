@@ -62,7 +62,7 @@ const ABI_REQUIRED: landlock::ABI = landlock::ABI::V6;
 
 /// Confines this process, from now on, to `sandbox`: read, write and create
 /// anything inside it; read the system paths in `SYSTEM_READ_ONLY`; connect
-/// over TCP only to [`WEB_PORTS`] and `server_ports` (the server it serves),
+/// over TCP only to `WEB_PORTS` and `server_ports` (the server it serves),
 /// never bind; signal and reach by abstract unix socket only itself.
 /// Irreversible.
 ///
