@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-29
+
 ### Removed
 - **model catalog**: sven no longer bundles a model list. `crates/model-catalog/models.yaml`, `prices.yaml`, `yaml_catalog()` and `sven list-models --catalog` are gone; a model's limits and price are what its endpoint serves, never a built-in guess.
 
