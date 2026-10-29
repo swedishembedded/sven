@@ -59,6 +59,10 @@ This machine runs each session's tool calls and file edits, and only this
 machine: every other place the conversation is open - the server's
 interface, `sven rc attach` - watches it and sends messages to it.
 
+`sven rc` stays connected: when the connection drops, or goes silent for a
+minute (the server sends a keepalive every 15 seconds), it reconnects on its
+own and picks up from the last command it took.
+
 `sven rc` itself takes no input. Like `watch`, it shows what its sessions
 do: one line per message, tool call and finished answer. To write to a
 conversation, attach to it (below). Ctrl-C stops `sven rc` and any answer

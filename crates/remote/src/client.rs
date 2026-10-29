@@ -99,6 +99,25 @@ impl std::error::Error for Disconnected {}
 /// How long a request that is not the command stream may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long the command stream may take to open, and to stay silent once
+/// open. A request timeout cannot bound it (it is meant to run for minutes),
+/// so these do: without them, a connection that dies without closing (a NAT
+/// entry dropped, a proxy restarted, a server host gone) leaves the host
+/// waiting on it for good, taking no more work.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StreamLimits {
+    /// The longest wait for the response headers.
+    pub open: Duration,
+    /// The longest silence: the server sends a keepalive every 15 s, so four
+    /// missed in a row mean the connection is gone.
+    pub idle: Duration,
+}
+
+const COMMAND_STREAM: StreamLimits = StreamLimits {
+    open: REQUEST_TIMEOUT,
+    idle: Duration::from_secs(60),
+};
+
 /// `server` as an origin: a scheme is added when missing (`http://` for
 /// this machine, `https://` for any other), and a trailing slash dropped.
 ///
@@ -206,6 +225,28 @@ impl std::fmt::Display for UnreadableCommand {
 }
 
 impl std::error::Error for UnreadableCommand {}
+
+/// `chunks`, ended by an error once `idle` passes without one: any chunk,
+/// a keepalive comment included, proves the connection is alive.
+fn idle_bounded<B: Send + 'static>(
+    chunks: impl Stream<Item = reqwest::Result<B>> + Send + 'static,
+    idle: Duration,
+) -> impl Stream<Item = anyhow::Result<B>> + Send + 'static {
+    futures::stream::unfold(Some(Box::pin(chunks)), move |chunks| async move {
+        let mut chunks = chunks?;
+        match tokio::time::timeout(idle, chunks.next()).await {
+            Ok(Some(chunk)) => Some((chunk.map_err(anyhow::Error::from), Some(chunks))),
+            Ok(None) => None,
+            Err(_) => Some((
+                Err(anyhow::anyhow!(
+                    "the command stream was silent for {} s",
+                    idle.as_secs_f32()
+                )),
+                None,
+            )),
+        }
+    })
+}
 
 fn decode_command(data: &str) -> anyhow::Result<CommandEnvelope> {
     serde_json::from_str(data).map_err(|e| {
@@ -356,15 +397,32 @@ impl RemoteClient {
         &self,
         after: u64,
     ) -> anyhow::Result<impl Stream<Item = anyhow::Result<CommandEnvelope>> + Send + 'static> {
-        let response = self
+        self.commands_within(after, COMMAND_STREAM).await
+    }
+
+    /// [`Self::commands`], held to `limits`: a stream that does not open in
+    /// time is an error, and one that falls silent ends with one.
+    pub(crate) async fn commands_within(
+        &self,
+        after: u64,
+        limits: StreamLimits,
+    ) -> anyhow::Result<impl Stream<Item = anyhow::Result<CommandEnvelope>> + Send + 'static> {
+        let request = self
             .http
             .get(self.url("commands"))
             .query(&[("after", after)])
             .query(&self.environment_query())
             .bearer_auth(&self.token)
             .header("accept", "text/event-stream")
-            .send()
-            .await?;
+            .send();
+        let response = tokio::time::timeout(limits.open, request)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "the command stream did not open within {} s",
+                    limits.open.as_secs_f32()
+                )
+            })??;
         match response.status().as_u16() {
             401 | 403 => return Err(TokenRefused.into()),
             409 => return Err(superseded(response).await.into()),
@@ -376,19 +434,21 @@ impl RemoteClient {
             response.status()
         );
         let mut decoder = SseDecoder::default();
-        Ok(response.bytes_stream().flat_map(move |chunk| {
-            let parsed: Vec<anyhow::Result<CommandEnvelope>> = match chunk {
-                Err(e) => vec![Err(anyhow::anyhow!("the command stream broke: {e}"))],
-                Ok(bytes) => match decoder.push(&bytes) {
-                    Err(e) => vec![Err(e)],
-                    Ok(payloads) => payloads
-                        .into_iter()
-                        .map(|data| decode_command(&data))
-                        .collect(),
-                },
-            };
-            futures::stream::iter(parsed)
-        }))
+        Ok(
+            idle_bounded(response.bytes_stream(), limits.idle).flat_map(move |chunk| {
+                let parsed: Vec<anyhow::Result<CommandEnvelope>> = match chunk {
+                    Err(e) => vec![Err(anyhow::anyhow!("the command stream broke: {e}"))],
+                    Ok(bytes) => match decoder.push(&bytes) {
+                        Err(e) => vec![Err(e)],
+                        Ok(payloads) => payloads
+                            .into_iter()
+                            .map(|data| decode_command(&data))
+                            .collect(),
+                    },
+                };
+                futures::stream::iter(parsed)
+            }),
+        )
     }
 
     /// The update that brings a replica of conversation `id`'s shared
@@ -602,5 +662,95 @@ mod tests {
             assert!(!same_origin("https://s.example", other), "{other}");
         }
         assert!(normalize_server("  ").is_err());
+    }
+
+    /// A server on a loopback port that answers one request by writing
+    /// `parts`, each after its delay, then holds the connection open without
+    /// a word: what a dead peer behind a NAT or a stopped proxy looks like.
+    async fn server_writing(parts: Vec<(Duration, &'static str)>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            for (delay, text) in parts {
+                tokio::time::sleep(delay).await;
+                if socket.write_all(text.as_bytes()).await.is_err() {
+                    return;
+                }
+            }
+            std::future::pending::<()>().await;
+        });
+        format!("http://{addr}/api/workspace")
+    }
+
+    const SSE_HEADERS: &str =
+        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+    const KEEPALIVE: &str = ": keep-alive\n\n";
+    const NOW: Duration = Duration::ZERO;
+
+    fn stream_limits() -> StreamLimits {
+        StreamLimits {
+            open: Duration::from_millis(300),
+            idle: Duration::from_millis(300),
+        }
+    }
+
+    /// A server that takes the request and never answers is given up on, so
+    /// the host reconnects instead of waiting on it for good.
+    #[tokio::test]
+    async fn a_command_stream_that_never_opens_is_given_up_on() {
+        let client = RemoteClient::new(&server_writing(vec![]).await, "t").unwrap();
+        let opened = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.commands_within(0, stream_limits()),
+        )
+        .await
+        .expect("the wait for the stream to open is bounded");
+        assert!(opened.is_err());
+    }
+
+    /// A stream that goes silent, keepalives included, ends with an error, so
+    /// the host's loop reconnects instead of waiting on a dead connection.
+    #[tokio::test]
+    async fn a_command_stream_that_goes_silent_ends() {
+        let url = server_writing(vec![(NOW, SSE_HEADERS), (NOW, KEEPALIVE)]).await;
+        let client = RemoteClient::new(&url, "t").unwrap();
+        let stream = client.commands_within(0, stream_limits()).await.unwrap();
+        futures::pin_mut!(stream);
+        let next = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("a silent stream ends");
+        assert!(matches!(next, Some(Err(_))), "{next:?}");
+    }
+
+    /// Keepalives are not commands, but they prove the server is there: a
+    /// stream that carries only keepalives for longer than the idle limit
+    /// stays open, and delivers the command that follows.
+    #[tokio::test]
+    async fn keepalives_hold_a_quiet_command_stream_open() {
+        let tick = Duration::from_millis(100);
+        let url = server_writing(vec![
+            (NOW, SSE_HEADERS),
+            (tick, KEEPALIVE),
+            (tick, KEEPALIVE),
+            (tick, KEEPALIVE),
+            (tick, KEEPALIVE),
+            (tick, KEEPALIVE),
+            (
+                tick,
+                "data: {\"seq\":3,\"command\":{\"type\":\"list_slash_commands\"}}\n\n",
+            ),
+        ])
+        .await;
+        let client = RemoteClient::new(&url, "t").unwrap();
+        let stream = client.commands_within(0, stream_limits()).await.unwrap();
+        futures::pin_mut!(stream);
+        let next = tokio::time::timeout(Duration::from_secs(5), stream.next())
+            .await
+            .expect("the command arrives");
+        assert_eq!(next.unwrap().unwrap().seq, 3);
     }
 }
