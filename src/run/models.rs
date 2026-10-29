@@ -2,14 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use sven_model::catalog::ModelCatalogEntry;
-
-/// `sven list-models`: the models that can be used now, asked live; or, with
-/// `catalog`, the bundled catalog.
+/// `sven list-models`: the models that can be used now, asked live.
 pub(crate) async fn list_models_cmd(
     config: &sven_bootstrap::Config,
     provider_filter: Option<&str>,
-    catalog: bool,
     as_json: bool,
 ) -> anyhow::Result<()> {
     if let Some(prov) = provider_filter {
@@ -27,10 +23,6 @@ pub(crate) async fn list_models_cmd(
             anyhow::bail!("Invalid provider: {prov}");
         }
     }
-    if catalog {
-        return print_catalog(provider_filter, as_json);
-    }
-
     let mut found = sven_model_drivers::reachable::reachable_models(&config.providers).await;
     if let Some(prov) = provider_filter {
         found.models.retain(|m| m.source == prov);
@@ -45,7 +37,6 @@ pub(crate) async fn list_models_cmd(
     }
     if found.models.is_empty() {
         println!("No model can be used now. Start a local server (`brain serve`), or store a hosted provider's key (`sven auth set openrouter`).");
-        println!("`sven list-models --catalog` shows the bundled catalog.");
         return Ok(());
     }
     let ref_w = found
@@ -75,75 +66,6 @@ pub(crate) async fn list_models_cmd(
         );
     }
     println!("\nTotal: {} model(s)", found.models.len());
-    Ok(())
-}
-
-/// The bundled catalog, optionally of one driver.
-fn print_catalog(provider_filter: Option<&str>, as_json: bool) -> anyhow::Result<()> {
-    let mut entries: Vec<ModelCatalogEntry> = sven_model::catalog::static_catalog();
-    if let Some(prov) = provider_filter {
-        entries.retain(|e| e.provider == prov);
-    }
-    entries.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.id.cmp(&b.id)));
-
-    if as_json {
-        println!("{}", serde_json::to_string_pretty(&entries)?);
-        return Ok(());
-    }
-
-    if entries.is_empty() {
-        println!("No models found.");
-        return Ok(());
-    }
-
-    // Determine column widths.
-    let id_w = entries
-        .iter()
-        .map(|e| e.id.len())
-        .max()
-        .unwrap_or(10)
-        .max(10);
-    let prov_w = entries
-        .iter()
-        .map(|e| e.provider.len())
-        .max()
-        .unwrap_or(8)
-        .max(8);
-
-    println!(
-        "{:<id_w$}  {:<prov_w$}  {:>12}  {:>16}  DESCRIPTION",
-        "ID",
-        "PROVIDER",
-        "CTX WINDOW",
-        "MAX OUT TOKENS",
-        id_w = id_w,
-        prov_w = prov_w,
-    );
-    println!("{}", "-".repeat(id_w + prov_w + 50));
-
-    for e in &entries {
-        let ctx = if e.context_window == 0 {
-            "  -".to_string()
-        } else {
-            format!("{:>12}", e.context_window)
-        };
-        let max_out = if e.max_output_tokens == 0 {
-            "  -".to_string()
-        } else {
-            format!("{:>16}", e.max_output_tokens)
-        };
-        println!(
-            "{:<id_w$}  {:<prov_w$}  {}  {}  {}",
-            e.id,
-            e.provider,
-            ctx,
-            max_out,
-            e.description,
-            id_w = id_w,
-            prov_w = prov_w,
-        );
-    }
-    println!("\nTotal: {} model(s)", entries.len());
     Ok(())
 }
 

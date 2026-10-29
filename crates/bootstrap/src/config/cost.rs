@@ -30,8 +30,8 @@ pub struct CostSettings {
     /// Requests still expected in a session. Unset: about as many as it has made
     /// so far.
     pub remaining_requests: Option<u32>,
-    /// Prices per million tokens by `provider/model`, over the catalog's
-    /// (which declares none). A model with neither has an unknown price, which
+    /// Prices per million tokens by `provider/model`, over the ones
+    /// the model's endpoint serves. A model with neither has an unknown price, which
     /// never justifies skipping a demotion.
     pub prices: BTreeMap<String, Pricing>,
 }

@@ -1,30 +1,36 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Model catalog: static metadata (bundled YAML) with a live-cache overlay.
+//! The catalog of models: what the endpoints actually serve, remembered.
 //!
-//! # Lookup order
+//! Sven bundles no list of models, limits or prices. Every entry here was
+//! reported by an endpoint's own `GET /models` (or its equivalent) and was put
+//! here by the driver that listed it. A model that no endpoint has reported is
+//! *unknown*: callers fall back to configuration, then to "no limit known".
 //!
-//! Every public lookup function checks the **in-memory live cache** first.
-//! The live cache is populated from two sources:
+//! # Sources
+//!
+//! Every lookup function reads the **in-memory cache** of served models,
+//! keyed by provider id. It is filled from two places:
 //!
 //! 1. **Disk cache** - a per-provider JSON file in
-//!    `~/.config/sven/model-cache/<provider>.json` written by previous
-//!    sessions.  Loaded at most once per provider per process via
-//!    [`load_disk_cache`].  Entries are only used when the file is younger
-//!    than `CACHE_TTL_SECS`.
+//!    `~/.config/sven/model-cache/<provider>.json` written by a previous run.
+//!    Loaded at most once per provider per process ([`load_disk_cache`], or
+//!    every file at once by [`load_all_disk_caches`]) and only while younger
+//!    than 24 hours, so a start-up without network still knows the last served
+//!    list.
 //!
-//! 2. **Background refresh** - a tokio task spawned by the model provider
-//!    after a successful live `GET /models` call.  Updates both the in-memory
-//!    cache and the on-disk file via [`cache_update`].
-//!
-//! The static YAML catalog (`models.yaml`) is always consulted as a fallback
-//! so that offline use and uncommon providers degrade gracefully.
+//! 2. **A successful listing** - a driver that lists its models calls
+//!    [`cache_update`], which replaces the provider's entries in memory and on
+//!    disk. A failed listing never touches the cache.
 
 mod pricing;
-pub use pricing::{lookup_pricing, CachePricing, Pricing};
+mod served;
+pub use pricing::{CachePricing, Pricing};
+pub use served::{served_pricing_of, token_count};
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock, RwLock};
 use sven_rt::{SystemTime, UNIX_EPOCH};
 
@@ -45,33 +51,54 @@ pub enum InputModality {
 }
 
 fn default_input_modalities() -> Vec<InputModality> {
-    // Conservative default: text only.
-    // Vision-capable models must explicitly list `image` in models.yaml.
+    // Conservative default: text only. A model is vision-capable only when its
+    // endpoint says so.
     vec![InputModality::Text]
 }
 
-/// Metadata for a single model.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// What an endpoint serves about one model. Every figure the endpoint did not
+/// report is `None` - unknown, never a placeholder.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelCatalogEntry {
     /// Provider-scoped model identifier (e.g. "gpt-4o", "claude-opus-4-6")
     pub id: String,
-    /// Human-readable display name
+    /// Human-readable display name; the id when the endpoint gives none.
     pub name: String,
-    /// Provider identifier: "openai" | "anthropic" | "mock"
+    /// Provider identifier of the endpoint that served it.
     pub provider: String,
-    /// Total context window in tokens (input + output)
-    pub context_window: u32,
-    /// Maximum output tokens per completion
-    pub max_output_tokens: u32,
+    /// Total context window in tokens (input + output).
+    #[serde(default)]
+    pub context_window: Option<u32>,
+    /// Maximum output tokens per completion.
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
     /// Short description
     #[serde(default)]
     pub description: String,
     /// Supported input modalities.  Defaults to `[text]`.
     #[serde(default = "default_input_modalities")]
     pub input_modalities: Vec<InputModality>,
+    /// What the endpoint charges, when it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<Pricing>,
 }
 
 impl ModelCatalogEntry {
+    /// An entry that carries only what a bare model list gives: the id.
+    #[must_use]
+    pub fn bare(provider: &str, id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            name: id.to_string(),
+            provider: provider.to_string(),
+            context_window: None,
+            max_output_tokens: None,
+            description: String::new(),
+            input_modalities: default_input_modalities(),
+            pricing: None,
+        }
+    }
+
     /// Return `true` if the model can accept image input.
     pub fn supports_images(&self) -> bool {
         self.input_modalities.contains(&InputModality::Image)
@@ -83,41 +110,13 @@ impl ModelCatalogEntry {
     }
 }
 
-// ── Static YAML catalog ───────────────────────────────────────────────────────
+// ── In-memory cache ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
-struct CatalogFile {
-    models: Vec<ModelCatalogEntry>,
-}
-
-/// Return a reference to the parsed static YAML catalog.
-///
-/// Parsed exactly once via [`OnceLock`]; subsequent calls are zero-cost
-/// pointer returns.  This is the raw YAML-only view - callers that want
-/// live-cache entries should use the public API functions.
-///
-/// `pub` (not `pub(crate)`) because `sven-model-drivers`'s OpenRouter cache
-/// refresh needs the YAML-only view specifically, to build its meta-model
-/// fallback list without creating a circular dependency with the live cache
-/// (see that call site's own comment).
-pub fn yaml_catalog() -> &'static [ModelCatalogEntry] {
-    static CATALOG: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
-    CATALOG.get_or_init(|| {
-        let yaml = include_str!("../models.yaml");
-        let file: CatalogFile =
-            serde_yaml::from_str(yaml).expect("bundled models.yaml must be valid");
-        file.models
-    })
-}
-
-// ── In-memory live cache ──────────────────────────────────────────────────────
-
-/// Global in-memory live cache keyed by provider id.
+/// Global in-memory cache of served models keyed by provider id.
 ///
 /// - Populated from disk on first access per provider ([`load_disk_cache`]).
-/// - Updated by background refresh tasks ([`cache_update`]).
-/// - Consulted by [`lookup`] / [`lookup_by_model_name`] before the YAML.
-fn live_cache() -> &'static RwLock<HashMap<String, Vec<ModelCatalogEntry>>> {
+/// - Replaced by a driver's successful listing ([`cache_update`]).
+fn served_cache() -> &'static RwLock<HashMap<String, Vec<ModelCatalogEntry>>> {
     static CACHE: OnceLock<RwLock<HashMap<String, Vec<ModelCatalogEntry>>>> = OnceLock::new();
     CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
@@ -130,7 +129,7 @@ fn disk_loaded() -> &'static Mutex<HashSet<String>> {
 
 // ── Disk cache helpers ────────────────────────────────────────────────────────
 
-/// On-disk serialisation for a single provider's live model cache.
+/// On-disk serialisation for a single provider's served-model cache.
 #[derive(Debug, Serialize, Deserialize)]
 struct DiskCache {
     /// Unix timestamp (seconds) of when this cache was written.
@@ -145,86 +144,27 @@ fn current_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn disk_cache_path(provider: &str) -> Option<std::path::PathBuf> {
-    let base = dirs::config_dir()
+fn cache_dir() -> Option<PathBuf> {
+    dirs::config_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
-        .map(|p| p.join("sven").join("model-cache"))?;
-    Some(base.join(format!("{provider}.json")))
+        .map(|p| p.join("sven").join("model-cache"))
 }
 
-// ── Public cache API ──────────────────────────────────────────────────────────
+fn disk_cache_path(provider: &str) -> Option<PathBuf> {
+    Some(cache_dir()?.join(format!("{provider}.json")))
+}
 
-/// Load the on-disk cache for `provider` into the in-memory live cache.
-///
-/// Called at most once per provider per process (guarded by `disk_loaded`).
-/// Does nothing when the file is absent, unreadable, invalid JSON, or older
-/// than `CACHE_TTL_SECS`.
-pub fn load_disk_cache(provider: &str) {
-    // Guard: only load once per provider per process.
-    {
-        let mut set = disk_loaded().lock().unwrap_or_else(|e| e.into_inner());
-        if !set.insert(provider.to_string()) {
-            return;
-        }
-    }
-
-    let path = match disk_cache_path(provider) {
-        Some(p) => p,
-        None => return,
-    };
-    let data = match std::fs::read(&path) {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-    let dc: DiskCache = match serde_json::from_slice(&data) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
+/// The entries of the cache file at `path`; `None` when it is absent,
+/// unreadable, invalid or older than `CACHE_TTL_SECS`.
+fn read_fresh_cache_file(path: &Path) -> Option<Vec<ModelCatalogEntry>> {
+    let dc: DiskCache = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
     if current_unix_secs().saturating_sub(dc.fetched_at) > CACHE_TTL_SECS {
-        // Stale - skip; background refresh will repopulate.
-        return;
+        return None;
     }
-    if let Ok(mut guard) = live_cache().write() {
-        guard.insert(provider.to_string(), dc.entries);
-    }
+    Some(dc.entries)
 }
 
-/// Return `true` when the on-disk cache for `provider` is absent or expired.
-///
-/// Used by the background refresh logic to decide whether a new fetch is
-/// needed.
-pub fn is_cache_stale(provider: &str) -> bool {
-    let path = match disk_cache_path(provider) {
-        Some(p) => p,
-        None => return true,
-    };
-    let data = match std::fs::read(&path) {
-        Ok(d) => d,
-        Err(_) => return true,
-    };
-    let dc: DiskCache = match serde_json::from_slice(&data) {
-        Ok(v) => v,
-        Err(_) => return true,
-    };
-    current_unix_secs().saturating_sub(dc.fetched_at) > CACHE_TTL_SECS
-}
-
-/// Update the in-memory live cache for `provider` and persist to disk.
-///
-/// Called by:
-/// - the OpenAI-compatible driver's `list_models` (`sven-model-drivers`) after a successful live fetch.
-/// - The background refresh task spawned from `from_config`.
-pub fn cache_update(provider: &str, entries: Vec<ModelCatalogEntry>) {
-    if let Ok(mut guard) = live_cache().write() {
-        guard.insert(provider.to_string(), entries.clone());
-    }
-    // Best-effort disk write; errors are silently ignored.
-    let _ = persist_to_disk(provider, &entries);
-}
-
-fn persist_to_disk(provider: &str, entries: &[ModelCatalogEntry]) -> anyhow::Result<()> {
-    let path =
-        disk_cache_path(provider).ok_or_else(|| anyhow::anyhow!("cannot determine config dir"))?;
+fn write_cache_file(path: &Path, entries: &[ModelCatalogEntry]) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -232,106 +172,133 @@ fn persist_to_disk(provider: &str, entries: &[ModelCatalogEntry]) -> anyhow::Res
         fetched_at: current_unix_secs(),
         entries: entries.to_vec(),
     };
-    let json = serde_json::to_vec_pretty(&dc)?;
-    std::fs::write(&path, &json)?;
+    std::fs::write(path, serde_json::to_vec_pretty(&dc)?)?;
     Ok(())
 }
 
-// ── Public lookup API (live-cache-first) ──────────────────────────────────────
+// ── Public cache API ──────────────────────────────────────────────────────────
 
-/// Return all known models: live-cache entries (by provider) merged over the
-/// static YAML catalog.
+/// Load the on-disk cache for `provider` into memory.
 ///
-/// When a provider has an active live-cache entry, its static YAML entries are
-/// replaced entirely by the live data.  Providers without a live-cache entry
-/// keep their static entries unchanged.
-pub fn static_catalog() -> Vec<ModelCatalogEntry> {
-    let mut result = yaml_catalog().to_vec();
-
-    if let Ok(guard) = live_cache().read() {
-        if guard.is_empty() {
-            return result;
-        }
-        // Replace YAML entries for providers that have live data.
-        for (provider, live_entries) in guard.iter() {
-            result.retain(|e| &e.provider != provider);
-            result.extend(live_entries.iter().cloned());
+/// Called at most once per provider per process (guarded by `disk_loaded`).
+/// Does nothing when the file is absent, unreadable, invalid JSON, or older
+/// than `CACHE_TTL_SECS`, and never replaces entries a listing already put in
+/// memory this run.
+pub fn load_disk_cache(provider: &str) {
+    {
+        let mut set = disk_loaded().lock().unwrap_or_else(|e| e.into_inner());
+        if !set.insert(provider.to_string()) {
+            return;
         }
     }
-    result
+    let Some(entries) = disk_cache_path(provider).and_then(|p| read_fresh_cache_file(&p)) else {
+        return;
+    };
+    if let Ok(mut guard) = served_cache().write() {
+        guard.entry(provider.to_string()).or_insert(entries);
+    }
 }
 
-/// Look up a single model by provider and id (or name).
-///
-/// Checks the in-memory live cache first; falls back to the static YAML
-/// catalog.  Returns `None` if not found in either source.
-pub fn lookup(provider: &str, model_id: &str) -> Option<ModelCatalogEntry> {
-    // Live cache first.
-    if let Ok(guard) = live_cache().read() {
-        if let Some(entries) = guard.get(provider) {
-            if let Some(e) = entries
-                .iter()
-                .find(|e| e.id == model_id || e.name == model_id)
-            {
-                return Some(e.clone());
+/// Load the on-disk cache of every provider that has one (see
+/// [`load_disk_cache`]). For callers that look across providers.
+pub fn load_all_disk_caches() {
+    let Some(dir) = cache_dir() else { return };
+    let Ok(files) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for path in files.filter_map(|f| f.ok().map(|f| f.path())) {
+        if path.extension().is_some_and(|e| e == "json") {
+            if let Some(provider) = path.file_stem().and_then(|s| s.to_str()) {
+                load_disk_cache(provider);
             }
         }
     }
-    // Static YAML fallback.
-    yaml_catalog()
+}
+
+/// Return `true` when the on-disk cache for `provider` is absent or expired.
+pub fn is_cache_stale(provider: &str) -> bool {
+    disk_cache_path(provider)
+        .and_then(|p| read_fresh_cache_file(&p))
+        .is_none()
+}
+
+/// Replace the cached models of `provider` with what its endpoint just
+/// served, in memory and on disk.
+///
+/// Called by a driver after a **successful** listing. An empty list is
+/// ignored: an endpoint that answers with no models has told us nothing worth
+/// forgetting what the last answer said.
+pub fn cache_update(provider: &str, entries: Vec<ModelCatalogEntry>) {
+    if entries.is_empty() {
+        return;
+    }
+    if let Some(path) = disk_cache_path(provider) {
+        // Best effort: a read-only config directory only costs the next
+        // start-up its warm cache.
+        let _ = write_cache_file(&path, &entries);
+    }
+    if let Ok(mut guard) = served_cache().write() {
+        guard.insert(provider.to_string(), entries);
+    }
+}
+
+/// Add `entries` to the in-memory cache of their provider, replacing any with
+/// the same id, without touching the disk. For tests and for an embedding
+/// application that already knows what its endpoint serves.
+pub fn cache_seed(entries: impl IntoIterator<Item = ModelCatalogEntry>) {
+    let Ok(mut guard) = served_cache().write() else {
+        return;
+    };
+    for entry in entries {
+        let list = guard.entry(entry.provider.clone()).or_default();
+        list.retain(|e| e.id != entry.id);
+        list.push(entry);
+    }
+}
+
+// ── Lookup API ────────────────────────────────────────────────────────────────
+
+/// Every model any endpoint has served, ordered by provider then id.
+pub fn served_models() -> Vec<ModelCatalogEntry> {
+    load_all_disk_caches();
+    let mut all: Vec<ModelCatalogEntry> = served_cache()
+        .read()
+        .map(|guard| guard.values().flatten().cloned().collect())
+        .unwrap_or_default();
+    all.sort_by(|a, b| (&a.provider, &a.id).cmp(&(&b.provider, &b.id)));
+    all
+}
+
+/// Look up a single model by provider and id (or name). `None` when no
+/// endpoint of that provider has served it.
+pub fn lookup(provider: &str, model_id: &str) -> Option<ModelCatalogEntry> {
+    load_disk_cache(provider);
+    served_cache()
+        .read()
+        .ok()?
+        .get(provider)?
         .iter()
-        .find(|e| e.provider == provider && (e.id == model_id || e.name == model_id))
+        .find(|e| e.id == model_id || e.name == model_id)
         .cloned()
 }
 
 /// Look up a model by bare model name (without a provider prefix).
 ///
-/// Searches `id` and `name` fields.  Live cache is checked first (all
-/// providers), then the static YAML catalog.  Returns the first match.
+/// Searches `id` and `name` of every provider's served models and returns the
+/// first match in provider order.
 ///
 /// Used by `ModelResolver` step 3 to detect when a bare model name (e.g.
-/// `"gpt-4o"`) can be resolved against a known provider from the catalog.
+/// `"gpt-4o"`) can be resolved against the provider that served it.
 pub fn lookup_by_model_name(model_name: &str) -> Option<ModelCatalogEntry> {
-    // Live cache first (all providers).
-    if let Ok(guard) = live_cache().read() {
-        for entries in guard.values() {
-            if let Some(e) = entries
-                .iter()
-                .find(|e| e.id == model_name || e.name == model_name)
-            {
-                return Some(e.clone());
-            }
-        }
-    }
-    // Static YAML fallback.
-    yaml_catalog()
-        .iter()
+    served_models()
+        .into_iter()
         .find(|e| e.id == model_name || e.name == model_name)
-        .cloned()
 }
 
-/// Return `true` if the model supports image input.
-///
-/// Defaults to `false` when the model is not found in either the live cache
-/// or the static YAML catalog.
-pub fn supports_images(provider: &str, model_id: &str) -> bool {
-    lookup(provider, model_id)
-        .map(|e| e.supports_images())
-        .unwrap_or(false)
-}
-
-/// Look up the context window for a model.  Falls back to `default` if not found.
-pub fn context_window(provider: &str, model_id: &str, default: u32) -> u32 {
-    lookup(provider, model_id)
-        .map(|e| e.context_window)
-        .unwrap_or(default)
-}
-
-/// Look up the max output tokens for a model.  Falls back to `default` if not found.
-pub fn max_output_tokens(provider: &str, model_id: &str, default: u32) -> u32 {
-    lookup(provider, model_id)
-        .map(|e| e.max_output_tokens)
-        .unwrap_or(default)
+/// The price an endpoint served for `model_id` at `provider`; `None` when it
+/// served none, which means unknown and never free.
+pub fn served_pricing(provider: &str, model_id: &str) -> Option<Pricing> {
+    lookup(provider, model_id)?.pricing
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -340,118 +307,82 @@ pub fn max_output_tokens(provider: &str, model_id: &str, default: u32) -> u32 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn static_catalog_is_non_empty() {
-        let models = static_catalog();
-        assert!(
-            !models.is_empty(),
-            "bundled catalog must contain at least one model"
-        );
+    /// Tests seed under provider names no real driver uses, so a developer's
+    /// own disk cache cannot collide with them.
+    fn entry(provider: &str, id: &str) -> ModelCatalogEntry {
+        ModelCatalogEntry {
+            context_window: Some(131_072),
+            max_output_tokens: Some(8_192),
+            ..ModelCatalogEntry::bare(provider, id)
+        }
     }
 
     #[test]
-    fn gpt4o_is_in_catalog() {
-        let entry = lookup("openai", "gpt-4o").expect("gpt-4o must be in catalog");
-        assert_eq!(entry.provider, "openai");
-        assert!(entry.context_window >= 128_000);
-        assert!(entry.max_output_tokens >= 4_096);
+    fn a_seeded_model_is_found_by_provider_and_by_bare_name() {
+        cache_seed([entry("seed-a", "model-a")]);
+        let found = lookup("seed-a", "model-a").unwrap();
+        assert_eq!(found.context_window, Some(131_072));
+        assert_eq!(lookup_by_model_name("model-a").unwrap().provider, "seed-a");
+        assert!(served_models().iter().any(|e| e.id == "model-a"));
     }
 
     #[test]
-    fn gpt4o_supports_images() {
-        let entry = lookup("openai", "gpt-4o").unwrap();
-        assert!(entry.supports_images(), "gpt-4o must support image input");
+    fn a_model_no_endpoint_served_is_unknown_with_no_window_and_no_price() {
+        assert!(lookup("seed-b", "nonexistent-model-xyz").is_none());
+        assert!(lookup_by_model_name("nonexistent-model-xyz").is_none());
+        assert!(served_pricing("seed-b", "nonexistent-model-xyz").is_none());
     }
 
     #[test]
-    fn claude_opus_is_in_catalog() {
-        let entry =
-            lookup("anthropic", "claude-opus-4-6").expect("claude-opus-4-6 must be in catalog");
-        assert_eq!(entry.provider, "anthropic");
-        assert!(entry.context_window >= 200_000);
-    }
-
-    #[test]
-    fn claude_opus_supports_images() {
-        let entry = lookup("anthropic", "claude-opus-4-6").unwrap();
-        assert!(
-            entry.supports_images(),
-            "claude-opus-4-6 must support image input"
-        );
-    }
-
-    #[test]
-    fn lookup_unknown_model_returns_none() {
-        assert!(lookup("openai", "nonexistent-model-xyz").is_none());
-    }
-
-    #[test]
-    fn context_window_fallback_used_when_unknown() {
-        let cw = context_window("openai", "no-such-model", 4096);
-        assert_eq!(cw, 4096);
-    }
-
-    #[test]
-    fn live_cache_takes_precedence_over_yaml() {
-        // Inject a fake entry into the live cache and verify lookup returns it.
-        let fake = ModelCatalogEntry {
-            id: "live-test-model-xyz".to_string(),
-            name: "Live Test Model".to_string(),
-            provider: "openai".to_string(),
-            context_window: 999_999,
-            max_output_tokens: 88_888,
-            description: "injected for test".to_string(),
-            input_modalities: vec![InputModality::Text],
+    fn a_served_price_is_found_and_a_model_served_without_one_has_none() {
+        let priced = Pricing {
+            input_per_mtok: 0.14,
+            output_per_mtok: 0.42,
+            cache: None,
         };
-        cache_update("openai", vec![fake.clone()]);
-        let found = lookup("openai", "live-test-model-xyz").expect("should find live entry");
-        assert_eq!(found.context_window, 999_999);
-        // Clean up so other tests are not affected.
-        if let Ok(mut guard) = live_cache().write() {
-            guard.remove("openai");
-        }
+        cache_seed([
+            ModelCatalogEntry {
+                pricing: Some(priced),
+                ..entry("seed-c", "priced")
+            },
+            entry("seed-c", "unpriced"),
+        ]);
+        assert_eq!(served_pricing("seed-c", "priced"), Some(priced));
+        assert_eq!(served_pricing("seed-c", "unpriced"), None);
     }
 
     #[test]
-    fn all_yaml_entries_have_non_zero_windows() {
-        for entry in yaml_catalog() {
-            // Non-completion models (video generation, etc.) may have zero windows.
-            if entry.context_window == 0 || entry.max_output_tokens == 0 {
-                // Sanity: such entries should describe themselves as non-token models.
-                assert!(
-                    entry.description.to_lowercase().contains("video")
-                        || entry.description.to_lowercase().contains("non-token")
-                        || entry.description.to_lowercase().contains("generation"),
-                    "{} ({}) has zero context_window/max_output_tokens but does not appear \
-                     to be a non-token model (description: {})",
-                    entry.id,
-                    entry.provider,
-                    entry.description,
-                );
-                continue;
-            }
-            assert!(
-                entry.context_window > 0,
-                "{} has zero context_window",
-                entry.id
-            );
-            assert!(
-                entry.max_output_tokens > 0,
-                "{} has zero max_output_tokens",
-                entry.id
-            );
-        }
+    fn seeding_replaces_an_entry_of_the_same_id_and_keeps_the_others() {
+        cache_seed([entry("seed-d", "one"), entry("seed-d", "two")]);
+        cache_seed([ModelCatalogEntry {
+            context_window: Some(1),
+            ..entry("seed-d", "one")
+        }]);
+        assert_eq!(lookup("seed-d", "one").unwrap().context_window, Some(1));
+        assert!(lookup("seed-d", "two").is_some());
     }
 
     #[test]
-    fn all_yaml_entries_have_at_least_text_modality() {
-        for entry in yaml_catalog() {
-            assert!(
-                entry.input_modalities.contains(&InputModality::Text),
-                "{} ({}) missing text modality",
-                entry.id,
-                entry.provider,
-            );
-        }
+    fn the_disk_cache_round_trips_and_expires_after_a_day() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.json");
+        write_cache_file(&path, &[entry("p", "m")]).unwrap();
+        assert_eq!(read_fresh_cache_file(&path).unwrap()[0].id, "m");
+
+        let stale = DiskCache {
+            fetched_at: current_unix_secs() - CACHE_TTL_SECS - 1,
+            entries: vec![entry("p", "m")],
+        };
+        std::fs::write(&path, serde_json::to_vec(&stale).unwrap()).unwrap();
+        assert!(read_fresh_cache_file(&path).is_none());
+    }
+
+    #[test]
+    fn a_missing_or_corrupt_cache_file_reads_as_no_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_fresh_cache_file(&dir.path().join("absent.json")).is_none());
+        let bad = dir.path().join("bad.json");
+        std::fs::write(&bad, b"{not json").unwrap();
+        assert!(read_fresh_cache_file(&bad).is_none());
     }
 }

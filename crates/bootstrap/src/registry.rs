@@ -188,11 +188,11 @@ pub(crate) async fn open_memory_store(
     }
 }
 
-/// Converts the model catalog into the slice-of-fields `SystemTool`'s
+/// Converts the served models into the slice-of-fields `SystemTool`'s
 /// `switch_model` fuzzy search needs, without giving `sven-tools-agent` a direct
 /// dependency on `sven-model` for the sake of one tool's lookup.
 fn model_catalog_for_tools() -> Vec<ModelCatalogEntry> {
-    sven_model::catalog::static_catalog()
+    sven_model::catalog::served_models()
         .into_iter()
         .map(|e| ModelCatalogEntry {
             id: e.id,

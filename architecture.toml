@@ -261,9 +261,8 @@ from = "sven-model"
 to   = "sven-model-catalog"
 why  = """
 Both are "kernel" tier: pure trait/type vocabulary crates, no heavy deps (no
-reqwest, no cloud SDKs). sven-model-catalog holds the static catalog data
-(ModelCatalogEntry, static_catalog(), lookup(), the on-disk live-cache
-overlay) so the tool crates can depend on just the data without sven-model. sven-model
+reqwest, no cloud SDKs). sven-model-catalog holds the cache of served models
+(ModelCatalogEntry, served_models(), lookup(), the on-disk cache) so the tool crates can depend on just the data without sven-model. sven-model
 still needs it directly: ModelProvider's default trait methods
 (catalog_max_output_tokens, input_modalities, ...) call straight into the
 catalog, and sanitize::strip_images_if_unsupported needs InputModality. No

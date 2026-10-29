@@ -70,11 +70,8 @@ impl SlashCommand for ModelCommand {
             }
         }
 
-        // All models from static catalog.
-        let mut catalog_models = catalog::static_catalog();
-        catalog_models.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.id.cmp(&b.id)));
-
-        for entry in catalog_models {
+        // Every model an endpoint has served, ordered by provider and id.
+        for entry in catalog::served_models() {
             let value = format!("{}/{}", entry.provider, entry.id);
             if value == current_value {
                 continue;
@@ -84,10 +81,14 @@ impl SlashCommand for ModelCommand {
             } else {
                 format!("{} - {}", value, entry.description)
             };
-            let desc = format!(
-                "ctx:{} max_out:{}",
-                entry.context_window, entry.max_output_tokens
-            );
+            let desc = [
+                entry.context_window.map(|n| format!("ctx:{n}")),
+                entry.max_output_tokens.map(|n| format!("max_out:{n}")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
             candidates.push(CompletionItem::with_desc(value, display, desc));
         }
 
@@ -117,6 +118,8 @@ impl SlashCommand for ModelCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sven_mcp_client::McpServers;
+    use sven_model_drivers::Providers;
 
     #[test]
     fn execute_bare_model_name_sets_override() {
@@ -145,5 +148,36 @@ mod tests {
     fn execute_empty_string_arg_returns_no_override() {
         let result = ModelCommand.execute(vec!["".into()]);
         assert!(result.model_override.is_none());
+    }
+
+    #[test]
+    fn completion_lists_the_models_endpoints_served_with_the_figures_they_gave() {
+        catalog::cache_seed([
+            catalog::ModelCatalogEntry {
+                context_window: Some(32_768),
+                ..catalog::ModelCatalogEntry::bare("completion-test", "windowed")
+            },
+            catalog::ModelCatalogEntry::bare("completion-test", "bare"),
+        ]);
+        let ctx = CommandContext {
+            providers: &Providers::new(),
+            mcp_servers: &McpServers::new(),
+            current_model_provider: "openai".into(),
+            current_model_name: "gpt-4o".into(),
+        };
+        let items = ModelCommand.complete(0, "completion-test", &ctx);
+        let describe = |value: &str| {
+            items
+                .iter()
+                .find(|i| i.value == value)
+                .unwrap_or_else(|| panic!("{value} not offered"))
+                .description
+                .clone()
+        };
+        assert_eq!(
+            describe("completion-test/windowed").as_deref(),
+            Some("ctx:32768")
+        );
+        assert_eq!(describe("completion-test/bare").as_deref(), Some(""));
     }
 }

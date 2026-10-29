@@ -37,6 +37,7 @@ mod discovery;
 #[cfg(not(target_arch = "wasm32"))]
 mod embedding;
 mod google;
+mod listing;
 mod openai;
 pub(crate) mod openai_compat;
 mod openrouter;
@@ -135,7 +136,7 @@ fn check_api_key_requirement(cfg: &ModelConfig) -> anyhow::Result<()> {
 ///
 /// This ensures that `catalog_context_window()` and
 /// `catalog_max_output_tokens()` reflect what the user explicitly configured
-/// rather than (potentially absent) static catalog metadata.  All other
+/// rather than (potentially absent) served metadata.  All other
 /// trait methods are forwarded directly to the inner provider.
 struct ConfigBoundedProvider {
     inner: Arc<dyn ModelProvider>,
@@ -147,8 +148,8 @@ struct ConfigBoundedProvider {
     max_output_tokens: Option<u32>,
     /// Input modalities declared in config (`cfg.input_modalities`).
     ///
-    /// The bundled catalog cannot know about self-hosted multimodal models, so
-    /// a config declaration is authoritative when present.  `None` means "no
+    /// A server may not say what its model accepts, so a config declaration
+    /// is authoritative when present.  `None` means "no
     /// declaration" and the inner driver's answer is used instead.
     input_modalities: Option<Vec<sven_model::catalog::InputModality>>,
     /// What the live server last reported; `None` when the provider was built
@@ -313,7 +314,7 @@ impl ModelProvider for ConfigBoundedProvider {
 /// priority order:
 /// 1. `cfg.max_output_tokens` - explicit per-request output cap
 /// 2. `cfg.max_tokens` - backward-compatible total/output cap
-/// 3. Static catalog `max_output_tokens` for the model
+/// 3. The `max_output_tokens` the endpoint served for the model
 /// 4. Hardcoded fallback of 4096
 ///
 /// When `cfg.max_output_tokens` is set, `cfg.max_tokens` is exposed as the
@@ -360,12 +361,12 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
     // Resolve the output token limit sent to the provider API:
     //   1. cfg.max_output_tokens  - explicit per-request output cap
     //   2. cfg.max_tokens         - backward compat: total used as output cap
-    //   3. catalog max_output_tokens for the model
+    //   3. max_output_tokens the endpoint served for the model
     // The final unwrap_or(4096) lives inside OpenAICompatProvider::new.
     let resolved_max_tokens = cfg
         .max_output_tokens
         .or(cfg.max_tokens)
-        .or_else(|| catalog::lookup(&cfg.provider, &cfg.name).map(|e| e.max_output_tokens));
+        .or_else(|| catalog::lookup(&cfg.provider, &cfg.name).and_then(|e| e.max_output_tokens));
 
     // Context window exposed via catalog_context_window():
     // - When max_output_tokens is set, max_tokens is the *total* context.
@@ -454,10 +455,6 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
         // ── OpenAI-compatible gateways (special-cased for custom behaviour) ──
         "openrouter" => {
             let or_base = base_url("https://openrouter.ai/api/v1");
-            // Load any fresh disk cache before using catalog metadata.
-            catalog::load_disk_cache("openrouter");
-            // Spawn a background task to refresh the cache when stale.
-            openrouter::maybe_spawn_openrouter_cache_refresh(key(), or_base.clone());
             Box::new(OpenAICompatProvider::new(
                 "openrouter",
                 cfg.name.clone(),
@@ -645,17 +642,19 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
 ///
 /// Wraps the driver in `ConfigBoundedProvider` so that
 /// `catalog_context_window()` and `catalog_max_output_tokens()` reflect the
-/// user's explicit configuration rather than the static catalog alone. This
+/// user's explicit configuration rather than the served catalog alone. This
 /// ensures compaction thresholds and session budget calculations use the
-/// correct values even for models not present in the bundled catalog.
+/// correct values even for models no endpoint has served limits for.
 ///
 /// Does no I/O beyond what driver construction itself requires (none, for
 /// every current driver) — for a version that additionally probes the live
 /// server for its actual context window, see [`from_config_probed`].
 pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
     let (inner, context_window, max_output_tokens) = build_inner(cfg)?;
+    let inner: Arc<dyn ModelProvider> = Arc::from(inner);
+    listing::refresh_when_stale(&inner, cfg);
     Ok(request_log::wrap(Box::new(ConfigBoundedProvider {
-        inner: Arc::from(inner),
+        inner,
         config_context_window: context_window,
         max_output_tokens,
         input_modalities: cfg
@@ -697,6 +696,7 @@ pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn Mod
     let cfg = &resolve_probed(cfg).await;
     let (inner, config_context_window, max_output_tokens) = build_inner(cfg)?;
     let inner: Arc<dyn ModelProvider> = Arc::from(inner);
+    listing::refresh_when_stale(&inner, cfg);
     let local =
         discovery::effective_base_url(cfg).is_some_and(|u| discovery::is_local_endpoint(&u));
     let live = discovery::LiveState::new(&cfg.name, local);

@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use sven_model::{
-    catalog::{static_catalog, ModelCatalogEntry},
+    catalog::{token_count, ModelCatalogEntry},
     CompletionRequest, MessageContent, ResponseEvent, ResponseStream, Role,
 };
 
@@ -59,13 +59,17 @@ impl sven_model::ModelProvider for CohereProvider {
         crate::url_host(&self.base_url)
     }
 
+    /// `GET /v1/models?endpoint=chat`: the chat models Cohere serves, with
+    /// the context length it reports for each.
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
-        let mut entries: Vec<ModelCatalogEntry> = static_catalog()
-            .into_iter()
-            .filter(|e| e.provider == "cohere")
-            .collect();
-        entries.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(entries)
+        let key = self.api_key.as_deref().context("COHERE_API_KEY not set")?;
+        let url = format!(
+            "{}/v1/models?endpoint=chat&page_size=1000",
+            self.base_url.trim_end_matches('/')
+        );
+        let req = self.client.get(url).bearer_auth(key);
+        let body = crate::listing::get_json(req, "cohere").await?;
+        Ok(crate::listing::record("cohere", models_from_list(&body)))
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
@@ -356,9 +360,39 @@ fn parse_cohere_event(v: &Value) -> anyhow::Result<ResponseEvent> {
     }
 }
 
+/// The models of a `GET /v1/models` body: `name` is the id, `context_length`
+/// the window.
+fn models_from_list(body: &Value) -> Vec<ModelCatalogEntry> {
+    let models = body["models"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    models
+        .iter()
+        .filter_map(|m| {
+            let id = m["name"].as_str()?;
+            Some(ModelCatalogEntry {
+                context_window: token_count(m.get("context_length")),
+                ..ModelCatalogEntry::bare("cohere", id)
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_models_list_gives_the_context_length_cohere_reports() {
+        let body = serde_json::json!({"models": [
+            {"name": "command-x", "context_length": 128000},
+            {"name": "command-y"},
+        ]});
+        let models = models_from_list(&body);
+        assert_eq!(models[0].context_window, Some(128_000));
+        assert_eq!(models[1].context_window, None);
+    }
     use sven_model::ModelProvider;
 
     #[test]

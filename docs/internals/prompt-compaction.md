@@ -86,8 +86,8 @@ enforces the bound.
 The window comes from the provider: the smaller of the configured
 `model.max_tokens` and the figure a local server reports (see
 [Local model discovery](../reference/configuration.md#local-model-discovery)),
-else the bundled catalog's entry for the model. When it is not known at all (a
-hosted provider with no catalog entry and no live probe result), the budget is
+else the window its endpoint served for the model. When it is not known at all
+(a model its endpoint served no window for and no live probe result), the budget is
 `None` and both the compaction trigger and the hard gate are skipped rather
 than guessing.
 

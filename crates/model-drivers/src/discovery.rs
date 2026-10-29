@@ -11,8 +11,8 @@
 //!
 //! Sven names no model for a local server. It asks the server: `GET /models`
 //! lists the served ids and, on servers that report them, each model's context
-//! length, output cap, tool-calling capability and applied adapter. Static
-//! catalog entries are only fallback metadata for what a server leaves out.
+//! length, output cap, tool-calling capability and applied adapter. What a
+//! server leaves out stays unknown.
 //!
 //! Every call here is bounded by [`DISCOVERY_TIMEOUT`] and degrades to "not
 //! known" on failure: discovery never fails or delays a turn.

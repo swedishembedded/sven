@@ -28,10 +28,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tracing::debug;
 
-use sven_model::{
-    catalog::{static_catalog, ModelCatalogEntry},
-    CompletionRequest, MessageContent, ResponseEvent, ResponseStream, Role,
-};
+use sven_model::{CompletionRequest, MessageContent, ResponseEvent, ResponseStream, Role};
 
 /// Placeholder substituted for audio content, which Bedrock Converse does not
 /// accept for the text models sven targets.
@@ -74,15 +71,6 @@ impl sven_model::ModelProvider for BedrockProvider {
     }
     fn model_name(&self) -> &str {
         &self.model
-    }
-
-    async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
-        let mut entries: Vec<ModelCatalogEntry> = static_catalog()
-            .into_iter()
-            .filter(|e| e.provider == "aws")
-            .collect();
-        entries.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(entries)
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {

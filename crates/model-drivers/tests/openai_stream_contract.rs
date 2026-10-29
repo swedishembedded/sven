@@ -20,6 +20,8 @@
 //! usage frames, an interrupted connection, model listing and context-size
 //! discovery.
 
+mod common;
+
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -619,6 +621,7 @@ fn model_list() -> Value {
 
 #[tokio::test]
 async fn the_served_models_are_listed() {
+    common::isolate_model_cache();
     let base = serve(None, Some(model_list())).await;
     let models = provider(&base).list_models().await.unwrap();
     let ids: Vec<_> = models.iter().map(|m| m.id.as_str()).collect();
@@ -626,6 +629,58 @@ async fn the_served_models_are_listed() {
         ids.contains(&"m") && ids.contains(&"other/model"),
         "{ids:?}"
     );
+}
+
+/// A hosted OpenAI-compatible provider other than OpenRouter, listed through
+/// `provider`, that serves a window, an output cap and a price.
+fn priced_list() -> Value {
+    json!({"data": [{
+        "id": "listed-priced",
+        "context_length": 65536,
+        "top_provider": {"max_completion_tokens": 8192},
+        "pricing": {"prompt": "0.0000005", "completion": "0.0000015"}
+    }, {"id": "listed-bare"}]})
+}
+
+fn provider_named(name: &str, base: &str) -> Box<dyn ModelProvider> {
+    from_config(&ModelConfig {
+        provider: name.into(),
+        name: "listed-priced".into(),
+        api_key: Some("k".into()),
+        base_url: Some(base.to_string()),
+        ..ModelConfig::default()
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_successful_listing_feeds_the_catalog_for_any_openai_compatible_provider() {
+    common::isolate_model_cache();
+    let base = serve(None, Some(priced_list())).await;
+    let groq = provider_named("groq", &base);
+    groq.list_models().await.unwrap();
+
+    let priced = sven_model::catalog::lookup("groq", "listed-priced").unwrap();
+    assert_eq!(priced.context_window, Some(65_536));
+    assert_eq!(priced.max_output_tokens, Some(8_192));
+    let price = priced.pricing.unwrap();
+    assert_eq!((price.input_per_mtok, price.output_per_mtok), (0.5, 1.5));
+    assert_eq!(groq.catalog_context_window(), Some(65_536));
+
+    let bare = sven_model::catalog::lookup("groq", "listed-bare").unwrap();
+    assert_eq!((bare.context_window, bare.pricing), (None, None));
+}
+
+#[tokio::test]
+async fn a_failed_listing_is_an_error_and_leaves_the_catalog_as_it_was() {
+    common::isolate_model_cache();
+    let ok = serve(None, Some(priced_list())).await;
+    provider_named("cerebras", &ok).list_models().await.unwrap();
+
+    let refusing = serve(None, None).await;
+    let result = provider_named("cerebras", &refusing).list_models().await;
+    assert!(result.is_err(), "no invented list in place of the answer");
+    assert!(sven_model::catalog::lookup("cerebras", "listed-priced").is_some());
 }
 
 #[tokio::test]

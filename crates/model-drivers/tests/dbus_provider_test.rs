@@ -17,6 +17,8 @@
 
 #![cfg(all(target_os = "linux", feature = "dbus"))]
 
+mod common;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -576,6 +578,7 @@ async fn only_the_first_image_and_audio_are_sent() {
 
 #[tokio::test]
 async fn list_models_maps_server_ids_to_catalog_entries() {
+    common::isolate_model_cache();
     let (provider, _seen, _server) = fake_server().await;
     let entries = provider.list_models().await.unwrap();
     let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();

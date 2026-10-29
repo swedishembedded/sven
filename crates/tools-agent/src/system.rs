@@ -30,8 +30,8 @@ use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
 /// The `provider`/`id`/`name` slice of a model catalog entry that
 /// `switch_model`'s fuzzy search needs. A local type rather than depending on
 /// `sven_model_catalog::ModelCatalogEntry` directly: the tool layer has no
-/// other reason to know about the model-provider crate, and the catalog is
-/// static data the caller already has (via `sven_model_catalog::static_catalog()`)
+/// other reason to know about the model-provider crate, and the models are
+/// data the caller already has (via `sven_model_catalog::served_models()`)
 /// when it constructs a [`SystemTool`].
 #[derive(Debug, Clone)]
 pub struct ModelCatalogEntry {
@@ -582,14 +582,17 @@ mod tests {
     ) -> (SystemTool, Arc<Mutex<AgentMode>>, mpsc::Receiver<ToolEvent>) {
         let current = Arc::new(Mutex::new(mode));
         let (tx, rx) = mpsc::channel(16);
-        let catalog = sven_model_catalog::static_catalog()
-            .into_iter()
-            .map(|e| ModelCatalogEntry {
-                id: e.id,
-                name: e.name,
-                provider: e.provider,
-            })
-            .collect();
+        let catalog = [
+            ("anthropic", "claude-opus-4-6", "Claude Opus 4.6"),
+            ("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6"),
+            ("openai", "gpt-4o", "GPT-4o"),
+        ]
+        .map(|(provider, id, name)| ModelCatalogEntry {
+            id: id.into(),
+            name: name.into(),
+            provider: provider.into(),
+        })
+        .to_vec();
         let tool = SystemTool::new(current.clone(), tx, catalog);
         (tool, current, rx)
     }

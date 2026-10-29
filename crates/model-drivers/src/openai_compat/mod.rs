@@ -43,10 +43,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use sven_model::{
-    catalog::{self, static_catalog, ModelCatalogEntry},
-    CompletionRequest, ResponseStream,
-};
+use sven_model::{catalog::ModelCatalogEntry, CompletionRequest, ResponseStream};
 /// How to send the API key in HTTP requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthStyle {
@@ -71,7 +68,7 @@ pub struct OpenAICompatProvider {
     api_key: Option<String>,
     /// Full chat completions URL, e.g. `https://api.groq.com/openai/v1/chat/completions`.
     chat_url: String,
-    /// Full models list URL (optional).  `None` → fall back to static catalog.
+    /// Full models list URL (optional).  `None`: the provider lists no models.
     models_url: Option<String>,
     max_tokens: u32,
     temperature: Option<f32>,
@@ -158,8 +155,7 @@ impl OpenAICompatProvider {
     /// deployment name and API version as path/query segments:
     /// `https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=...`
     ///
-    /// No `/models` URL is configured; the static catalog is used for model
-    /// discovery.
+    /// No `/models` URL is configured; the provider lists no models.
     #[allow(clippy::too_many_arguments)]
     pub fn with_full_chat_url(
         driver_name: &'static str,
@@ -304,7 +300,7 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
     ///    doesn't populate this field; hosted providers therefore still fall
     ///    through to `None` here exactly as before this path existed.
     ///
-    /// Either value may be smaller than the static catalog entry (e.g. the
+    /// Either value may be smaller than the window the list reports (e.g. the
     /// server was started with a smaller context budget than the checkpoint
     /// architecturally supports) - that's the whole point of asking the live
     /// server instead of trusting a hand-written config number.
@@ -329,73 +325,26 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         .await
     }
 
-    /// List models via `GET /models`, enriched with metadata.
+    /// List models via `GET /models` and record what the server serves
+    /// (limits, modalities, prices) in the catalog cache.
     ///
-    /// For OpenRouter, uses the rich metadata fields the API returns
-    /// (`context_length`, `top_provider.max_completion_tokens`,
-    /// `architecture.input_modalities`).  For other OpenAI-compatible
-    /// providers, enriches bare model IDs with static catalog metadata.
-    ///
-    /// Falls back to the static catalog when no API key is present, the
-    /// endpoint is unavailable, or the response is empty.
+    /// # Errors
+    /// The server did not answer, refused the request or answered something
+    /// that is not a model list. Nothing is invented in its place.
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
-        let catalog_entries: Vec<ModelCatalogEntry> = static_catalog()
-            .into_iter()
-            .filter(|e| e.provider == self.driver_name)
-            .collect();
-
-        let url = match &self.models_url {
-            Some(u) => u.clone(),
-            None => return Ok(catalog_entries),
-        };
-
-        let key = match &self.api_key {
-            Some(k) => k.clone(),
-            None => {
-                // Local provider with no key - just return catalog.
-                return Ok(catalog_entries);
-            }
-        };
-
-        let mut req = self.client.get(&url);
-        req = match self.auth_style {
-            AuthStyle::Bearer => req.bearer_auth(&key),
-            AuthStyle::ApiKeyHeader => req.header("api-key", &key),
-            AuthStyle::None => req,
-        };
+        let url = self
+            .models_url
+            .as_deref()
+            .with_context(|| format!("{} has no model list endpoint", self.driver_name))?;
+        let mut req = self.authed(self.client.get(url));
         for (name, val) in &self.extra_headers {
             req = req.header(name.as_str(), val.as_str());
         }
-
-        let resp = match req.send().await {
-            Ok(r) => r,
-            Err(_) => {
-                // Network error (e.g. local server not running) - return catalog.
-                return Ok(catalog_entries);
-            }
-        };
-
-        if !resp.status().is_success() {
-            return Ok(catalog_entries);
-        }
-
-        let body: Value = match resp.json().await {
-            Ok(v) => v,
-            Err(_) => return Ok(catalog_entries),
-        };
-
-        let live = parse_models_response(&body, self.driver_name, &catalog_entries);
-        if live.is_empty() {
-            return Ok(catalog_entries);
-        }
-
-        // Persist live data to the catalog cache so subsequent lookups (context
-        // window, modalities) benefit from the fresh metadata.
-        if self.driver_name == "openrouter" {
-            catalog::cache_update(self.driver_name, live.clone());
-        }
-
-        Ok(live)
+        let body = crate::listing::get_json(req, self.driver_name).await?;
+        Ok(crate::listing::record(
+            self.driver_name,
+            parse_models_response(&body, self.driver_name),
+        ))
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {

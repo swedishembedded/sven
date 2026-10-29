@@ -21,16 +21,17 @@ use sven_model::{catalog, get_driver};
 /// 1. **Named provider** - if the prefix of `override_str` matches a key in
 ///    `config.providers`, use that named config (optionally overriding the
 ///    model name with the suffix after `/`).
-/// 2. **Catalog lookup `provider/name`** - when `override_str` contains `/`
-///    and the prefix is a known driver, look up `(provider, name)` in the
-///    static model catalog.  A fresh `ModelConfig` is built from catalog
-///    metadata; credentials are inherited only when the resolved provider
-///    matches `config.model.provider`.
-/// 3. **Catalog lookup by bare model name** - when `override_str` has no `/`
-///    and is not a known provider id, search the catalog for that model name
-///    alone (provider is inferred from the catalog entry).
+/// 2. **Served-model lookup `provider/name`** - when `override_str` contains
+///    `/` and the prefix is a known driver, look up `(provider, name)` among
+///    the models that provider's endpoint has served.  A fresh `ModelConfig`
+///    is built from the entry; credentials are inherited only when the
+///    resolved provider matches `config.model.provider`.
+/// 3. **Served-model lookup by bare model name** - when `override_str` has no
+///    `/` and is not a known provider id, search every provider's served
+///    models for that name alone (provider is inferred from the entry).
 /// 4. **Fallback** - call [`resolve_model_cfg`] with `config.model` as the
-///    base, which handles bare provider ids and custom/unknown endpoints.
+///    base, which handles bare provider ids, and any model no endpoint has
+///    been seen to serve: `provider/name` is kept as written.
 pub struct ModelResolver<'a> {
     model: &'a ModelConfig,
     providers: &'a Providers,
@@ -111,7 +112,7 @@ impl<'a> ModelResolver<'a> {
         Some(entry.to_model_config(model_name))
     }
 
-    /// Step 2: catalog lookup by `provider/name` when the provider is a
+    /// Step 2: served-model lookup by `provider/name` when the provider is a
     /// known driver.
     fn try_catalog_by_provider_name(
         &self,
@@ -124,7 +125,8 @@ impl<'a> ModelResolver<'a> {
         Some(self.catalog_entry_to_config(&entry))
     }
 
-    /// Step 3: catalog lookup by bare model name (no `/`, not a provider id).
+    /// Step 3: served-model lookup by bare model name (no `/`, not a provider
+    /// id).
     fn try_catalog_by_bare_model_name(
         &self,
         provider_key: &str,
@@ -142,7 +144,7 @@ impl<'a> ModelResolver<'a> {
         resolve_model_cfg(self.model, self.override_str)
     }
 
-    /// Convert a catalog entry to a [`ModelConfig`], inheriting credentials
+    /// Convert a served-model entry to a [`ModelConfig`], inheriting credentials
     /// from `config.model` when the provider matches.
     fn catalog_entry_to_config(&self, entry: &catalog::ModelCatalogEntry) -> ModelConfig {
         let mut cfg = ModelConfig {
@@ -274,6 +276,19 @@ mod tests {
     struct Config {
         model: ModelConfig,
         providers: Providers,
+    }
+
+    /// Make the endpoints of `openai` and `anthropic` serve the models these
+    /// tests resolve, as a listing would have recorded them.
+    fn seed_served_models() {
+        catalog::cache_seed(
+            [
+                ("openai", "gpt-4o"),
+                ("openai", "gpt-4o-mini"),
+                ("anthropic", "claude-opus-4-6"),
+            ]
+            .map(|(provider, id)| catalog::ModelCatalogEntry::bare(provider, id)),
+        );
     }
 
     // ── resolve_model_cfg ─────────────────────────────────────────────────────
@@ -465,6 +480,7 @@ mod tests {
     /// The resolved config should use the catalog's provider defaults.
     #[test]
     fn catalog_model_override_does_not_inherit_custom_base_url() {
+        seed_served_models();
         use std::collections::HashMap;
         let config = Config {
             model: ModelConfig {
@@ -489,11 +505,11 @@ mod tests {
         );
     }
 
-    /// Regression: fallback path (model NOT in catalog) must also clear base_url.
+    /// Regression: fallback path (model no endpoint served) must also clear base_url.
     ///
     /// Example: config.model has `provider: sven, base_url: http://koala:8000/v1`
-    /// and the user runs `--model openai/gpt-5.5`.  gpt-5.5 is not in the
-    /// catalog so resolution falls to `resolve_model_cfg` (step 4).  The
+    /// and the user runs `--model openai/model-nobody-served`.  No endpoint served
+    /// it, so resolution falls to `resolve_model_cfg` (step 4).  The
     /// custom base_url must not bleed over to the openai provider.
     #[test]
     fn fallback_path_does_not_inherit_custom_base_url_on_provider_change() {
@@ -508,11 +524,15 @@ mod tests {
             providers: HashMap::new(),
         };
 
-        // "gpt-5.5" is not in the catalog, so resolution falls to
+        // No endpoint served this model, so resolution falls to
         // resolve_model_cfg which previously leaked base_url.
-        let cfg = resolve_model_from_config(&config.model, &config.providers, "openai/gpt-5.5");
+        let cfg = resolve_model_from_config(
+            &config.model,
+            &config.providers,
+            "openai/model-nobody-served",
+        );
         assert_eq!(cfg.provider, "openai");
-        assert_eq!(cfg.name, "gpt-5.5");
+        assert_eq!(cfg.name, "model-nobody-served");
         assert!(
             cfg.base_url.is_none(),
             "koala base_url must NOT bleed into openai provider via fallback path: {:?}",
@@ -524,6 +544,7 @@ mod tests {
     /// has a local endpoint must NOT inherit the custom base_url.
     #[test]
     fn catalog_model_slash_form_does_not_inherit_custom_base_url() {
+        seed_served_models();
         use std::collections::HashMap;
         let config = Config {
             model: ModelConfig {
@@ -553,6 +574,7 @@ mod tests {
     /// and credentials are not inherited.
     #[test]
     fn catalog_model_different_provider_clears_credentials() {
+        seed_served_models();
         use std::collections::HashMap;
         let config = Config {
             model: ModelConfig {
@@ -655,8 +677,8 @@ mod tests {
     /// Step 2: `provider/name` form resolves via catalog when provider is a known driver.
     #[test]
     fn step2_slash_form_resolves_via_catalog() {
+        seed_served_models();
         let config = make_config("anthropic", "claude-opus-4-5");
-        // openai/gpt-4o should be in the static catalog.
         let cfg = ModelResolver::new(&config.model, &config.providers, "openai/gpt-4o").resolve();
         assert_eq!(cfg.provider, "openai");
         assert_eq!(cfg.name, "gpt-4o");
@@ -681,6 +703,7 @@ mod tests {
     /// Step 2: credentials are inherited when the catalog model uses the same provider as config.
     #[test]
     fn step2_inherits_credentials_when_same_provider() {
+        seed_served_models();
         let mut config = make_config("openai", "gpt-4o");
         config.model.api_key = Some("sk-mykey".into());
         // openai/gpt-4o-mini - same provider, should inherit api_key.
@@ -696,14 +719,29 @@ mod tests {
 
     // ── Step 3: catalog lookup by bare model name ──────────────────────────────
 
-    /// Step 3: a bare model name (not a provider id) resolves via catalog.
+    /// Step 3: a bare model name (not a provider id) resolves to the provider
+    /// that served it.
     #[test]
-    fn step3_bare_model_name_resolves_via_catalog() {
+    fn step3_bare_model_name_resolves_to_the_provider_that_served_it() {
+        catalog::cache_seed([catalog::ModelCatalogEntry::bare(
+            "openai",
+            "step3-served-model",
+        )]);
         let config = make_config("anthropic", "claude-opus-4-5");
-        // "gpt-4o" is a bare model name that exists in the catalog.
-        let cfg = ModelResolver::new(&config.model, &config.providers, "gpt-4o").resolve();
+        let cfg =
+            ModelResolver::new(&config.model, &config.providers, "step3-served-model").resolve();
         assert_eq!(cfg.provider, "openai");
-        assert_eq!(cfg.name, "gpt-4o");
+        assert_eq!(cfg.name, "step3-served-model");
+    }
+
+    /// Step 3: a bare model name no endpoint served keeps the active provider.
+    #[test]
+    fn step3_bare_model_name_nobody_served_keeps_the_active_provider() {
+        let config = make_config("anthropic", "claude-opus-4-5");
+        let cfg =
+            ModelResolver::new(&config.model, &config.providers, "step3-unserved-model").resolve();
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.name, "step3-unserved-model");
     }
 
     /// Step 3 skip: a bare known provider id (e.g. "groq") skips step 3 and falls to step 4.

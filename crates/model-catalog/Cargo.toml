@@ -2,12 +2,14 @@
 name    = "sven-model-catalog"
 version.workspace = true
 edition = "2021"
-description = "Static model catalog data (bundled YAML) + a live-cache overlay. No I/O beyond local disk cache reads/writes; no reqwest, no cloud SDKs."
+description = "The cache of what model endpoints serve (limits, modalities, prices), in memory and on local disk. No I/O beyond local disk cache reads/writes; no reqwest, no cloud SDKs."
 
 [dependencies]
 sven-rt    = { path = "../rt" }
 anyhow     = { workspace = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
 dirs       = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

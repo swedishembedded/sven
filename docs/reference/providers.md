@@ -70,7 +70,6 @@ source that does not answer, or refuses its key, is reported on stderr.
 sven list-models                    # e.g. brain/Qwen/Qwen3-0.6B, openrouter/z-ai/glm-5.3-flash
 sven list-models --provider openrouter
 sven list-models --json
-sven list-models --catalog          # the bundled catalog instead
 ```
 
 To check that the configured model can be used before starting a session:
@@ -94,14 +93,60 @@ takes, in order of precedence:
 1. `<name>[/model]` where `<name>` is a key of the `providers:` section: that
    entry's endpoint, key and per-model overrides. With no `/model` part the
    current model name is kept.
-2. `provider/model` where `provider` is a registered id and the pair is in the
-   bundled catalog. Credentials of the active model are kept only when the
+2. `provider/model` where `provider` is a registered id and the pair has been
+   served by that provider's endpoint (see [Served models](#served-models)).
+   Credentials of the active model are kept only when the
    provider is the same.
-3. A bare model name found in the catalog: the provider is inferred.
-4. Otherwise `provider/model`, a bare provider id (keeps the model name) or a
+3. A bare model name that some provider's endpoint has served: the provider is
+   inferred.
+4. Otherwise `provider/model` (also for a model no endpoint is known to serve,
+   which is kept as written), a bare provider id (keeps the model name) or a
    bare model name (keeps the provider) applied to the active configuration.
    Switching provider clears the old `base_url`, key, token limits,
    `driver_options` and Azure/AWS fields.
+
+## Served models
+
+sven bundles no list of models, limits or prices. What it knows about a model is
+what the model's endpoint served, kept in a per-provider cache
+(`~/.config/sven/model-cache/<provider>.json`) that is refreshed after a
+successful model list and, for a hosted provider with a stored key, in the
+background when the file is older than 24 hours, so a start-up without network
+still knows the last served list. A list that fails is an error; sven never
+substitutes entries of its own.
+
+| figure | read from the endpoint's `GET /models` entry |
+|--------|-----------------------------------------------|
+| context window | `context_length`, else `max_model_len`, else `context_window`; Google `inputTokenLimit`; Cohere `context_length` |
+| output cap | `top_provider.max_completion_tokens`, else `max_output_tokens`; Google `outputTokenLimit` |
+| input modalities | `architecture.input_modalities`, else `capabilities`; otherwise text only |
+| price | `pricing` (below) |
+
+A figure the endpoint does not serve is unknown, and the configuration is
+consulted instead (`model.max_tokens`, `max_output_tokens`, `input_modalities`,
+`cost.prices`). With none of them there is no context-window gate, the driver's
+default output cap applies and the price is unknown, never zero.
+
+`pricing` is the OpenRouter shape: US dollars **per token** as decimal strings,
+`prompt` and `completion` required, `input_cache_read` and `input_cache_write`
+optional.
+
+```json
+{"id": "deepseek/deepseek-chat", "context_length": 163840,
+ "top_provider": {"max_completion_tokens": 32768},
+ "pricing": {"prompt": "0.00000014", "completion": "0.00000042",
+             "input_cache_read": "0.000000014"}}
+```
+
+sven multiplies each figure by one million to get the per-million-token prices
+of `cost.prices`. A cache write that is not stated is charged at the `prompt`
+price, and no cache time-to-live is served. A price that is negative (OpenRouter
+states `-1` for per-request pricing) or unreadable is unknown. A price declared
+in `cost.prices` wins over a served one.
+
+The anthropic, google, cohere and OpenAI-compatible drivers record their model
+lists this way; Bedrock lists nothing, so its models are known by configuration
+alone.
 
 ## Default provider auto-detection
 
@@ -914,7 +959,7 @@ Each `providers.<name>` entry takes `name` (the driver id), `base_url`,
 overrides the token limits, `temperature`, `driver_options`, the `cache_*`
 flags, `mock_responses_file` and `input_modalities`.
 `input_modalities` (any of `text`, `image`, `audio`) declares what a
-self-hosted model accepts, since the bundled catalog only knows public models.
+model accepts when its server does not say.
 
 For OpenAI-compatible providers, `driver_options` is a JSON object merged into
 every request body; its keys win over the ones sven computes (for example

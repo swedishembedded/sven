@@ -293,13 +293,9 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                 let config = Settings::load(cli.config.as_deref())?.runtime;
                 return run_task_command(command, &config).await;
             }
-            Commands::ListModels {
-                provider,
-                catalog,
-                json,
-            } => {
+            Commands::ListModels { provider, json } => {
                 let config = Settings::load(cli.config.as_deref())?.runtime;
-                return list_models_cmd(&config, provider.as_deref(), *catalog, *json).await;
+                return list_models_cmd(&config, provider.as_deref(), *json).await;
             }
             Commands::Auth { command } => {
                 return run_auth_command(command).await;

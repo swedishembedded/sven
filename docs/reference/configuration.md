@@ -154,12 +154,6 @@ Only one provider or `providers:` entry:
 sven list-models --provider openrouter
 ```
 
-The bundled catalog instead:
-
-```sh
-sven list-models --catalog
-```
-
 Output as JSON:
 
 ```sh
@@ -701,8 +695,8 @@ in the file. There are no extra keys for it.
 Optional fields a server may add to each `/models` entry, all ignored when
 absent: `context_length` (or `max_model_len`, `context_window`), `max_output_tokens`,
 `capabilities` (a list; tool calling is recognised from `tools`, `tool_use`,
-`tool_calls` or `function_calling`) and `adapter`. The bundled catalog is used
-only for what a server leaves out.
+`tool_calls` or `function_calling`) and `adapter`. What a server leaves out is
+unknown: sven bundles no model list to fill it in from.
 
 ---
 
@@ -1241,7 +1235,7 @@ cache. Off unless turned on; advisory unless `enforce`.
 |-----|---------|---------|
 | `cache_aware` | `off` | `off`, `advise` (record the comparison, demote anyway) or `enforce` (leave a demotion undone that does not pay) |
 | `remaining_requests` | unset | requests still expected in a session; unset means about as many as it has made |
-| `prices` | none | per million tokens by `provider/model`: `input_per_mtok`, `output_per_mtok`, optional `cache` with `read_per_mtok`, `write_per_mtok`, `ttl_secs` |
+| `prices` | none | per million tokens by `provider/model`: `input_per_mtok`, `output_per_mtok`, optional `cache` with `read_per_mtok`, `write_per_mtok`, `ttl_secs` (the price a model's endpoint serves is used when none is declared; see [Served models](providers.md#served-models)) |
 
 See [Cost model](../internals/cost-model.md#where-it-is-wired).
 

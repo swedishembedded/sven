@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// Swedish Embedded AB implements solutions for keeping agents aware of what
+// their model endpoints really serve, for its clients. If your team needs
+// expertise in multi-provider LLM gateways then you can procure our services
+// by sending an email to info@swedishembedded.com.
+//! What every driver's `list_models` shares: asking the endpoint, and keeping
+//! the answer.
+//!
+//! A listing that fails is an error naming the provider. It is never answered
+//! from invented entries; the catalog cache keeps the last good answer.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{bail, Context};
+use serde_json::Value;
+use sven_model::catalog::{self, ModelCatalogEntry};
+use sven_model::ModelProvider;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::api_key::resolve_api_key;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::discovery::{effective_base_url, is_local_endpoint};
+use crate::ModelConfig;
+
+/// How long an endpoint may take to list its models.
+const LIST_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Send `req` (a model-list `GET`) and return its JSON body.
+///
+/// # Errors
+/// The endpoint did not answer, answered a non-success status (the key is not
+/// echoed) or answered something that is not JSON.
+pub(crate) async fn get_json(
+    req: reqwest::RequestBuilder,
+    provider: &str,
+) -> anyhow::Result<Value> {
+    let resp = req
+        .timeout(LIST_TIMEOUT)
+        .send()
+        .await
+        .with_context(|| format!("{provider}: the model list request failed"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!(
+            "{provider} answered HTTP {} to its model list",
+            status.as_u16()
+        );
+    }
+    resp.json()
+        .await
+        .with_context(|| format!("{provider}: the model list is not JSON"))
+}
+
+/// Record `entries` as what `provider` serves and return them ordered by id.
+pub(crate) fn record(
+    provider: &str,
+    mut entries: Vec<ModelCatalogEntry>,
+) -> Vec<ModelCatalogEntry> {
+    entries.sort_by(|a, b| a.id.cmp(&b.id));
+    catalog::cache_update(provider, entries.clone());
+    entries
+}
+
+/// Ask a hosted endpoint for its models in the background when the disk cache
+/// of its provider is absent or older than a day, so limits and prices are
+/// known without a listing having been requested.
+///
+/// Does nothing without a running tokio runtime or a key, nor for an endpoint
+/// on this machine or network: those answer a live probe at start-up instead,
+/// and a list request to them is not free of side effects for a test or a
+/// server that counts requests. A failed refresh is logged and leaves the
+/// cache as it was.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn refresh_when_stale(provider: &Arc<dyn ModelProvider>, cfg: &ModelConfig) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let hosted = effective_base_url(cfg).is_some_and(|url| !is_local_endpoint(&url));
+    if !hosted || resolve_api_key(cfg).is_none() || !catalog::is_cache_stale(&cfg.provider) {
+        return;
+    }
+    let provider = Arc::clone(provider);
+    runtime.spawn(async move {
+        if let Err(e) = provider.list_models().await {
+            tracing::debug!(provider = provider.name(), error = %e, "model list refresh failed");
+        }
+    });
+}
+
+/// A browser has no on-disk catalog to refresh.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn refresh_when_stale(_provider: &Arc<dyn ModelProvider>, _cfg: &ModelConfig) {}

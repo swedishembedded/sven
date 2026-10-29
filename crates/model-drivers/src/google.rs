@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use sven_model::{
-    catalog::{static_catalog, ModelCatalogEntry},
+    catalog::{token_count, ModelCatalogEntry},
     CompletionRequest, MessageContent, ResponseEvent, ResponseStream, Role,
 };
 
@@ -67,13 +67,17 @@ impl sven_model::ModelProvider for GoogleProvider {
         crate::url_host(&self.base_url)
     }
 
+    /// `GET /v1beta/models`: the models that can generate content, with the
+    /// input and output token limits Google reports for each.
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
-        let mut entries: Vec<ModelCatalogEntry> = static_catalog()
-            .into_iter()
-            .filter(|e| e.provider == "google")
-            .collect();
-        entries.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(entries)
+        let key = self.api_key.as_deref().context("GEMINI_API_KEY not set")?;
+        let url = format!(
+            "{}/v1beta/models?pageSize=1000",
+            self.base_url.trim_end_matches('/')
+        );
+        let req = self.client.get(url).header("x-goog-api-key", key);
+        let body = crate::listing::get_json(req, "google").await?;
+        Ok(crate::listing::record("google", models_from_list(&body)))
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
@@ -482,9 +486,53 @@ fn stream_url(base_url: &str, model: &str) -> String {
     )
 }
 
+/// The generative models of a `models.list` body. `name` is `models/<id>`;
+/// the limits are Google's `inputTokenLimit` and `outputTokenLimit`.
+fn models_from_list(body: &Value) -> Vec<ModelCatalogEntry> {
+    let models = body["models"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    models
+        .iter()
+        .filter(|m| {
+            m["supportedGenerationMethods"]
+                .as_array()
+                .is_some_and(|ms| ms.iter().any(|g| g == "generateContent"))
+        })
+        .filter_map(|m| {
+            let id = m["name"].as_str()?.trim_start_matches("models/");
+            Some(ModelCatalogEntry {
+                name: m["displayName"].as_str().unwrap_or(id).to_string(),
+                description: m["description"].as_str().unwrap_or_default().to_string(),
+                context_window: token_count(m.get("inputTokenLimit")),
+                max_output_tokens: token_count(m.get("outputTokenLimit")),
+                ..ModelCatalogEntry::bare("google", id)
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_models_list_keeps_generative_models_with_their_token_limits() {
+        let body = serde_json::json!({"models": [
+            {"name": "models/gemini-x", "displayName": "Gemini X",
+             "inputTokenLimit": 1048576, "outputTokenLimit": 65536,
+             "supportedGenerationMethods": ["generateContent", "countTokens"]},
+            {"name": "models/embed-y", "inputTokenLimit": 2048,
+             "supportedGenerationMethods": ["embedContent"]},
+        ]});
+        let models = models_from_list(&body);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gemini-x");
+        assert_eq!(models[0].name, "Gemini X");
+        assert_eq!(models[0].context_window, Some(1_048_576));
+        assert_eq!(models[0].max_output_tokens, Some(65_536));
+    }
     use sven_model::ModelProvider;
 
     /// The URL is interpolated into `reqwest` transport errors, which this

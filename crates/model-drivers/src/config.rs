@@ -464,9 +464,9 @@ pub struct ModelConfig {
     // ── Multimodal capability declaration ────────────────────────────────────
     /// Input modalities this model accepts: any of `text`, `image`, `audio`.
     ///
-    /// The bundled static model catalog only knows about public models, so
-    /// self-hosted multimodal endpoints must declare their capabilities here.
-    /// When set, this overrides whatever the driver/catalog would report; when
+    /// A self-hosted endpoint often does not report what its model accepts,
+    /// so it can declare its capabilities here.
+    /// When set, this overrides whatever the driver/served catalog would report; when
     /// absent, the driver's own answer is used.
     ///
     /// ```yaml

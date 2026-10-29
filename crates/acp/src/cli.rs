@@ -108,7 +108,7 @@ fn parse_command_patterns(json: &str) -> Result<CommandPatterns, String> {
 
 /// Holds `config` to the budgets a parent handed down: each only ever
 /// lowers what the configuration allows. The output cap is a bound on the
-/// served model's own cap - configured, or its catalog entry's - never a
+/// served model's own cap - configured, or the one its endpoint served - never a
 /// replacement for it.
 fn apply_budgets(
     config: &mut sven_bootstrap::Config,
@@ -122,7 +122,7 @@ fn apply_budgets(
     if let Some(tokens) = max_output_tokens {
         let own = config.model.max_output_tokens.or_else(|| {
             sven_model::catalog::lookup(&config.model.provider, &config.model.name)
-                .map(|entry| entry.max_output_tokens)
+                .and_then(|entry| entry.max_output_tokens)
         });
         config.model.max_output_tokens = Some(own.map_or(tokens, |own| own.min(tokens)));
     }
@@ -244,19 +244,17 @@ mod tests {
 
     #[test]
     fn a_parent_output_cap_never_raises_the_served_model_catalog_cap() {
-        let entry = sven_model::catalog::static_catalog()
-            .into_iter()
-            .next()
-            .expect("the catalog lists a model");
+        let entry = sven_model::catalog::ModelCatalogEntry {
+            max_output_tokens: Some(4096),
+            ..sven_model::catalog::ModelCatalogEntry::bare("acp-cap-test", "capped")
+        };
+        sven_model::catalog::cache_seed([entry.clone()]);
         let mut config = sven_bootstrap::Config::default();
         config.model.provider = entry.provider.clone();
         config.model.name = entry.id.clone();
         config.model.max_output_tokens = None;
         apply_budgets(&mut config, None, Some(u32::MAX), &[]);
-        assert_eq!(
-            config.model.max_output_tokens,
-            Some(entry.max_output_tokens)
-        );
+        assert_eq!(config.model.max_output_tokens, entry.max_output_tokens);
     }
 
     #[test]

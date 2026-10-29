@@ -36,8 +36,8 @@ pub struct ModelChange {
 ///
 /// Every field except `id` is optional because servers differ in what they
 /// advertise and older servers advertise nothing beyond the id. `None` always
-/// means "not reported", never "no" - callers fall back to static catalog
-/// metadata for those.
+/// means "not reported", never "no" - callers fall back to configuration, then
+/// to "no limit known".
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ServedModel {
     pub id: String,
@@ -69,14 +69,16 @@ pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
     /// Send a completion request and return a streaming response.
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream>;
 
-    /// List all models available from this provider.
+    /// List all models this provider's endpoint serves.
     ///
-    /// The default implementation returns only the static catalog entries for
-    /// this provider.  Override to perform a live API query (and then merge
-    /// with the catalog for metadata enrichment).
+    /// The default implementation returns what the endpoint last served, from
+    /// the catalog cache. A driver that can ask its endpoint overrides this,
+    /// returns the endpoint's answer and records it with
+    /// [`crate::catalog::cache_update`]; when the endpoint cannot be asked it
+    /// returns the error, never invented entries.
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
         let provider = self.name();
-        let entries = crate::catalog::static_catalog()
+        let entries = crate::catalog::served_models()
             .into_iter()
             .filter(|e| e.provider == provider)
             .collect();
@@ -85,7 +87,7 @@ pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
 
     /// Ask the live server which models it is serving right now.
     ///
-    /// Unlike [`Self::list_models`], which merges static catalog entries, this
+    /// Unlike [`Self::list_models`], which may answer from the catalog cache, this
     /// reports only what the server itself says, so a model loaded or an
     /// adapter swapped after sven started is visible. Returns `None` when the
     /// provider has no discovery endpoint or the server did not answer in
@@ -132,16 +134,16 @@ pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
 
     /// Maximum output tokens for this provider/model combination.
     ///
-    /// Reads from the static catalog; returns `None` if the model is unknown.
+    /// Reads from what the endpoint served; `None` if it served no cap.
     fn catalog_max_output_tokens(&self) -> Option<u32> {
-        crate::catalog::lookup(self.name(), self.model_name()).map(|e| e.max_output_tokens)
+        crate::catalog::lookup(self.name(), self.model_name()).and_then(|e| e.max_output_tokens)
     }
 
     /// Context window size for this provider/model combination.
     ///
-    /// Reads from the static catalog; returns `None` if the model is unknown.
+    /// Reads from what the endpoint served; `None` if it served no window.
     fn catalog_context_window(&self) -> Option<u32> {
-        crate::catalog::lookup(self.name(), self.model_name()).map(|e| e.context_window)
+        crate::catalog::lookup(self.name(), self.model_name()).and_then(|e| e.context_window)
     }
 
     /// Config-specified total context window (overrides catalog when set).
@@ -182,7 +184,7 @@ pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
 
     /// Input modalities supported by this provider/model combination.
     ///
-    /// Reads from the static catalog.  Returns `[Text]` when the model is not
+    /// Reads from what the endpoint served.  Returns `[Text]` when the model is not
     /// found, to be conservative (avoid sending images to unknown models).
     fn input_modalities(&self) -> Vec<InputModality> {
         crate::catalog::lookup(self.name(), self.model_name())

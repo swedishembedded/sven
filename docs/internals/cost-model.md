@@ -20,13 +20,16 @@ is not declared the figure is `unknown`, and an unknown figure is never chosen.
 |-------|--------|
 | token counts of a request | the request ledger's estimate ([token-ledger.md](token-ledger.md)), reconciled with what the provider reported |
 | cache hits and writes | the provider's own usage report of the previous request (`reported.cache_read`, `reported.cache_write`) |
-| prices, cache prices, cache time-to-live | declared: the `cost.prices` configuration (keyed `<driver id>/<model name>`), else `sven-model-catalog`'s `prices.yaml`; a model with neither has an unknown price |
+| prices, cache prices, cache time-to-live | declared: the `cost.prices` configuration (keyed `<driver id>/<model name>`), else the `pricing` the model's endpoint serves; a model with neither has an unknown price |
 | time since the last request | the wall clock at the request boundary, owned by the executor |
 
-`sven-model-catalog` ships `prices.yaml` **empty** (`prices: []`). A price is a fact about a
-contract and goes stale silently; declare the ones you pay. Prices are per
-million tokens in one currency that the declarer chooses; sven does not convert
-or label it.
+sven bundles no prices. A price is a fact about a contract and goes stale
+silently, so it is taken from what the endpoint serves (see
+[Served models](../reference/providers.md#served-models)) and a price declared
+in `cost.prices` wins over it. Declared prices are per million tokens in one
+currency that the declarer chooses; sven does not convert or label it. A served
+price carries no cache time-to-live, so the cache is not assumed warm unless
+`ttl_secs` is declared.
 
 ## One step, term by term
 

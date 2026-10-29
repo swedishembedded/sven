@@ -5,8 +5,8 @@ explains how to add support for a new model provider. (`sven-model` itself
 is just the `ModelProvider` trait + request/response types + the pure
 `ModelResolver`/`resolve_model_cfg` config-resolution logic — no reqwest, no
 per-provider dependency closure. See that crate's `lib.rs` for how the two
-fit together, and `sven-model-catalog`/`sven-model-mock` for the static
-catalog and the mock providers.)
+fit together, and `sven-model-catalog`/`sven-model-mock` for the cache of
+served models and the mock providers.)
 
 ## Architecture overview
 
@@ -46,9 +46,11 @@ pub trait ModelProvider: Send + Sync {
     /// Stream a chat completion.
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream>;
 
-    /// List available models (default: return static catalog entries).
+    /// List the models the endpoint serves (default: what it last served,
+    /// from the catalog cache). A driver that can ask overrides this, records
+    /// the answer with `listing::record` and returns an error when it fails.
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
-        // default implementation - return catalog entries filtered by provider
+        // default implementation - cached entries filtered by provider
     }
 }
 ```
@@ -112,16 +114,10 @@ DriverMeta {
 ))),
 ```
 
-3. **Add model catalog entries** in `models.yaml`:
-
-```yaml
-- id: my-provider-model-v1
-  name: My Provider Model v1
-  provider: myprovider
-  context_window: 131072
-  max_output_tokens: 8192
-  description: My Provider flagship model
-```
+3. **Models need no entries.** An OpenAI-compatible `/models` list is read as
+   it stands, including `context_length`, `top_provider.max_completion_tokens`,
+   `architecture.input_modalities` and `pricing`; see
+   `docs/reference/providers.md#served-models`.
 
 That's it!  The `OpenAICompatProvider` handles request serialisation, SSE
 parsing, tool calls, streaming, and live model listing automatically.
@@ -231,7 +227,4 @@ sven list-providers --json
 
 # The models a provider serves now (live; needs its stored key)
 sven list-models --provider groq
-
-# The bundled catalog
-sven list-models --catalog --provider openai
 ```

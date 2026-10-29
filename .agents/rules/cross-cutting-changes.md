@@ -141,7 +141,10 @@ act across the stack, never an interpreter escape hatch.
    URL, `requires_api_key`, `local`). Pure metadata; it stays in `sven-model`.
 2. A driver module in `sven-model-drivers` (usually reusing `openai_compat`;
    bespoke only when the wire format differs).
-3. `model-catalog/models.yaml`: model metadata.
+3. Nothing in `model-catalog`: models, limits and prices are what the
+   provider's endpoint serves. If its listing is not OpenAI-shaped, the driver's
+   `list_models` reads it into `ModelCatalogEntry` and records it with
+   `listing::record`.
 
 ## Change what a session looks like on a surface
 

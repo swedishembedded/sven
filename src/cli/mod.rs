@@ -664,16 +664,11 @@ pub enum Commands {
     /// takes: every local server that answers (brain, ollama, vLLM, LM
     /// Studio), every `providers:` entry and every hosted provider with a
     /// stored key, asked live. A source that does not answer is reported.
-    ///
-    /// With --catalog the bundled model catalog is shown instead.
     ListModels {
         /// Only this provider: a driver id ("openrouter", "brain") or a
         /// `providers:` entry
         #[arg(long, short = 'p')]
         provider: Option<String>,
-        /// Show the bundled catalog instead of asking the providers
-        #[arg(long)]
-        catalog: bool,
         /// Output as JSON instead of a formatted table
         #[arg(long)]
         json: bool,

@@ -406,8 +406,8 @@ impl sven_model::ModelProvider for DbusProvider {
     }
 
     /// This transport exists precisely to carry images and audio, so it always
-    /// advertises all three modalities regardless of the static catalog (which
-    /// cannot know about a self-hosted model).
+    /// advertises all three modalities regardless of what the server lists (it
+    /// reports ids only).
     fn input_modalities(&self) -> Vec<InputModality> {
         vec![
             InputModality::Text,
@@ -416,36 +416,32 @@ impl sven_model::ModelProvider for DbusProvider {
         ]
     }
 
+    /// The model ids the server serves (`Brain1.Manager.ListModels`), which
+    /// reports no limits. Every one takes image and audio input, as this
+    /// provider's own `input_modalities` does.
+    ///
+    /// # Errors
+    /// The server cannot be reached or refuses the call.
     async fn list_models(&self) -> Result<Vec<ModelCatalogEntry>> {
-        let entry_for = |id: &str| ModelCatalogEntry {
-            id: id.to_string(),
-            name: id.to_string(),
-            provider: "dbus".to_string(),
-            context_window: self.max_tokens.unwrap_or(32_768),
-            max_output_tokens: self.max_tokens.unwrap_or(4_096),
-            description: "brain model served over D-Bus".to_string(),
-            input_modalities: vec![
-                InputModality::Text,
-                InputModality::Image,
-                InputModality::Audio,
-            ],
-        };
-
-        let proxy = match self.manager().await {
-            Ok(p) => p,
-            Err(e) => {
-                debug!(error = %e, "D-Bus list_models: could not reach the server");
-                return Ok(vec![entry_for(&self.model)]);
-            }
-        };
-        match proxy.list_models().await {
-            Ok(ids) => Ok(ids.iter().map(|id| entry_for(id)).collect()),
-            Err(e) => {
-                // Informational call only — never fail the caller over it.
-                debug!(error = %e, "D-Bus ListModels failed; reporting the configured model only");
-                Ok(vec![entry_for(&self.model)])
-            }
-        }
+        let ids = self
+            .manager()
+            .await?
+            .list_models()
+            .await
+            .context("Brain1.Manager.ListModels failed")?;
+        let entries = ids
+            .iter()
+            .map(|id| ModelCatalogEntry {
+                description: "brain model served over D-Bus".to_string(),
+                input_modalities: vec![
+                    InputModality::Text,
+                    InputModality::Image,
+                    InputModality::Audio,
+                ],
+                ..ModelCatalogEntry::bare("dbus", id)
+            })
+            .collect();
+        Ok(crate::listing::record("dbus", entries))
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<ResponseStream> {

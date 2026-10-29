@@ -22,7 +22,7 @@ fn cached(input: f64, output: f64, read: f64, write: f64, ttl: u32) -> Pricing {
         cache: Some(CachePricing {
             read_per_mtok: read,
             write_per_mtok: write,
-            ttl_secs: ttl,
+            ttl_secs: Some(ttl),
         }),
     }
 }

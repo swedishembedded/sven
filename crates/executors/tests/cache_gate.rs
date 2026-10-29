@@ -92,7 +92,7 @@ fn pricing() -> Pricing {
         cache: Some(CachePricing {
             read_per_mtok: 0.3,
             write_per_mtok: 3.75,
-            ttl_secs: 300,
+            ttl_secs: Some(300),
         }),
     }
 }

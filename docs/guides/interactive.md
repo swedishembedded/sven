@@ -376,7 +376,7 @@ names and arguments, and `Shift+Tab` cycles backwards.
 | `/resume` | Browse saved sessions and load one. |
 | `/clear` | Clear the current session's chat history. The session stays open. |
 | `/compact` | Summarise the conversation so far to free context, now rather than when the context is nearly full. The summary the conversation continues from is shown in the chat. Not available while a turn is running (the status bar says so). |
-| `/model <provider/name>` | Switch the model (e.g. `/model anthropic/claude-opus-4-6`). Tab-completes over the configured providers and the built-in model catalog. Takes effect on the next message. |
+| `/model <provider/name>` | Switch the model (e.g. `/model anthropic/claude-opus-4-6`). Tab-completes over the configured providers and the models their endpoints have served. Takes effect on the next message. |
 | `/provider <name>` | Switch provider, keeping the current model name. Takes effect on the next message. |
 | `/mode <research\|plan\|agent\|chat\|sdlc>` | Switch the agent mode for this session. Takes effect on the next message. |
 | `/abort` | Abort the current agent turn. Queued messages stay queued; partial output is kept. |

@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use sven_rt::Instant;
 
 use sven_cost::{CacheAware, CacheState};
-use sven_model_catalog::{lookup_pricing, Pricing};
+use sven_model_catalog::{served_pricing, Pricing};
 
 use super::TurnExecutor;
 use crate::CacheContext;
@@ -29,7 +29,7 @@ pub struct CostPolicy {
     /// as many as it has made so far.
     pub declared_remaining: Option<u32>,
     /// Declared prices by `provider/model`, taking precedence over the
-    /// catalog's.
+    /// ones the model's endpoint serves.
     pub prices: BTreeMap<String, Pricing>,
 }
 
@@ -67,13 +67,8 @@ impl TurnExecutor {
         if self.cost.mode == CacheAware::Off {
             return None;
         }
-        let pricing = self
-            .cost
-            .prices
-            .get(&format!("{}/{}", model.name(), model.model_name()))
-            .copied()
-            .or_else(|| lookup_pricing(model.name(), model.model_name()));
-        let ttl = pricing.and_then(|p| p.cache).map(|c| c.ttl_secs);
+        let pricing = price_of(&self.cost.prices, model.name(), model.model_name());
+        let ttl = pricing.and_then(|p| p.cache).and_then(|c| c.ttl_secs);
         let usage = self
             .cache_usage
             .lock()
@@ -92,5 +87,62 @@ impl TurnExecutor {
             declared_remaining: self.cost.declared_remaining,
             input_budget: sven_model::budget::effective_input_budget(window, output),
         })
+    }
+}
+
+/// The price of `model` at `provider`: the one declared in the configuration,
+/// else the one its endpoint served; `None` is unknown, never free.
+fn price_of(declared: &BTreeMap<String, Pricing>, provider: &str, model: &str) -> Option<Pricing> {
+    declared
+        .get(&format!("{provider}/{model}"))
+        .copied()
+        .or_else(|| served_pricing(provider, model))
+}
+
+#[cfg(test)]
+mod tests {
+    use sven_model_catalog::{cache_seed, ModelCatalogEntry};
+
+    use super::*;
+
+    fn flat(input: f64, output: f64) -> Pricing {
+        Pricing {
+            input_per_mtok: input,
+            output_per_mtok: output,
+            cache: None,
+        }
+    }
+
+    fn serve(provider: &str, id: &str, price: Option<Pricing>) {
+        cache_seed([ModelCatalogEntry {
+            pricing: price,
+            ..ModelCatalogEntry::bare(provider, id)
+        }]);
+    }
+
+    #[test]
+    fn a_declared_price_beats_the_served_one() {
+        serve("cost-gate-a", "m", Some(flat(1.0, 2.0)));
+        let declared = BTreeMap::from([("cost-gate-a/m".to_string(), flat(5.0, 6.0))]);
+        assert_eq!(
+            price_of(&declared, "cost-gate-a", "m"),
+            Some(flat(5.0, 6.0))
+        );
+    }
+
+    #[test]
+    fn without_a_declared_price_the_served_one_is_used() {
+        serve("cost-gate-b", "m", Some(flat(1.0, 2.0)));
+        assert_eq!(
+            price_of(&BTreeMap::new(), "cost-gate-b", "m"),
+            Some(flat(1.0, 2.0))
+        );
+    }
+
+    #[test]
+    fn a_model_with_neither_has_an_unknown_price_not_a_zero_one() {
+        serve("cost-gate-c", "unpriced", None);
+        assert_eq!(price_of(&BTreeMap::new(), "cost-gate-c", "unpriced"), None);
+        assert_eq!(price_of(&BTreeMap::new(), "cost-gate-c", "unserved"), None);
     }
 }

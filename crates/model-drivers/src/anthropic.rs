@@ -7,10 +7,7 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use tracing::{debug, warn};
 
-use sven_model::{
-    catalog::{static_catalog, ModelCatalogEntry},
-    CompletionRequest, ResponseEvent, ResponseStream,
-};
+use sven_model::{catalog::ModelCatalogEntry, CompletionRequest, ResponseEvent, ResponseStream};
 
 /// Placeholder substituted for audio content on the Anthropic transport.
 ///
@@ -141,15 +138,20 @@ impl sven_model::ModelProvider for AnthropicProvider {
         crate::url_host(&self.base_url)
     }
 
-    /// Anthropic does not expose a public list-models endpoint with full
-    /// metadata, so we return the static catalog entries for this provider.
+    /// `GET /v1/models`: the ids and display names Anthropic serves. The
+    /// endpoint reports no token limits, so none are recorded.
     async fn list_models(&self) -> anyhow::Result<Vec<ModelCatalogEntry>> {
-        let mut entries: Vec<ModelCatalogEntry> = static_catalog()
-            .into_iter()
-            .filter(|e| e.provider == "anthropic")
-            .collect();
-        entries.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(entries)
+        let key = self
+            .api_key
+            .as_deref()
+            .context("ANTHROPIC_API_KEY not set")?;
+        let req = self
+            .client
+            .get(format!("{}/v1/models?limit=1000", self.base_url))
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01");
+        let body = crate::listing::get_json(req, "anthropic").await?;
+        Ok(crate::listing::record("anthropic", models_from_list(&body)))
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
@@ -727,9 +729,40 @@ pub(crate) fn build_anthropic_messages(messages: &[sven_model::Message]) -> (Str
     )
 }
 
+/// The models of a `GET /v1/models` body: `id` and `display_name` each.
+fn models_from_list(body: &Value) -> Vec<ModelCatalogEntry> {
+    let data = body["data"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    data.iter()
+        .filter_map(|m| {
+            let id = m["id"].as_str()?;
+            Some(ModelCatalogEntry {
+                name: m["display_name"].as_str().unwrap_or(id).to_string(),
+                ..ModelCatalogEntry::bare("anthropic", id)
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_models_list_gives_ids_and_display_names_but_no_limits() {
+        let body = serde_json::json!({"data": [
+            {"id": "claude-x", "display_name": "Claude X", "type": "model"},
+            {"id": "claude-y", "type": "model"},
+        ]});
+        let models = models_from_list(&body);
+        assert_eq!(models[0].name, "Claude X");
+        assert_eq!(models[1].name, "claude-y");
+        assert!(models.iter().all(|m| m.provider == "anthropic"
+            && m.context_window.is_none()
+            && m.max_output_tokens.is_none()));
+    }
     use sven_model::ModelProvider;
 
     #[test]

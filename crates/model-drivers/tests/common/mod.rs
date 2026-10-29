@@ -14,6 +14,18 @@ use sven_model_drivers::ModelConfig;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+/// Point the user's configuration directory at a fresh temporary one for the
+/// rest of this test process, so a listing that records what a server serves
+/// writes its cache there and never into the real home of whoever runs the
+/// tests. Idempotent.
+pub fn isolate_model_cache() {
+    static CONFIG_HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let dir = CONFIG_HOME.get_or_init(|| tempfile::tempdir().unwrap());
+    // SAFETY: only ever sets the one value, before any listing in this process
+    // reads it; the tests of this process share that value.
+    unsafe { std::env::set_var("XDG_CONFIG_HOME", dir.path()) };
+}
+
 /// A loopback model server whose `/models` answer can be changed while it
 /// runs. `/props` is absent (404) and chat completions are rejected with a
 /// context-overflow error, like a server whose window is smaller than the
