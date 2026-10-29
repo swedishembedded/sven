@@ -12,8 +12,9 @@
 //! many tokens it spends. A token count cannot tell that apart from a long
 //! derivation, and a cap low enough to catch loops cuts honest reasoning off
 //! (a tenth of a 16k window ended an agent's run mid-thought). What marks a
-//! loop is the repetition: the most recent stretch of reasoning already
-//! occurs, verbatim, several times in the reasoning just before it.
+//! loop is the repetition: the reasoning ends in the same block written
+//! several times back to back. A stretch that only recurs (code quoted again
+//! to compare it, with different reasoning in between) is progress.
 
 /// Reasoning kept for comparison. A loop whose period is more than a third of
 /// this is not seen until it has run longer.
@@ -21,7 +22,8 @@ const WINDOW_CHARS: usize = 16_384;
 /// Length of the most recent stretch looked for in the window; long enough
 /// that natural text does not repeat it by chance.
 const PROBE_CHARS: usize = 400;
-/// Occurrences of the probe, itself included, that make a loop.
+/// Back-to-back copies of the repeating block, the last one included, that
+/// make a loop.
 const REPEATS: usize = 3;
 /// New characters between two looks, so the check costs little per delta.
 const CHECK_EVERY: usize = 512;
@@ -57,8 +59,18 @@ impl RepetitionWatch {
         if probe.chars().filter(|c| !c.is_whitespace()).count() < PROBE_CHARS / 4 {
             return None;
         }
-        let seen = self.recent.matches(probe).count();
-        (seen >= REPEATS).then_some(seen)
+        // The block is what lies between the probe's previous occurrence and
+        // this one; a loop is that block, back to back, REPEATS times.
+        let (previous, _) = self.recent.rmatch_indices(probe).nth(1)?;
+        let period = from - previous;
+        let text = self.recent.as_bytes();
+        let span = period * REPEATS;
+        if span > text.len() {
+            return None;
+        }
+        let tail = &text[text.len() - span..];
+        let periodic = (period..span).all(|i| tail[i] == tail[i - period]);
+        periodic.then(|| tail.len() / period)
     }
 
     /// Forgets the stretch so far: the model made progress.
@@ -119,6 +131,21 @@ mod tests {
     }
 
     #[test]
+    fn code_quoted_again_between_different_reasoning_passes() {
+        // Recorded false positive: a model compared versions of a function by
+        // quoting it three times, reasoning differently in between. The
+        // stretch recurs, but the reasoning moves on: not a loop.
+        let code = derivation_seeded(900, 99);
+        let mut text = derivation(2_000);
+        for i in 0..3 {
+            text.push_str(&code);
+            text.push_str(&derivation_seeded(600, i + 10));
+        }
+        text.push_str(&code);
+        assert_eq!(first_detection(&text), None);
+    }
+
+    #[test]
     fn a_paragraph_repeated_over_and_over_is_stopped() {
         let paragraph = derivation(700);
         let mut text = derivation(5_000);
@@ -133,6 +160,12 @@ mod tests {
     #[test]
     fn a_single_phrase_repeated_endlessly_is_stopped() {
         let text = "Let me think about this again. ".repeat(400);
+        assert!(first_detection(&text).is_some());
+    }
+
+    #[test]
+    fn a_loop_of_multibyte_text_is_stopped() {
+        let text = "Vänta, låt mig räkna om det här steget. ".repeat(200);
         assert!(first_detection(&text).is_some());
     }
 
