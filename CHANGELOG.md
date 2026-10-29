@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **providers**: a harness run (and `sven replay`) on a hosted model the model cache does not know yet lists the endpoint's models before the first turn instead of in the background, so a vision model on OpenRouter is sent the images `read_file` and `attach_file` produce instead of being taken for text-only.
+- **providers**: on the OpenAI wire (OpenRouter, vLLM, brain and the other OpenAI-compatible drivers) a tool result's images and audio go in one user message after the turn's tool results, naming the call they came from, and each `tool` message carries text only: providers refuse an array there (DeepInfra, SiliconFlow and Novita answer "Input should be a valid string"), which failed every turn after a tool returned an image.
 - **tools**: an image or audio a tool returns (`read_file` on a PNG, `attach_file`, an MCP tool) reaches the conversation with the tool's text instead of being dropped there, so a vision model sees what the agent opened; a model that does not accept images is still sent the text only.
 - **providers**: the input modalities a local server states for its model in `GET /models` (`architecture.input_modalities` or `capabilities`) are read by the start-up probe, so a vision model on brain or vLLM is sent images without an `input_modalities` setting. `ServedModel::input_modalities` and `sven_model::catalog::served_input_modalities` carry them.
 

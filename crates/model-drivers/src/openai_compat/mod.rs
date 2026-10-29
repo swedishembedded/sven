@@ -1141,29 +1141,57 @@ mod tests {
         assert_eq!(content[1]["image_url"]["url"], data_url);
     }
 
+    /// The OpenAI wire takes only text in a `tool` message: DeepInfra,
+    /// SiliconFlow and Novita refuse an array there ("Input should be a
+    /// valid string"). An image a tool returned goes in one user message
+    /// after the turn's tool results, naming the call it came from.
     #[test]
-    fn tool_result_parts_with_image_serialized_as_content_array() {
-        use sven_model::{Message, ToolContentPart};
+    fn a_tool_results_image_follows_the_tool_messages_as_a_user_message() {
+        use sven_model::{FunctionCall, Message, MessageContent, Role, ToolContentPart};
         let data_url = "data:image/jpeg;base64,/9j/4AAQ=";
-        let msg = Message::tool_result_with_parts(
-            "tc-99",
-            vec![
-                ToolContentPart::Text {
-                    text: "image captured".into(),
+        let call = |id: &str| Message {
+            role: Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: id.into(),
+                function: FunctionCall {
+                    name: "read_file".into(),
+                    arguments: "{}".into(),
                 },
-                ToolContentPart::Image {
-                    image_url: data_url.into(),
-                },
-            ],
+            },
+            reasoning: None,
+        };
+        let messages = [
+            call("tc-1"),
+            call("tc-99"),
+            Message::tool_result("tc-1", "plain"),
+            Message::tool_result_with_parts(
+                "tc-99",
+                vec![
+                    ToolContentPart::Text {
+                        text: "image captured".into(),
+                    },
+                    ToolContentPart::Image {
+                        image_url: data_url.into(),
+                    },
+                ],
+            ),
+        ];
+        let json = build_openai_messages(&messages);
+        assert_eq!(json.len(), 4, "{json:#?}");
+        assert_eq!(
+            (&json[1]["role"], &json[1]["content"]),
+            (&json!("tool"), &json!("plain"))
         );
-        let json = build_openai_messages(&[msg]);
-        assert_eq!(json[0]["role"], "tool");
-        assert_eq!(json[0]["tool_call_id"], "tc-99");
-        let content = &json[0]["content"];
-        assert!(content.is_array());
-        assert_eq!(content[0]["type"], "text");
-        assert_eq!(content[1]["type"], "image_url");
-        assert_eq!(content[1]["image_url"]["url"], data_url);
+        assert_eq!(json[2]["role"], "tool");
+        assert_eq!(
+            json[2]["content"], "image captured",
+            "a tool message carries text only"
+        );
+        assert_eq!(json[3]["role"], "user");
+        let parts = json[3]["content"].as_array().unwrap();
+        assert!(parts[0]["text"].as_str().unwrap().contains("tc-99"));
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], data_url);
     }
 
     #[test]

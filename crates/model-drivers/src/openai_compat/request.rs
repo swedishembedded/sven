@@ -88,26 +88,33 @@ pub(crate) fn build_openai_messages_with(
         })
     }
 
-    fn tool_result_to_json(tool_call_id: &str, content: &ToolResultContent) -> Value {
-        let wire_content: Value = match content {
-            ToolResultContent::Text(t) => json!(t),
-            ToolResultContent::Parts(parts) if !parts.is_empty() => {
-                let arr: Vec<Value> = parts
-                    .iter()
-                    .map(|p| match p {
-                        ToolContentPart::Text { text } => json!({ "type": "text", "text": text }),
-                        ToolContentPart::Image { image_url } => json!({
+    /// The `tool` message of a result: its text only, which is all the
+    /// OpenAI wire takes there (providers refuse an array). Its images and
+    /// audio are returned for the user message that follows the turn's
+    /// results.
+    fn tool_result_to_json(tool_call_id: &str, content: &ToolResultContent) -> (Value, Vec<Value>) {
+        let (text, media) = match content {
+            ToolResultContent::Text(t) => (t.clone(), Vec::new()),
+            ToolResultContent::Parts(parts) => {
+                let mut text = Vec::new();
+                let mut media = Vec::new();
+                for part in parts {
+                    match part {
+                        ToolContentPart::Text { text: t } => text.push(t.as_str()),
+                        ToolContentPart::Image { image_url } => media.push(json!({
                             "type": "image_url",
                             "image_url": { "url": image_url },
-                        }),
-                        ToolContentPart::Audio { audio_url } => audio_part_json(audio_url, None),
-                    })
-                    .collect();
-                json!(arr)
+                        })),
+                        ToolContentPart::Audio { audio_url } => {
+                            media.push(audio_part_json(audio_url, None));
+                        }
+                    }
+                }
+                (text.join("\n"), media)
             }
-            ToolResultContent::Parts(_) => json!(""),
         };
-        json!({ "role": "tool", "tool_call_id": tool_call_id, "content": wire_content })
+        let message = json!({ "role": "tool", "tool_call_id": tool_call_id, "content": text });
+        (message, media)
     }
 
     fn content_json(content: &MessageContent) -> Value {
@@ -178,14 +185,28 @@ pub(crate) fn build_openai_messages_with(
                 result.push(message);
             }
             sven_model::Turn::ToolResults(results) => {
+                // Media go after the whole group: a user message between two
+                // tool messages would break the call/result pairing.
+                let mut media = Vec::new();
                 for m in results {
                     if let MessageContent::ToolResult {
                         tool_call_id,
                         content,
                     } = &m.content
                     {
-                        result.push(tool_result_to_json(tool_call_id, content));
+                        let (message, parts) = tool_result_to_json(tool_call_id, content);
+                        result.push(message);
+                        if !parts.is_empty() {
+                            media.push(json!({
+                                "type": "text",
+                                "text": format!("Returned by tool call {tool_call_id}:"),
+                            }));
+                            media.extend(parts);
+                        }
                     }
+                }
+                if !media.is_empty() {
+                    result.push(json!({ "role": "user", "content": media }));
                 }
             }
         }
