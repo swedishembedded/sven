@@ -35,8 +35,11 @@ pub(super) async fn tell_watchdog(sink: &EventSink, reason: &str) {
 }
 
 /// Words in a transport error that say the failure is of the moment: the
-/// connection dropped, the server was busy or slow.
-const TRANSIENT_MARKERS: [&str; 9] = [
+/// connection dropped, the server was busy or slow, or the provider broke a
+/// generation off (`finish_reason: error`, which OpenRouter sends when the
+/// upstream provider fails mid-stream). A content-filter stop is not one.
+const TRANSIENT_MARKERS: [&str; 10] = [
+    "stream stopped: error",
     "connection closed",
     "connection reset",
     "connection refused",
@@ -58,5 +61,20 @@ pub(super) fn failure_text(error: &str) -> String {
         format!("{TRANSIENT}: {error}")
     } else {
         error.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::failure_text;
+    use sven_hsm::TRANSIENT;
+
+    #[test]
+    fn a_generation_the_provider_broke_off_is_retried_and_a_filtered_one_is_not() {
+        let broken = failure_text("model completion failed: stream stopped: error");
+        assert!(broken.starts_with(TRANSIENT), "{broken}");
+        assert!(failure_text("HTTP 503 Service Unavailable").starts_with(TRANSIENT));
+        let filtered = failure_text("stream stopped: content_filter");
+        assert!(!filtered.starts_with(TRANSIENT), "{filtered}");
     }
 }
