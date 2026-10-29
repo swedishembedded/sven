@@ -40,6 +40,8 @@ Changes that helped (landed):
 | `edit_file` accepts a diff without `@@` and unprefixed context | edit failures 16% -> 9% |
 | `edit_file` refuses a hunk matching several places without a line number | it edited the first match silently |
 | `find_file` deferred | 7 calls in 64 runs against 220 searches by `grep`/`shell`; about 230 tokens per request |
+| Time budget at the end of each request (cache-safe) | SWE dev 8 -> 9 of 12, paired 1 won 0 lost; second partial sample tied 3 of 3 |
+| A transient model failure is asked again (5/15/45 s) | a dropped request had ended a 51-minute run with exit 1 |
 
 No measurable effect:
 
@@ -48,7 +50,8 @@ No measurable effect:
 | Thinking budget (unbounded / 8k / 2k) | SWE 9 / 9 / 8 of 12, Terminal-Bench 0 / 1 / 1 of 6 |
 | `old_text`/`new_text` edit interface instead of diff hunks | edit failures 19% -> 0%, yet tasks passed 9 of 15 -> 5 of 13 (all losses timeouts); not adopted - tool-call success is not task success |
 | Tool-definition tokens | about 1.7k of a ~25k-token request, in the cached prefix: trimming them barely moves cost |
-| Agent scaffold, once harness defects are gone | sven, a bash-only agent and two other coding agents on the same model and tasks: 6-7 of 12 each |
+| Agent scaffold, once harness defects are gone | same model, same 12 SWE dev tasks at the same time: sven 7, a bash-only agent 9, two other coding agents 8 each |
+| Exploration-discipline prompt ("go straight to the code", no reproduce-first) | embedded train, paired 1 won 1 lost over 16 tasks; not adopted |
 
 What limits success now:
 
@@ -77,12 +80,9 @@ What limits success now:
 
 ## Plan (in order)
 
-1. Exploration discipline in the core prompt (A/B running) and a time-budget
-   notice at the end of each request, which keeps the cached prefix
-   byte-identical (implemented, A/B next). Land what wins.
-2. Outcome classes for every run (solved, wrong, timeout, harness abort,
+1. Outcome classes for every run (solved, wrong, timeout, harness abort,
    server error) and a zero-harness-abort gate.
-3. One-call navigation (definition, callers, file outline) and project facts
+2. One-call navigation (definition, callers, file outline) and project facts
    found by a script (test runner, single-test command, build), each A/B'd.
-4. Multi-sample runs on the eval splits against the reference agents, then a
+3. Multi-sample runs on the eval splits against the reference agents, then a
    second model family.
