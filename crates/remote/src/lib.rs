@@ -40,6 +40,7 @@ pub mod transcript;
 
 pub use client::{
     normalize_server, Busy, ConversationNotFound, Disconnected, EnvironmentTaken, RemoteClient,
+    UnreadableCommand,
 };
 pub use host::{restrict_to_hosted, run_host, HostOptions, HOSTED_TOOLS};
 pub use login::RemoteLogin;

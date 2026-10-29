@@ -33,8 +33,15 @@ fn json(status: u16, body: &str) -> Canned {
 }
 
 /// Serves each path's queue in order; the last response repeats.
-async fn mock(mut routes: HashMap<&'static str, VecDeque<Canned>>) -> Mock {
+async fn mock(routes: HashMap<&'static str, VecDeque<Canned>>) -> Mock {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    mock_on(listener, routes).await
+}
+
+async fn mock_on(
+    listener: TcpListener,
+    mut routes: HashMap<&'static str, VecDeque<Canned>>,
+) -> Mock {
     let base = format!("http://{}", listener.local_addr().unwrap());
     routes.entry("/.well-known/sven-remote").or_insert_with(|| {
         VecDeque::from([json(
@@ -362,4 +369,40 @@ fn a_hosted_host_may_connect_to_the_ports_of_its_servers_urls_and_no_others() {
     assert_eq!(login.server_ports().unwrap(), vec![443, 8443, 3000]);
     login.control_url = "not a url".into();
     assert!(login.server_ports().is_err());
+}
+
+#[tokio::test]
+async fn discovery_naming_another_origin_for_the_token_is_refused() {
+    for field in [
+        "control_url",
+        "openai_base_url",
+        "device_authorization_url",
+        "device_token_url",
+    ] {
+        let mut routes = HashMap::new();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let mut document = serde_json::json!({
+            "protocol_version": 1, "authorize_url": format!("{base}/connect"),
+            "device_authorization_url": format!("{base}/device"),
+            "device_token_url": format!("{base}/device/token"),
+            "control_url": format!("{base}/api"), "openai_base_url": format!("{base}/v1"),
+        });
+        document[field] = "http://127.0.0.1:9/elsewhere".into();
+        routes.insert(
+            "/.well-known/sven-remote",
+            VecDeque::from([json(200, &document.to_string())]),
+        );
+        let m = mock_on(listener, routes).await;
+        let message = format!("{:#}", login(&m, None).await.result.unwrap_err());
+        assert!(message.contains("same origin"), "{field}: {message}");
+        assert!(
+            m.seen
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(path, _)| path != "/device"),
+            "{field}: no device request was made"
+        );
+    }
 }

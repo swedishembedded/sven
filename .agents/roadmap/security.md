@@ -15,6 +15,8 @@ Scope: Hardening `sven rc` so that a compromised remote-control server (which ch
   closed (`sven_remote::sandbox`).
 - Hosted: configuration is read from `--config` alone
   (`ConfigDocument::load_explicit`).
+- Sign-in: https required except loopback, discovery URLs must be on the
+  server's origin; an unreadable command is skipped, not retried forever.
 
 ## Left
 

@@ -33,6 +33,14 @@ cancels the wait. A server that predates this sign-in must be updated first.
 (`--server localhost:3000`) and `https://` for any other. `--name` sets what
 the server calls this machine; the host name by default.
 
+Plain `http://` is accepted only for this machine (`localhost`, `127.x.x.x`,
+`::1`); any other server must be `https://`, since the token and every
+conversation would otherwise cross the network in the clear. The server's
+discovery document must also name its control API, model API and device
+sign-in endpoints on the server's own origin (scheme, host and port); sven
+refuses to sign in when one points elsewhere, so the token and model key
+cannot be sent to a third party.
+
 The sign-in is stored in `~/.config/sven/remote.yaml` (mode 0600).
 `sven auth list` shows it; `sven auth logout` forgets it. Removing the
 connection on the server revokes the token.
@@ -77,6 +85,10 @@ finished tool call and every finished answer in
 `~/.local/share/sven/remote/sessions/` (mode 0600; the platform's data
 directory elsewhere). After `sven rc` restarts, a session continues from
 there rather than from the server's text-only copy.
+
+A command from the server that this `sven` cannot read (for example one
+from a newer server) is logged and skipped, and acknowledged so the server
+does not resend it; the commands after it still arrive.
 
 If `sven rc` stopped in the middle of an answer, the work it did is kept.
 A tool call that was cut off is never run again on its own: the agent is

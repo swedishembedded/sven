@@ -108,19 +108,48 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub fn normalize_server(server: &str) -> anyhow::Result<String> {
     let server = server.trim().trim_end_matches('/');
     anyhow::ensure!(!server.is_empty(), "the server address is empty");
-    if server.starts_with("http://") || server.starts_with("https://") {
-        return Ok(server.to_string());
-    }
     anyhow::ensure!(
-        !server.contains("://"),
+        !server.contains("://") || server.starts_with("http://") || server.starts_with("https://"),
         "the server must be an http or https address"
     );
-    let host = server.split(['/', ':']).next().unwrap_or_default();
-    let local = matches!(host, "localhost" | "127.0.0.1" | "[") || server.starts_with("[::1]");
-    Ok(format!(
-        "{}://{server}",
-        if local { "http" } else { "https" }
-    ))
+    let with_scheme = if server.contains("://") {
+        server.to_string()
+    } else {
+        let host = server.split(['/', ':']).next().unwrap_or_default();
+        let local = matches!(host, "localhost" | "127.0.0.1") || server.starts_with("[::1]");
+        format!("{}://{server}", if local { "http" } else { "https" })
+    };
+    let url = reqwest::Url::parse(&with_scheme)
+        .map_err(|e| anyhow::anyhow!("{server} is not a server address: {e}"))?;
+    anyhow::ensure!(
+        url.scheme() == "https" || is_loopback(&url),
+        "{server} would send the token and every conversation in the clear; \
+         use an https address (http is only for this machine)"
+    );
+    Ok(with_scheme)
+}
+
+/// Whether `url` names this machine itself.
+fn is_loopback(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    host == "localhost"
+        || host
+            .trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Whether `url` is on the same origin (scheme, host and port) as `server`.
+/// What a server's discovery document names for the token and the model key
+/// to be sent to must be, or a document that was altered on the way (or a
+/// server that was) could send them elsewhere.
+pub(crate) fn same_origin(server: &str, url: &str) -> bool {
+    match (reqwest::Url::parse(server), reqwest::Url::parse(url)) {
+        (Ok(server), Ok(url)) => server.origin() == url.origin(),
+        _ => false,
+    }
 }
 
 pub(crate) fn http() -> anyhow::Result<reqwest::Client> {
@@ -158,6 +187,37 @@ pub async fn discover(server: &str) -> anyhow::Result<RemoteDiscovery> {
         found.protocol_version
     );
     Ok(found)
+}
+
+/// A command the server sent that this host cannot read (one of a newer
+/// protocol, or malformed). Reconnecting resends it from the same place, so
+/// a host that stops at it never moves on: it skips it by its `seq`.
+#[derive(Debug)]
+pub struct UnreadableCommand {
+    /// The command's position in the stream, when the payload still says.
+    pub seq: Option<u64>,
+    reason: String,
+}
+
+impl std::fmt::Display for UnreadableCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "an unreadable command ({})", self.reason)
+    }
+}
+
+impl std::error::Error for UnreadableCommand {}
+
+fn decode_command(data: &str) -> anyhow::Result<CommandEnvelope> {
+    serde_json::from_str(data).map_err(|e| {
+        let seq = serde_json::from_str::<serde_json::Value>(data)
+            .ok()
+            .and_then(|value| value.get("seq")?.as_u64());
+        UnreadableCommand {
+            seq,
+            reason: e.to_string(),
+        }
+        .into()
+    })
 }
 
 /// A host's connection to its server.
@@ -323,10 +383,7 @@ impl RemoteClient {
                     Err(e) => vec![Err(e)],
                     Ok(payloads) => payloads
                         .into_iter()
-                        .map(|data| {
-                            serde_json::from_str(&data)
-                                .map_err(|e| anyhow::anyhow!("an unreadable command ({e}): {data}"))
-                        })
+                        .map(|data| decode_command(&data))
                         .collect(),
                 },
             };
@@ -491,6 +548,59 @@ mod tests {
             "https://example.com"
         );
         assert!(normalize_server("ftp://example.com").is_err());
+    }
+
+    #[test]
+    fn an_unreadable_command_still_says_where_it_was() {
+        let poison =
+            decode_command(r#"{"seq":7,"command":{"type":"from_the_future"}}"#).unwrap_err();
+        assert_eq!(
+            poison.downcast_ref::<UnreadableCommand>().unwrap().seq,
+            Some(7)
+        );
+        let garbage = decode_command("{").unwrap_err();
+        assert_eq!(
+            garbage.downcast_ref::<UnreadableCommand>().unwrap().seq,
+            None
+        );
+        assert!(decode_command(r#"{"seq":1,"command":{"type":"list_slash_commands"}}"#).is_ok());
+    }
+
+    #[test]
+    fn plain_http_is_for_this_machine_only() {
+        for local in [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://127.1.2.3",
+            "http://[::1]:3000",
+            "[::1]:3000",
+        ] {
+            assert!(normalize_server(local).is_ok(), "{local}");
+        }
+        for remote in [
+            "http://example.com",
+            "http://192.168.1.5:3000",
+            "http://localhost.example.com",
+            "http://127.0.0.1.example.com",
+            "http://localhost@evil.example",
+        ] {
+            assert!(normalize_server(remote).is_err(), "{remote}");
+        }
+    }
+
+    #[test]
+    fn only_the_servers_own_origin_is_the_servers() {
+        assert!(same_origin("https://s.example", "https://s.example/api"));
+        assert!(same_origin("https://s.example", "https://s.example:443/v1"));
+        for other in [
+            "http://s.example/api",
+            "https://evil.example/api",
+            "https://s.example:8443/api",
+            "https://s.example.evil.example/api",
+            "not a url",
+        ] {
+            assert!(!same_origin("https://s.example", other), "{other}");
+        }
         assert!(normalize_server("  ").is_err());
     }
 }

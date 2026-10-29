@@ -33,7 +33,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::approvals::{PendingApprovals, RemoteApprovals, APPROVAL_TIMEOUT};
-use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused};
+use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused, UnreadableCommand};
 use crate::login::RemoteLogin;
 use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
 use upload::{upload_loop, Upload};
@@ -174,10 +174,21 @@ async fn command_loop(
                 while let Some(item) = stream.next().await {
                     let envelope = match item {
                         Ok(envelope) => envelope,
-                        Err(e) => {
-                            tracing::warn!("command stream: {e:#}");
-                            break;
-                        }
+                        // Sent again from the same place on every reconnect, so
+                        // a command that cannot be read is passed over, not
+                        // retried: it would wedge this host for good.
+                        Err(e) => match e.downcast_ref::<UnreadableCommand>() {
+                            Some(UnreadableCommand { seq: Some(seq), .. }) => {
+                                tracing::warn!("skipping command {seq}: {e:#}");
+                                taken = taken.max(*seq);
+                                let _ = uploads.send(Upload::Ack(taken)).await;
+                                continue;
+                            }
+                            _ => {
+                                tracing::warn!("command stream: {e:#}");
+                                break;
+                            }
+                        },
                     };
                     // At-least-once delivery: a command already taken is
                     // sent again after a reconnect and dropped here.
@@ -800,6 +811,61 @@ mod tests {
 
     use super::*;
     use sven_control::HistoryRole;
+
+    /// A command this host cannot read is passed over: the server sends it
+    /// again from the same place on every reconnect, so retrying it would
+    /// keep the host from ever reaching the commands after it.
+    #[tokio::test]
+    async fn a_command_that_cannot_be_read_does_not_wedge_the_command_loop() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let (asked, mut asked_rx) = mpsc::unbounded_channel::<String>();
+        tokio::spawn(async move {
+            // The server keeps resending whatever follows `after`.
+            let poison = r#"{"seq":1,"command":{"type":"from_the_future"}}"#;
+            let cancel = r#"{"seq":2,"command":{"type":"cancel_session","session_id":"00000000-0000-0000-0000-000000000000"}}"#;
+            loop {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let n = conn.read(&mut buf).await.unwrap();
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let after = request
+                    .split("after=")
+                    .nth(1)
+                    .unwrap()
+                    .split(['&', ' '])
+                    .next()
+                    .unwrap()
+                    .to_string();
+                asked.send(after.clone()).unwrap();
+                let body = if after == "0" {
+                    format!("data: {poison}\n\n")
+                } else {
+                    format!("data: {cancel}\n\n")
+                };
+                let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+                let _ = conn.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        let client = RemoteClient::new(&format!("{base}/api"), "token").unwrap();
+        let (routed, mut routed_rx) = mpsc::channel(8);
+        let (uploads, mut uploads_rx) = mpsc::channel(8);
+        let looping = tokio::spawn(async move { command_loop(&client, &routed, &uploads).await });
+        let command = tokio::time::timeout(Duration::from_secs(10), routed_rx.recv())
+            .await
+            .expect("the command after the unreadable one arrives")
+            .unwrap();
+        assert!(matches!(command, ControlCommand::CancelSession { .. }));
+        assert_eq!(asked_rx.recv().await.unwrap(), "0");
+        assert_eq!(
+            asked_rx.recv().await.unwrap(),
+            "1",
+            "it resumed after the skipped command"
+        );
+        assert!(matches!(uploads_rx.recv().await, Some(Upload::Ack(1))));
+        looping.abort();
+    }
 
     /// A host searches through the server it signed in to, with its key:
     /// the server runs the search and bills that account.
