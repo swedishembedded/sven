@@ -22,6 +22,7 @@ heading and a `Scope: <one sentence>` line under it, then run
 | [`android-ui-test`](android-ui-test.md) | android-ui-test | Android UI-test workflows: the `android` tool (`sven-tools-android`), the `ui-test` mode and `sven agent-dispatch`. |
 | [`continual-learning`](continual-learning.md) | experience-memory | Recording which memory units and skills were in play for a step and its outcome, so an embedding application can learn from them. |
 | [`document-conversion`](document-conversion.md) | document-conversion | Open work and measured numbers for PDF to Markdown conversion (`sven document`, `document_convert`). |
+| [`harness-performance`](harness-performance.md) | harness-performance | Making sven a fast, efficient, precise and robust coding harness for any model, and proving it with measured runs. |
 | [`harness-workflows`](harness-workflows.md) | harness-workflows | Open work on the harness workflow language and runtime (`sven-harness-spec`, `sven-harness-runtime`, `sven harness`). |
 | [`memory`](memory.md) | memory | Agent memory: the `sven-memory-api` contract, the `sven-memory-sqlite` adapter and the `semantic_memory` tool. |
 | [`model-router`](model-router.md) | model-router | Routing a request to models beyond the session language model (image, speech, video and other brain-served models). |
