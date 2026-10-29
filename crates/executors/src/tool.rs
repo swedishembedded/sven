@@ -543,8 +543,9 @@ impl EffectExecutor for ToolExecutor {
                         stored.push_str(&sven_model::repeat::repeat_note(earlier));
                     }
                 }
+                let message = with_media(orig, stored, &output.parts);
                 if let Ok(mut s) = store.lock() {
-                    s.append(&tid, Message::tool_result(orig, stored));
+                    s.append(&tid, message);
                 }
             }
 
@@ -593,6 +594,34 @@ impl EffectExecutor for ToolExecutor {
             }
         });
     }
+}
+
+/// The history message of a tool result: its (truncated) text, followed by
+/// the images and audio the tool returned, so a model that accepts them sees
+/// them. Which of them a given model is sent is decided per turn
+/// (`sven_model::sanitize`), not here.
+fn with_media(call_id: String, text: String, parts: &[sven_tool_api::ToolOutputPart]) -> Message {
+    use sven_model::ToolContentPart;
+    use sven_tool_api::ToolOutputPart;
+
+    let media: Vec<ToolContentPart> = parts
+        .iter()
+        .filter_map(|part| match part {
+            ToolOutputPart::Image(url) => Some(ToolContentPart::Image {
+                image_url: url.clone(),
+            }),
+            ToolOutputPart::Audio(url) => Some(ToolContentPart::Audio {
+                audio_url: url.clone(),
+            }),
+            ToolOutputPart::Text(_) => None,
+        })
+        .collect();
+    if media.is_empty() {
+        return Message::tool_result(call_id, text);
+    }
+    let mut content = vec![ToolContentPart::Text { text }];
+    content.extend(media);
+    Message::tool_result_with_parts(call_id, content)
 }
 
 #[cfg(test)]
@@ -901,6 +930,69 @@ mod tests {
                 sven_tool_api::ToolOutput::ok(call.id.clone(), content)
             }
         }
+    }
+
+    /// A tool that answers with a caption and an image, as `read_file` does
+    /// for a PNG.
+    struct ImageTool;
+
+    #[async_trait::async_trait]
+    impl sven_tool_api::Tool for ImageTool {
+        fn name(&self) -> &str {
+            "picture"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
+        fn description(&self) -> &str {
+            "test-only image tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+        fn default_policy(&self) -> sven_tool_api::ApprovalPolicy {
+            sven_tool_api::ApprovalPolicy::Auto
+        }
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
+            sven_tool_api::ToolOutput::with_parts(
+                call.id.clone(),
+                vec![
+                    sven_tool_api::ToolOutputPart::Text("Image file: sketch.png".into()),
+                    sven_tool_api::ToolOutputPart::Image("data:image/png;base64,iVBO".into()),
+                ],
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn an_image_a_tool_returns_reaches_the_conversation() {
+        use sven_model::{MessageContent, ToolContentPart, ToolResultContent};
+        let mut registry = ToolRegistry::new();
+        registry.register(ImageTool);
+        let store = Arc::new(Mutex::new(crate::thread_store::ThreadStore::new()));
+        let mut exec = ToolExecutor::unrestricted(Arc::new(registry));
+        run_tool_effect_and_get_stored_content(
+            &mut exec,
+            Arc::clone(&store),
+            "t1",
+            ToolCallId::new(),
+            "picture",
+        )
+        .await;
+        let last = store.lock().unwrap().snapshot("t1").into_iter().last();
+        let Some(MessageContent::ToolResult {
+            content: ToolResultContent::Parts(parts),
+            ..
+        }) = last.map(|m| m.content)
+        else {
+            panic!("the result is stored as text only, without its image");
+        };
+        assert!(
+            matches!(&parts[0], ToolContentPart::Text { text } if text == "Image file: sketch.png")
+        );
+        assert!(
+            matches!(&parts[1], ToolContentPart::Image { image_url } if image_url == "data:image/png;base64,iVBO")
+        );
     }
 
     /// Runs `effect` against a `ToolExecutor` wired with a real shared store
