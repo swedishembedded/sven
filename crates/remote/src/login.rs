@@ -44,6 +44,27 @@ impl RemoteLogin {
             })
     }
 
+    /// The TCP ports this sign-in's server, control API and model API are
+    /// reached on, for a host that may connect nowhere else.
+    ///
+    /// # Errors
+    ///
+    /// A URL that does not parse or names no port.
+    pub fn server_ports(&self) -> anyhow::Result<Vec<u16>> {
+        let mut ports = Vec::new();
+        for url in [&self.server, &self.control_url, &self.openai_base_url] {
+            let parsed = reqwest::Url::parse(url)
+                .map_err(|e| anyhow::anyhow!("the sign-in's URL {url}: {e}"))?;
+            let port = parsed
+                .port_or_known_default()
+                .ok_or_else(|| anyhow::anyhow!("the sign-in's URL {url} names no port"))?;
+            if !ports.contains(&port) {
+                ports.push(port);
+            }
+        }
+        Ok(ports)
+    }
+
     /// Where this host's searches go: the server's API, with its key, so
     /// the server runs and bills them (`tools.web.search.provider` can still
     /// choose Brave). Lives only in this process, never in a config file.

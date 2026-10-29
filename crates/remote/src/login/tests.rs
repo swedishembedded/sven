@@ -354,3 +354,12 @@ fn only_the_hosted_service_is_the_sven_providers_key() {
     assert!(signed_in_to("https://sven.swedishembedded.com/v1/").is_the_sven_service());
     assert!(!signed_in_to("http://localhost:3000/v1").is_the_sven_service());
 }
+
+#[test]
+fn a_hosted_host_may_connect_to_the_ports_of_its_servers_urls_and_no_others() {
+    let mut login = signed_in_to("http://127.0.0.1:3000/v1");
+    login.control_url = "https://server:8443/api/control".into();
+    assert_eq!(login.server_ports().unwrap(), vec![443, 8443, 3000]);
+    login.control_url = "not a url".into();
+    assert!(login.server_ports().is_err());
+}

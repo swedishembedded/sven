@@ -162,7 +162,7 @@ pub(crate) fn confine_hosted(cli: &crate::cli::Cli) -> anyhow::Result<Option<Hos
                 .canonicalize()
                 .with_context(|| format!("the sandbox {}", sandbox.display()))?;
             sven_remote::restrict_to_hosted(&mut config);
-            sven_remote::sandbox::confine(&sandbox)?;
+            sven_remote::sandbox::confine(&sandbox, &login.server_ports()?)?;
             HostedPlace::Sandbox(sandbox)
         }
         (None, true) => {

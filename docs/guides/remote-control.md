@@ -143,7 +143,13 @@ its own that it never shares. Two walls keep a hosted host to itself:
   so can every process it starts. Another account's sandbox, home
   directories and the rest of the machine are refused by the kernel. The
   host does not start unless the kernel enforces all of it, and on other
-  systems a hosted host does not start at all.
+  systems a hosted host does not start at all. The same confinement
+  refuses every TCP bind and every TCP connect except to ports 443, 80 and
+  53 and the ports of the sign-in's server, control and model URLs (so a
+  subverted tool cannot reach a service on the machine's loopback or
+  private network), and refuses signals to, and abstract unix sockets of,
+  processes outside the host. That needs Landlock ABI 6 (Linux 6.12 or
+  newer); an older kernel makes the host refuse to start.
 
 - **The network.** `web_fetch` reaches only the public internet: never the
   server itself, its private networks or a cloud metadata service, checked

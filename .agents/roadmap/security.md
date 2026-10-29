@@ -10,6 +10,10 @@ Scope: Hardening `sven rc` so that a compromised remote-control server (which ch
   `tools.disabled` are the operator allow list
   (`docs/guides/remote-control.md`).
 
+- Hosted: Landlock ABI 6 (TCP connect limited to 443, 80, 53 and the
+  sign-in's ports, no bind, signal and abstract-socket scopes), failing
+  closed (`sven_remote::sandbox`).
+
 ## Left
 
 - The `shell` tool is not path-confined in non-hosted `sven rc`; the
