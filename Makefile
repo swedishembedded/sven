@@ -29,6 +29,10 @@ DEB_OUT := target/debian
 # The git remote whose GitHub repository receives a release (release/publish,
 # package/deb/publish).
 RELEASE_REMOTE ?= origin
+# What a release bump runs first. Empty (`make release/patch RELEASE_TESTS=`)
+# bumps and tags without them, for a tree whose tests already passed: the
+# suites need a lot of memory and the bump itself changes only the version.
+RELEASE_TESTS ?= test test/e2e/basic
 
 # Every workspace package (root, crates, xtask, samples): one sed over the
 # manifests, so adding a crate adds its build/crate/<package> and
@@ -547,15 +551,15 @@ release/publish:
 	$(MAKE) package/deb/publish
 
 ## release/patch - bump the patch version (0.1.x to 0.1.x+1), commit and tag (local only; release/publish pushes)
-release/patch: _require-cargo-release test test/e2e/basic
+release/patch: _require-cargo-release $(RELEASE_TESTS)
 	@cargo release patch -p sven --execute --no-confirm
 
 ## release/minor - bump the minor version (0.x.0 to 0.x+1.0), commit and tag (local only; release/publish pushes)
-release/minor: _require-cargo-release test test/e2e/basic
+release/minor: _require-cargo-release $(RELEASE_TESTS)
 	@cargo release minor -p sven --execute --no-confirm
 
 ## release/major - bump the major version (x.0.0 to x+1.0.0), commit and tag (local only; release/publish pushes)
-release/major: _require-cargo-release test test/e2e/basic
+release/major: _require-cargo-release $(RELEASE_TESTS)
 	@cargo release major -p sven --execute --no-confirm
 
 ## site - lists the site targets; does nothing (site/publish uploads to production)
