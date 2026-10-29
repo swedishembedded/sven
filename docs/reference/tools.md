@@ -50,7 +50,7 @@ the rest ([Core and deferred disclosure](#core-and-deferred-disclosure)).
 | Tool | Gated as | Mode | Disclosure |
 |------|----------|------|------------|
 | [`read_file`](#read_file) | read | all | core |
-| [`find_file`](#find_file) | read | all | core |
+| [`find_file`](#find_file) | read | all | deferred |
 | [`grep`](#grep) | read | all | core |
 | [`write_file`](#write_file) | write | `agent` | core |
 | [`edit_file`](#edit_file) | write | `agent` | core |

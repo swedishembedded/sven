@@ -51,12 +51,14 @@ pub const DISCOVERY_TOOL: &str = "tools";
 /// [`Disclosure::Deferred`]: the file, search and shell tools of the coding
 /// loop, the todo list, and the discovery tool that reaches everything else.
 /// Chosen by measurement: these are the tools that appear in the tool calls of
-/// the baseline scenarios (see `docs/internals/token-ledger.md`).
+/// the baseline scenarios (see `docs/internals/token-ledger.md`). `find_file`
+/// is not one: in 64 recorded runs of a local 27B model on repair tasks it was
+/// called 7 times against 280 file searches through `shell` and `grep`, while
+/// its definition cost every request about 230 tokens.
 ///
 /// An MCP tool is never core, whatever its name.
 pub const CORE_TOOLS: &[&str] = &[
     "edit_file",
-    "find_file",
     "grep",
     "read_file",
     "shell",

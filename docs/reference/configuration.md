@@ -998,7 +998,7 @@ tools:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `mode` | `deferred` | `full` sends the definition of every tool the mode offers with every request. `deferred` sends the definitions of the core tools (`read_file`, `write_file`, `edit_file`, `grep`, `find_file`, `shell`, `todo`) and of the tools the model has loaded, plus the `tools` tool; every other tool - including every MCP tool - is listed in the system prompt by a one-line summary until the model loads it. |
+| `mode` | `deferred` | `full` sends the definition of every tool the mode offers with every request. `deferred` sends the definitions of the core tools (`read_file`, `write_file`, `edit_file`, `grep`, `shell`, `todo`) and of the tools the model has loaded, plus the `tools` tool; every other tool - including every MCP tool - is listed in the system prompt by a one-line summary until the model loads it. |
 
 ```yaml
 tools:

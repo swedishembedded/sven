@@ -39,8 +39,8 @@ already decided what it needs.
 
 ## What the model sees
 
-**Core tools**, always in full, in name order: `edit_file`, `find_file`,
-`grep`, `read_file`, `shell`, `todo`, `write_file`, and `tools`.
+**Core tools**, always in full, in name order: `edit_file`, `grep`,
+`read_file`, `shell`, `todo`, `write_file`, and `tools`.
 `sven_tool_registry::CORE_TOOLS` is the list. An MCP tool is never core,
 whatever its name.
 

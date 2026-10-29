@@ -141,7 +141,7 @@ mod guidelines {
     }
 
     pub fn core_tools() -> &'static str {
-        "- Locate code with `grep` and `find_file`, then read the relevant ranges with `read_file`.\n\
+        "- Locate code with `grep`, then read the relevant ranges with `read_file`.\n\
          - Change existing files with `edit_file` and create new ones with `write_file`.\n\
          - Use `shell` for builds, tests, git and running programs; pass `timeout_secs` for builds and test suites."
     }
