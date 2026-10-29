@@ -46,6 +46,16 @@ pub struct RcArgs {
     #[arg(long, requires = "container")]
     pub egress_socket: Option<PathBuf>,
 
+    /// Let the server's sessions reach beyond the working directory and the
+    /// public internet. By default the file tools stay in the working
+    /// directory (never reading sven's own sign-in and credentials),
+    /// `web_fetch` reaches only the public internet and gdb runs no host
+    /// program the model spells out, because the server chooses the tool
+    /// calls and relays the approvals. Restrict tools with `tools.only` or
+    /// `tools.disabled` in the configuration instead.
+    #[arg(long, conflicts_with = "hosted")]
+    pub wide_access: bool,
+
     #[command(subcommand)]
     pub action: Option<RcAction>,
 }

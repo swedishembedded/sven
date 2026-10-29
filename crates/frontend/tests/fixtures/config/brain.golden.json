@@ -151,6 +151,7 @@
         "mode": "deferred"
       },
       "gdb": {
+        "allow_host_commands": true,
         "command_timeout_secs": 10,
         "connect_timeout_secs": 30,
         "gdb_path": "gdb-multiarch",

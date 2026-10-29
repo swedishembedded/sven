@@ -51,6 +51,7 @@ mod gdb_integration {
             command_timeout_secs: 15,
             connect_timeout_secs: 30,
             server_startup_wait_ms: 1000,
+            allow_host_commands: true,
         }
     }
 

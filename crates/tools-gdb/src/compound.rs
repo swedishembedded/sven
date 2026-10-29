@@ -41,6 +41,8 @@ pub struct GdbTool {
     stop: GdbStopTool,
     /// `tools.deny_patterns`, applied to every host command the tool runs.
     policy: Arc<sven_tool_registry::ToolPolicy>,
+    /// `tools.gdb.allow_host_commands`.
+    allow_host_commands: bool,
 }
 
 impl GdbTool {
@@ -54,6 +56,7 @@ impl GdbTool {
             status: GdbStatusTool::new(state.clone()),
             stop: GdbStopTool::new(state),
             policy: Arc::default(),
+            allow_host_commands: cfg.allow_host_commands,
         }
     }
 
@@ -64,6 +67,21 @@ impl GdbTool {
     pub fn with_command_policy(mut self, policy: Arc<sven_tool_registry::ToolPolicy>) -> Self {
         self.policy = policy;
         self
+    }
+
+    /// What in this call would make the host run a program the model spells
+    /// out, if anything: see `tools.gdb.allow_host_commands`.
+    fn host_reaching(action: &str, args: &Value) -> Option<String> {
+        let given = |key: &str| args.get(key).and_then(Value::as_str);
+        match action {
+            "start_server" => given("server_command")
+                .or_else(|| given("command"))
+                .map(|_| "a debug server command".to_string()),
+            "connect" => given("gdb_path").map(|_| "a gdb executable path".to_string()),
+            "command" => host_reaching_word(given("command")?)
+                .map(|word| format!("the GDB command word '{word}'")),
+            _ => None,
+        }
     }
 
     /// The host command `call` would run, if it runs one: the server command
@@ -79,6 +97,52 @@ impl GdbTool {
             _ => None,
         }
     }
+}
+
+/// GDB commands that run host programs or arbitrary code, or can be made
+/// to: a command line naming one of them as any word is refused when
+/// `tools.gdb.allow_host_commands` is false. Words are matched as GDB
+/// matches commands, by unique prefix, so every prefix of a listed word
+/// counts (`so` is `source`, `pyt` is `python`). Conservative on purpose:
+/// a debugging command with a false match can be spelled another way, an
+/// escape that is missed hands the host to whoever drives the session.
+const HOST_REACHING_COMMANDS: &[&str] = &[
+    "shell",
+    "python",
+    "python-interactive",
+    "pipe",
+    "guile",
+    "guile-repl",
+    "source",
+    "compile",
+    "eval",
+    "define",
+    "document",
+    "commands",
+    "with",
+    "exec-wrapper",
+    "startup-with-shell",
+];
+
+/// The word of `command` that reaches the host, if one does.
+fn host_reaching_word(command: &str) -> Option<String> {
+    let command = command.trim_start();
+    if command.starts_with('!') || command.starts_with('|') {
+        return Some(command[..1].to_string());
+    }
+    command
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '$'))
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .find(|word| {
+            let word = word.trim_start_matches('$');
+            // `$_shell(...)` runs a program from inside an expression.
+            word.contains("shell")
+                || (word.len() >= 2
+                    && HOST_REACHING_COMMANDS
+                        .iter()
+                        .any(|reaching| reaching.starts_with(word)))
+        })
 }
 
 /// The shell command a GDB command line hands to the host shell, if any.
@@ -210,6 +274,18 @@ impl Tool for GdbTool {
             Some(a) => a.to_string(),
             None => return ToolOutput::err(&call.id, "missing required parameter 'action'"),
         };
+
+        if !self.allow_host_commands {
+            if let Some(what) = Self::host_reaching(&action, &call.args) {
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "refused: {what} would run a program on this machine, and \
+                         tools.gdb.allow_host_commands is false"
+                    ),
+                );
+            }
+        }
 
         if let Some(host_command) = Self::host_command(&action, &call.args) {
             if self.policy.decide(&host_command) == ApprovalPolicy::Deny {
@@ -369,6 +445,84 @@ mod tests {
             ))
             .await;
         assert!(!out.content.contains("deny_patterns"));
+    }
+
+    /// With `allow_host_commands: false` nothing the model spells reaches
+    /// the host: not a GDB escape of any kind, not a server command, not a
+    /// gdb path. Ordinary debugging commands still get through to the
+    /// session (which then reports there is none).
+    #[tokio::test]
+    async fn host_commands_are_refused_when_not_allowed() {
+        let state = Arc::new(Mutex::new(GdbSessionState::default()));
+        let cfg = GdbConfig {
+            allow_host_commands: false,
+            ..GdbConfig::default()
+        };
+        let t = GdbTool::new(state, cfg);
+        for command in [
+            "shell id",
+            "  !id",
+            "| bt | id",
+            "pipe bt | id",
+            "python import os",
+            "py print(1)",
+            "pi",
+            "python-interactive",
+            "source ~/x.gdb",
+            "so x",
+            "guile (display 1)",
+            "compile code int x;",
+            "eval \"shell id\"",
+            "print $_shell(\"id\")",
+            "define x",
+            "commands 1",
+            "with confirm off -- shell id",
+            "set exec-wrapper env",
+            "set startup-with-shell on",
+            "-interpreter-exec console \"shell id\"",
+        ] {
+            let out = t
+                .execute(&call(json!({"action": "command", "command": command})))
+                .await;
+            assert!(
+                out.is_error && out.content.contains("allow_host_commands"),
+                "{command}: {}",
+                out.content
+            );
+        }
+        for args in [
+            json!({"action": "start_server", "server_command": "openocd"}),
+            json!({"action": "start_server", "command": "openocd"}),
+            json!({"action": "connect", "gdb_path": "evil-gdb"}),
+        ] {
+            let out = t.execute(&call(args.clone())).await;
+            assert!(
+                out.is_error && out.content.contains("allow_host_commands"),
+                "{args}: {}",
+                out.content
+            );
+        }
+        for command in [
+            "info registers",
+            "info sharedlibrary",
+            "x/10x 0x20000000",
+            "break main",
+            "continue",
+            "monitor reset halt",
+            "print a != b",
+            "step",
+            "backtrace",
+            "load",
+        ] {
+            let out = t
+                .execute(&call(json!({"action": "command", "command": command})))
+                .await;
+            assert!(
+                out.content.contains("No active GDB session"),
+                "{command}: {}",
+                out.content
+            );
+        }
     }
 
     #[test]

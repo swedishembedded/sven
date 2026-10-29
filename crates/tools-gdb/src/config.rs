@@ -29,6 +29,14 @@ pub struct GdbConfig {
     /// Milliseconds to wait after spawning the GDB server before connecting
     #[serde(default = "GdbConfig::default_server_startup_wait_ms")]
     pub server_startup_wait_ms: u64,
+    /// Whether the model may make gdb run host programs it spells out: a
+    /// GDB command that reaches the host (`shell`, `!`, `pipe`, `python`,
+    /// `source`, ...), a debug server command, a gdb executable path.
+    /// When false they are refused; a discovered server and the configured
+    /// `gdb_path` still work. `sven rc` sets it false unless started with
+    /// `--wide-access`.
+    #[serde(default = "GdbConfig::default_allow_host_commands")]
+    pub allow_host_commands: bool,
 }
 
 impl GdbConfig {
@@ -44,6 +52,9 @@ impl GdbConfig {
     fn default_server_startup_wait_ms() -> u64 {
         500
     }
+    fn default_allow_host_commands() -> bool {
+        true
+    }
 
     /// The keys of the `tools.gdb` section.
     #[must_use]
@@ -53,6 +64,7 @@ impl GdbConfig {
             "command_timeout_secs",
             "connect_timeout_secs",
             "server_startup_wait_ms",
+            "allow_host_commands",
         ])
     }
 }
@@ -64,6 +76,7 @@ impl Default for GdbConfig {
             command_timeout_secs: Self::default_command_timeout_secs(),
             connect_timeout_secs: Self::default_connect_timeout_secs(),
             server_startup_wait_ms: Self::default_server_startup_wait_ms(),
+            allow_host_commands: Self::default_allow_host_commands(),
         }
     }
 }

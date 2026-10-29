@@ -84,6 +84,44 @@ told it was interrupted and may or may not have taken effect. Retrying the
 answer at the server continues it from where it stopped instead of starting
 over.
 
+## What the server can reach
+
+The server chooses the tool calls and relays the approvals, so an approval
+the server answers is not a safeguard of this machine. These limits are
+enforced here, by default, whatever the server approves:
+
+- **Files.** The file tools (`read_file`, `write_file`, `edit_file`,
+  `find_file`, `grep` and the tools that take file paths) work only inside
+  the working directory; a path that leaves it, by `..` or a symlink, is
+  refused. Even inside it, sven's own directory (`<config dir>/sven`: the
+  sign-in, stored provider keys, configuration) and the sessions `sven rc`
+  keeps are refused, so starting `sven rc` in your home directory does not
+  expose them.
+- **Web.** `web_fetch` reaches only the public internet, never this
+  machine, your LAN or a cloud metadata service (`tools.web.public_only`).
+- **GDB.** The `gdb` tool refuses GDB commands that reach the host
+  (`shell`, `!`, `pipe`, `python`, `source`, ...), a debug server command or
+  gdb path the model spells out (`tools.gdb.allow_host_commands: false`);
+  a server it discovers and the configured `gdb_path` still work.
+- **Shell.** The `shell` tool is allowed and starts in the working
+  directory, but nothing confines what a command touches. If the server must
+  not have that, remove the tool (below), or run `sven rc` in a container
+  with only the project mounted.
+
+`sven rc --wide-access` lifts the first three for a session you trust the
+server with entirely.
+
+You decide which tools the server may use. The configuration `sven rc`
+reads (`--config`, or the files described in the
+[configuration reference](../reference/configuration.md)) takes
+`tools.only`, an allow list of tool names (every other tool is removed), or
+`tools.disabled`, a deny list. For a read-only machine:
+
+```yaml
+tools:
+  only: [read_file, find_file, grep, web_search, web_fetch, skill]
+```
+
 ## Hosted
 
 ```bash

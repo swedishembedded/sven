@@ -240,6 +240,7 @@ pub(crate) async fn run_hosted_host(start: HostedStart) -> anyhow::Result<()> {
         login,
         sessions: sven_remote::SessionStore::new(kept),
         hosted: true,
+        wide_access: false,
     })
     .await
 }
@@ -247,6 +248,7 @@ pub(crate) async fn run_hosted_host(start: HostedStart) -> anyhow::Result<()> {
 pub(crate) async fn run_remote_host(
     config: Config,
     working_dir: Option<PathBuf>,
+    wide_access: bool,
 ) -> anyhow::Result<()> {
     let login = signed_in()?;
     let working_dir = match working_dir {
@@ -267,6 +269,7 @@ pub(crate) async fn run_remote_host(
         login,
         sessions: sven_remote::SessionStore::new(sessions),
         hosted: false,
+        wide_access,
     })
     .await
 }

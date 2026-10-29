@@ -42,6 +42,9 @@ pub struct PathScope {
     /// The canonical root, or `None` for the process working directory with
     /// no confinement.
     root: Option<Arc<PathBuf>>,
+    /// Canonical locations inside the root that are refused all the same
+    /// (see [`PathScope::denying`]).
+    denied: Arc<Vec<PathBuf>>,
 }
 
 /// A path a [`PathScope`] refuses.
@@ -65,6 +68,11 @@ pub enum PathScopeError {
         /// Why it could not be resolved.
         reason: String,
     },
+    /// The path lies in a location the scope was told to keep tools out of.
+    Denied {
+        /// The path as the caller gave it.
+        requested: PathBuf,
+    },
 }
 
 impl fmt::Display for PathScopeError {
@@ -75,6 +83,11 @@ impl fmt::Display for PathScopeError {
                 "path '{}' is outside the project root {}",
                 requested.display(),
                 root.display()
+            ),
+            Self::Denied { requested } => write!(
+                f,
+                "path '{}' is a protected location tools never read or write",
+                requested.display()
             ),
             Self::Unresolvable {
                 requested,
@@ -120,7 +133,26 @@ impl PathScope {
         }
         Ok(Self {
             root: Some(Arc::new(canonical)),
+            denied: Arc::default(),
         })
+    }
+
+    /// This scope, also refusing everything at or beneath `location` (a
+    /// file or directory, followed through symlinks as far as it exists):
+    /// credentials that happen to lie inside the root. Meaningful only on a
+    /// confined scope; an unconfined one resolves nothing and refuses nothing.
+    #[must_use]
+    pub fn denying(mut self, location: impl AsRef<Path>) -> Self {
+        let location = location.as_ref();
+        let absolute = if location.is_absolute() {
+            location.to_path_buf()
+        } else {
+            return self;
+        };
+        if let Ok(resolved) = follow_existing_prefix(&normalise(&absolute)) {
+            Arc::make_mut(&mut self.denied).push(resolved);
+        }
+        self
     }
 
     /// The canonical root, or `None` when unconfined.
@@ -151,7 +183,11 @@ impl PathScope {
 
         let resolved =
             follow_existing_prefix(&normalise(&root.join(requested))).map_err(unresolvable)?;
-        if resolved.starts_with(root) {
+        if self.denied.iter().any(|d| resolved.starts_with(d)) {
+            Err(PathScopeError::Denied {
+                requested: requested.to_path_buf(),
+            })
+        } else if resolved.starts_with(root) {
             Ok(resolved)
         } else {
             Err(PathScopeError::Outside {
@@ -294,6 +330,26 @@ mod tests {
             s.resolve("dangling"),
             Err(PathScopeError::Unresolvable { .. })
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_denied_location_inside_the_root_is_refused_however_it_is_reached() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("secrets")).unwrap();
+        std::fs::write(root.join("secrets/key"), "k").unwrap();
+        std::os::unix::fs::symlink(root.join("secrets"), root.join("alias")).unwrap();
+        let s = scope(&root).denying(root.join("secrets"));
+        let canonical = s.root().unwrap().to_path_buf();
+
+        for path in ["secrets", "secrets/key", "alias/key", "x/../secrets/key"] {
+            assert!(
+                matches!(s.resolve(path), Err(PathScopeError::Denied { .. })),
+                "{path}"
+            );
+        }
+        assert_eq!(s.resolve("other").unwrap(), canonical.join("other"));
     }
 
     #[test]

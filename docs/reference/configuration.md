@@ -1053,6 +1053,7 @@ is listed at all. How it works and what it saves:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `fetch_max_chars` | `20000` | Maximum characters fetched from a URL |
+| `public_only` | `false` | `web_fetch` reaches only the public internet: never this machine, a private network or a cloud metadata service. `sven rc` sets it unless started with `--wide-access` |
 | `search.provider` | `auto` | `auto`: the sven service `sven rc` signed in to, else a `providers.sven` entry with `base_url` and a key, else Brave. `sven` or `brave` to choose one |
 | `search.api_key` | - | Brave Search API key (also `BRAVE_API_KEY` env var) |
 
@@ -1129,6 +1130,7 @@ Configures the integrated GDB debugging support.
 | `command_timeout_secs` | `10` | Seconds to wait for a GDB command response |
 | `connect_timeout_secs` | `30` | Seconds allowed for the initial connect handshake, which includes loading symbols; keep it at least `command_timeout_secs` |
 | `server_startup_wait_ms` | `500` | Milliseconds to wait after spawning the GDB server |
+| `allow_host_commands` | `true` | When `false`, the `gdb` tool refuses GDB commands that reach the host (`shell`, `!`, `pipe`, `python`, `source`, ...), a debug server command and a gdb executable path the model spells out. `sven rc` sets it `false` unless started with `--wide-access` |
 
 **Example:**
 

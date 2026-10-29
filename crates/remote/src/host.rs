@@ -44,7 +44,7 @@ mod slash;
 mod upload;
 
 use hosted::session_runtime;
-pub use hosted::{restrict_to_hosted, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
+pub use hosted::{restrict_to_hosted, restrict_to_working_dir, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
 
 /// Events waiting for the uploader. Full means the server has stopped
 /// taking them; sessions then wait rather than grow memory without bound.
@@ -66,6 +66,10 @@ pub struct HostOptions {
     /// A server's hosted host: attaches as the `hosted` environment, not as
     /// a directory of a person's machine.
     pub hosted: bool,
+    /// The person chose to let the server's sessions reach beyond the
+    /// working directory and the public internet (`sven rc --wide-access`):
+    /// otherwise [`restrict_to_working_dir`] applies.
+    pub wide_access: bool,
 }
 
 /// Runs until interrupted, or until the server stops accepting the token.
@@ -120,11 +124,15 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
     });
     // Searches go to this server, which runs and bills them.
     let mut config = (*options.config).clone();
+    if !options.hosted && !options.wide_access {
+        restrict_to_working_dir(&mut config);
+    }
     config.tools.web.search.sven = Some(options.login.search_endpoint());
     let context = Arc::new(SessionContext {
         config: Arc::new(config),
         working_dir: options.working_dir,
         hosted: options.hosted,
+        wide_access: options.wide_access,
         openai_base_url: options.login.openai_base_url,
         token: options.login.token,
         uploads: uploads.clone(),
@@ -309,6 +317,8 @@ struct SessionContext {
     working_dir: PathBuf,
     /// Run by a site for its own web conversations (`sven rc --hosted`).
     hosted: bool,
+    /// See [`HostOptions::wide_access`].
+    wide_access: bool,
     openai_base_url: String,
     token: String,
     uploads: mpsc::Sender<Upload>,
@@ -539,7 +549,8 @@ impl SessionActor {
             &self.context.config,
             &self.context.working_dir,
             self.context.hosted,
-        );
+            self.context.wide_access,
+        )?;
         let mut options = SessionOptions::new(
             Arc::clone(&self.context.config),
             runtime,
@@ -823,7 +834,7 @@ mod tests {
         let dir = std::path::Path::new("hosted/acct/conv/work");
         let mut config = Config::default();
         config.agent.system_prompt = Some("You are a helpful assistant.".into());
-        let runtime = session_runtime(&config, dir, true);
+        let runtime = session_runtime(&config, dir, true, false).unwrap();
         assert!(
             runtime.no_system,
             "the built-in prompt and its context sections are left out"
@@ -837,7 +848,7 @@ mod tests {
     #[test]
     fn a_hosted_session_without_a_configured_prompt_gets_one_that_names_no_path() {
         let dir = std::path::Path::new("hosted/acct/conv/work");
-        let runtime = session_runtime(&Config::default(), dir, true);
+        let runtime = session_runtime(&Config::default(), dir, true, false).unwrap();
         assert!(runtime.no_system);
         let prompt = runtime
             .system_prompt_override
@@ -853,7 +864,7 @@ mod tests {
         let dir = std::path::Path::new("someone/project");
         let mut config = Config::default();
         config.agent.system_prompt = Some("Be terse.".into());
-        let runtime = session_runtime(&config, dir, false);
+        let runtime = session_runtime(&config, dir, false, true).unwrap();
         assert!(
             !runtime.no_system,
             "the project context stays for a local session"
@@ -883,6 +894,7 @@ mod tests {
             config: Arc::new(config),
             working_dir: dir.to_path_buf(),
             hosted: false,
+            wide_access: true,
             openai_base_url: String::new(),
             token: String::new(),
             uploads,
