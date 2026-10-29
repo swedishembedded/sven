@@ -863,10 +863,11 @@ of a 16k window did). Compaction, with its output reserve, keeps the window
 in bounds instead. A loop is stopped by:
 
 - **a repetition detector** on the reasoning stream: when the reasoning ends
-  in the same block written three times back to back, the turn is aborted and
-  the error says how many thinking tokens were spent. A stretch that only
-  recurs, such as code quoted again with different reasoning in between, is
-  not a loop;
+  in the same block written three times back to back, the looping reply is
+  dropped and the turn asked again once, with a note telling the model why. A
+  second loop in the same turn aborts it, and the error says how many thinking
+  tokens were spent. A stretch that only recurs, such as code quoted again
+  with different reasoning in between, is not a loop;
 - **`thinking_timeout_secs`** - wall-clock time spent reasoning with *no*
   forward progress (a real text or tool-call delta). Reset on every sign of
   progress. Defaults to `600`.

@@ -402,7 +402,7 @@ pub struct StreamedTurn {
 /// `tx` receives [`AgentEvent`]s for UI bridging while the stream runs.
 ///
 /// `output_limit` is the request's output-token limit (see
-/// [`TurnLimits::output_limit`] for how callers typically compute it — scaled
+/// [`TurnLimits::output_limit`] for how callers typically compute it - scaled
 /// to the actual prompt size rather than a fixed reservation); an
 /// `Option<u32>` is a limit that was set. `None` tokens let the provider apply
 /// its own built-in default.
@@ -530,7 +530,7 @@ pub async fn stream_turn(
                 let looped = repetition.feed(&delta);
                 let _ = tx.send(AgentEvent::ThinkingDelta(delta)).await;
                 if let Some(times) = looped {
-                    return Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
+                    return Err(anyhow::Error::new(AbortedError::reasoning_loop(format!(
                         "the model is looping in its reasoning (the same stretch occurs {times} \
                          times in the last few thousand characters; ~{thinking_token_estimate} thinking \
                          tokens so far)"

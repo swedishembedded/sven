@@ -24,6 +24,10 @@ pub struct AbortedError {
     /// Whether a person asked for it. A watchdog abort is not: it is a
     /// failure of the turn that a consumer must be told about.
     pub by_user: bool,
+    /// The watchdog stopped reasoning that repeated itself. Unlike a cap or a
+    /// deadline, a fresh attempt can take another path, so the turn may be
+    /// asked again.
+    pub reasoning_loop: bool,
 }
 
 impl AbortedError {
@@ -33,6 +37,7 @@ impl AbortedError {
         Self {
             reason: reason.into(),
             by_user: true,
+            reasoning_loop: false,
         }
     }
 
@@ -42,6 +47,16 @@ impl AbortedError {
         Self {
             reason: reason.into(),
             by_user: false,
+            reasoning_loop: false,
+        }
+    }
+
+    /// The watchdog's cut-off of reasoning that repeated itself.
+    #[must_use]
+    pub fn reasoning_loop(reason: impl Into<String>) -> Self {
+        Self {
+            reasoning_loop: true,
+            ..Self::by_watchdog(reason)
         }
     }
 }

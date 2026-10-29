@@ -7,7 +7,8 @@
 // expertise in unattended agents you can procure our services by sending an
 // email to info@swedishembedded.com.
 //! Spec: a turn the thinking watchdog cuts short is a failure that says why,
-//! and a summarisation call is not cut short by the thinking-token cap.
+//! a reasoning loop is asked again once before it is one, and a summarisation
+//! call is not cut short by the thinking-token cap.
 
 use std::sync::{Arc, Mutex};
 
@@ -83,7 +84,7 @@ fn harness(
 }
 
 fn harness_with_limits(
-    model: Reasoner,
+    model: impl sven_model::ModelProvider + 'static,
     store: Arc<Mutex<ThreadStore>>,
     compaction: Option<CompactionConfig>,
     limits: sven_turn::TurnLimits,
@@ -313,4 +314,104 @@ async fn a_turn_still_running_at_its_deadline_is_cut_off_and_says_so() {
         "{events:?}"
     );
     assert!(events.iter().any(|e| matches!(e, UiEvent::Aborted { .. })));
+}
+
+/// Loops in its reasoning on the first `loops` calls, then answers.
+struct Looper {
+    loops: usize,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl sven_model::ModelProvider for Looper {
+    fn name(&self) -> &str {
+        "looper"
+    }
+    fn model_name(&self) -> &str {
+        "looper"
+    }
+    fn catalog_context_window(&self) -> Option<u32> {
+        Some(8192)
+    }
+    fn catalog_max_output_tokens(&self) -> Option<u32> {
+        Some(512)
+    }
+    async fn complete(&self, _req: sven_model::CompletionRequest) -> anyhow::Result<Stream> {
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let events: Vec<anyhow::Result<ResponseEvent>> = if call < self.loops {
+            let paragraph = "Let me reconsider the order of the two writes once more, \
+                             because the flag and the payload may race on this core. ";
+            vec![Ok(ResponseEvent::ThinkingDelta(paragraph.repeat(60)))]
+        } else {
+            vec![
+                Ok(ResponseEvent::TextDelta("ok".into())),
+                Ok(ResponseEvent::Done),
+            ]
+        };
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
+fn looper(loops: usize, store: Arc<Mutex<ThreadStore>>) -> Harness {
+    let limits = sven_turn::TurnLimits::from(sven_turn::ThinkingBudget {
+        max_thinking_tokens: None,
+        thinking_timeout_secs: None,
+    });
+    let model = Looper {
+        loops,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    };
+    harness_with_limits(model, store, None, limits)
+}
+
+#[tokio::test]
+async fn a_reasoning_loop_is_asked_again_once_and_the_turn_goes_on() {
+    use sven_machines::machines::reactive_agent::CHAT_THREAD;
+    let store = Arc::new(Mutex::new(ThreadStore::new()));
+    let h = looper(1, Arc::clone(&store));
+    let mut rx = h.rt.subscribe_observations();
+    h.rt.post(Event::user_message("go")).await;
+    let events = until_ended(&mut rx).await;
+    h.rt.abort();
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::TurnComplete)),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Error(_) | UiEvent::Aborted { .. })),
+        "{events:?}"
+    );
+    let thread = store.lock().unwrap().snapshot(CHAT_THREAD);
+    let texts: Vec<String> = thread
+        .iter()
+        .filter_map(|m| match &m.content {
+            sven_model::MessageContent::Text(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("repeated")),
+        "the model is told why it is asked again: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("reconsider the order")),
+        "the looping reasoning is not kept: {texts:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_reasoning_loop_on_the_retry_too_is_an_error() {
+    let h = looper(2, Arc::new(Mutex::new(ThreadStore::new())));
+    let mut rx = h.rt.subscribe_observations();
+    h.rt.post(Event::user_message("go")).await;
+    let events = until_ended(&mut rx).await;
+    h.rt.abort();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Error(m) if m.contains("looping in its reasoning"))),
+        "{events:?}"
+    );
 }

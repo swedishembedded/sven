@@ -68,6 +68,8 @@ pub(super) struct Recovery {
     /// Threads whose turn was already retried after a compaction answered a
     /// request the server rejected as too long.
     overflow_retried: std::collections::HashSet<String>,
+    /// Threads whose turn was already asked again after its reasoning looped.
+    pub(super) loop_retried: std::collections::HashSet<String>,
 }
 
 /// What a compaction works against: the window and how the server counts.
@@ -258,6 +260,7 @@ impl TurnExecutor {
             }
             Ok(turn) => {
                 self.recovery.overflow_retried.remove(&req.thread);
+                self.recovery.loop_retried.remove(&req.thread);
                 self.recover_exhausted_output(req, turn, sent.output_budget, model, sent.fit, obs)
                     .await
             }

@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Single-turn effect executor — the kernel-native turn engine.
+//! Single-turn effect executor - the kernel-native turn engine.
 //!
 //! Handles `Effect::CallLlm { request: {"kind": "turn", ...} }` emitted by
 //! any machine that uses `loop_core` (`sven-machines`).  For each turn:
@@ -74,6 +74,9 @@ const EMPTY_TURN_FAILURE_THRESHOLD: u32 = 2;
 /// reason briefly) before this bound ends a model that cannot finish within
 /// the budget.
 const TRUNCATED_TURN_FAILURE_THRESHOLD: u32 = 4;
+/// What a model is told when its reasoning looped and the turn is asked again.
+const LOOP_NOTE: &str = "Your previous reply was stopped because its reasoning repeated the same \
+     passage. Continue from the facts gathered so far and take a different approach.";
 
 use async_trait::async_trait;
 use sven_decision::telemetry::DecisionTelemetry;
@@ -649,6 +652,19 @@ impl EffectExecutor for TurnExecutor {
         // module doc for why that distinction matters to `SdlcMachine`.
         if let Err(e) = &result {
             if let Some(aborted) = e.downcast_ref::<AbortedError>() {
+                // Reasoning that repeated itself is dropped and the turn asked
+                // again once, with a note why: a fresh attempt can take
+                // another path, where ending the run loses all its work.
+                if aborted.reasoning_loop && self.recovery.loop_retried.insert(thread_id.clone()) {
+                    obs.emit(UiEvent::Warning(format!("{aborted}; asking again once")));
+                    append_messages(&self.store, &thread_id, vec![Message::user(LOOP_NOTE)]);
+                    req.instruction.clear();
+                    req.delay_ms = None;
+                    let retry = Effect::CallLlm {
+                        request: req.to_value(),
+                    };
+                    return self.execute(retry, sink, obs).await;
+                }
                 let partial = partial_text.lock().map(|g| g.clone()).unwrap_or_default();
                 let marker = format!("[aborted: {aborted}]");
                 // The abort still ends the turn as a cancel (see the module
