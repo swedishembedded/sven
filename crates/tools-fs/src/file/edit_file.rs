@@ -79,10 +79,20 @@ fn strip_markdown_fence(diff: &str) -> &str {
 /// - Standard `@@ -N,M +N,M @@` headers (line numbers are optional hints)
 /// - FuDiff-style `@@ @@` (no line numbers)
 /// - Diffs wrapped in markdown ` ```diff ` fences
+/// - A body with no `@@` line at all, read as one hunk: the header only
+///   separates hunks, and its line numbers are optional hints
+///
+/// A body line with none of the ` `, `-`, `+` prefixes is context, verbatim:
+/// models drop the space in front of tab-indented context. It still has to
+/// match the file, so a wrong reading fails instead of editing.
 fn parse_hunks(diff: &str) -> Result<Vec<Hunk>, String> {
     let diff = strip_markdown_fence(diff);
     let mut hunks: Vec<Hunk> = Vec::new();
-    let mut current: Option<Hunk> = None;
+    let headerless = !diff.lines().any(|l| l.starts_with("@@"));
+    let mut current: Option<Hunk> = headerless.then(|| Hunk {
+        old_start_hint: None,
+        lines: Vec::new(),
+    });
 
     for line in diff.lines() {
         // File header lines - skip
@@ -113,11 +123,9 @@ fn parse_hunks(diff: &str) -> Result<Vec<Hunk>, String> {
                 h.lines.push(HunkLine::Del(rest.to_string()));
             } else if let Some(rest) = line.strip_prefix('+') {
                 h.lines.push(HunkLine::Add(rest.to_string()));
-            } else if line.is_empty() {
-                // A blank diff line with no prefix = context empty line
-                h.lines.push(HunkLine::Context(String::new()));
+            } else {
+                h.lines.push(HunkLine::Context(line.to_string()));
             }
-            // Unknown line type - ignore
         }
     }
 
@@ -127,8 +135,17 @@ fn parse_hunks(diff: &str) -> Result<Vec<Hunk>, String> {
         }
     }
 
-    if hunks.is_empty() {
-        return Err("Editing file failed. No hunk markers found in input diff. Please format the diff correctly.".to_string());
+    let changes = |h: &Hunk| {
+        h.lines
+            .iter()
+            .any(|l| matches!(l, HunkLine::Add(_) | HunkLine::Del(_)))
+    };
+    if !hunks.iter().any(changes) {
+        return Err(
+            "Editing file failed: the diff has no '-' or '+' lines. Prefix removed lines \
+                    with '-', added lines with '+' and unchanged context with a space."
+                .to_string(),
+        );
     }
     Ok(hunks)
 }
@@ -511,12 +528,12 @@ impl Tool for EditFileTool {
     }
 
     fn description(&self) -> &str {
-        "Edit a file by applying unified diff hunks. Every change block must begin with an\n\
-         @@ line (line numbers optional); raw replacements fail.\n\
+        "Edit a file by applying unified diff hunks.\n\
          Lines: ' ' context, '-' removed, '+' added. Give 2-3 unchanged context lines\n\
          around each change; they must match the file (indentation differences are\n\
-         corrected). Several hunks edit separate places; ```diff fences are accepted.\n\
-         Re-read the file after an edit before writing new context.\n\
+         corrected). Start each hunk with an @@ line (line numbers optional) to edit\n\
+         several places in one call. Re-read the file after an edit before writing new\n\
+         context.\n\
          Example - replace one call and add a log line:\n\
          @@ -12,6 +12,7 @@\n\
           fn process(x: u32) -> u32 {\n\
@@ -1573,6 +1590,33 @@ mod tests {
         let result = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         (out, result)
+    }
+
+    #[tokio::test]
+    async fn a_diff_without_an_at_at_line_is_one_hunk() {
+        // Recorded: the model sent a correct hunk body with no `@@` line. The
+        // header only separates hunks (its line numbers are optional), so a
+        // diff without one is a single hunk.
+        let file = "\tif (starts_with(line, \"ECHO \")) {\n\t\tuart_puts(line + 4);\n\t}\n";
+        let diff = " \tif (starts_with(line, \"ECHO \")) {\n-\t\tuart_puts(line + 4);\n+\t\tuart_puts(line + 5);\n \t}";
+        let (out, result) = edit(file, diff).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(
+            result,
+            "\tif (starts_with(line, \"ECHO \")) {\n\t\tuart_puts(line + 5);\n\t}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_context_line_without_its_space_prefix_is_still_context() {
+        // Recorded: tab-indented context lines arrived without the leading
+        // space. Dropping them made the hunk's context miss; read verbatim,
+        // they still have to match the file, so a wrong guess fails safely.
+        let file = "\t\tx = 1;\na\n\tfor (;;) {\n\t\tx = 1;\n\t}\nb\n";
+        let diff = "@@ @@\n\tfor (;;) {\n-\t\tx = 1;\n+\t\tx = 2;\n\t}\n";
+        let (out, result) = edit(file, diff).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(result, "\t\tx = 1;\na\n\tfor (;;) {\n\t\tx = 2;\n\t}\nb\n");
     }
 
     #[tokio::test]

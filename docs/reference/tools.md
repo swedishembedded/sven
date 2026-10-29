@@ -139,8 +139,10 @@ Write a whole file, creating missing parent directories. Overwrites unless
 
 ### `edit_file`
 
-Edit an existing file by applying unified diff hunks. Every hunk starts with an
-`@@` line; context lines must match the file. A hunk is located by an exact
+Edit an existing file by applying unified diff hunks. An `@@` line starts each
+hunk; a diff with no `@@` line is one hunk. A body line with none of the ` `,
+`-`, `+` prefixes is read as context, verbatim. Context lines must match the
+file. A hunk is located by an exact
 match, then by a match that differs only in one common indentation offset, then
 by a fuzzy match in which every line must resemble the file line it lands on
 (a typo passes; a missing context line does not, because the hunk would line up
@@ -246,9 +248,9 @@ See [Converting one chapter](../guides/document-conversion.md#converting-one-cha
 | `syntax` | `literal` (default), `regex` (Rust `regex`; `(?-i)` for case-sensitive), or `fzf` (extended search: `abc` fuzzy, `'abc` exact, `^abc` prefix, `abc$` suffix, `!abc` excludes, `a \| b` either, `\ ` a literal space; terms must all match one line; ranked best first) |
 | `pages` | search only these pages, e.g. `600-700` or `1-5,9` |
 | `depth` | outline levels listed (default 2 without a query, all with one) |
-| `limit` | entries per list, 1–1000 (default 30) |
+| `limit` | entries per list, 1-1000 (default 30) |
 | `offset` | entries to skip, from a previous `next_offset` |
-| `context` | snippet characters each side of a match, 0–1000 (default 60) |
+| `context` | snippet characters each side of a match, 0-1000 (default 60) |
 
 Matching ignores case and treats line breaks as spaces. An unknown parameter,
 an out-of-range value, an unparsable regex, or a query that matches the empty
