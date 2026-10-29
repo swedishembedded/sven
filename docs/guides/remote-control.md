@@ -224,3 +224,11 @@ A tool whose policy is to ask before it runs asks the person at the server:
 the call waits until it is approved or denied there, and a call nobody
 answers within ten minutes is denied. The terminal prints which tool is
 waiting.
+
+The server alone answers: `sven rc` takes no input, so there is no local
+approval step, and a server that approves every request (as the hosted
+service's default does) approves everything the tool list allows. Treat the
+approval as a convenience and rely on the limits in
+[What the server can reach](#what-the-server-can-reach): the confined
+defaults and your `tools.only` / `tools.disabled` allow list, which the
+server cannot change.
