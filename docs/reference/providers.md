@@ -172,6 +172,40 @@ Any explicit model configuration wins over auto-detection.
 
 ---
 
+## The sven service (`sven`)
+
+`sven` is the hosted sven service, `https://sven.swedishembedded.com/v1`:
+many models behind one account, billed from its credit. Sign in once and its
+models are yours, with what it serves them for:
+
+```bash
+sven auth login             # stores the key as the `sven` provider's
+sven list-models            # what it serves now, with prices
+sven --model sven/deepseek/v4 "..."
+```
+
+Its model list, limits and prices are what it serves (see
+[Served models](#served-models)); `web_search` searches through it too,
+billed per search. `sven auth logout` forgets the key.
+
+| Setting    | Value                                      |
+|------------|--------------------------------------------|
+| Provider id | `sven`                                    |
+| Auth       | The key `sven auth login` stores (or `sven auth set sven`) |
+| Default URL | `https://sven.swedishembedded.com/v1`     |
+
+Another sven server is the same provider with its own `base_url` (and a key
+only if it needs one); the stored sign-in is never sent to it:
+
+```yaml
+model:
+  provider: sven
+  name: ""                       # empty = the model the server serves
+  base_url: http://gpu-box:8000/v1
+```
+
+---
+
 ## Major Cloud Providers
 
 ### OpenAI
@@ -867,26 +901,6 @@ Desktop app for running local models.
 model:
   provider: lmstudio
   name: loaded-model-name
-```
-
----
-
-### Custom local server (`sven`)
-
-`sven` is the id for a self-run OpenAI-compatible server on a host you name.
-It behaves like `vllm` but has no default URL.
-
-| Setting    | Value                                      |
-|------------|--------------------------------------------|
-| Provider id | `sven`                                    |
-| Auth       | Optional bearer token                      |
-| Requires   | `base_url` set                             |
-
-```yaml
-model:
-  provider: sven
-  name: ""                       # empty = the model the server serves
-  base_url: http://gpu-box:8000/v1
 ```
 
 ---

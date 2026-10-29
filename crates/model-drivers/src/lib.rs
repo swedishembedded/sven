@@ -106,9 +106,24 @@ fn check_api_key_requirement(cfg: &ModelConfig) -> anyhow::Result<()> {
     if let Some(file) = &cfg.api_key_file {
         return api_key::read_key_file(file).map(|_| ());
     }
-    let needs_key = registry::get_driver(&cfg.provider).is_some_and(|m| m.requires_api_key);
+    let meta = registry::get_driver(&cfg.provider);
+    // The hosted sven service needs its sign-in; another sven server named by
+    // base_url may answer without a key, as a local server does.
+    let elsewhere = cfg.provider == "sven"
+        && cfg.base_url.as_deref().is_some_and(|url| {
+            meta.and_then(|m| m.default_base_url)
+                .is_none_or(|default| default.trim_end_matches('/') != url.trim_end_matches('/'))
+        });
+    let needs_key = meta.is_some_and(|m| m.requires_api_key) && !elsewhere;
     if !needs_key || resolve_api_key(cfg).is_some() {
         return Ok(());
+    }
+    if cfg.provider == "sven" {
+        bail!(
+            "Not signed in to the sven service (model '{}').\nRun `sven auth login`, then use \
+             `sven/<model>`; `sven list-models` shows what it serves.",
+            cfg.name,
+        );
     }
     if cfg.provider == "brain" {
         bail!(
@@ -524,18 +539,14 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
         // It behaves identically to "vllm" but is kept as a distinct id so
         // users who wrote `provider: sven` in their config don't hit an
         // "unknown provider" error.  base_url must be set in config.
+        // The hosted sven service (its key is the one `sven auth login`
+        // stores), or another sven server at `base_url`.
         "sven" => {
-            let base = cfg.base_url.as_deref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "provider 'sven' requires base_url in config.\n\
-                     Set it to your local server, e.g.:\n\
-                     \n\
-                     model:\n\
-                       provider: sven\n\
-                       base_url: http://koala:8000/v1\n\
-                       name: <your-model-name>"
-                )
-            })?;
+            let base = cfg
+                .base_url
+                .as_deref()
+                .or(registry::get_driver("sven").and_then(|m| m.default_base_url))
+                .unwrap_or_default();
             let k = key();
             let auth = if k.is_some() {
                 AuthStyle::Bearer
@@ -1019,6 +1030,41 @@ mod tests {
             .to_string();
         assert!(e.contains("absent"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `sven` is the hosted service, reached with the key `sven auth login`
+    /// stores; another sven server is reached at its base_url, key or not.
+    #[test]
+    fn the_sven_provider_is_the_hosted_service_signed_in_with_sven_auth_login() {
+        let dir = scratch("sven-service");
+        with_config_dir(&dir, || {
+            let cfg = ModelConfig {
+                provider: "sven".into(),
+                name: "deepseek/v4".into(),
+                ..ModelConfig::default()
+            };
+            let e = from_config(&cfg).err().expect("not signed in").to_string();
+            assert!(e.contains("sven auth login"), "{e}");
+            credentials::set("sven", "service-minted").unwrap();
+            assert_eq!(resolve_api_key(&cfg).as_deref(), Some("service-minted"));
+            assert!(
+                from_config(&cfg).is_ok(),
+                "signed in, the hosted service serves it"
+            );
+            let elsewhere = ModelConfig {
+                base_url: Some("http://koala:8000/v1".into()),
+                ..cfg.clone()
+            };
+            assert_eq!(
+                resolve_api_key(&elsewhere),
+                None,
+                "the sign-in never goes elsewhere"
+            );
+            assert!(
+                from_config(&elsewhere).is_ok(),
+                "another sven server may need no key"
+            );
+        });
     }
 
     /// A stored key serves its driver; the environment's variables name none.

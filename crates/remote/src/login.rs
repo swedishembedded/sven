@@ -33,6 +33,17 @@ pub struct RemoteLogin {
 }
 
 impl RemoteLogin {
+    /// Whether this is a sign-in to the hosted sven service, whose key is
+    /// then the `sven` provider's: its models and web search run on it.
+    #[must_use]
+    pub fn is_the_sven_service(&self) -> bool {
+        sven_model::get_driver(SVEN_PROVIDER)
+            .and_then(|driver| driver.default_base_url)
+            .is_some_and(|url| {
+                url.trim_end_matches('/') == self.openai_base_url.trim_end_matches('/')
+            })
+    }
+
     /// Where this host's searches go: the server's API, with its key, so
     /// the server runs and bills them (`tools.web.search.provider` can still
     /// choose Brave). Lives only in this process, never in a config file.
@@ -43,6 +54,25 @@ impl RemoteLogin {
             api_key: self.token.clone(),
         }
     }
+}
+
+/// The model provider whose stored key a sign-in to the hosted sven service
+/// is (`sven auth set sven` stores the same).
+pub const SVEN_PROVIDER: &str = "sven";
+
+/// Stores a sign-in to the hosted sven service as the `sven` provider's key,
+/// so sessions here use its models and web search; true when it did. A
+/// sign-in to another server stores nothing.
+///
+/// # Errors
+///
+/// The key could not be written.
+pub fn remember_as_provider(login: &RemoteLogin) -> anyhow::Result<bool> {
+    if !login.is_the_sven_service() {
+        return Ok(false);
+    }
+    sven_model_drivers::credentials::set(SVEN_PROVIDER, &login.token)?;
+    Ok(true)
 }
 
 /// The login file of this user.

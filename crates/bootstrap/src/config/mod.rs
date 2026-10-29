@@ -99,15 +99,34 @@ pub struct Config {
 }
 
 impl Config {
-    /// The sven service a `providers.sven` entry names, when it has a base
-    /// URL and a key: where `web_search` searches unless `sven rc` signed in
-    /// to another one (see `WebSearchConfig::backend`).
+    /// The sven service a key has been provided for: a `providers.sven`
+    /// entry with a key, or the hosted service once `sven auth login` stored
+    /// its key. Where `web_search` searches unless `sven rc` signed in to
+    /// another one (see `WebSearchConfig::backend`).
     #[must_use]
     pub fn sven_search_endpoint(&self) -> Option<sven_tools_web::SvenEndpoint> {
-        let entry = self.providers.get("sven")?;
+        self.sven_search_endpoint_with(sven_model_drivers::provider_key)
+    }
+
+    /// [`Self::sven_search_endpoint`], with `key_of` finding an entry's key.
+    fn sven_search_endpoint_with(
+        &self,
+        key_of: impl Fn(&sven_model_drivers::ProviderEntry) -> Option<String>,
+    ) -> Option<sven_tools_web::SvenEndpoint> {
+        let entry = self.providers.get("sven").cloned().unwrap_or_else(|| {
+            sven_model_drivers::ProviderEntry {
+                name: "sven".into(),
+                ..Default::default()
+            }
+        });
+        let base_url = entry.base_url.clone().or_else(|| {
+            sven_model::get_driver(&entry.name)
+                .and_then(|driver| driver.default_base_url)
+                .map(str::to_string)
+        })?;
         Some(sven_tools_web::SvenEndpoint {
-            base_url: entry.base_url.clone()?,
-            api_key: sven_model_drivers::provider_key(entry)?,
+            base_url,
+            api_key: key_of(&entry)?,
         })
     }
 
@@ -232,27 +251,40 @@ mod tests {
     /// without the entry, there is none.
     #[test]
     fn a_sven_provider_with_a_key_is_the_search_service() {
+        let no_key = |_: &sven_model_drivers::ProviderEntry| None;
+        let stored = |entry: &sven_model_drivers::ProviderEntry| {
+            (entry.name == "sven" && entry.api_key.is_none()).then(|| "signed-in".to_string())
+        };
+        let configured = |entry: &sven_model_drivers::ProviderEntry| entry.api_key.clone();
         let mut cfg = Config::default();
-        assert_eq!(cfg.sven_search_endpoint(), None);
+        assert_eq!(
+            cfg.sven_search_endpoint_with(no_key),
+            None,
+            "no key, no search service"
+        );
+        // Signed in to the hosted service (`sven auth login` stored its key).
+        assert_eq!(
+            cfg.sven_search_endpoint_with(stored),
+            Some(sven_tools_web::SvenEndpoint {
+                base_url: "https://sven.swedishembedded.com/v1".into(),
+                api_key: "signed-in".into(),
+            })
+        );
+        // A `providers.sven` entry names another service and its key.
         cfg.providers.insert(
             "sven".into(),
             sven_model_drivers::ProviderEntry {
                 name: "openai".into(),
                 base_url: Some("https://sven.example/v1".into()),
+                api_key: Some("service_key".into()),
                 ..Default::default()
             },
         );
         assert_eq!(
-            cfg.sven_search_endpoint(),
-            None,
-            "no key, no search service"
-        );
-        cfg.providers.get_mut("sven").unwrap().api_key = Some("whale_key".into());
-        assert_eq!(
-            cfg.sven_search_endpoint(),
+            cfg.sven_search_endpoint_with(configured),
             Some(sven_tools_web::SvenEndpoint {
                 base_url: "https://sven.example/v1".into(),
-                api_key: "whale_key".into(),
+                api_key: "service_key".into(),
             })
         );
     }

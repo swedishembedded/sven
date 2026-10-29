@@ -267,15 +267,15 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
     },
-    // ── Local / OSS ───────────────────────────────────────────────────────────
     DriverMeta {
         id: "sven",
-        name: "Sven (custom local server)",
-        description: "User-defined OpenAI-compatible local server; set base_url in config",
-        default_base_url: None,
-        requires_api_key: false,
-        local: true,
+        name: "Sven",
+        description: "The hosted sven service: its models, prices and web search, with the key `sven auth login` stores; base_url for another sven server",
+        default_base_url: Some("https://sven.swedishembedded.com/v1"),
+        requires_api_key: true,
+        local: false,
     },
+    // ── Local / OSS ───────────────────────────────────────────────────────────
     DriverMeta {
         id: "brain",
         name: "Brain (local edge-AI server)",
@@ -355,10 +355,8 @@ mod tests {
     fn servers_on_the_users_own_hardware_are_marked_local() {
         let mut local: Vec<_> = DRIVERS.iter().filter(|d| d.local).map(|d| d.id).collect();
         local.sort_unstable();
-        assert_eq!(
-            local,
-            ["brain", "dbus", "lmstudio", "ollama", "sven", "vllm"]
-        );
+        // `sven` is the hosted service, not a server here.
+        assert_eq!(local, ["brain", "dbus", "lmstudio", "ollama", "vllm"]);
     }
 
     #[test]

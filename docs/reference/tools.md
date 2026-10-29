@@ -288,7 +288,8 @@ Search the web. Where the search runs (`tools.web.search.provider`, default
 
 - **The sven service**, when one is known: the server `sven rc` signed in to
   (hosted conversations and connected computers), else a `providers.sven`
-  entry with a `base_url` and a key. sven sends the query to `<base_url>/search`
+  entry with a `base_url` and a key, else the hosted service once
+  `sven auth login` stored its key. sven sends the query to `<base_url>/search`
   with that key; the service searches and bills the account the key belongs
   to, and a refusal (no credit, a revoked key) comes back as its message.
 - **Brave Search** otherwise, with `tools.web.search.api_key` or the

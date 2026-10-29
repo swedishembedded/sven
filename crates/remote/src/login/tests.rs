@@ -13,6 +13,7 @@ use tokio::net::TcpListener;
 
 use super::{sign_in_with, RemoteLogin};
 use crate::device::Pacing;
+use uuid::Uuid;
 
 const DEVICE_CODE: &str = "DEVICE-CODE-MUST-STAY-SECRET";
 const TOKEN: &str = "sk-minted-token";
@@ -331,4 +332,25 @@ async fn login_at(base: &str) -> anyhow::Result<RemoteLogin> {
         |_| Ok(()),
     )
     .await
+}
+
+fn signed_in_to(openai_base_url: &str) -> RemoteLogin {
+    RemoteLogin {
+        server: "https://server".into(),
+        control_url: "https://server/api/control".into(),
+        openai_base_url: openai_base_url.into(),
+        token: "minted".into(),
+        workspace_id: Uuid::nil(),
+        workspace_name: "w".into(),
+        account: "a@example.com".into(),
+    }
+}
+
+/// A sign-in to the hosted sven service is that provider's key (its models
+/// and web search run on it); a sign-in to another server is not.
+#[test]
+fn only_the_hosted_service_is_the_sven_providers_key() {
+    assert!(signed_in_to("https://sven.swedishembedded.com/v1").is_the_sven_service());
+    assert!(signed_in_to("https://sven.swedishembedded.com/v1/").is_the_sven_service());
+    assert!(!signed_in_to("http://localhost:3000/v1").is_the_sven_service());
 }
