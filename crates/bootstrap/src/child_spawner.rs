@@ -248,6 +248,12 @@ impl SdlcChildSpawner {
                 .turn_limits()
                 .with_max_output_tokens(contract.max_output_tokens)
                 .with_decoding(self.decoding),
+        )
+        // A child with a deadline of its own is told how long it has.
+        .with_time_budget(
+            contract
+                .remaining(Instant::now())
+                .map(sven_turn::TimeBudget::starting_now),
         );
 
         let tool_executor = ToolExecutor::with_shared_store(
@@ -309,7 +315,7 @@ impl ChildSpawner for SdlcChildSpawner {
         // SDLC decomposition contract, and the one native agent machine
         // with an explicit child contract), a registered harness document
         // (a delegate step), or nothing anyone can interpret
-        // — which reports, it never hangs.
+        // - which reports, it never hangs.
         if let Some(task) = descriptor.get("task").and_then(Value::as_str) {
             self.spawn_task_child(machine, task.to_string(), run, parent)
                 .await;

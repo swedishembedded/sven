@@ -819,6 +819,7 @@ impl RuntimeBuilder {
                 parked_tx,
                 tool_executor_override: self.tool_executor_override.take(),
                 reconcile_capabilities: harness_session,
+                time_budget: self.runtime_ctx.time_budget,
             },
         );
 

@@ -751,7 +751,7 @@ Controls the agent's autonomy and defaults.
 | `first_token_timeout_secs` | `300`; `900` for a local server | Seconds, from the request, to wait for the first real output (text, reasoning or a tool-call chunk); keepalives do not count |
 | `no_progress_timeout_secs` | `600` | Seconds of silence in real output, once it has started, before the turn fails; keepalives do not count |
 | `max_step_timeout_secs` | `0` | Wall-clock limit of one headless workflow step; `0` = no limit. `--step-timeout` overrides it |
-| `max_run_timeout_secs` | `14400` (4 hours) | Wall-clock limit of a whole headless run, covering every wait in it: model, tools, approvals and questions. The run ends with exit code `124`. `0` = no limit. `--run-timeout` overrides it; see [CI pipeline](../guides/headless.md#timeouts) |
+| `max_run_timeout_secs` | `14400` (4 hours) | Wall-clock limit of a whole headless run, covering every wait in it: model, tools, approvals and questions. The run ends with exit code `124`. `0` = no limit. `--run-timeout` overrides it; see [CI pipeline](../guides/headless.md#timeouts). While a limit applies, each model request ends with a line stating the minutes used and left |
 | `child_run_timeout_secs` | `3600` | Wall-clock budget of each child agent run (a parallel SDLC task, a `task` sub-agent); the child is stopped when it runs out. `0` = no limit |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.

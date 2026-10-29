@@ -21,6 +21,7 @@ use std::time::Instant;
 use anyhow::Context as _;
 use sven_bootstrap::Config;
 use sven_bootstrap::RuntimeContext;
+use sven_bootstrap::TimeBudget;
 use sven_frontend::{SessionController, SessionOptions, SessionSpec};
 use sven_hsm::UiEvent;
 use sven_model::Message;
@@ -51,7 +52,7 @@ pub struct RuntimeRunner {
 /// Options for a single kernel-driven CI run.
 #[derive(Debug)]
 pub struct RuntimeRunnerOptions {
-    /// Mode string (e.g. `"agent"`, `"chat"`, `"sdlc"`) — selects which kernel
+    /// Mode string (e.g. `"agent"`, `"chat"`, `"sdlc"`) - selects which kernel
     /// machine runs. `Self::kernel_mode` collapses `Plan`/`Research`/`Agent`
     /// to the same "agent" machine string; `agent_mode` below is what
     /// actually differentiates their PERMISSION policy.
@@ -65,7 +66,7 @@ pub struct RuntimeRunnerOptions {
     pub prompt: String,
     /// Prior conversation history to seed into the kernel thread before the
     /// prompt is posted. Used to replay a piped prior-conversation document
-    /// (`sven '…' | sven --stdin 'next task'`) as context. Empty for a fresh run.
+    /// (`sven '...' | sven --stdin 'next task'`) as context. Empty for a fresh run.
     pub history: Vec<Message>,
     /// Project root (used for checkpoint path, audit log, etc.).
     pub project_root: Option<std::path::PathBuf>,
@@ -149,12 +150,26 @@ impl RuntimeRunner {
             ));
         }
 
+        // The deadline is enforced per `recv` rather than by racing the whole
+        // drive loop in a `select!`: dropping that future on timeout would
+        // take `state` - and with it the trajectory accumulated so far - down
+        // with it, leaving a timed-out run with no record at all. It is fixed
+        // before the session is built so that the model is told the same
+        // budget the run is held to.
+        let started = Instant::now();
+        let deadline = super::deadline::run_deadline(
+            started,
+            opts.timeout_secs.or(opts.step_timeout_secs),
+            self.config.agent.max_run_timeout_secs,
+        );
+
         let runtime_ctx = RuntimeContext {
             project_context_file,
             append_system_prompt: opts.append_system_prompt.clone(),
             system_prompt_override: self.config.agent.system_prompt.clone(),
             no_system: opts.no_system,
             no_tools: opts.no_tools,
+            time_budget: deadline.map(|by| TimeBudget::starting_now(by - started)),
             ..RuntimeContext::auto_detect_at(opts.project_root.clone())
         };
 
@@ -220,17 +235,6 @@ impl RuntimeRunner {
         // and eagerly writing "## User" here (as this used to)
         // unconditionally broke that contract on every provider error.
         write_progress("[sven:step:start] 1/1");
-        let started = Instant::now();
-
-        // The deadline is enforced per `recv` rather than by racing the whole
-        // drive loop in a `select!`: dropping that future on timeout would
-        // take `state` - and with it the trajectory accumulated so far - down
-        // with it, leaving a timed-out run with no record at all.
-        let deadline = super::deadline::run_deadline(
-            started,
-            opts.timeout_secs.or(opts.step_timeout_secs),
-            self.config.agent.max_run_timeout_secs,
-        );
 
         // `TurnExecutor` emits `UiEvent::TurnComplete` whenever a turn
         // produces neither tool calls nor an empty response - a heuristic

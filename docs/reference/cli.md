@@ -73,7 +73,7 @@ configuration file; see [Configuration](configuration.md#toolsdisclosure).
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--step-timeout SECS` | `agent.max_step_timeout_secs` (`0`) | Wall-clock limit of one workflow step; `0` is no limit. A `timeout=` directive on the step wins. |
-| `--run-timeout SECS` | `agent.max_run_timeout_secs` (`14400`) | Wall-clock limit of the whole headless run, every wait included; `0` is no limit. A single-prompt run takes `--step-timeout` as its limit when `--run-timeout` is not given. |
+| `--run-timeout SECS` | `agent.max_run_timeout_secs` (`14400`) | Wall-clock limit of the whole headless run, every wait included; `0` is no limit. A single-prompt run takes `--step-timeout` as its limit when `--run-timeout` is not given. The model is told the minutes used and left on every request. |
 | `--max-tokens N` | unlimited | Stop the run when input plus output tokens reach `N` (exit code `4`). |
 | `--dry-run` | off | Parse the workflow, print the steps on stderr (`[sven:dry-run] ...`) and exit without calling the model. |
 

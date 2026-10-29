@@ -186,6 +186,7 @@ impl sven_model::ModelProvider for YamlMockProvider {
             .rev()
             .find(|m| m.role == Role::User)
             .and_then(|m| m.as_text())
+            .map(sven_model::time_notice::without_time_notice)
             .unwrap_or("[no user message]")
             .to_string();
 

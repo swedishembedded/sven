@@ -37,7 +37,7 @@ pub struct RuntimeContext {
     /// CI environment metadata.
     pub ci_context: Option<CiContext>,
     /// Path of `.sven/context.md`, `AGENTS.md`, or `CLAUDE.md`, when one
-    /// exists. Referenced by path in the system prompt, not inlined — see
+    /// exists. Referenced by path in the system prompt, not inlined - see
     /// `sven_turn::prompts`.
     pub project_context_file: Option<PathBuf>,
     /// Text appended after the default system prompt Guidelines section.
@@ -50,6 +50,10 @@ pub struct RuntimeContext {
     /// Suppress tool availability entirely (from `--no-tools`): no tool
     /// schemas are sent to the model and any tool call is refused.
     pub no_tools: bool,
+    /// The wall-clock the host gives the run, when it enforces one (headless
+    /// `--run-timeout`, `agent.max_run_timeout_secs`). The model is told how
+    /// much of it is left. `None` for a run without a deadline.
+    pub time_budget: Option<sven_turn::TimeBudget>,
     /// Skills discovered from the standard search hierarchy.
     ///
     /// Using [`SharedSkills`] allows the TUI to share the same instance and
@@ -140,6 +144,7 @@ impl RuntimeContext {
             system_prompt_override: None,
             no_system: false,
             no_tools: false,
+            time_budget: None,
             skills,
             agents,
             knowledge,

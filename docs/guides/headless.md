@@ -470,6 +470,17 @@ connection, a busy server - is asked again after 5, 15 and 45 seconds before
 the turn ends; a good reply resets the count. Other failures end the turn at
 once.
 
+**The model sees the clock.** When a run has a limit, every request to the
+model ends with one line stating the whole minutes used and left, for example
+`Time: 12 of 58 min used, 46 min left; leave time to verify and finish.`, so
+that the agent can pace itself instead of exploring until it is stopped. The
+line is appended to the newest message of the request only: every earlier
+message is byte-identical to the previous request, so a server's prompt-prefix
+cache is not invalidated, and the line is never stored in the session or the
+trajectory. A subagent with a limit of its own (`agent.child_run_timeout_secs`)
+is told its own time; a run without a limit (`--run-timeout 0`) and an
+interactive session are told nothing. There is no switch for it.
+
 On a timeout sven writes the partial trajectory, when one is being written,
 stamped `timeout` with reward `0.0`, before it exits.
 

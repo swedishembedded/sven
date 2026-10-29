@@ -35,6 +35,7 @@ use tokio::sync::mpsc;
 use atif::{TraceStep, Trajectory};
 use sven_bootstrap::Config;
 use sven_bootstrap::RuntimeContext;
+use sven_bootstrap::TimeBudget;
 use sven_machines::AgentEvent;
 use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
@@ -193,7 +194,7 @@ pub struct CiOptions {
     ///
     /// Note: ATIF trajectories never persist the system prompt as a step (see
     /// `sven_session_store::trace_session::StepAssembler::push_message`'s System-role
-    /// handling) — the agent always regenerates it. This flag therefore
+    /// handling) - the agent always regenerates it. This flag therefore
     /// currently has no additional effect on trace-loaded runs; it is kept
     /// for CLI compatibility and in case a future ATIF `extra` convention
     /// restores stored-system-prompt reuse.
@@ -551,7 +552,7 @@ impl CiRunner {
         // no stored-system-prompt injection here: ATIF trajectories never
         // persist the system prompt as a step (see
         // `sven_session_store::trace_session::StepAssembler::push_message`'s
-        // System-role handling) — the agent always regenerates it fresh, so
+        // System-role handling) - the agent always regenerates it fresh, so
         // `--regen-system-prompt` has no additional effect on trace-loaded
         // runs (see its doc comment on `CiOptions`).
         //
@@ -611,6 +612,8 @@ impl CiRunner {
         // the frontend's SessionController) seeded with the accumulated history, so per-step mode
         // and model overrides are honoured while the streaming AgentEvent
         // contract this runner consumes stays identical.
+        runtime_ctx.time_budget =
+            run_timeout_secs.map(|t| TimeBudget::starting_now(Duration::from_secs(t)));
         let mut agent = KernelAgent::new(
             self.config.clone(),
             runtime_ctx,
@@ -731,7 +734,7 @@ impl CiRunner {
         let max_tokens_budget = opts.max_tokens_budget;
 
         // In-progress `task`-tool subagents (keyed by ACP `handle_id`) and
-        // the trajectories of those that have finished so far — both
+        // the trajectories of those that have finished so far - both
         // threaded through every `StepState` for the life of the run (not
         // reset per-step) so a subagent spawned in one step and finished in
         // a later one still resolves correctly. See `event::SubagentChildState`
@@ -742,10 +745,10 @@ impl CiRunner {
         // Write the combined ATIF trajectory (existing steps ++ new steps
         // accumulated so far) to `path`, atomically (temp file + rename; see
         // `atif::persist::write_trajectory_atomic`) so a crash never leaves
-        // a half-written document. `expected: None` — same as the old JSONL
+        // a half-written document. `expected: None` - same as the old JSONL
         // flush, this run is the sole writer for the duration and does not
         // need concurrent-modification detection against other processes.
-        // `subagent_trajectories` — like `new_steps` — is passed as a
+        // `subagent_trajectories` - like `new_steps` - is passed as a
         // parameter rather than captured by reference: both `assembler` and
         // `completed_subagents` keep mutating after this closure is defined,
         // so each call site passes a fresh snapshot instead of the closure
@@ -756,7 +759,7 @@ impl CiRunner {
         // outcome final); `None` leaves the document untouched, which
         // downstream trajectory consumers read as "outcome unknown" and
         // skip. It is a parameter rather than a captured flag so the
-        // compiler forces every flush site — including ones added later —
+        // compiler forces every flush site - including ones added later -
         // to say which it is.
         //
         // Note this closure rebuilds the trajectory from scratch, so with
@@ -1079,7 +1082,7 @@ impl CiRunner {
                             // Abort if the `--max-tokens` budget was exhausted.
                             // Flushing here (rather than in `handle_event`) is
                             // what makes `--output-trace` still get a valid
-                            // partial document when this fires — see
+                            // partial document when this fires - see
                             // `StepState::budget_exhausted`'s doc comment.
                             if budget_exhausted {
                                 if let Some(ref path) = effective_output_trace {
@@ -1251,7 +1254,7 @@ impl CiRunner {
                 OutputFormat::Json => {
                     // The full trajectory (including this step's contribution)
                     // is written once at the very end of the run, once the
-                    // assembler is finished — see the final `OutputFormat::Json`
+                    // assembler is finished - see the final `OutputFormat::Json`
                     // block below.
                 }
             }
@@ -1337,7 +1340,7 @@ impl CiRunner {
         }
 
         // ── Finalize JSON output ─────────────────────────────────────────────
-        // Emit the run's full ATIF trajectory as pretty JSON — replaces the
+        // Emit the run's full ATIF trajectory as pretty JSON - replaces the
         // old bespoke {title, steps:[{user_input, agent_response, ...}]}
         // summary with the actual trace document (also what --output-trace
         // would have written to a file).

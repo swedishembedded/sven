@@ -30,6 +30,7 @@ impl sven_model::ModelProvider for MockProvider {
             .rev()
             .find(|m| matches!(m.role, sven_model::Role::User))
             .and_then(|m| m.as_text())
+            .map(sven_model::time_notice::without_time_notice)
             .unwrap_or("[no input]")
             .to_string();
 

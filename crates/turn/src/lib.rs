@@ -27,6 +27,7 @@ pub mod ledger;
 mod ledger_recorder;
 mod oneshot;
 mod repetition;
+mod time_budget;
 mod tool_slots;
 
 mod prompt_composer;
@@ -50,3 +51,4 @@ pub use stream_turn::{
     to_model_schemas, AbortedError, Decoding, ModelResolver, StreamedTurn, ThinkingBudget,
     TurnLimits,
 };
+pub use time_budget::TimeBudget;

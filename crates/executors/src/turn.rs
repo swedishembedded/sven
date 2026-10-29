@@ -170,6 +170,8 @@ pub struct TurnExecutor {
     rebuilds: Vec<sven_vocab::cost::RebuildRecord>,
     /// Activates and announces conditional instructions each turn.
     instructions: Option<Arc<sven_turn::instructions::Activator>>,
+    /// The run's deadline, announced on the newest message of every request.
+    time_budget: Option<sven_turn::TimeBudget>,
 }
 
 impl TurnExecutor {
@@ -200,6 +202,7 @@ impl TurnExecutor {
             cache_ctx: None,
             rebuilds: Vec::new(),
             instructions: None,
+            time_budget: None,
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
@@ -255,6 +258,15 @@ impl TurnExecutor {
         instructions: Option<Arc<sven_turn::instructions::Activator>>,
     ) -> Self {
         self.instructions = instructions;
+        self
+    }
+
+    /// Tells the model how much of `budget` is left, in a line at the end of
+    /// every request (see [`sven_turn::TimeBudget`]). `None`, a run without a
+    /// deadline, says nothing.
+    #[must_use]
+    pub fn with_time_budget(mut self, budget: Option<sven_turn::TimeBudget>) -> Self {
+        self.time_budget = budget;
         self
     }
 
@@ -451,13 +463,18 @@ impl EffectExecutor for TurnExecutor {
                 req.dynamic_suffix.as_deref(),
             );
         }
-        let (messages, context_view) = match view {
+        let (mut messages, context_view) = match view {
             Some((assembled, record)) => {
                 self.mark_view_sent(&record);
                 (assembled, Some(record))
             }
             None => (messages, None),
         };
+        // Last, on the copy that goes out: the stored thread never holds the
+        // notice, and it changes only the newest message of the request.
+        if let Some(budget) = &self.time_budget {
+            budget.append_to(&mut messages);
+        }
 
         let no_room = |prompt: usize, budget: usize| {
             format!(

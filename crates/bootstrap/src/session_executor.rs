@@ -147,6 +147,8 @@ pub(crate) struct ExecutorParts {
     pub reconcile_capabilities: bool,
     /// The providers the host offers by role name.
     pub model_roles: Option<sven_turn::ModelResolver>,
+    /// The run's deadline, when the host enforces one.
+    pub time_budget: Option<sven_turn::TimeBudget>,
 }
 
 /// A caller-supplied executor replaces the default composite wholesale;
@@ -190,7 +192,8 @@ pub(crate) fn compose(
     .with_cost_policy(cost_policy(&parts.config))
     .with_decision_telemetry(parts.decision_telemetry)
     .with_context_assembler(assembler)
-    .with_instructions(Some(parts.instructions.activator()));
+    .with_instructions(Some(parts.instructions.activator()))
+    .with_time_budget(parts.time_budget);
     let user_executor = UserExecutor::new(parts.gates.questions, parts.gates.approvals)
         .with_gate_journal(GateJournal::new(
             Arc::clone(&parts.conv_store),
