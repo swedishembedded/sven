@@ -20,9 +20,19 @@ publish      = false          # sven is a binary tool, not a crates.io library
 sign-tag     = false
 sign-commit  = false
 
-# Required for {{version}} etc. to be expanded in pre-release-commit-message
-# (see cargo-release docs: placeholders only applied "if not consolidated")
-consolidate-commits = false
+# One commit for the release: every crate shares the workspace version
+# (shared-version = "workspace"), and cargo-release 1.x refuses anything else
+# for such a workspace. {{version}} still expands in the commit message, since
+# the version is shared.
+consolidate-commits = true
+
+# What a release changes besides the version: the changelog's Unreleased
+# section becomes the release's, dated, under a new empty Unreleased; and
+# .bumpversion.cfg keeps the version bump2version would find.
+pre-release-replacements = [
+  { file = "CHANGELOG.md", search = "## \\[Unreleased\\]", replace = "## [Unreleased]\n\n## [{{version}}] - {{date}}", exactly = 1 },
+  { file = ".bumpversion.cfg", search = "current_version = .*", replace = "current_version = {{version}}", exactly = 1 },
+]
 
 pre-release-commit-message = "chore: release v{{version}}"
 
