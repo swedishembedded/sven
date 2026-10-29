@@ -4,7 +4,7 @@
 //! Spec: many harness runs share one engine, one model and one process and
 //! stay apart. With the real coding tools, each run's files, shell and gates
 //! live in the workspace it was given and nowhere else; a run that cheats
-//! fails its own gate without touching the others (a verdict, not an error);
+//! fails its own gate, and only its own run fails;
 //! cancelling one run leaves the rest to finish; and the coding profile
 //! offers the tools, with the argument names, the prompts of a port use.
 //!
@@ -190,11 +190,10 @@ async fn a_cheating_run_fails_its_own_gate_and_the_others_complete() {
         panic!("the cheat's gate fails: {:?}", cheat.result);
     };
     assert_eq!(failure.code, "gate_failed");
-    assert_eq!(
-        cheat.conclusion,
-        RunConclusion::Success,
-        "a failed gate is a verdict the run reports, not a run that broke"
-    );
+    // A failed run is not a success (crates/sdk/tests/harness_run.rs); what
+    // isolation adds is that only the cheat's run failed.
+    assert_eq!(cheat.conclusion, RunConclusion::AgentError);
+    assert_eq!(honest.conclusion, RunConclusion::Success);
     assert_eq!(read(honest_tree.path(), "owner.txt").trim(), "honest");
 }
 
