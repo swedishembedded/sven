@@ -155,7 +155,8 @@
         "fetch_max_chars": 50000,
         "public_only": false,
         "search": {
-          "api_key": "BSA-example"
+          "api_key": "BSA-example",
+          "provider": "auto"
         }
       }
     },
