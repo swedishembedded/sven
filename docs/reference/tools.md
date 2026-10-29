@@ -148,7 +148,9 @@ by a fuzzy match in which every line must resemble the file line it lands on
 (a typo passes; a missing context line does not, because the hunk would line up
 a line late). The offset found is applied to the added lines; an offset of one
 column is taken for context lines that lack their leading space and is not
-applied, and a hunk whose lines disagree on the offset is refused. An edit
+applied, and a hunk whose lines disagree on the offset is refused. A hunk that
+matches several places is applied at the one nearest the `@@` line number, and
+refused when the `@@` line has none. An edit
 that leaves the file unchanged is an error, not a success.
 
 | Parameter | Description |

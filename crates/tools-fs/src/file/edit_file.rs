@@ -322,7 +322,7 @@ fn find_hunk_window(
         .filter(|&i| file_refs[i..i + n] == *search_lines)
         .collect();
     if !exact.is_empty() {
-        return Ok((pick_best(&exact, hint), 0));
+        return Ok((pick_best(&exact, hint)?, 0));
     }
 
     // ── Strategy 2: indent-normalised ────────────────────────────────────────
@@ -346,7 +346,7 @@ fn find_hunk_window(
 
     if !indent_hits.is_empty() {
         let positions: Vec<usize> = indent_hits.iter().map(|(p, _)| *p).collect();
-        let best = pick_best(&positions, hint);
+        let best = pick_best(&positions, hint)?;
         let delta = indent_hits
             .iter()
             .find(|(p, _)| *p == best)
@@ -383,7 +383,7 @@ fn find_hunk_window(
             .filter(|(r, _, _)| (r - best_ratio).abs() < 1e-9)
             .collect();
         let positions: Vec<usize> = best_hits.iter().map(|(_, p, _)| *p).collect();
-        let best = pick_best(&positions, hint);
+        let best = pick_best(&positions, hint)?;
         let delta = best_hits
             .iter()
             .find(|(_, p, _)| *p == best)
@@ -412,19 +412,30 @@ fn find_hunk_window(
 }
 
 /// When several windows match at equal quality, pick the one closest to `hint`
-/// (1-based old-file line).  Falls back to the first match when hint is absent.
-fn pick_best(matches: &[usize], hint: Option<usize>) -> usize {
+/// (1-based old-file line); without a hint the hunk is ambiguous and refused.
+fn pick_best(matches: &[usize], hint: Option<usize>) -> Result<usize, String> {
     if matches.len() == 1 {
-        return matches[0];
+        return Ok(matches[0]);
     }
-    if let Some(h) = hint {
-        let target = h.saturating_sub(1);
-        return *matches
-            .iter()
-            .min_by_key(|&&p| (p as isize - target as isize).unsigned_abs())
-            .unwrap_or(&matches[0]);
-    }
-    matches[0]
+    let Some(h) = hint else {
+        // Choosing the first of identical places edits the wrong one as often
+        // as not; without a line number to choose by, the model must say more.
+        return Err(format!(
+            "The hunk matches {} places (lines {}). Add unchanged context lines that \
+             appear only at the place to edit, or give its line number in the @@ line.",
+            matches.len(),
+            matches
+                .iter()
+                .map(|p| (p + 1).to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    };
+    let target = h.saturating_sub(1);
+    Ok(*matches
+        .iter()
+        .min_by_key(|&&p| (p as isize - target as isize).unsigned_abs())
+        .unwrap_or(&matches[0]))
 }
 
 /// Return up to `limit` windows in `file_lines` most similar to `search_lines`
@@ -1590,6 +1601,30 @@ mod tests {
         let result = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         (out, result)
+    }
+
+    #[tokio::test]
+    async fn a_hunk_that_matches_two_places_without_a_line_hint_is_refused() {
+        // Picking the first of two identical places edits the wrong one half
+        // the time, silently. Without a line number to choose by, refuse.
+        let file = "def f():\n    x = 1\n    return x\n\ndef g():\n    x = 1\n    return x\n";
+        let diff = "@@ @@\n-    x = 1\n+    x = 2\n     return x\n";
+        let (out, result) = edit(file, diff).await;
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("2 places"), "{}", out.content);
+        assert_eq!(result, file);
+    }
+
+    #[tokio::test]
+    async fn a_line_hint_chooses_between_identical_places() {
+        let file = "def f():\n    x = 1\n    return x\n\ndef g():\n    x = 1\n    return x\n";
+        let diff = "@@ -6,2 +6,2 @@\n-    x = 1\n+    x = 2\n     return x\n";
+        let (out, result) = edit(file, diff).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(
+            result,
+            "def f():\n    x = 1\n    return x\n\ndef g():\n    x = 2\n    return x\n"
+        );
     }
 
     #[tokio::test]
