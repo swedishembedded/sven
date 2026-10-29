@@ -28,6 +28,10 @@ pub struct Reply {
     pub cutoff: bool,
     pub delay: Duration,
     pub error: Option<String>,
+    /// Held until this many requests are in flight together (at most five
+    /// seconds), so a test of concurrency does not depend on how fast the
+    /// machine renders pages.
+    pub hold: Option<Arc<tokio::sync::Barrier>>,
 }
 
 impl Reply {
@@ -37,6 +41,7 @@ impl Reply {
             cutoff: false,
             delay: Duration::ZERO,
             error: None,
+            hold: None,
         }
     }
 }
@@ -116,6 +121,9 @@ impl ModelProvider for ScriptedOcr {
             width: img.width(),
         };
         let reply = (self.script)(&seen, call);
+        if let Some(together) = &reply.hold {
+            let _ = tokio::time::timeout(Duration::from_secs(5), together.wait()).await;
+        }
         tokio::time::sleep(reply.delay).await;
         if let Some(e) = reply.error {
             anyhow::bail!(e);

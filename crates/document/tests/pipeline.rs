@@ -320,11 +320,15 @@ async fn the_backend_stays_saturated_and_replicas_share_the_work() {
     let dir = tempfile::tempdir().unwrap();
     let src = write_pdf(dir.path(), &scans(12));
     let out = dir.path().join("out.md");
-    let slow = |seen: &common::Seen, _| Reply {
-        delay: Duration::from_millis(120),
+    // Each reply waits until six are in flight together: the converter must
+    // fill every slot on both endpoints, however slowly pages render here.
+    let together = Arc::new(tokio::sync::Barrier::new(6));
+    let slow = move |seen: &common::Seen, _| Reply {
+        delay: Duration::from_millis(20),
+        hold: Some(Arc::clone(&together)),
         ..Reply::text(page_of(seen.gray))
     };
-    let (a, b) = (ScriptedOcr::new(slow), ScriptedOcr::new(slow));
+    let (a, b) = (ScriptedOcr::new(slow.clone()), ScriptedOcr::new(slow));
     let conv = Converter::new(Arc::new(HayroBackend), vec![Arc::new(a), Arc::new(b)]);
     let opts = ConvertOptions {
         concurrency: 3,
