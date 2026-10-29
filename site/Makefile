@@ -1,4 +1,7 @@
 IMAGE     := swedishembedded/sven-site
+# The image carries the site's version, so the host pins exactly what it
+# runs (a moving `latest` changes production without a commit there).
+VERSION   := $(shell node -p "require('./package.json').version")
 PORT      := 3000
 DOCKER    ?= sudo docker
 TARGET    ?= agentsven.com
@@ -11,11 +14,11 @@ endif
 
 .PHONY: build serve publish install copy-install
 
-## build          - build the Docker image (swedishembedded/sven-site)
+## build          - build the Docker image (swedishembedded/sven-site:v<package.json version>)
 ##                  use NO_CACHE=1 to rebuild without layer cache
 build: install copy-install
 	npm run build
-	$(DOCKER) build $(DOCKER_BUILD_FLAGS) -t $(IMAGE) .
+	$(DOCKER) build $(DOCKER_BUILD_FLAGS) -t $(IMAGE):v$(VERSION) .
 
 ## serve          - run the Vite dev server locally on http://localhost:$(PORT)
 serve: install copy-install
@@ -23,9 +26,9 @@ serve: install copy-install
 
 ## publish        - upload the Docker image to martin@swedishembedded.com via SSH
 publish: build
-	@echo "Publishing $(IMAGE) to $(TARGET)..."
-	$(DOCKER) save $(IMAGE) | ssh $(TARGET) docker load
-	@echo "Done. Infrastructure on $(TARGET) will handle deployment."
+	@echo "Publishing $(IMAGE):v$(VERSION) to $(TARGET)..."
+	$(DOCKER) save $(IMAGE):v$(VERSION) | ssh $(TARGET) docker load
+	@echo "Done. Release it with portal_agentsven_version: v$(VERSION) in the infrastructure repository."
 
 ## install        - install npm dependencies
 install:
