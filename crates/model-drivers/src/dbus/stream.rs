@@ -88,9 +88,14 @@ pub(super) struct FrameReader {
 
 impl FrameReader {
     pub(super) fn new(fd: OwnedFd) -> Result<Self> {
-        Ok(Self {
-            fd: AsyncFd::new(fd).context("watching the D-Bus stream socket")?,
-        })
+        // SAFETY: `register` needs the descriptor to stay open, owned and the
+        // same for the `AsyncFd`'s whole life. `OwnedFd` is that: the socket is
+        // moved in, closed only when the `AsyncFd` drops it, and its raw value
+        // never changes.
+        let fd = unsafe { AsyncFd::register(fd) }
+            .map_err(|e| e.into_parts().1)
+            .context("watching the D-Bus stream socket")?;
+        Ok(Self { fd })
     }
 
     /// The next frame, or `None` when brain closed the stream.
