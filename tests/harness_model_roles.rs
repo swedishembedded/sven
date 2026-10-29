@@ -55,3 +55,68 @@ fn an_unmapped_or_unknown_role_is_refused_before_any_model_is_asked() {
     assert!(stderr(&unknown).contains("planer"), "{}", stderr(&unknown));
     assert_eq!(server.seen.lock().unwrap().requests, 0);
 }
+
+/// `--api-key-file` is read once, whatever the number of roles: a key fed
+/// through a FIFO that holds it once (so nothing that runs later can read
+/// it again) serves every role.
+#[cfg(unix)]
+#[test]
+fn the_key_file_is_read_once_for_every_role() {
+    let setup = setup();
+    let fifo = setup.out("key.fifo");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let writer = {
+        let fifo = fifo.clone();
+        std::thread::spawn(move || {
+            std::fs::write(&fifo, r#"{"openai": "sk-test-5f0c9d7e-not-a-real-key"}"#).unwrap()
+        })
+    };
+    let server = serve(vec![Turn::Text("step one"), Turn::Text("done")]);
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_sven"));
+    cmd.current_dir(setup.scratch.path())
+        .env("HOME", setup.scratch.path())
+        .env("XDG_CONFIG_HOME", setup.scratch.path())
+        .env("TMPDIR", setup.scratch.path())
+        .args(["harness", "run"])
+        .arg(fixtures().join("roles"))
+        .arg("--workspace")
+        .arg(setup.repo.path())
+        .args([
+            "--model",
+            harness_support::MODEL,
+            "--model-endpoint",
+            &server.base,
+        ])
+        .args(["--model-role", "planner=openai/scripted-planner"])
+        .args([
+            "--approvals",
+            "deny",
+            "--json",
+            "--timeout",
+            "20",
+            "--api-key-file",
+        ])
+        .arg(&fifo);
+    // A regression would block on a second read: give it a deadline.
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the run blocked reading the key file a second time");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let out = child.wait_with_output().unwrap();
+    writer.join().unwrap();
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(server.seen.lock().unwrap().requests, 2);
+}

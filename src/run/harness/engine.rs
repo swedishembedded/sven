@@ -109,18 +109,23 @@ impl Assembly {
         let approvals = args.approvals.ok_or_else(|| {
             usage("--approvals auto|deny|ask is required: a run never inherits an approval mode")
         })?;
-        let api_key = args
+        // Read once, whatever the number of roles: the file may be one a
+        // host can read only once (a FIFO), so nothing that runs later can.
+        let keys = args
             .api_key_file
             .as_deref()
-            .map(|file| read_api_key(file, provider, &workspace))
+            .map(|file| ApiKeys::read(file, &workspace))
+            .transpose()?;
+        let api_key = keys
+            .as_ref()
+            .map(|k| k.for_provider(provider))
             .transpose()?;
         let roles = role_models(&args.model_roles, &plan.model_roles())?
             .into_iter()
             .map(|(role, provider, model)| {
-                let api_key = args
-                    .api_key_file
-                    .as_deref()
-                    .map(|file| read_api_key(file, &provider, &workspace))
+                let api_key = keys
+                    .as_ref()
+                    .map(|k| k.for_provider(&provider))
                     .transpose()?;
                 Ok(RoleModel {
                     role,
@@ -385,41 +390,55 @@ fn capability_named(name: &str) -> Result<ToolCapability, Failure> {
         .ok_or_else(|| usage(format!("unknown capability `{name}`")))
 }
 
-/// Reads the model server's key from `file`: a JSON object of provider name
-/// to key, or the bare key. Refuses a file the agent could read.
-fn read_api_key(file: &Path, provider: &str, workspace: &Path) -> Result<String, Failure> {
-    let shown = file.display();
-    let text = std::fs::read_to_string(file)
-        .map_err(|e| usage(format!("cannot read --api-key-file {shown}: {e}")))?;
-    let inside = file
-        .canonicalize()
-        .is_ok_and(|real| real.starts_with(workspace));
-    if inside {
-        return Err(usage(format!(
-            "--api-key-file {shown} is inside the workspace, where the agent could read it: keep it outside"
-        )));
-    }
-    let key = match serde_json::from_str::<Value>(&text) {
-        Ok(Value::Object(keys)) => keys
-            .get(provider)
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| {
-                usage(format!(
-                    "--api-key-file {shown} has no string key for provider `{provider}`"
-                ))
-            })?,
-        Ok(_) => {
+/// The contents of `--api-key-file`, read once: a JSON object of provider
+/// name to key, or the bare key.
+struct ApiKeys {
+    shown: String,
+    text: String,
+}
+
+impl ApiKeys {
+    /// Reads `file`, refusing one the agent could read.
+    fn read(file: &Path, workspace: &Path) -> Result<Self, Failure> {
+        let shown = file.display().to_string();
+        let inside = file
+            .canonicalize()
+            .is_ok_and(|real| real.starts_with(workspace));
+        if inside {
             return Err(usage(format!(
-                "--api-key-file {shown} is JSON but not an object of provider to key"
-            )))
+                "--api-key-file {shown} is inside the workspace, where the agent could read it: keep it outside"
+            )));
         }
-        Err(_) => text.trim().to_string(),
-    };
-    if key.is_empty() {
-        return Err(usage(format!("--api-key-file {shown} holds an empty key")));
+        let text = std::fs::read_to_string(file)
+            .map_err(|e| usage(format!("cannot read --api-key-file {shown}: {e}")))?;
+        Ok(Self { shown, text })
     }
-    Ok(key)
+
+    /// The key for `provider`.
+    fn for_provider(&self, provider: &str) -> Result<String, Failure> {
+        let shown = &self.shown;
+        let key = match serde_json::from_str::<Value>(&self.text) {
+            Ok(Value::Object(keys)) => keys
+                .get(provider)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    usage(format!(
+                        "--api-key-file {shown} has no string key for provider `{provider}`"
+                    ))
+                })?,
+            Ok(_) => {
+                return Err(usage(format!(
+                    "--api-key-file {shown} is JSON but not an object of provider to key"
+                )))
+            }
+            Err(_) => self.text.trim().to_string(),
+        };
+        if key.is_empty() {
+            return Err(usage(format!("--api-key-file {shown} holds an empty key")));
+        }
+        Ok(key)
+    }
 }
 
 /// `--approvals deny`: refuse every call that needs approval, ask nobody.
