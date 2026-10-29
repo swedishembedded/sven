@@ -111,6 +111,17 @@ impl Settings {
         Ok(Self::from_document(&document))
     }
 
+    /// [`Self::load`] from the `extra` file alone ([`ConfigDocument::load_explicit`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`ConfigDocument::load_explicit`].
+    pub fn load_explicit(extra: Option<&Path>) -> anyhow::Result<Self> {
+        let document = ConfigDocument::load_explicit(extra)?;
+        document.warn_unknown_keys(&Self::schema());
+        Ok(Self::from_document(&document))
+    }
+
     /// Whether `document` is a configuration sven reads as written: every
     /// key one it knows, every value of its type. What a command that writes
     /// the file checks before it saves, so a mistake is refused rather than

@@ -155,6 +155,10 @@ its own that it never shares. Two walls keep a hosted host to itself:
   server itself, its private networks or a cloud metadata service, checked
   on the addresses a name resolves to and on every redirect
   (`tools.web.public_only`, which any `sven` can set).
+- **Its configuration.** A hosted host reads only the file `--config`
+  names, never the system, user, workspace or project files it would
+  otherwise find from its home and working directory, which are where a
+  tenant's own files are.
 - **The key.** The server writes the sign-in to the host's standard input,
   read before the confinement; it is never in a file.
 

@@ -89,6 +89,22 @@ impl ConfigDocument {
         Ok(document)
     }
 
+    /// The `extra` file alone (the `--config` flag), or an empty document:
+    /// none of the system, user, workspace or project layers, which for a
+    /// host whose home and working directory someone else can write are not
+    /// to be trusted (`sven rc --hosted`).
+    ///
+    /// # Errors
+    ///
+    /// An `extra` path that cannot be read or is not YAML.
+    pub fn load_explicit(extra: Option<&Path>) -> anyhow::Result<Self> {
+        let mut document = Self::default();
+        if let Some(path) = extra {
+            document.merge_file(path)?;
+        }
+        Ok(document)
+    }
+
     /// A document of `text` alone, its placeholders expanded.
     ///
     /// # Errors

@@ -146,7 +146,9 @@ pub(crate) fn confine_hosted(cli: &crate::cli::Cli) -> anyhow::Result<Option<Hos
     if !args.hosted {
         return Ok(None);
     }
-    let mut config = sven_frontend::Settings::load(cli.config.as_deref())?.runtime;
+    // Only the file `--config` names: the host's home and working directory
+    // are where a tenant's own files are, so no layer is looked for there.
+    let mut config = sven_frontend::Settings::load_explicit(cli.config.as_deref())?.runtime;
     // The server that starts it writes the sign-in to its standard input,
     // so the key is never in a file anything it runs could read.
     let mut login = String::new();
