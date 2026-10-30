@@ -42,6 +42,7 @@ Changes that helped (landed):
 | `find_file` deferred | 7 calls in 64 runs against 220 searches by `grep`/`shell`; about 230 tokens per request |
 | Time budget at the end of each request (cache-safe) | SWE dev 8 -> 9 of 12, paired 1 won 0 lost; second partial sample tied 3 of 3 |
 | A transient model failure is asked again (5/15/45 s) | a dropped request had ended a 51-minute run with exit 1 |
+| Verification asks for a test of the reported case and its edge cases | SWE dev 7 -> 9 of 12, paired 2 won 0 lost; two held-out losses had been fixes that missed an edge case |
 
 No measurable effect:
 
@@ -50,8 +51,9 @@ No measurable effect:
 | Thinking budget (unbounded / 8k / 2k) | SWE 9 / 9 / 8 of 12, Terminal-Bench 0 / 1 / 1 of 6 |
 | `old_text`/`new_text` edit interface instead of diff hunks | edit failures 19% -> 0%, yet tasks passed 9 of 15 -> 5 of 13 (all losses timeouts); not adopted - tool-call success is not task success |
 | Tool-definition tokens | about 1.7k of a ~25k-token request, in the cached prefix: trimming them barely moves cost |
-| Agent scaffold, once harness defects are gone | same model, same 12 SWE dev tasks at the same time: sven 7, a bash-only agent 9, two other coding agents 8 each |
+| Agent scaffold, once harness defects are gone | same model, same tasks at the same time: dev split sven 7, a bash-only agent 9, two other coding agents 8 each; held-out eval split sven 8, others 9, 10 and 9 (before the edge-case verification change) |
 | Exploration-discipline prompt ("go straight to the code", no reproduce-first) | embedded train, paired 1 won 1 lost over 16 tasks; not adopted |
+| Not sending earlier reasoning back to a local server | SWE dev paired 2 won 2 lost; prompt per request halved (32k -> 16k) but output tokens rose 25k -> 40k as the model re-derived its reasoning, and output is the decode-bound cost; not adopted |
 
 What limits success now:
 
