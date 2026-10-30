@@ -9,8 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.2.4] - 2026-10-30
 
+### Changed
+- **install**: the installer installs into your own `~/.local/bin` and never asks for `sudo` (root still installs into `/usr/local/bin`). When that directory is not on your `PATH` yet it is added, once, to your shell's startup file (zsh, bash, fish, or `~/.profile`), and the installer checks that a new terminal finds `sven`, saying what to do if it does not. `SVEN_NO_MODIFY_PATH=1` leaves the startup files alone.
+
 ### Fixed
-- **install**: the installer creates the install directory when it does not exist yet, with sudo when needed. On a Mac without `/usr/local/bin` (the usual case on Apple Silicon) it failed with `/usr/local/bin/INS@...: No such file or directory`, because macOS's `install` never creates its destination.
+- **install**: a `SVEN_INSTALL_DIR` that does not exist yet is created first, with `sudo` when needed. On macOS this failed with `/usr/local/bin/INS@...: No such file or directory`, because macOS's `install` never creates its destination.
 
 ## [4.2.3] - 2026-10-29
 
