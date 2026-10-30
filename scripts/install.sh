@@ -113,12 +113,16 @@ expected="$(awk -v a="$ASSET" '$2 == a || $2 == "*" a { print $1 }' "$TMP/checks
 chmod +x "$TMP/sven"
 "$TMP/sven" --version >/dev/null 2>&1 || fail "the downloaded sven does not run on this machine"
 
+# The directory may not exist yet: /usr/local/bin is missing on many Macs
+# (Apple Silicon), and install(1) on macOS never creates its destination.
+[ -d "$INSTALL_DIR" ] || mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 if [ -w "$INSTALL_DIR" ]; then
 	mv "$TMP/sven" "$INSTALL_DIR/sven"
 elif [ "${SVEN_NO_SUDO:-0}" = 1 ]; then
 	fail "$INSTALL_DIR is not writable and SVEN_NO_SUDO=1 forbids sudo; set SVEN_INSTALL_DIR"
 elif command -v sudo >/dev/null 2>&1; then
 	info "Installing to $INSTALL_DIR with sudo"
+	[ -d "$INSTALL_DIR" ] || sudo mkdir -p "$INSTALL_DIR"
 	sudo install -m 0755 "$TMP/sven" "$INSTALL_DIR/sven"
 else
 	INSTALL_DIR="$HOME/.local/bin"

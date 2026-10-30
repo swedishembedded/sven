@@ -143,3 +143,35 @@ run_install() {
   [ "$status" -eq 0 ]
   [ "$("$DEST/sven" --version)" = "sven $MAJOR.1.0" ]
 }
+
+@test "creates the install directory when it does not exist yet" {
+  releases "v${MAJOR}.0.1"
+  publish "v${MAJOR}.0.1" sven-linux-x86_64-musl
+  rmdir "$DEST"
+  run_install
+  [ "$status" -eq 0 ]
+  [ -x "$DEST/sven" ]
+}
+
+# macOS: /usr/local/bin is often missing (Apple Silicon), only root may create
+# it, and BSD `install` does not create directories: it writes a temporary
+# INS@XXXXXX in the destination and fails with "No such file or directory".
+@test "creates a missing directory with sudo before installing into it, as BSD install needs" {
+  releases "v${MAJOR}.0.1"
+  publish "v${MAJOR}.0.1" sven-linux-x86_64-musl
+  local root="$BATS_TEST_TMPDIR/root"
+  mkdir -p "$root" && chmod 0555 "$root"
+  # sudo: records each command and runs it with the protected tree writable,
+  # standing in for root.
+  printf '#!/bin/sh\necho "$*" >>"%s/sudo.log"\nchmod u+w "%s"\n"$@"; s=$?\nchmod 0555 "%s"\nexit $s\n' \
+    "$BATS_TEST_TMPDIR" "$root" "$root" >"$BIN/sudo"
+  # install: BSD's, which never creates the destination directory.
+  printf '#!/bin/sh\nfor last; do :; done\nd=$(dirname "$last")\n[ -d "$d" ] || { echo "install: $d/INS@Lr01hQ: No such file or directory" >&2; exit 71; }\ncp "$3" "$last" && chmod 0755 "$last"\n' >"$BIN/install"
+  chmod +x "$BIN/sudo" "$BIN/install"
+  run env PATH="$BIN:$PATH" SVEN_INSTALL_DIR="$root/usr/local/bin" \
+    SVEN_RELEASES_API="file://$GH/releases.json" SVEN_DOWNLOAD_BASE="file://$GH/download" sh "$SCRIPT"
+  chmod -R u+w "$root"
+  [ "$status" -eq 0 ]
+  [ -x "$root/usr/local/bin/sven" ]
+  grep -q "mkdir -p $root/usr/local/bin" "$BATS_TEST_TMPDIR/sudo.log"
+}
