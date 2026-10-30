@@ -25,17 +25,22 @@ with a new script.
 curl -fsSL https://sven.swedishembedded.com/install.sh | sh
 ```
 
+It installs into your own `~/.local/bin` (or `~/bin`, when only that one is
+on your `PATH`) and never asks for `sudo`. When that directory is not on your
+`PATH` yet, it adds it to your shell's startup file (`~/.zshrc`, `~/.bashrc`,
+`~/.bash_profile` on macOS, fish's `conf.d`, or `~/.profile`), once, and then
+checks that a new terminal finds `sven`. If it does not, the script says so and
+prints the one line to add. Run as root (a Dockerfile, say), it installs into
+`/usr/local/bin` for everyone.
+
 Environment variables:
 
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `SVEN_VERSION` | newest 4.x | Install exactly this version, e.g. `4.0.0` |
-| `SVEN_INSTALL_DIR` | `/usr/local/bin` | Where to put the binary |
-| `SVEN_NO_SUDO` | unset | Set to `1` to never use sudo (fails if the directory is not writable) |
-
-If the install directory is not writable and `sudo` is not available, the binary
-goes to `~/.local/bin` instead. The script tells you when the install directory
-is not on your `PATH`.
+| `SVEN_INSTALL_DIR` | `~/.local/bin`; `/usr/local/bin` as root | Where to put the binary; one that needs it is installed with `sudo` |
+| `SVEN_NO_SUDO` | unset | Set to `1` to never use `sudo`, even for a `SVEN_INSTALL_DIR` that needs it |
+| `SVEN_NO_MODIFY_PATH` | unset | Set to `1` to leave your shell's startup files alone; the script prints the line to add instead |
 
 ## Option 1 - Debian/Ubuntu package
 

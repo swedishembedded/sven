@@ -22,8 +22,13 @@
 #
 # Environment:
 #   SVEN_VERSION      install exactly this version (e.g. 4.1.0)
-#   SVEN_INSTALL_DIR  where to install (default /usr/local/bin)
-#   SVEN_NO_SUDO=1    never use sudo
+#   SVEN_INSTALL_DIR      where to install. Default: your own ~/.local/bin
+#                         (or ~/bin when only that is on PATH), with no sudo;
+#                         /usr/local/bin when run as root
+#   SVEN_NO_SUDO=1        never use sudo, even for a SVEN_INSTALL_DIR that
+#                         needs it
+#   SVEN_NO_MODIFY_PATH=1 never add the install directory to a shell's
+#                         startup file; print the line to add instead
 set -eu
 
 SVEN_MAJOR=4
@@ -31,7 +36,26 @@ SVEN_MAJOR=4
 REPO="swedishembedded/sven"
 RELEASES_API="${SVEN_RELEASES_API:-https://api.github.com/repos/${REPO}/releases?per_page=100}"
 DOWNLOAD_BASE="${SVEN_DOWNLOAD_BASE:-https://github.com/${REPO}/releases/download}"
-INSTALL_DIR="${SVEN_INSTALL_DIR:-/usr/local/bin}"
+USER_DIR="$HOME/.local/bin"
+
+on_path() {
+	case ":$PATH:" in *":$1:"*) return 0 ;; *) return 1 ;; esac
+}
+
+# A person installs for themselves, into a directory they own: no sudo, ever,
+# unless they name a directory that needs it. Root (a Dockerfile, a
+# provisioning script) installs for everyone, into /usr/local/bin. Never
+# /usr/bin: macOS protects it even from root, and on Linux it belongs to the
+# package manager.
+if [ -n "${SVEN_INSTALL_DIR:-}" ]; then
+	INSTALL_DIR="$SVEN_INSTALL_DIR"
+elif [ "$(id -u)" = 0 ]; then
+	INSTALL_DIR=/usr/local/bin
+elif ! on_path "$USER_DIR" && on_path "$HOME/bin"; then
+	INSTALL_DIR="$HOME/bin"
+else
+	INSTALL_DIR="$USER_DIR"
+fi
 
 if [ -t 1 ]; then
 	BOLD="$(printf '\033[1m')" GREEN="$(printf '\033[32m')" RED="$(printf '\033[31m')" RESET="$(printf '\033[0m')"
@@ -118,23 +142,71 @@ chmod +x "$TMP/sven"
 [ -d "$INSTALL_DIR" ] || mkdir -p "$INSTALL_DIR" 2>/dev/null || true
 if [ -w "$INSTALL_DIR" ]; then
 	mv "$TMP/sven" "$INSTALL_DIR/sven"
-elif [ "${SVEN_NO_SUDO:-0}" = 1 ]; then
-	fail "$INSTALL_DIR is not writable and SVEN_NO_SUDO=1 forbids sudo; set SVEN_INSTALL_DIR"
-elif command -v sudo >/dev/null 2>&1; then
-	info "Installing to $INSTALL_DIR with sudo"
-	[ -d "$INSTALL_DIR" ] || sudo mkdir -p "$INSTALL_DIR"
-	sudo install -m 0755 "$TMP/sven" "$INSTALL_DIR/sven"
+elif [ "${SVEN_NO_SUDO:-0}" = 1 ] || ! command -v sudo >/dev/null 2>&1; then
+	fail "$INSTALL_DIR is not writable; choose another SVEN_INSTALL_DIR, or leave it unset to install into your own $USER_DIR"
 else
-	INSTALL_DIR="$HOME/.local/bin"
-	info "Installing to $INSTALL_DIR (the default directory is not writable)"
-	mkdir -p "$INSTALL_DIR"
-	mv "$TMP/sven" "$INSTALL_DIR/sven"
+	info "Installing to $INSTALL_DIR with sudo (it may ask for your password)"
+	if ! { [ -d "$INSTALL_DIR" ] || sudo mkdir -p "$INSTALL_DIR"; } ||
+		! sudo install -m 0755 "$TMP/sven" "$INSTALL_DIR/sven"; then
+		fail "could not install into $INSTALL_DIR; choose another SVEN_INSTALL_DIR, or leave it unset to install into your own $USER_DIR"
+	fi
 fi
 
 printf '\n%s%ssven %s is installed in %s%s\n\n' "$BOLD" "$GREEN" "${TAG#v}" "$INSTALL_DIR" "$RESET"
-# shellcheck disable=SC2016 # $PATH is printed for the person to copy
-case ":$PATH:" in
-*":$INSTALL_DIR:"*) ;;
-*) printf 'Add it to your PATH:\n  export PATH="%s:$PATH"\n\n' "$INSTALL_DIR" ;;
-esac
+# The file a new terminal of the person's shell reads at start.
+startup_file() {
+	case "$(basename "${SHELL:-sh}")" in
+	zsh) echo "${ZDOTDIR:-$HOME}/.zshrc" ;;
+	# Terminals on macOS start login shells, which read .bash_profile.
+	bash) if [ "$(uname -s)" = Darwin ]; then echo "$HOME/.bash_profile"; else echo "$HOME/.bashrc"; fi ;;
+	fish) echo "${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/sven.fish" ;;
+	*) echo "$HOME/.profile" ;;
+	esac
+}
+
+# Whether a new terminal finds sven: the person's own shell, started the way
+# a terminal starts it, with nothing to read from and at most ten seconds to
+# answer, is asked where `sven` is. Interactive; and a login shell too when
+# the line went into a profile, which only login shells read (macOS
+# terminals start bash as one).
+new_terminal_finds_sven() {
+	[ -n "${SHELL:-}" ] && [ -x "$SHELL" ] || return 1
+	case "$file" in
+	*profile) set -- -l -i ;;
+	*) set -- -i ;;
+	esac
+	"$SHELL" "$@" -c 'command -v sven' </dev/null >"$TMP/found" 2>/dev/null &
+	shell_pid=$!
+	(sleep 10 && kill "$shell_pid" 2>/dev/null) &
+	watchdog=$!
+	wait "$shell_pid" 2>/dev/null || true
+	kill "$watchdog" 2>/dev/null || true
+	[ "$(tail -n 1 "$TMP/found" 2>/dev/null)" = "$INSTALL_DIR/sven" ]
+}
+
+# sven must start in the next terminal without the person doing anything: a
+# directory not on PATH yet is added to their shell's startup file, once, and
+# then checked the way they will use it.
+if ! on_path "$INSTALL_DIR"; then
+	file="$(startup_file)"
+	# shellcheck disable=SC2016 # $PATH is written for the shell to expand
+	case "$file" in
+	*.fish) line="fish_add_path -g $INSTALL_DIR" ;;
+	*) line="export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
+	esac
+	if [ "${SVEN_NO_MODIFY_PATH:-0}" = 1 ]; then
+		printf 'Add it to your PATH:\n  %s\n\n' "$line"
+	else
+		if ! grep -qs 'added by the sven installer' "$file"; then
+			mkdir -p "$(dirname "$file")"
+			printf '\n# added by the sven installer\n%s\n' "$line" >>"$file"
+			info "Added $INSTALL_DIR to your PATH in $file"
+		fi
+		if new_terminal_finds_sven; then
+			info "A new terminal finds sven. In this one, run:  $line"
+		else
+			printf 'A new terminal did not find sven yet. Add this line to your shell'"'"'s startup file, then open a new terminal:\n  %s\n\n' "$line"
+		fi
+	fi
+fi
 printf 'Get started: sven --help\nDocumentation: https://swedishembedded.com/docs/sven\n'

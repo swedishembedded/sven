@@ -175,3 +175,80 @@ run_install() {
   [ -x "$root/usr/local/bin/sven" ]
   grep -q "mkdir -p $root/usr/local/bin" "$BATS_TEST_TMPDIR/sudo.log"
 }
+
+# run_default ENV...: the installer with no SVEN_INSTALL_DIR and no sudo on
+# PATH, HOME a scratch home, and PATH limited to the fakes plus the system.
+run_default() {
+  HOME_DIR="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME_DIR"
+  run env -i HOME="$HOME_DIR" SHELL=/bin/zsh "$@" \
+    SVEN_RELEASES_API="file://$GH/releases.json" SVEN_DOWNLOAD_BASE="file://$GH/download" \
+    sh -c 'PATH="$BIN_PATH"; export PATH; exec sh "$0"' "$SCRIPT"
+}
+
+@test "installs without sudo into ~/.local/bin when it is already on PATH" {
+  releases "v${MAJOR}.0.1"
+  publish "v${MAJOR}.0.1" sven-linux-x86_64-musl
+  printf '#!/bin/sh\necho "sudo must not be used" >&2; exit 1\n' >"$BIN/sudo" && chmod +x "$BIN/sudo"
+  mkdir -p "$BATS_TEST_TMPDIR/home/.local/bin"
+  run_default BIN_PATH="$BATS_TEST_TMPDIR/home/.local/bin:$BIN:/usr/bin:/bin"
+  [ "$status" -eq 0 ]
+  [ -x "$HOME_DIR/.local/bin/sven" ]
+  [ ! -e "$HOME_DIR/.zshrc" ]
+}
+
+
+# forbidden_sudo: a sudo that fails the test if the installer touches it.
+forbidden_sudo() {
+  printf '#!/bin/sh\necho "sudo must not be used" >&2; exit 1\n' >"$BIN/sudo" && chmod +x "$BIN/sudo"
+}
+
+@test "a normal user installs into ~/.local/bin without sudo and gets it on PATH in the shell's startup file, once" {
+  releases "v${MAJOR}.0.1"
+  publish "v${MAJOR}.0.1" sven-linux-x86_64-musl
+  forbidden_sudo
+  run_default BIN_PATH="$BIN:/usr/bin:/bin"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"sudo must not be used"* ]]
+  [ -x "$HOME_DIR/.local/bin/sven" ]
+  grep -q '\.local/bin' "$HOME_DIR/.zshrc"
+  run_default BIN_PATH="$BIN:/usr/bin:/bin"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'added by the sven installer' "$HOME_DIR/.zshrc")" -eq 1 ]
+}
+
+@test "checks that a new terminal of the person's shell finds sven" {
+  releases "v${MAJOR}.0.1"
+  publish "v${MAJOR}.0.1" sven-linux-x86_64-musl
+  forbidden_sudo
+  HOME_DIR="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME_DIR"
+  run env -i HOME="$HOME_DIR" SHELL=/bin/bash \
+    SVEN_RELEASES_API="file://$GH/releases.json" SVEN_DOWNLOAD_BASE="file://$GH/download" \
+    sh -c 'PATH="$0"; export PATH; exec sh "$1"' "$BIN:/usr/bin:/bin" "$SCRIPT"
+  [ "$status" -eq 0 ]
+  grep -q 'added by the sven installer' "$HOME_DIR/.bashrc"
+  [[ "$output" == *"A new terminal finds sven"* ]]
+}
+
+@test "fish gets the directory in its own configuration" {
+  command -v fish >/dev/null || skip "fish is not installed here"
+  releases "v${MAJOR}.0.1"
+  publish "v${MAJOR}.0.1" sven-linux-x86_64-musl
+  forbidden_sudo
+  run_default BIN_PATH="$BIN:/usr/bin:/bin" SHELL="$(command -v fish)"
+  [ "$status" -eq 0 ]
+  grep -q '\.local/bin' "$HOME_DIR/.config/fish/conf.d/sven.fish"
+  [ ! -e "$HOME_DIR/.zshrc" ]
+}
+
+@test "SVEN_NO_MODIFY_PATH=1 leaves the shell's startup files alone" {
+  releases "v${MAJOR}.0.1"
+  publish "v${MAJOR}.0.1" sven-linux-x86_64-musl
+  forbidden_sudo
+  run_default BIN_PATH="$BIN:/usr/bin:/bin" SVEN_NO_MODIFY_PATH=1
+  [ "$status" -eq 0 ]
+  [ -x "$HOME_DIR/.local/bin/sven" ]
+  [ ! -e "$HOME_DIR/.zshrc" ]
+  [[ "$output" == *'export PATH='* ]]
+}
