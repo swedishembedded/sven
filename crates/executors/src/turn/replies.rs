@@ -38,10 +38,11 @@ pub(super) async fn tell_watchdog(sink: &EventSink, reason: &str) {
 /// connection dropped, the server was busy or slow, or the provider broke a
 /// generation off (`finish_reason: error`, which OpenRouter sends when the
 /// upstream provider fails mid-stream, or an error frame naming the upstream
-/// provider, which it relays when that provider refused one completion), or
+/// provider, or its generic "Provider returned error", which it relays when
+/// that provider failed or refused one completion), or
 /// the stream went silent past the stall watchdog's idle limit. A
 /// content-filter stop by the model itself is not one.
-const TRANSIENT_MARKERS: [&str; 12] = [
+const TRANSIENT_MARKERS: [&str; 13] = [
     "stream stopped: error",
     "stale connection",
     "connection closed",
@@ -54,6 +55,7 @@ const TRANSIENT_MARKERS: [&str; 12] = [
     "http 503",
     "http 504",
     "upstream error from",
+    "provider returned error",
 ];
 
 /// A failed turn's error text, led by the cause when it is a known one: a
@@ -94,5 +96,8 @@ mod tests {
              Output data may contain inappropriate content.",
         );
         assert!(upstream.starts_with(TRANSIENT), "{upstream}");
+        let relayed =
+            failure_text("model completion failed: server error: Provider returned error");
+        assert!(relayed.starts_with(TRANSIENT), "{relayed}");
     }
 }
