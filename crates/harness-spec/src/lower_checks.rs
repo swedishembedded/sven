@@ -477,6 +477,7 @@ fn on_failure(
                 allowance: None,
                 max_repeated_results: plan.max_repeated_results,
                 decoding: plan.decoding.clone(),
+                attach: Vec::new(),
                 then: again,
             })),
         };

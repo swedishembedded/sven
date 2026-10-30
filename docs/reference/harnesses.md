@@ -112,6 +112,18 @@ result is readable, but it neither earns a repair nor fails the task. With
 `on_failure: return` a failed check or exhausted loop ends the run by returning
 its outputs with `status: failed` and `failure`, instead of failing it.
 
+**Attached files.** `attach: [<path>, ...]` on an agent task sends files with
+its prompt, as parts of the task's first message: paths relative to the
+workspace (templates over inputs and the loop variables), a directory standing
+for the images and audio directly in it, in name order. They are loaded as the
+`attach_file` tool loads them, so a vision model sees a drawing without
+deciding to open it, and repairs and follow-ups continue the conversation
+that already holds them. A path outside the workspace, a missing file, a
+directory with nothing attachable, or an image for a model without image input
+fails the turn; the validator refuses an absolute path, `..`, and `attach` on a
+`model_only` or check task. A build without the `media` feature refuses every
+attachment.
+
 **Turn origins.** Every user turn the workflow adds to a conversation is labelled
 in the trajectory (`extra.sven.origin`): `task`, `follow_up`, `repair` or
 `correction`.

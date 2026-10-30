@@ -122,6 +122,13 @@ pub struct TurnRequest {
     /// Decoding settings for this turn only, laid over the run's own.
     #[serde(default, skip_serializing_if = "TurnDecoding::is_empty")]
     pub decoding: TurnDecoding,
+    /// Files sent with `instruction` as parts of the same user message:
+    /// paths relative to the session's project root (a directory stands for
+    /// the images and audio files directly in it). The executor loads them,
+    /// as the `attach_file` tool would, so the model sees an image from the
+    /// first message instead of only if it chooses to open it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<String>,
 }
 
 /// Sampling and thinking settings of one turn. Every field is optional; an

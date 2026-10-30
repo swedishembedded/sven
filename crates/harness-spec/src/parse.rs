@@ -240,6 +240,8 @@ struct RawTask {
     #[serde(default)]
     max_repeated_results: Option<u32>,
     #[serde(default)]
+    attach: Vec<String>,
+    #[serde(default)]
     corrections: Option<crate::workflow::Corrections>,
     #[serde(default)]
     checkpoint: Option<crate::workflow::CheckpointPolicy>,
@@ -330,6 +332,7 @@ fn parse_task(raw: Value, label: &str) -> Result<TaskSpec, HarnessError> {
         turn: raw.turn,
         allowance: raw.allowance,
         max_repeated_results: raw.max_repeated_results,
+        attach: raw.attach,
         corrections: raw.corrections,
         checkpoint: raw.checkpoint,
         use_import: raw.use_import,

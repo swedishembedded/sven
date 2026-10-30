@@ -152,6 +152,7 @@ impl HarnessMachine {
                 ref pool,
                 ref allowance,
                 max_repeated_results,
+                ref attach,
                 ..
             } => {
                 let decoding = match resolve_decoding(run, decoding) {
@@ -202,10 +203,18 @@ impl HarnessMachine {
                     decoding,
                     ..AgentLoop::default()
                 });
+                let attachments = attach
+                    .iter()
+                    .map(|path| match run.resolve_template(path) {
+                        serde_json::Value::String(text) => text,
+                        other => other.to_string(),
+                    })
+                    .collect();
                 let effect = self.agent_turn_effect(
                     run,
                     prompt,
                     tools,
+                    attachments,
                     TurnShape {
                         thread: &thread,
                         system: system.as_ref(),

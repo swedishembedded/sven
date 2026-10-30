@@ -193,7 +193,8 @@ pub(crate) fn compose(
     .with_decision_telemetry(parts.decision_telemetry)
     .with_context_assembler(assembler)
     .with_instructions(Some(parts.instructions.activator()))
-    .with_time_budget(parts.time_budget);
+    .with_time_budget(parts.time_budget)
+    .with_attachment_root(parts.instructions.project_root.clone());
     let user_executor = UserExecutor::new(parts.gates.questions, parts.gates.approvals)
         .with_gate_journal(GateJournal::new(
             Arc::clone(&parts.conv_store),

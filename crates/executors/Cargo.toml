@@ -25,6 +25,12 @@ anyhow        = { workspace = true }
 serde_json    = { workspace = true }
 async-trait   = { workspace = true }
 tracing       = { workspace = true }
+# Attaching files to a turn's instruction (`TurnRequest::attachments`) loads
+# them as the `attach_file` tool does; without `media` an attachment is refused.
+sven-tools-fs = { path = "../tools-fs", default-features = false, optional = true }
+
+[features]
+media = ["dep:sven-tools-fs", "sven-tools-fs/media"]
 
 # Native only: the audit log (a hash-chained file) and the verifiers (files,
 # sockets, HTTP probes). A browser session has neither slot; an effect for

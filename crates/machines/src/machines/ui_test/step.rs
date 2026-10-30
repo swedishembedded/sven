@@ -143,6 +143,7 @@ pub fn compile_step_effect(step_text: &str, known_vars: &[String]) -> Effect {
             role: None,
             system: None,
             decoding: sven_vocab::TurnDecoding::default(),
+            attachments: Vec::new(),
             delay_ms: None,
         }
         .to_value(),

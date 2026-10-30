@@ -326,6 +326,7 @@ pub(super) fn lower_required(
                     allowance: None,
                     max_repeated_results: turn.max_repeated_results,
                     decoding: turn.decoding.clone(),
+                    attach: Vec::new(),
                     then: check,
                 })),
                 at.clone(),

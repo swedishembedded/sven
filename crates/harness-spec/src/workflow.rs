@@ -652,6 +652,11 @@ pub struct TaskSpec {
     /// Ends a turn with the stop `repetition` when the same call has been
     /// answered the same way this many times.
     pub max_repeated_results: Option<u32>,
+    /// Files sent with the task's prompt, in its first message: paths
+    /// relative to the workspace (templates over inputs and the loop
+    /// variables); a directory stands for the images and audio directly in
+    /// it. The model sees them without having to open them.
+    pub attach: Vec<String>,
     /// A supervisor that writes the messages the agent is sent after its
     /// result was judged.
     pub corrections: Option<Corrections>,

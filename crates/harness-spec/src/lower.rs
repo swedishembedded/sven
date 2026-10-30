@@ -375,6 +375,7 @@ pub(super) fn lower_task(
                     },
                     max_repeated_results: task.max_repeated_results,
                     decoding: decoding.clone(),
+                    attach: Vec::new(),
                     then: following.clone(),
                 })),
                 origin(Some(&task.name), "follow_up"),
@@ -459,6 +460,11 @@ pub(super) fn lower_task(
             allowance: allowance(&task.allowance, &scope)?,
             max_repeated_results: task.max_repeated_results,
             decoding: decoding.clone(),
+            attach: task
+                .attach
+                .iter()
+                .map(|path| rewrite_text(path, &scope))
+                .collect::<Result<_, _>>()?,
             then: following,
         }))
     };

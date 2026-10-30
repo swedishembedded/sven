@@ -109,6 +109,7 @@ fn validate_use(w: &WorkflowSpec, task: &TaskSpec, alias: &str) -> Result<(), Ha
         ("turn", task.turn.is_some()),
         ("allowance", task.allowance.is_some()),
         ("max_repeated_results", task.max_repeated_results.is_some()),
+        ("attach", !task.attach.is_empty()),
         ("corrections", task.corrections.is_some()),
         ("checkpoint", task.checkpoint.is_some()),
     ];

@@ -424,6 +424,9 @@ pub struct AgentStepSpec {
     /// answered the same way this many times.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_repeated_results: Option<u32>,
+    /// Files attached to the step's prompt (templates, workspace-relative).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attach: Vec<String>,
     /// The next step.
     pub then: String,
 }

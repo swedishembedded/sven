@@ -190,6 +190,7 @@ impl LoopState {
             role: None,
             system: None,
             decoding: sven_vocab::TurnDecoding::default(),
+            attachments: Vec::new(),
             delay_ms: None,
         };
         Effect::CallLlm {
@@ -360,6 +361,7 @@ pub fn build_turn_effect(
         role: None,
         system: None,
         decoding: sven_vocab::TurnDecoding::default(),
+        attachments: Vec::new(),
         delay_ms: None,
     };
     Effect::CallLlm {

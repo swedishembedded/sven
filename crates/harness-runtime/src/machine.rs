@@ -231,6 +231,7 @@ impl HarnessMachine {
             role: shape.role.map(str::to_string),
             system: system_text(state, shape.system),
             decoding: shape.decoding,
+            attachments: Vec::new(),
             delay_ms: (state.retry_delay_ms > 0).then_some(state.retry_delay_ms),
         };
         Effect::CallLlm {

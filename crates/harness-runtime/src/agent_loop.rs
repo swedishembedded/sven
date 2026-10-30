@@ -93,13 +93,15 @@ pub struct AgentLoop {
 }
 
 impl HarnessMachine {
-    /// The agent step's first turn: its prompt, with the tools the step
-    /// declared (`Some`) or the session's agent-mode tools (`None`).
+    /// The agent step's first turn: its prompt and the files attached to it,
+    /// with the tools the step declared (`Some`) or the session's agent-mode
+    /// tools (`None`).
     pub(super) fn agent_turn_effect(
         &self,
         state: &HarnessRunState,
         prompt: &Template,
         tools: &Option<Vec<String>>,
+        attachments: Vec<String>,
         shape: TurnShape<'_>,
     ) -> Effect {
         let instruction = state.resolve_template(prompt);
@@ -113,6 +115,7 @@ impl HarnessMachine {
                 role: shape.role.map(str::to_string),
                 decoding: shape.decoding,
                 delay_ms: (state.retry_delay_ms > 0).then_some(state.retry_delay_ms),
+                attachments,
                 ..TurnRequest::default()
             },
             tools.is_none(),

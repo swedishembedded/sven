@@ -248,6 +248,7 @@ pub(super) fn lower_corrections(
             allowance,
             max_repeated_results: t.task.max_repeated_results,
             decoding: t.decoding.clone(),
+            attach: Vec::new(),
             then: recheck,
         })),
         at("correction"),

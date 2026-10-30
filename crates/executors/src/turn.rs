@@ -93,6 +93,7 @@ mod context_view;
 mod cost_gate;
 
 pub use cost_gate::CostPolicy;
+mod attach;
 mod instructions;
 mod interrupted;
 mod limits;
@@ -172,6 +173,8 @@ pub struct TurnExecutor {
     instructions: Option<Arc<sven_turn::instructions::Activator>>,
     /// The run's deadline, announced on the newest message of every request.
     time_budget: Option<sven_turn::TimeBudget>,
+    /// What a request's `attachments` are relative to: the project root.
+    attachment_root: Option<std::path::PathBuf>,
 }
 
 impl TurnExecutor {
@@ -203,11 +206,20 @@ impl TurnExecutor {
             rebuilds: Vec::new(),
             instructions: None,
             time_budget: None,
+            attachment_root: None,
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
             limits: sven_turn::TurnLimits::default(),
         }
+    }
+
+    /// The directory a request's `attachments` are relative to (the
+    /// session's project root); a path that leaves it is refused.
+    #[must_use]
+    pub fn with_attachment_root(mut self, root: Option<std::path::PathBuf>) -> Self {
+        self.attachment_root = root;
+        self
     }
 
     /// Send zero tool schemas to the model regardless of what the requesting
@@ -356,6 +368,29 @@ impl EffectExecutor for TurnExecutor {
             }
         };
 
+        // The instruction's attachments are loaded before anything is
+        // appended, so a turn that cannot show its files leaves no trace.
+        let instruction = if req.attachments.is_empty() || req.instruction.is_empty() {
+            Message::user(&req.instruction)
+        } else {
+            let root = self.attachment_root.as_deref();
+            match attach::instruction_parts(
+                &req.instruction,
+                &req.attachments,
+                root,
+                model.as_ref(),
+            )
+            .await
+            {
+                Ok(parts) => Message::user_with_parts(parts),
+                Err(error) => {
+                    obs.emit(UiEvent::Error(error.clone()));
+                    let _ = sink.emit(Event::LlmFailed { error }).await;
+                    obs.emit(UiEvent::TurnComplete);
+                    return;
+                }
+            }
+        };
         // Answer the calls the machine answered itself, then the instruction: a valid history.
         let answers = machine_answers(&self.call_id_to_thread, &req.answered_calls);
         if let Ok(mut s) = self.store.lock() {
@@ -363,10 +398,8 @@ impl EffectExecutor for TurnExecutor {
             s.open_thread(&thread_id, req.system.as_deref());
             if !req.instruction.is_empty() {
                 match &req.origin {
-                    Some(origin) => {
-                        s.append_labeled(&thread_id, Message::user(&req.instruction), origin);
-                    }
-                    None => s.append(&thread_id, Message::user(&req.instruction)),
+                    Some(origin) => s.append_labeled(&thread_id, instruction, origin),
+                    None => s.append(&thread_id, instruction),
                 }
             }
         }

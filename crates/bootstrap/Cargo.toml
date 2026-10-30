@@ -71,7 +71,7 @@ research = ["media"]
 # links an image codec, which the minimal SDK excludes.
 document = ["dep:sven-document", "dep:sven-tools-document"]
 # Image and audio decoding: `attach_file` and images in `read_file`.
-media = ["sven-tools-fs/media"]
+media = ["sven-tools-fs/media", "sven-executors/media"]
 # Speech-to-text over brain's D-Bus action surface (Linux only).
 asr = ["media", "dbus", "sven-tools-fs/asr"]
 # `provider: dbus`, brain's D-Bus model transport (Linux only).

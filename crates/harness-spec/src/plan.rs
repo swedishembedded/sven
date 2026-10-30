@@ -233,6 +233,9 @@ pub enum PlanPrimitive {
         /// The repeated answers that end the loop.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_repeated_results: Option<u32>,
+        /// Files attached to the prompt, parsed.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attach: Vec<Template>,
         /// Successor.
         then: String,
     },
@@ -489,6 +492,11 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             pool: a.pool.clone(),
             allowance: a.allowance.as_deref().and_then(|t| Template::parse(t).ok()),
             max_repeated_results: a.max_repeated_results,
+            attach: a
+                .attach
+                .iter()
+                .filter_map(|t| Template::parse(t).ok())
+                .collect(),
             then: a.then.clone(),
         },
         StepSpec::Verify(v) => PlanPrimitive::Verify {

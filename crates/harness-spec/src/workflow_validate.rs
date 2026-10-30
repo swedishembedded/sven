@@ -315,6 +315,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
             &crate::workflow::decoding_of(&task.sampling, &task.thinking, &task.turn),
         )?;
         validate_model_only(task, &place)?;
+        validate_attach(task, &place)?;
         validate_allowance(w, &place, &task.allowance)?;
         validate_corrections(w, task, &place)?;
         for (j, turn) in task.follow_ups.iter().enumerate() {
@@ -506,6 +507,32 @@ fn validate_allowance(
             "{place}: allowance `{other}` is not a whole number"
         ))),
     }
+}
+
+/// `attach` names workspace files for an agent task's first message: a
+/// relative path that stays inside the workspace, on a task with a prompt.
+fn validate_attach(task: &crate::workflow::TaskSpec, place: &str) -> Result<(), HarnessError> {
+    if task.attach.is_empty() {
+        return Ok(());
+    }
+    if task.model_only || task.task.trim().is_empty() {
+        return Err(invalid(format!(
+            "{place}: `attach` sends files with an agent task's prompt; a `model_only` task, a \
+             check task or a loop's own entry has none to send them with"
+        )));
+    }
+    for path in &task.attach {
+        let trimmed = path.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with('/')
+            || trimmed.split(['/', '\\']).any(|segment| segment == "..")
+        {
+            return Err(invalid(format!(
+                "{place}: attach `{path}` is not a path inside the workspace (relative, no `..`)"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A `model_only` task is one model turn without tools.
