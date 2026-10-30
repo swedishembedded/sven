@@ -35,14 +35,16 @@ pub(super) async fn tell_watchdog(sink: &EventSink, reason: &str) {
 }
 
 /// Words in a transport error that say the failure is of the moment: the
-/// connection dropped, the server was busy or slow, or the provider broke a
+/// connection dropped, the server was busy or slow, the provider broke a
 /// generation off (`finish_reason: error`, which OpenRouter sends when the
-/// upstream provider fails mid-stream, or an error frame naming the upstream
-/// provider, or its generic "Provider returned error", which it relays when
-/// that provider failed or refused one completion), or
-/// the stream went silent past the stall watchdog's idle limit. A
-/// content-filter stop by the model itself is not one.
-const TRANSIENT_MARKERS: [&str; 13] = [
+/// upstream provider fails mid-stream), a server that had accepted the
+/// request sent an error frame instead of the reply (`server error`, the
+/// stream parser's prefix: an aborted, refused or failed upstream
+/// completion, whatever its wording), or the stream went silent past the
+/// stall watchdog's idle limit. A request too large for the context is
+/// classified before these; a content-filter stop by the model itself is not
+/// one.
+const TRANSIENT_MARKERS: [&str; 12] = [
     "stream stopped: error",
     "stale connection",
     "connection closed",
@@ -54,8 +56,7 @@ const TRANSIENT_MARKERS: [&str; 13] = [
     "http 502",
     "http 503",
     "http 504",
-    "upstream error from",
-    "provider returned error",
+    "server error",
 ];
 
 /// A failed turn's error text, led by the cause when it is a known one: a
@@ -88,9 +89,10 @@ mod tests {
     }
 
     #[test]
-    fn an_upstream_providers_error_relayed_mid_stream_is_retried() {
-        // OpenRouter relays a provider's own refusal of one completion as an
-        // error frame; the next request may be served (or routed) otherwise.
+    fn an_error_frame_sent_mid_stream_is_retried_whatever_its_wording() {
+        // OpenRouter relays an upstream provider's failure or refusal of one
+        // completion as an error frame, in many wordings; the next request
+        // may be served (or routed) otherwise.
         let upstream = failure_text(
             "model completion failed: server error: Upstream error from Alibaba: \
              Output data may contain inappropriate content.",
@@ -99,5 +101,10 @@ mod tests {
         let relayed =
             failure_text("model completion failed: server error: Provider returned error");
         assert!(relayed.starts_with(TRANSIENT), "{relayed}");
+        let aborted =
+            failure_text("model completion failed: server error: The operation was aborted");
+        assert!(aborted.starts_with(TRANSIENT), "{aborted}");
+        let coded = failure_text("server error (502): Bad gateway upstream");
+        assert!(coded.starts_with(TRANSIENT), "{coded}");
     }
 }
