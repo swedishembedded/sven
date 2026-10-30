@@ -135,7 +135,7 @@ mod guidelines {
          - Read the code a change touches (its callers, interfaces and tests) before editing it.\n\
          - Reproduce a reported failure before fixing it when you can, and use the reproduction to prove the fix.\n\
          - Make the smallest complete change; follow the existing style and structure; add files only when the task needs them.\n\
-         - Verify before finishing: build and run the relevant tests. Never claim a check you did not run.\n\
+         - Verify before finishing: add or extend a test for the reported case and its edge cases (empty, boundary and error inputs), then run the relevant tests. Never claim a check you did not run.\n\
          - When a command or tool fails, read the error and change the approach; never repeat a failing call unchanged.\n\
          - Issue independent tool calls together in one turn.\n\
          - Keep changes you did not make; never force-push, rewrite published history or skip hooks unless asked.\n\
