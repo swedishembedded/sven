@@ -59,13 +59,28 @@ const TRANSIENT_MARKERS: [&str; 12] = [
     "server error",
 ];
 
+/// HTTP statuses that say "not now" rather than "not this": a request
+/// timeout, rate limiting, and a gateway or service that is unavailable.
+const TRANSIENT_STATUSES: [&str; 5] = ["408", "429", "502", "503", "504"];
+
+/// Whether `lower` holds a driver's HTTP failure (`<driver> error <status>`,
+/// as every model driver formats one) with a status that may pass.
+fn has_transient_status(lower: &str) -> bool {
+    lower.match_indices(" error ").any(|(at, sep)| {
+        let rest = &lower[at + sep.len()..];
+        TRANSIENT_STATUSES.iter().any(|code| {
+            rest.starts_with(code) && !rest[code.len()..].starts_with(|c: char| c.is_ascii_digit())
+        })
+    })
+}
+
 /// A failed turn's error text, led by the cause when it is a known one: a
 /// request that did not fit the context, or a failure that may pass.
 pub(super) fn failure_text(error: &str) -> String {
     let lower = error.to_ascii_lowercase();
     if sven_model::budget::is_context_overflow(error) {
         format!("{CONTEXT_EXHAUSTED}: {error}")
-    } else if TRANSIENT_MARKERS.iter().any(|m| lower.contains(m)) {
+    } else if TRANSIENT_MARKERS.iter().any(|m| lower.contains(m)) || has_transient_status(&lower) {
         format!("{TRANSIENT}: {error}")
     } else {
         error.to_string()
@@ -106,5 +121,24 @@ mod tests {
         assert!(aborted.starts_with(TRANSIENT), "{aborted}");
         let coded = failure_text("server error (502): Bad gateway upstream");
         assert!(coded.starts_with(TRANSIENT), "{coded}");
+    }
+
+    #[test]
+    fn a_drivers_busy_or_unavailable_status_is_retried_and_a_refusal_is_not() {
+        for status in [
+            "504 Gateway Timeout",
+            "429 Too Many Requests",
+            "503 Service Unavailable",
+        ] {
+            let failed = failure_text(&format!(
+                "model completion failed: openrouter error {status}: {{\"error\":{{}}}}"
+            ));
+            assert!(failed.starts_with(TRANSIENT), "{failed}");
+        }
+        let refused =
+            failure_text("model completion failed: openrouter error 401 Unauthorized: key expired");
+        assert!(!refused.starts_with(TRANSIENT), "{refused}");
+        let bad = failure_text("Anthropic error 400 Bad Request: invalid model");
+        assert!(!bad.starts_with(TRANSIENT), "{bad}");
     }
 }
