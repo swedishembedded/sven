@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.4] - 2026-10-30
+
+### Fixed
+- **install**: the installer creates the install directory when it does not exist yet, with sudo when needed. On a Mac without `/usr/local/bin` (the usual case on Apple Silicon) it failed with `/usr/local/bin/INS@...: No such file or directory`, because macOS's `install` never creates its destination.
+
 ## [4.2.3] - 2026-10-29
 
 ## [4.2.2] - 2026-10-29
