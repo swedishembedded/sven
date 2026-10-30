@@ -142,7 +142,8 @@ default 16384) says how much of the end of each output stream its result keeps.
 answer: the turn is asked again, twice at most, after a pause that doubles
 from 2 s, each retry a `TurnRetried` trace record (`empty_reply`), and when the
 replies stay empty the run fails with `empty_reply`. A server failure that may
-pass (a dropped connection, a timeout, an overloaded or unavailable server) is
+pass (a dropped connection, a timeout, an overloaded or unavailable server, an
+upstream provider's error relayed by a router such as OpenRouter) is
 asked again up to four times after 5, 10, 20 and 40 s (`transient`) and then
 fails with `model_unavailable`. A prompt that does not fit the model's context fails with
 `context_exhausted`, and a reply cut off at the output limit is the stop status

@@ -37,9 +37,11 @@ pub(super) async fn tell_watchdog(sink: &EventSink, reason: &str) {
 /// Words in a transport error that say the failure is of the moment: the
 /// connection dropped, the server was busy or slow, or the provider broke a
 /// generation off (`finish_reason: error`, which OpenRouter sends when the
-/// upstream provider fails mid-stream), or the stream went silent past the
-/// stall watchdog's idle limit. A content-filter stop is not one.
-const TRANSIENT_MARKERS: [&str; 11] = [
+/// upstream provider fails mid-stream, or an error frame naming the upstream
+/// provider, which it relays when that provider refused one completion), or
+/// the stream went silent past the stall watchdog's idle limit. A
+/// content-filter stop by the model itself is not one.
+const TRANSIENT_MARKERS: [&str; 12] = [
     "stream stopped: error",
     "stale connection",
     "connection closed",
@@ -51,6 +53,7 @@ const TRANSIENT_MARKERS: [&str; 11] = [
     "http 502",
     "http 503",
     "http 504",
+    "upstream error from",
 ];
 
 /// A failed turn's error text, led by the cause when it is a known one: a
@@ -80,5 +83,16 @@ mod tests {
         assert!(stale.starts_with(TRANSIENT), "{stale}");
         let filtered = failure_text("stream stopped: content_filter");
         assert!(!filtered.starts_with(TRANSIENT), "{filtered}");
+    }
+
+    #[test]
+    fn an_upstream_providers_error_relayed_mid_stream_is_retried() {
+        // OpenRouter relays a provider's own refusal of one completion as an
+        // error frame; the next request may be served (or routed) otherwise.
+        let upstream = failure_text(
+            "model completion failed: server error: Upstream error from Alibaba: \
+             Output data may contain inappropriate content.",
+        );
+        assert!(upstream.starts_with(TRANSIENT), "{upstream}");
     }
 }
