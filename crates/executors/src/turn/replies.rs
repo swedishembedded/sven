@@ -41,10 +41,12 @@ pub(super) async fn tell_watchdog(sink: &EventSink, reason: &str) {
 /// request sent an error frame instead of the reply (`server error`, the
 /// stream parser's prefix: an aborted, refused or failed upstream
 /// completion, whatever its wording), or the stream went silent past the
-/// stall watchdog's idle limit. A request too large for the context is
+/// stall watchdog's idle limit or stopped making progress after it had begun
+/// (a generation that hung midway; a server slow to give its first token is
+/// a setting to raise, not a failure to retry). A request too large for the context is
 /// classified before these; a content-filter stop by the model itself is not
 /// one.
-const TRANSIENT_MARKERS: [&str; 12] = [
+const TRANSIENT_MARKERS: [&str; 13] = [
     "stream stopped: error",
     "stale connection",
     "connection closed",
@@ -57,6 +59,7 @@ const TRANSIENT_MARKERS: [&str; 12] = [
     "http 503",
     "http 504",
     "server error",
+    "no model progress from",
 ];
 
 /// HTTP statuses that say "not now" rather than "not this": a request
@@ -101,6 +104,20 @@ mod tests {
         assert!(stale.starts_with(TRANSIENT), "{stale}");
         let filtered = failure_text("stream stopped: content_filter");
         assert!(!filtered.starts_with(TRANSIENT), "{filtered}");
+    }
+
+    #[test]
+    fn a_generation_that_hung_midway_is_retried_and_a_slow_start_is_not() {
+        let hung = failure_text(
+            "no model progress from openrouter openrouter.ai for 600 s (the server sent only \
+             keepalives) - raise agent.no_progress_timeout_secs for a slow server",
+        );
+        assert!(hung.starts_with(TRANSIENT), "{hung}");
+        let slow = failure_text(
+            "no model output from local 127.0.0.1 after 300 s (the server sent nothing) - raise \
+             agent.first_token_timeout_secs for a slow server",
+        );
+        assert!(!slow.starts_with(TRANSIENT), "{slow}");
     }
 
     #[test]
