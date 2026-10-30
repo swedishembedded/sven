@@ -157,7 +157,8 @@ replies stay empty the run fails with `empty_reply`. A server failure that may
 pass (a dropped connection, a timeout, rate limiting, an overloaded or
 unavailable server or gateway (HTTP 408, 429, 502, 503, 504), an
 error frame a server sends mid-stream, such as an upstream provider's failure
-a router like OpenRouter relays) is
+a router like OpenRouter relays, a generation that stops making progress
+after it began) is
 asked again up to four times after 5, 10, 20 and 40 s (`transient`) and then
 fails with `model_unavailable`. A prompt that does not fit the model's context fails with
 `context_exhausted`, and a reply cut off at the output limit is the stop status
