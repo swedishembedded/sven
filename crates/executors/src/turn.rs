@@ -496,6 +496,11 @@ impl EffectExecutor for TurnExecutor {
                 req.dynamic_suffix.as_deref(),
             );
         }
+        // Judged as compaction judges it: by the server's count of what it was
+        // sent, where there is one, since the plain estimate also counts the
+        // reasoning kept with each reply and never sent back.
+        let sent = view.as_ref().map_or(&messages, |v| &v.0);
+        let (estimate, _) = self.prompt_counts.estimate(&thread_id, sent, estimate);
         let (mut messages, context_view) = match view {
             Some((assembled, record)) => {
                 self.mark_view_sent(&record);
