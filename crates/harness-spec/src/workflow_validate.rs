@@ -317,6 +317,9 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
         validate_model_only(task, &place)?;
         validate_attach(task, &place)?;
         validate_allowance(w, &place, &task.allowance)?;
+        if let Some(repair) = &task.repair {
+            validate_allowance(w, &format!("{place}: repair"), &repair.allowance)?;
+        }
         validate_corrections(w, task, &place)?;
         for (j, turn) in task.follow_ups.iter().enumerate() {
             let place = format!("{place}: follow_ups[{j}]");
@@ -558,7 +561,8 @@ fn validate_model_only(task: &crate::workflow::TaskSpec, place: &str) -> Result<
              `tools` nor `follow_ups`"
         )));
     }
-    if task.allowance.is_some() || task.max_repeated_results.is_some() {
+    let repair_allowance = task.repair.as_ref().is_some_and(|r| r.allowance.is_some());
+    if task.allowance.is_some() || task.max_repeated_results.is_some() || repair_allowance {
         return Err(invalid(format!(
             "{place}: a `model_only` task makes no tool calls: no `allowance` or `max_repeated_results`"
         )));

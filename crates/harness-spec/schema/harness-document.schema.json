@@ -511,6 +511,7 @@
           "properties": {
             "attempts": { "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 16 }, { "$ref": "#/$defs/input_hole" }], "description": "A whole number, or a number input (then at_most is required): the run uses that many, up to at_most." },
             "at_most": { "type": "integer", "minimum": 1, "maximum": 16, "description": "With attempts read from an input, the most repair turns the plan is unrolled to." },
+            "allowance": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/input_hole" }], "description": "The tool calls each repair turn may make: it sets the task's pool afresh. Without it a repair draws on what the task's earlier turns left." },
             "prompt": {
               "type": "string",
               "minLength": 1,

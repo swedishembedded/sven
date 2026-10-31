@@ -53,7 +53,7 @@ they survive reordering and reformatting), `task` (the prompt, a template),
 `conversation`, `do`, `tools`, `when` (a condition; the task is skipped when it does not hold),
 `follow_ups` (further user turns in the same conversation, each with an optional
 `when`), `outputs` (files the task must leave; each is checked to exist),
-`verify` (checks that must pass, in order), `repair: {attempts, prompt}`,
+`verify` (checks that must pass, in order), `repair: {attempts, prompt, allowance}`,
 `model_only`, `system`, `schema`, `sampling`, `thinking`, `turn`, and at most one
 of the loops below.
 
@@ -131,7 +131,10 @@ in the trajectory (`extra.sven.origin`): `task`, `follow_up`, `repair` or
 **Stop statuses and budgets.** `execution.limits.tool_calls` may be a single
 `{{ inputs.<name> }}`. A task's `allowance` is the tool calls its first turn may
 make; follow-ups and repairs draw on the rest (a follow-up's own `allowance`,
-and a repair's `allowance` for every repair turn, sets it afresh) and a call beyond it is refused. `max_repeated_results: N` ends a
+and `repair.allowance` for every repair turn, sets it afresh) and a call beyond
+it is refused. A bounded first turn with a repair allowance makes a long task
+check its work every N calls: the turn ends, the checks run, and the repair
+carries their findings. `max_repeated_results: N` ends a
 turn when the same call has been answered the same way N times. A turn ends
 with a stop status readable as `tasks.<name>.stop` (`concluded`,
 `stopped_without_conclusion`, `output_truncated` when the provider cut the final
