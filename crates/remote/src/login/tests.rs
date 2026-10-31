@@ -19,21 +19,23 @@ const DEVICE_CODE: &str = "DEVICE-CODE-MUST-STAY-SECRET";
 const TOKEN: &str = "sk-minted-token";
 
 /// A canned response: status line, extra headers, JSON body.
-type Canned = (u16, &'static str, String);
+pub(crate) type Canned = (u16, &'static str, String);
 
-struct Mock {
-    base: String,
+pub(crate) struct Mock {
+    pub(crate) base: String,
     /// `(path, arrival time)` of every request.
-    seen: Arc<Mutex<Vec<(String, std::time::Instant)>>>,
-    bodies: Arc<Mutex<Vec<String>>>,
+    pub(crate) seen: Arc<Mutex<Vec<(String, std::time::Instant)>>>,
+    pub(crate) bodies: Arc<Mutex<Vec<String>>>,
+    /// The request head (line and headers) of every request.
+    pub(crate) heads: Arc<Mutex<Vec<String>>>,
 }
 
-fn json(status: u16, body: &str) -> Canned {
+pub(crate) fn json(status: u16, body: &str) -> Canned {
     (status, "", body.to_string())
 }
 
 /// Serves each path's queue in order; the last response repeats.
-async fn mock(routes: HashMap<&'static str, VecDeque<Canned>>) -> Mock {
+pub(crate) async fn mock(routes: HashMap<&'static str, VecDeque<Canned>>) -> Mock {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     mock_on(listener, routes).await
 }
@@ -63,7 +65,8 @@ async fn mock_on(
     let routes = Arc::new(Mutex::new(routes));
     let seen = Arc::new(Mutex::new(Vec::new()));
     let bodies = Arc::new(Mutex::new(Vec::new()));
-    let (seen2, bodies2) = (seen.clone(), bodies.clone());
+    let heads = Arc::new(Mutex::new(Vec::new()));
+    let (seen2, bodies2, heads2) = (seen.clone(), bodies.clone(), heads.clone());
     tokio::spawn(async move {
         loop {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -98,6 +101,11 @@ async fn mock_on(
                 .lock()
                 .unwrap()
                 .push((path.clone(), std::time::Instant::now()));
+            heads2.lock().unwrap().push(
+                text.split_once("\r\n\r\n")
+                    .map(|(h, _)| h.to_string())
+                    .unwrap_or_default(),
+            );
             bodies2.lock().unwrap().push(
                 text.split_once("\r\n\r\n")
                     .map(|(_, b)| b.to_string())
@@ -118,7 +126,12 @@ async fn mock_on(
             socket.write_all(response.as_bytes()).await.unwrap();
         }
     });
-    Mock { base, seen, bodies }
+    Mock {
+        base,
+        seen,
+        bodies,
+        heads,
+    }
 }
 
 fn authorization(expires_in: u32) -> Canned {

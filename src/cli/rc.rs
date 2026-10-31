@@ -56,6 +56,18 @@ pub struct RcArgs {
     #[arg(long, conflicts_with = "hosted")]
     pub wide_access: bool,
 
+    /// Sign in from a start credential instead of a saved sign-in: a YAML
+    /// file (at most 64 KiB) holding `server:` and `start_credential:`. The
+    /// credential is traded once for this host's token, which is kept in
+    /// memory only; nothing is written to disk and the file is left as it
+    /// is (it may be on a read-only volume).
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with_all = ["hosted", "sandbox", "container", "state", "egress_socket"]
+    )]
+    pub login_file: Option<PathBuf>,
+
     #[command(subcommand)]
     pub action: Option<RcAction>,
 }

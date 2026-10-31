@@ -149,7 +149,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
 
     tokio::select! {
         result = command_loop(&client, &routed, &uploads) => result,
-        _ = tokio::signal::ctrl_c() => {
+        () = crate::stop::requested() => {
             println!("Stopping. Sessions in progress end here.");
             if let Err(e) = client.detach_environment().await {
                 tracing::warn!("could not tell the server this host stopped: {e:#}");

@@ -18,6 +18,13 @@ fn signed_in() -> anyhow::Result<sven_remote::RemoteLogin> {
     })
 }
 
+/// The sign-in a container host starts with: the start credential in `path`
+/// traded for a token held in memory. Nothing is saved.
+async fn started_login(path: &std::path::Path) -> anyhow::Result<sven_remote::RemoteLogin> {
+    let file = sven_remote::start::read_login_file(path)?;
+    sven_remote::start::exchange_start_credential(&file).await
+}
+
 /// `sven rc show`: prints the conversation's finished messages, and with
 /// `follow` keeps syncing and printing until Ctrl-C.
 pub(crate) async fn show_remote_conversation(
@@ -251,8 +258,12 @@ pub(crate) async fn run_remote_host(
     config: Config,
     working_dir: Option<PathBuf>,
     wide_access: bool,
+    login_file: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    let login = signed_in()?;
+    let login = match login_file {
+        Some(path) => started_login(path).await?,
+        None => signed_in()?,
+    };
     let working_dir = match working_dir {
         Some(dir) => dir,
         None => std::env::current_dir().context("the current directory")?,

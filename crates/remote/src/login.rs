@@ -242,4 +242,4 @@ pub async fn sign_in_with(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

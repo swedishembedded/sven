@@ -138,6 +138,41 @@ tools:
   only: [read_file, find_file, grep, web_search, web_fetch, skill]
 ```
 
+## Signing in from a start credential
+
+```bash
+sven rc --login-file /run/sven/login.yaml
+```
+
+A host that nobody can sit down at, such as a container the server started
+for you, cannot approve a device code. The server gives it a single-use start
+credential instead, in a file:
+
+```yaml
+server: https://sven.example.com
+start_credential: <opaque string>
+```
+
+The file is YAML with exactly these two fields (anything else is an error)
+and at most 64 KiB. `sven rc` reads it once at startup and leaves it alone,
+so it can sit on a read-only volume. `--login-file` cannot be combined with
+`--hosted`; the host is an ordinary `sven rc` with the same tools and the
+same limits as one signed in with `sven auth login`.
+
+The exchange: sven fetches the server's discovery document and refuses to go
+on unless its control and model URLs are on the server's own origin, as at
+sign-in. It then sends the credential once, as a bearer token, to the
+server's `/start` and receives this host's token, workspace and account. If
+the server refuses the credential (invalid, already used or expired) `sven
+rc` exits and says so; start the host again with a new credential. Network
+errors and 5xx answers are retried with a growing pause for up to about two
+minutes before it gives up.
+
+Nothing is written to disk. The token lives in the process's memory only:
+`sven rc --login-file` does not create or change the sign-in `sven auth
+login` keeps, and the credential is never logged. The host stops cleanly on
+Ctrl-C and, on Unix, on SIGTERM, the signal a container runtime sends first.
+
 ## Hosted
 
 ```bash

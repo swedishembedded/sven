@@ -171,7 +171,13 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                     None => {}
                 }
                 let config = Settings::load(cli.config.as_deref())?.runtime;
-                return run_remote_host(config, args.working_dir.clone(), args.wide_access).await;
+                return run_remote_host(
+                    config,
+                    args.working_dir.clone(),
+                    args.wide_access,
+                    args.login_file.as_deref(),
+                )
+                .await;
             }
             Commands::Completions { shell } => {
                 cli::print_completions(*shell);

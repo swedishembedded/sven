@@ -823,6 +823,24 @@ mod tests {
         }
     }
 
+    /// A start-credential host is an ordinary `sven rc`, never a hosted one.
+    #[cfg(feature = "network")]
+    #[test]
+    fn rc_login_file_conflicts_with_hosted() {
+        let parse = |args: &[&str]| {
+            Cli::try_parse_from(std::iter::once("sven").chain(args.iter().copied()))
+        };
+        assert!(parse(&["rc", "--login-file", "/run/login.yaml"]).is_ok());
+        for hosted in [
+            &["--hosted", "--sandbox", "/srv/x"][..],
+            &["--hosted", "--container"],
+        ] {
+            let mut args = vec!["rc", "--login-file", "/run/login.yaml"];
+            args.extend_from_slice(hosted);
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
+    }
+
     /// An explicit `--mode` wins; without one the configured default applies.
     #[test]
     fn mode_falls_back_to_the_configured_default() {

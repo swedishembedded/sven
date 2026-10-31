@@ -36,6 +36,8 @@ pub mod login;
 pub mod sandbox;
 pub mod sessions;
 mod sse;
+pub mod start;
+mod stop;
 pub mod transcript;
 
 pub use client::{

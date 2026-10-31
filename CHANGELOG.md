@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **remote**: `sven rc --login-file PATH` signs in from a single-use start credential (a YAML file with `server` and `start_credential`), so a container started by a server runs an ordinary `sven rc` without a device grant. The credential is traded once for a token kept in memory only; nothing is written to disk. `sven rc` now also stops cleanly on SIGTERM.
+
 ### Changed
 - **providers**: every OpenAI-protocol driver (`openai`, `openrouter`, `portkey`, `litellm`, `cloudflare`, `vllm`, `sven`, `brain`, `ollama` and the rest of the registry) is one client, `OpenAICompatProvider`, configured by its driver registry entry (default base URL, whether a base URL is required, locality, gateway headers and option rewrites). The `OpenAiProvider` type is gone from `sven-model-drivers`; an embedder builds `OpenAICompatProvider::openai(model, api_key, base_url)` (`api_key: None` sends no credential). A registry driver that needs no key now sends the key when one is configured.
 
