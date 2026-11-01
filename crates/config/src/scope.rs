@@ -201,25 +201,7 @@ pub fn read_file(path: &Path) -> anyhow::Result<serde_yaml::Value> {
 ///
 /// The directory cannot be made or the file written.
 pub fn write_file(path: &Path, document: &serde_yaml::Value) -> anyhow::Result<()> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    let text = serde_yaml::to_string(document)?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let aside = dir.join(format!(".{name}.tmp-{}", std::process::id()));
-    {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let mut file = options
-            .open(&aside)
-            .with_context(|| format!("writing {}", aside.display()))?;
-        std::io::Write::write_all(&mut file, text.as_bytes())?;
-    }
-    std::fs::rename(&aside, path).with_context(|| format!("writing {}", path.display()))
+    crate::write_private(path, &serde_yaml::to_string(document)?)
 }
 
 #[cfg(test)]

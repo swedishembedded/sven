@@ -94,8 +94,10 @@ An http server that requires OAuth 2.0 is configured with an `oauth` block;
 | `callback_port` | port of the local callback listener (default 5598) |
 
 The flow is authorization code with PKCE (RFC 7636). Tokens are cached in
-`~/.config/sven/mcp-credentials.json`, shared by every project that uses the
-same server URL, and refreshed before they expire. A server that answers 401
+`~/.config/sven/mcp-credentials.json`, readable by its owner only, shared by
+every project that names the server the same and uses the same URL, and
+refreshed before they expire; sven processes running at once update the file
+under a lock and never lose each other's tokens. A server that answers 401
 shows as `needs-auth`; `/mcp auth <name>` in the TUI starts the flow. A static
 bearer token needs no `oauth` block: put it in `transport.headers`. Setup of
 the `sven://` and `cursor://` redirect handlers is in

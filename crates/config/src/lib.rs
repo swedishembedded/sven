@@ -13,10 +13,12 @@
 //! none of them.
 
 mod document;
+mod private_file;
 mod schema;
 pub mod scope;
 
 pub use document::{layer_files, ConfigDocument};
+pub use private_file::write_private;
 pub use schema::Schema;
 
 /// Serde default helper - returns `true`.

@@ -1407,9 +1407,10 @@ to `http://127.0.0.1:5598/callback?code=...&state=...`. A helper script is at
 
 **Credentials storage**
 
-OAuth tokens are stored in `~/.config/sven/mcp-credentials.json` and refreshed
-automatically before expiry. The same credentials are reused across projects
-that use the same server URL.
+OAuth tokens are stored in `~/.config/sven/mcp-credentials.json`, readable by
+its owner only, and refreshed automatically before expiry. The same
+credentials are reused across projects that give the server the same name and
+URL.
 
 ---
 

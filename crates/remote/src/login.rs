@@ -115,7 +115,7 @@ pub fn parse(text: &str, origin: &str) -> anyhow::Result<RemoteLogin> {
 /// No configuration directory, or the write failed.
 pub fn save(login: &RemoteLogin) -> anyhow::Result<PathBuf> {
     let file = path().ok_or_else(|| anyhow::anyhow!("no configuration directory for this user"))?;
-    sven_model_drivers::credentials::write_private(&file, &serde_yaml::to_string(login)?)?;
+    sven_config::write_private(&file, &serde_yaml::to_string(login)?)?;
     Ok(file)
 }
 

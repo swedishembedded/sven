@@ -78,10 +78,7 @@ impl SessionStore {
     ///
     /// The directory cannot be made or the file written.
     pub fn save(&self, session: Uuid, messages: &[Message]) -> anyhow::Result<()> {
-        sven_model_drivers::credentials::write_private(
-            &self.file(session),
-            &serde_json::to_string(messages)?,
-        )
+        sven_config::write_private(&self.file(session), &serde_json::to_string(messages)?)
     }
 
     /// Forgets what was kept for `session`: its conversation was archived

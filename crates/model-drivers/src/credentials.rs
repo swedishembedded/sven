@@ -84,39 +84,7 @@ pub(crate) fn read(file: &Path) -> anyhow::Result<BTreeMap<String, String>> {
 
 /// Write `keys` to `file` readable by its owner only, replacing it whole.
 fn write(file: &Path, keys: &BTreeMap<String, String>) -> anyhow::Result<()> {
-    write_private(file, &serde_yaml::to_string(keys)?)
-}
-
-/// Replace `file` with `body`, readable by its owner only, atomically: a
-/// reader sees the old file or the new one, never part of either. For any
-/// file that holds a secret.
-pub fn write_private(file: &Path, body: &str) -> anyhow::Result<()> {
-    let dir = file
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("{} has no directory", file.display()))?;
-    std::fs::create_dir_all(dir)?;
-    let name = file
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("secret");
-    let aside = dir.join(format!(".{name}.tmp-{}", std::process::id()));
-    {
-        use std::io::Write;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let mut f = options.open(&aside)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        }
-        f.write_all(body.as_bytes())?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&aside, file)?;
-    Ok(())
+    sven_config::write_private(file, &serde_yaml::to_string(keys)?)
 }
 
 #[cfg(test)]

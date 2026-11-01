@@ -153,44 +153,44 @@ impl CredentialsStore {
             .join("mcp-client-info.json")
     }
 
-    fn load_all(&self) -> Result<HashMap<String, StoredTokens>> {
-        if !self.path.exists() {
-            return Ok(HashMap::new());
+    /// Every entry of the store file at `path`; none when it does not exist.
+    fn load_map<T: serde::de::DeserializeOwned>(
+        path: &std::path::Path,
+    ) -> Result<HashMap<String, T>> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+            Err(e) => Err(e).with_context(|| format!("read {}", path.display())),
         }
-        let text = std::fs::read_to_string(&self.path)
-            .with_context(|| format!("read credentials store: {}", self.path.display()))?;
-        serde_json::from_str(&text).context("parse credentials store")
     }
 
-    fn save_all(&self, store: &HashMap<String, StoredTokens>) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        let text = serde_json::to_string_pretty(store)?;
-        std::fs::write(&self.path, text)
-            .with_context(|| format!("write credentials store: {}", self.path.display()))?;
-        Ok(())
-    }
-
-    fn load_all_client_info(&self) -> Result<HashMap<String, StoredClientInfo>> {
-        let path = self.client_info_path();
-        if !path.exists() {
-            return Ok(HashMap::new());
-        }
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("read client info store: {}", path.display()))?;
-        serde_json::from_str(&text).context("parse client info store")
-    }
-
-    fn save_all_client_info(&self, store: &HashMap<String, StoredClientInfo>) -> Result<()> {
-        let path = self.client_info_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        let text = serde_json::to_string_pretty(store)?;
-        std::fs::write(&path, text)
-            .with_context(|| format!("write client info store: {}", path.display()))?;
-        Ok(())
+    /// Change the store file at `path` with `change`, under an exclusive
+    /// lock on `<path>.lock`, so two sven processes refreshing tokens at once
+    /// never lose each other's update. The file is replaced whole, readable
+    /// by its owner only ([`sven_config::write_private`]).
+    fn update_map<T: Serialize + serde::de::DeserializeOwned>(
+        path: &std::path::Path,
+        change: impl FnOnce(&mut HashMap<String, T>),
+    ) -> Result<()> {
+        use fs4::fs_std::FileExt;
+        let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path.with_extension("lock"))
+            .with_context(|| format!("locking {}", path.display()))?;
+        lock.lock_exclusive()
+            .with_context(|| format!("locking {}", path.display()))?;
+        let result = Self::load_map(path).and_then(|mut all| {
+            change(&mut all);
+            sven_config::write_private(path, &serde_json::to_string_pretty(&all)?)
+        });
+        let _ = FileExt::unlock(&lock);
+        result
     }
 
     /// Normalize a server URL for consistent store keys.
@@ -218,26 +218,29 @@ impl CredentialsStore {
 
     /// Load tokens for a specific server.
     pub fn load(&self, server_name: &str, server_url: &str) -> Option<StoredTokens> {
-        self.load_all()
+        Self::load_map::<StoredTokens>(&self.path)
             .ok()?
             .remove(&Self::key(server_name, server_url))
     }
 
     /// Persist tokens for a specific server.
     pub fn save(&self, tokens: &StoredTokens) -> Result<()> {
-        let mut all = self.load_all().unwrap_or_default();
-        all.insert(
-            Self::key(&tokens.server_name, &tokens.server_url),
-            tokens.clone(),
-        );
-        self.save_all(&all)
+        Self::update_map(&self.path, |all| {
+            all.insert(
+                Self::key(&tokens.server_name, &tokens.server_url),
+                tokens.clone(),
+            );
+        })
     }
 
     /// Remove tokens for a specific server.
     pub fn remove(&self, server_name: &str, server_url: &str) {
-        let mut all = self.load_all().unwrap_or_default();
-        all.remove(&Self::key(server_name, server_url));
-        let _ = self.save_all(&all);
+        let key = Self::key(server_name, server_url);
+        if let Err(e) = Self::update_map::<StoredTokens>(&self.path, |all| {
+            all.remove(&key);
+        }) {
+            warn!(server = %server_name, error = %e, "could not remove stored MCP tokens");
+        }
     }
 
     /// Load DCR client info for a specific server.
@@ -246,23 +249,26 @@ impl CredentialsStore {
         server_name: &str,
         server_url: &str,
     ) -> Option<StoredClientInfo> {
-        self.load_all_client_info()
+        Self::load_map::<StoredClientInfo>(&self.client_info_path())
             .ok()?
             .remove(&Self::key(server_name, server_url))
     }
 
     /// Persist DCR client info for a specific server.
     pub fn save_client_info(&self, info: &StoredClientInfo) -> Result<()> {
-        let mut all = self.load_all_client_info().unwrap_or_default();
-        all.insert(Self::key(&info.server_name, &info.server_url), info.clone());
-        self.save_all_client_info(&all)
+        Self::update_map(&self.client_info_path(), |all| {
+            all.insert(Self::key(&info.server_name, &info.server_url), info.clone());
+        })
     }
 
     /// Remove DCR client info for a specific server.
     pub fn remove_client_info(&self, server_name: &str, server_url: &str) {
-        let mut all = self.load_all_client_info().unwrap_or_default();
-        all.remove(&Self::key(server_name, server_url));
-        let _ = self.save_all_client_info(&all);
+        let key = Self::key(server_name, server_url);
+        if let Err(e) = Self::update_map::<StoredClientInfo>(&self.client_info_path(), |all| {
+            all.remove(&key);
+        }) {
+            warn!(server = %server_name, error = %e, "could not remove stored MCP client info");
+        }
     }
 }
 
@@ -1435,6 +1441,54 @@ mod tests {
     use url::Url;
 
     use super::*;
+
+    fn tokens_for(server: &str) -> StoredTokens {
+        StoredTokens {
+            server_name: server.into(),
+            server_url: format!("https://{server}.example.com/mcp"),
+            access_token: format!("at-{server}"),
+            refresh_token: Some(format!("rt-{server}")),
+            expires_at: None,
+            token_endpoint: format!("https://{server}.example.com/token"),
+            client_id: None,
+            client_secret: None,
+        }
+    }
+
+    /// Tokens are their owner's alone, and processes saving at the same time
+    /// (two sven sessions refreshing different servers) keep both entries.
+    #[test]
+    fn stored_tokens_are_owner_only_and_concurrent_saves_lose_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sven/mcp-credentials.json");
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    CredentialsStore::new(path)
+                        .save(&tokens_for(&format!("s{i}")))
+                        .unwrap();
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let store = CredentialsStore::new(path.clone());
+        for i in 0..8 {
+            let name = format!("s{i}");
+            let url = format!("https://{name}.example.com/mcp");
+            assert!(store.load(&name, &url).is_some(), "{name} kept");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        store.remove("s0", "https://s0.example.com/mcp");
+        assert!(store.load("s0", "https://s0.example.com/mcp").is_none());
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
