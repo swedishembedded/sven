@@ -24,6 +24,7 @@ heading and a `Scope: <one sentence>` line under it, then run
 | [`document-conversion`](document-conversion.md) | document-conversion | Open work and measured numbers for PDF to Markdown conversion (`sven document`, `document_convert`). |
 | [`harness-performance`](harness-performance.md) | harness-performance | Making sven a fast, efficient, precise and robust coding harness for any model, and proving it with measured runs. |
 | [`harness-workflows`](harness-workflows.md) | harness-workflows | Open work on the harness workflow language and runtime (`sven-harness-spec`, `sven-harness-runtime`, `sven harness`). |
+| [`mcp-client`](mcp-client.md) | mcp-client | sven as an MCP client: a current-protocol client for any remote or local MCP server, standalone with any model provider, with a guided sign-in and a tool policy that holds after the server's tool list changes. |
 | [`memory`](memory.md) | memory | Agent memory: the `sven-memory-api` contract, the `sven-memory-sqlite` adapter and the `semantic_memory` tool. |
 | [`model-router`](model-router.md) | model-router | Routing a request to models beyond the session language model (image, speech, video and other brain-served models). |
 | [`remote-control`](remote-control.md) | remote-control | `sven auth login` and `sven rc` (`sven-remote`), the HTTP binding in |
