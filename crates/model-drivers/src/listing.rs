@@ -91,7 +91,9 @@ pub(crate) fn refresh_when_stale(provider: &Arc<dyn ModelProvider>, cfg: &ModelC
     });
 }
 
-/// What a probed start does about a hosted endpoint's model list.
+/// What a probed start does about a hosted endpoint's model list. Only a
+/// native start probes ([`settle_for_start`]).
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, PartialEq, Eq)]
 enum StartListing {
     /// Nothing: a local endpoint (probed live instead) or no key to ask with.
@@ -104,6 +106,7 @@ enum StartListing {
     Background,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn start_listing(hosted: bool, keyed: bool, model_known: bool) -> StartListing {
     match (hosted && keyed, model_known) {
         (false, _) => StartListing::Skip,
