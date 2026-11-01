@@ -99,8 +99,11 @@ pub fn restrict_to_working_dir(config: &mut Config) {
 /// [`HOSTED_TOOLS`] (an allow list, so a tool added later is never offered
 /// unless named there), and `web_fetch` reaching only the public internet,
 /// never the server's own network (its services, its database, a cloud
-/// metadata service).
+/// metadata service). No configured MCP server is started or reached: an
+/// allow list hides a server's tools, but a stdio server would still run on
+/// the host and an HTTP one still be called.
 pub fn restrict_to_hosted(config: &mut Config) {
+    config.mcp_servers.clear();
     config.tools.only = Some(
         HOSTED_TOOLS
             .iter()
@@ -113,6 +116,19 @@ pub fn restrict_to_hosted(config: &mut Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A configured MCP server would run (stdio) or be reached (HTTP) from
+    /// the hosted host even with its tools hidden by the allow list.
+    #[test]
+    fn a_hosted_host_starts_and_reaches_no_configured_mcp_server() {
+        let mut config: Config = serde_yaml::from_str(
+            "mcp_servers:\n  local: {command: /bin/true}\n  remote: {url: https://mcp.example.com}\n",
+        )
+        .unwrap();
+        assert_eq!(config.mcp_servers.len(), 2);
+        restrict_to_hosted(&mut config);
+        assert!(config.mcp_servers.is_empty());
+    }
 
     #[test]
     fn a_remotely_driven_session_gets_a_public_only_web_and_no_gdb_host_commands() {

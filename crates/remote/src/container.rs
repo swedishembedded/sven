@@ -52,8 +52,11 @@ pub const CONTAINER_TOOLS: &[&str] = &[
 /// What a containerised host's sessions may do, applied to its
 /// configuration: [`HOSTED_TOOLS`] and [`CONTAINER_TOOLS`] only. Reaching
 /// the network is the egress proxy's to decide, not `web_fetch`'s own check
-/// (inside the container there is no name resolution to check against).
+/// (inside the container there is no name resolution to check against). No
+/// configured MCP server is started or reached, as for
+/// [`restrict_to_hosted`](crate::restrict_to_hosted).
 pub fn restrict_to_container(config: &mut Config) {
+    config.mcp_servers.clear();
     config.tools.only = Some(
         HOSTED_TOOLS
             .iter()
@@ -98,9 +101,14 @@ mod tests {
 
     #[test]
     fn a_container_host_has_the_hosted_tools_a_shell_and_files_and_the_proxy_decides_the_network() {
-        let mut config = Config::default();
+        let mut config: Config =
+            serde_yaml::from_str("mcp_servers:\n  local: {command: /bin/true}\n").unwrap();
         config.tools.web.public_only = true;
         restrict_to_container(&mut config);
+        assert!(
+            config.mcp_servers.is_empty(),
+            "no configured MCP server runs"
+        );
         let only = config.tools.only.unwrap();
         for tool in ["web_fetch", "shell", "write_file"] {
             assert!(only.iter().any(|t| t == tool), "{tool} is offered");

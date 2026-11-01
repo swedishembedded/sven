@@ -186,7 +186,8 @@ its own that it never shares. Two walls keep a hosted host to itself:
 - **Its tools.** Its sessions have only tools that never touch the machine
   the host runs on - web search, web fetch and finding skills. It is an
   allow list: any other tool, including one added to sven later, is never
-  offered.
+  offered. MCP servers in its configuration are ignored: none is started
+  or called.
 - **The kernel.** Before it starts anything, the host confines itself with
   Linux Landlock to its sandbox: it can read, write and create only inside
   that directory, plus read what any program needs to run and reach the
@@ -242,6 +243,7 @@ on its loopback and passes every connection to `--egress-socket`, the
 server's proxy, and points its own clients and every command it runs at
 that listener (`HTTP_PROXY`/`HTTPS_PROXY`). The server decides what the
 proxy reaches.
+MCP servers in its configuration are ignored here too.
 
 ## Read a conversation
 
