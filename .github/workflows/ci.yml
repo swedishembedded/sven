@@ -24,6 +24,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install the voice input build dependencies (ALSA, cmake for libopus)
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libasound2-dev cmake
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -94,6 +97,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install the voice input build dependencies (ALSA, cmake for libopus)
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libasound2-dev cmake
       - name: Release build
         run: make build/release
 

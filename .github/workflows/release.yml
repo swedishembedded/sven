@@ -55,6 +55,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install the voice input build dependencies (ALSA, cmake for libopus)
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libasound2-dev cmake
+
       - name: Release build
         run: make build/release
 
@@ -112,7 +115,9 @@ jobs:
         run: cargo install cross --git https://github.com/cross-rs/cross --locked
 
       - name: Build static release binary (cross)
-        run: cross build --release --target ${{ matrix.target }} -p sven
+        # Static: everything but voice input, whose ALSA cannot be linked
+        # statically. The packaged and macOS builds have it.
+        run: cross build --release --target ${{ matrix.target }} -p sven --no-default-features --features tui,network,gdb,memory,coding,research,dbus,android
 
       - uses: docker/setup-qemu-action@v3
         if: matrix.arch != 'x86_64'

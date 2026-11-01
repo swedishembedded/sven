@@ -2,11 +2,14 @@
 #
 # The pre-build step installs `perl` and `pkg-config`, which the default cross
 # image does not have, for native build scripts. The workspace links no
-# OpenSSL: TLS goes through rustls.
+# OpenSSL: TLS goes through rustls. The glibc build has voice input, so it
+# also gets the target's ALSA headers and cmake (for the bundled libopus);
+# the static musl builds leave voice input out.
 
 [target.aarch64-unknown-linux-gnu]
 pre-build = [
-    "apt-get update && apt-get install -y --no-install-recommends perl pkg-config",
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install -y --no-install-recommends perl pkg-config cmake libasound2-dev:$CROSS_DEB_ARCH",
 ]
 
 [target.x86_64-unknown-linux-musl]
