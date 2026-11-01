@@ -316,6 +316,8 @@ impl App {
                 self.ui.show_help = !self.ui.show_help;
             }
 
+            Action::ToggleVoice => self.toggle_voice(),
+
             Action::OpenPager => {
                 let mut pager = PagerOverlay::new(self.chat.lines.clone());
                 if let Some(line) = self.ui.search.current_line() {

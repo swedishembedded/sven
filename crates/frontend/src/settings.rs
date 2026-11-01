@@ -43,6 +43,43 @@ pub struct TuiConfig {
     /// is kept in the session, and the status bar says "Thinking" while it
     /// streams.
     pub show_thinking: bool,
+    /// Voice dictation (Ctrl+G).
+    pub voice: VoiceConfig,
+}
+
+/// The `tui.voice:` section: where speech is transcribed and how.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceConfig {
+    /// The provider that transcribes: `sven` (the default; the signed-in
+    /// service) or the name of a `providers:` entry, a local brain among them.
+    pub provider: Option<String>,
+    /// The speech-to-text model asked for.
+    pub model: String,
+    /// ISO-639-1 language hint (`sv`, `en`); unset lets the model detect it.
+    pub language: Option<String>,
+    /// Show provisional text while speaking (about one request per second of
+    /// speech, each billed). Off sends one request per phrase.
+    pub live_preview: bool,
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            provider: None,
+            model: "qwen/qwen3-asr-0.6b".into(),
+            language: None,
+            live_preview: true,
+        }
+    }
+}
+
+impl VoiceConfig {
+    /// The keys of the `tui.voice:` section.
+    #[must_use]
+    pub fn schema() -> Schema {
+        Schema::keys(&["provider", "model", "language", "live_preview"])
+    }
 }
 
 impl Default for TuiConfig {
@@ -53,6 +90,7 @@ impl Default for TuiConfig {
             wrap_width: 0,
             ascii_borders: false,
             show_thinking: false,
+            voice: VoiceConfig::default(),
         }
     }
 }
@@ -61,12 +99,13 @@ impl TuiConfig {
     /// The keys of the `tui:` section.
     #[must_use]
     pub fn schema() -> Schema {
-        Schema::keys(&[
-            "theme",
-            "code_line_numbers",
-            "wrap_width",
-            "ascii_borders",
-            "show_thinking",
+        Schema::fields([
+            ("theme", Schema::value()),
+            ("code_line_numbers", Schema::value()),
+            ("wrap_width", Schema::value()),
+            ("ascii_borders", Schema::value()),
+            ("show_thinking", Schema::value()),
+            ("voice", VoiceConfig::schema()),
         ])
     }
 }
@@ -187,6 +226,28 @@ mod tests {
         assert!(document
             .unknown_keys(&Config::schema().with("tui", Schema::value()))
             .is_empty());
+    }
+
+    #[test]
+    fn voice_dictation_defaults_and_is_a_known_section() {
+        let voice = Settings::default().tui.voice;
+        assert_eq!(voice.model, "qwen/qwen3-asr-0.6b");
+        assert!(voice.live_preview);
+        assert_eq!((voice.provider, voice.language), (None, None));
+
+        let document = ConfigDocument::from_yaml(
+            "tui: {voice: {provider: local, language: sv, live_preview: false, pitch: 1}}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            document.unknown_keys(&Settings::schema()),
+            ["Unrecognised config field `tui.voice.pitch` - check spelling or update sven"]
+        );
+        let voice = Settings::from_document(&document).tui.voice;
+        assert_eq!(voice.provider.as_deref(), Some("local"));
+        assert_eq!(voice.language.as_deref(), Some("sv"));
+        assert!(!voice.live_preview);
+        assert_eq!(voice.model, "qwen/qwen3-asr-0.6b");
     }
 
     #[test]

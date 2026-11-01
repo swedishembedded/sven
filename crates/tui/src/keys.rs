@@ -125,6 +125,9 @@ pub enum Action {
     /// Shrink the input pane by one row.
     ResizeInputShrink,
 
+    /// Start or stop dictating into the input (Ctrl+G in the input pane).
+    ToggleVoice,
+
     // Buffer submit (Neovim integration)
     SubmitBufferToAgent,
 
@@ -354,6 +357,7 @@ pub fn map_key(event: KeyEvent, cx: KeyContext) -> Option<Action> {
         KeyCode::Char('c') if ctrl && in_input => Some(Action::InterruptAgent),
         KeyCode::Char('u') if ctrl && in_input => Some(Action::InputDeleteToStart),
         KeyCode::Char('k') if ctrl && in_input => Some(Action::InputDeleteToEnd),
+        KeyCode::Char('g') if ctrl && in_input => Some(Action::ToggleVoice),
         // Ctrl+Up/Down: explicit history navigation (always jumps, regardless of cursor row).
         // Plain Up/Down also trigger history when the cursor is already on the first/last row
         // (shell-style), which is handled inside the InputMoveLineUp/Down dispatch handlers.
@@ -735,6 +739,13 @@ mod tests {
     fn alt_t_opens_task_list() {
         let ev = key(KeyCode::Char('t'), KeyModifiers::ALT);
         assert_eq!(map_key(ev, chat()), Some(Action::ToggleTaskList));
+    }
+
+    #[test]
+    fn ctrl_g_toggles_voice_in_the_input_pane_only() {
+        let ev = key(KeyCode::Char('g'), KeyModifiers::CONTROL);
+        assert_eq!(map_key(ev, input()), Some(Action::ToggleVoice));
+        assert_ne!(map_key(ev, chat()), Some(Action::ToggleVoice));
     }
 
     #[test]

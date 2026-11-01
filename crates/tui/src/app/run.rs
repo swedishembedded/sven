@@ -34,6 +34,8 @@ impl App {
         let (question_tx, mut question_rx) = mpsc::channel::<sven_tools_agent::QuestionRequest>(4);
         let (toast_tx, mut toast_rx) = mpsc::channel::<ui_state::Toast>(32);
         let (withdrawn_tx, mut withdrawn_rx) = mpsc::channel::<String>(8);
+        let (voice_tx, mut voice_rx) = mpsc::channel::<crate::voice::VoiceEvent>(64);
+        self.voice.tx = Some(voice_tx);
         self.question_withdrawn_tx = Some(withdrawn_tx);
         self.toast_tx = Some(toast_tx);
 
@@ -274,6 +276,9 @@ impl App {
                 Some(toast) = toast_rx.recv() => {
                     self.ui.push_toast(toast);
                 }
+                Some(event) = voice_rx.recv() => {
+                    self.handle_voice_event(event);
+                }
                 // A model list refreshed in the background (`/model` asks for
                 // one each time it opens): an open menu shows the new models.
                 () = sven_model_drivers::listing::listings_changed().notified(),
@@ -289,18 +294,24 @@ impl App {
                 // every path which sets a busy flag MUST have a path that clears
                 // it (the turn-exit guard);
                 // a stuck busy flag would repaint the screen at 12fps forever.
-                _ = anim_tick.tick(), if self.agent.busy || self.sessions.any_background_busy() => {
+                _ = anim_tick.tick(), if self.agent.busy
+                    || self.sessions.any_background_busy()
+                    || self.voice.is_listening() => {
                     // Advance the clock-driven animation frame. This branch also
                     // serves as the display refresh for streaming text: TextDelta
                     // handlers only buffer incoming tokens; the actual render
                     // (build_display_from_segments + Neovim sync) is rate-limited
                     // here to 80ms so fast LLM streams don't starve keyboard events.
                     self.agent.anim_frame = self.agent.anim_frame.wrapping_add(1);
-                    self.rerender_chat().await;
-                    self.scroll_to_bottom();
-                    self.nvim_scroll_to_bottom().await;
-                    if let Some(pager) = &mut self.ui.pager {
-                        pager.set_lines(self.chat.lines.clone());
+                    // Listening alone animates the level meter; it must not
+                    // re-render the chat or pull it to the bottom.
+                    if self.agent.busy || self.sessions.any_background_busy() {
+                        self.rerender_chat().await;
+                        self.scroll_to_bottom();
+                        self.nvim_scroll_to_bottom().await;
+                        if let Some(pager) = &mut self.ui.pager {
+                            pager.set_lines(self.chat.lines.clone());
+                        }
                     }
                 }
                 _ = Self::nvim_notify_future(flush_notify_clone.as_deref()) => {}

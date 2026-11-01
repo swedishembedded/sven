@@ -43,6 +43,7 @@ const BINDINGS: &[(&str, &str, bool)] = &[
     ("Alt+Enter", "New line", false),
     ("^c", "Interrupt agent", false),
     ("^k / ^u", "Delete to end/start", false),
+    ("^g", "Dictate: start/stop voice input", false),
     ("^Up / ^Dn", "History older/newer", false),
     ("/ ...", "Slash commands", false),
     ("── Queue panel ──", "", true),

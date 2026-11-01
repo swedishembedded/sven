@@ -3,6 +3,13 @@ name    = "sven-tui"
 version.workspace = true
 edition = "2021"
 
+[features]
+default = ["voice"]
+# Voice dictation (Ctrl+G): microphone capture (cpal, which needs the ALSA
+# headers on Linux), Ogg/Opus encoding (libopus, built with cmake) and the
+# transcription request. Without it Ctrl+G only says the build has none.
+voice = ["dep:cpal", "dep:opus", "dep:ogg", "dep:sven-audio"]
+
 [dependencies]
 sven-vocab     = { path = "../vocab" }
 sven-model     = { path = "../model" }
@@ -37,6 +44,10 @@ uuid        = { workspace = true }
 base64      = { workspace = true }
 rand        = "0.8"
 notify       = { workspace = true }
+cpal         = { version = "0.16", optional = true }
+opus         = { version = "0.4", optional = true }
+ogg          = { version = "0.9", optional = true }
+sven-audio   = { path = "../sven-audio", optional = true }
 
 [dev-dependencies]
 tempfile     = { workspace = true }

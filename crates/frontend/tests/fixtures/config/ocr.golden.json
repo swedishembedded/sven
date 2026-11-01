@@ -171,6 +171,12 @@
       "code_line_numbers": false,
       "show_thinking": false,
       "theme": "dark",
+      "voice": {
+        "language": null,
+        "live_preview": true,
+        "model": "qwen/qwen3-asr-0.6b",
+        "provider": null
+      },
       "wrap_width": 0
     }
   },

@@ -45,6 +45,8 @@ pub mod request_log;
 mod resolve;
 pub mod sven_service;
 mod thinking;
+#[cfg(not(target_arch = "wasm32"))]
+mod transcription;
 
 pub use anthropic::AnthropicProvider;
 pub use api_key::{provider_base_url, provider_key};
@@ -54,6 +56,8 @@ pub use embedding::OpenAiEmbedder;
 pub use openai_compat::OpenAICompatProvider;
 pub use provider_check::{check_provider, ProviderCheck, ProviderReport, Verdict};
 pub use resolve::{resolve_model_cfg, resolve_model_from_config, ModelResolver};
+#[cfg(not(target_arch = "wasm32"))]
+pub use transcription::transcribe;
 
 use anyhow::bail;
 use api_key::resolve_api_key;

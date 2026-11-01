@@ -109,7 +109,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # 0.1.92: older expansions add a #[must_use] clippy rejects (double_must_use).
 async-trait  = "0.1.92"
 futures      = "0.3"
-reqwest      = { version = "0.12", features = ["json", "stream", "rustls-tls", "gzip"], default-features = false }
+reqwest      = { version = "0.12", features = ["json", "stream", "multipart", "rustls-tls", "gzip"], default-features = false }
 rustls       = { version = "0.23", features = ["ring"] }
 html2text    = "0.12"
 async-recursion = "1"
@@ -186,7 +186,7 @@ toml             = { workspace = true }
 sha2             = { workspace = true }
 hex              = { workspace = true }
 # ── Optional surfaces, gated by the `tui`/`network` cargo features below ──────
-sven-tui         = { path = "crates/tui", optional = true }
+sven-tui         = { path = "crates/tui", optional = true, default-features = false }
 # `network` bundles the ACP/MCP servers and the team surface behind one
 # feature flag rather than toggling them independently.
 sven-team        = { path = "crates/team", optional = true }
@@ -216,10 +216,13 @@ ratatui     = { workspace = true, optional = true }
 chrono      = { workspace = true }
 
 [features]
-default = ["tui", "network", "gdb", "memory", "coding", "research", "dbus", "android"]
+default = ["tui", "voice", "network", "gdb", "memory", "coding", "research", "dbus", "android"]
 # Interactive terminal UI (the default when `sven` is run with no subcommand
 # and a TTY is attached). Pulls in ratatui + sven-tui-nvim (nvim-rs).
 tui = ["dep:sven-tui", "dep:ratatui"]
+# Voice dictation in the TUI (Ctrl+G): microphone capture and Opus encoding.
+# Needs the ALSA headers and cmake to build; a build without it keeps the TUI.
+voice = ["sven-tui?/voice"]
 # GDB/MI debugging tools (sven-bootstrap's own `gdb` feature - see that
 # crate's Cargo.toml). Forwarded explicitly since sven-bootstrap is depended
 # on with `default-features = false` here so that a `minimal` build (which

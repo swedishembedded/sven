@@ -60,6 +60,35 @@ pub fn is_image_path(path: &std::path::Path) -> bool {
     )
 }
 
+/// Inserts dictated `text` into `buffer` at the byte offset `cursor` and
+/// moves the cursor past it.
+///
+/// The text is trimmed and joined to what precedes it with one space, unless
+/// the cursor is at the start or already after whitespace. A `cursor` inside
+/// a multibyte character is taken to be at the start of that character.
+/// Empty text changes nothing.
+pub(crate) fn insert_dictation(buffer: &mut String, cursor: &mut usize, text: &str) {
+    let text = text.trim();
+    if text.is_empty() {
+        return;
+    }
+    let mut at = (*cursor).min(buffer.len());
+    while !buffer.is_char_boundary(at) {
+        at -= 1;
+    }
+    let needs_space = buffer[..at]
+        .chars()
+        .next_back()
+        .is_some_and(|c| !c.is_whitespace());
+    let mut inserted = String::with_capacity(text.len() + 1);
+    if needs_space {
+        inserted.push(' ');
+    }
+    inserted.push_str(text);
+    buffer.insert_str(at, &inserted);
+    *cursor = at + inserted.len();
+}
+
 // ── InputState ────────────────────────────────────────────────────────────────
 
 /// Capacity of the per-session message history ring.
@@ -94,6 +123,11 @@ impl InputState {
             history_draft: None,
             attachments: Vec::new(),
         }
+    }
+
+    /// Inserts dictated text at the cursor; see [`insert_dictation`].
+    pub fn insert_dictation(&mut self, text: &str) {
+        insert_dictation(&mut self.buffer, &mut self.cursor, text);
     }
 
     /// Push a newly-submitted message into the history ring.
@@ -298,5 +332,36 @@ mod history_tests {
         s.push_history("   "); // whitespace-only, must be skipped
         s.push_history("same"); // consecutive duplicate, must be skipped
         assert_eq!(s.history, vec!["same".to_string()]);
+    }
+
+    fn dictate(buffer: &str, cursor: usize, text: &str) -> (String, usize) {
+        let (mut buffer, mut cursor) = (buffer.to_string(), cursor);
+        insert_dictation(&mut buffer, &mut cursor, text);
+        (buffer, cursor)
+    }
+
+    #[test]
+    fn dictation_is_joined_with_one_space_and_moves_the_cursor_past_it() {
+        assert_eq!(dictate("", 0, "hello"), ("hello".into(), 5));
+        assert_eq!(dictate("fix", 3, " the bug "), ("fix the bug".into(), 11));
+        assert_eq!(dictate("fix ", 4, "it"), ("fix it".into(), 6));
+        assert_eq!(dictate("a\n", 2, "b"), ("a\nb".into(), 3));
+        assert_eq!(
+            dictate("x", 1, "  "),
+            ("x".into(), 1),
+            "blank text is nothing"
+        );
+    }
+
+    #[test]
+    fn dictation_lands_at_a_char_boundary_in_multibyte_text() {
+        // "åäö" is 6 bytes; a cursor in the middle of 'ä' is moved back.
+        assert_eq!(dictate("åäö", 3, "ok"), ("å ok\u{e4}\u{f6}".into(), 5));
+        // Insert in the middle, before existing text.
+        let (buffer, cursor) = dictate("héllo", 1, "världen");
+        assert_eq!(buffer, "h världenéllo");
+        assert_eq!(&buffer[..cursor], "h världen");
+        // A cursor past the end is clamped.
+        assert_eq!(dictate("ö", 99, "x"), ("ö x".into(), 4));
     }
 }

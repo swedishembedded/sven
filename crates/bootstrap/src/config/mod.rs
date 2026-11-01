@@ -113,9 +113,31 @@ impl Config {
         &self,
         key_of: impl Fn(&sven_model_drivers::ProviderEntry) -> Option<String>,
     ) -> Option<sven_tools_web::SvenEndpoint> {
-        let entry = self.providers.get("sven").cloned().unwrap_or_else(|| {
+        self.provider_endpoint_with(sven_model_drivers::sven_service::PROVIDER, key_of)
+    }
+
+    /// Where speech is transcribed: the `provider` named (default: the sven
+    /// service, signed in or configured, exactly as for
+    /// [`Self::sven_search_endpoint`]) with its base URL and key. Any other
+    /// `providers.<name>` entry works the same way, a local brain with its
+    /// key among them. None while there is no key for it.
+    #[must_use]
+    pub fn voice_endpoint(&self, provider: Option<&str>) -> Option<sven_tools_web::SvenEndpoint> {
+        self.provider_endpoint_with(
+            provider.unwrap_or(sven_model_drivers::sven_service::PROVIDER),
+            sven_model_drivers::provider_key,
+        )
+    }
+
+    /// The base URL and key of the provider `name`, `key_of` finding the key.
+    fn provider_endpoint_with(
+        &self,
+        name: &str,
+        key_of: impl Fn(&sven_model_drivers::ProviderEntry) -> Option<String>,
+    ) -> Option<sven_tools_web::SvenEndpoint> {
+        let entry = self.providers.get(name).cloned().unwrap_or_else(|| {
             sven_model_drivers::ProviderEntry {
-                name: "sven".into(),
+                name: name.into(),
                 ..Default::default()
             }
         });
@@ -286,6 +308,35 @@ mod tests {
     }
 
     use super::*;
+
+    /// Speech goes to the named provider with its key; the sven service is
+    /// the default.
+    #[test]
+    fn voice_endpoint_follows_the_named_provider() {
+        let mut cfg = Config::default();
+        cfg.providers.insert(
+            "local".into(),
+            sven_model_drivers::ProviderEntry {
+                name: "openai".into(),
+                base_url: Some("http://127.0.0.1:9/v1".into()),
+                api_key: Some("local_key".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            cfg.voice_endpoint(Some("local")),
+            Some(sven_tools_web::SvenEndpoint {
+                base_url: "http://127.0.0.1:9/v1".into(),
+                api_key: "local_key".into(),
+            })
+        );
+        assert_eq!(
+            cfg.provider_endpoint_with("sven", |_| Some("k".into()))
+                .map(|e| e.base_url),
+            Some("https://sven.swedishembedded.com/v1".into()),
+            "no name given means the sven service"
+        );
+    }
 
     fn document(yaml: &str) -> ConfigDocument {
         ConfigDocument::from_yaml(yaml).unwrap()

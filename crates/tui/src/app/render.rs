@@ -235,6 +235,8 @@ impl App {
             && self.ui.question_modal.is_none()
             && self.ui.confirm_modal.is_none();
 
+        let voice_status = self.voice_status();
+        let voice_rows = usize::from(voice_status.is_some());
         frame.render_widget(
             InputPane {
                 content,
@@ -249,6 +251,7 @@ impl App {
                     Some(crate::app::layout_cache::ResizeDrag::InputHeight { .. })
                 ),
                 agent_busy: self.agent.busy,
+                voice: voice_status,
             },
             layout.input_pane,
         );
@@ -262,7 +265,7 @@ impl App {
                 true,
                 ascii,
                 edit_mode,
-                self.input.attachments.len(),
+                self.input.attachments.len() + voice_rows,
             ) {
                 frame.set_cursor_position(pos);
             }

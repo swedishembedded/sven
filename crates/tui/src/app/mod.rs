@@ -35,6 +35,7 @@ pub(crate) mod term_events;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub(crate) mod ui_state;
+pub(crate) mod voice;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -175,4 +176,6 @@ pub struct App {
     /// Sender for toast notifications from background tasks (e.g. OAuth auth).
     /// `None` before `run()` is called.
     pub(crate) toast_tx: Option<mpsc::Sender<ui_state::Toast>>,
+    /// The voice dictation in progress, if any (Ctrl+G).
+    pub(crate) voice: crate::voice::VoiceState,
 }

@@ -207,6 +207,37 @@ between siblings. Subagents restored from a saved session are reachable through
 
 ---
 
+### Voice dictation
+
+Press `Ctrl+G` in the input box to dictate instead of typing. While it listens
+the input box shows a `listening` label with a small level meter, and the text
+of the phrase you are speaking appears dimmed above your text, revised about
+once a second. When you pause, the phrase is transcribed once more and its
+final text is inserted at the cursor, joined to what precedes it with one
+space. Dictation only ever fills the input box: sending the message is still
+your `Enter`. Text goes to the session that was active when you started
+listening, even if you switch sessions meanwhile.
+
+`Ctrl+G` again stops listening; phrases already spoken are still transcribed,
+and a further `Ctrl+G` during that gives up on them. Listening stops by itself
+after 30 seconds without speech and after 10 minutes. A missing microphone, a
+refused request (an expired key, no balance) or a network failure stops it with
+a message at the bottom of the screen.
+
+Speech is sent to a transcription service as short Ogg/Opus recordings
+(`POST {base_url}/audio/transcriptions`), by default the sven service you are
+signed in to (`sven auth login`). Every request, provisional ones included, is
+billed by the second of audio; turn `tui.voice.live_preview` off to send one
+request per phrase. Point `tui.voice.provider` at one of your `providers:`
+entries to use another OpenAI-compatible server (a local one, say). See
+[`tui.voice`](../reference/configuration.md#tui).
+
+Voice input is a build feature (`voice`, on by default; it needs the ALSA
+development headers and `cmake` to build on Linux). In a build without it,
+`Ctrl+G` says so.
+
+---
+
 ### Full-screen pager
 
 Press `Ctrl+T` to open the chat history full screen, which is useful for reading

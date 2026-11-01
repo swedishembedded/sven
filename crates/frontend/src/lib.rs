@@ -68,6 +68,6 @@ pub use segment::{
     segment_is_rerunnable, segment_short_preview, segment_tool_call_id,
     tool_result_insert_position, tool_runs, ChatSegment, ToolRun,
 };
-pub use settings::{Settings, TuiConfig};
+pub use settings::{Settings, TuiConfig, VoiceConfig};
 pub use sven_session_model::{SubagentActivity, SubagentState};
 pub use types::{FrontendOptions, ModelDirective, QueuedMessage, SessionMeta};

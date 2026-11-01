@@ -15,6 +15,7 @@ mod pager;
 mod state;
 mod submit;
 mod ui;
+mod voice;
 
 pub use app::{AgentTask, App, AppOptions, ModelDirective, QueuedMessage};
 pub use chat::segment::ChatSegment;

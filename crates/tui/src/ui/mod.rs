@@ -36,7 +36,7 @@ pub(crate) mod width_utils;
 pub(crate) use chat_pane::{nvim_cursor_screen_pos, ChatPane};
 pub(crate) use completion_menu::CompletionMenu;
 pub(crate) use help_overlay::HelpOverlay;
-pub(crate) use input_pane::{input_cursor_screen_pos, InputEditMode, InputPane};
+pub(crate) use input_pane::{input_cursor_screen_pos, InputEditMode, InputPane, VoiceStatus};
 pub(crate) use inspector::{InspectorKind, InspectorOverlay};
 pub(crate) use modals::{ConfirmModalView, QuestionModalView};
 pub(crate) use queue_panel::{QueueItem, QueuePanel};

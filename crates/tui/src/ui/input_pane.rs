@@ -62,6 +62,64 @@ fn placeholder_for(width: usize) -> &'static str {
     }
 }
 
+// ── Voice status ──────────────────────────────────────────────────────────────
+
+/// A dictation in progress, shown on a row of its own above the text.
+pub struct VoiceStatus<'a> {
+    /// The microphone is open (otherwise the last phrases are being
+    /// transcribed).
+    pub listening: bool,
+    /// Latest levels, oldest first.
+    pub levels: &'a [f32],
+    /// Text of the open phrase, not yet in the buffer.
+    pub provisional: &'a str,
+}
+
+impl VoiceStatus<'_> {
+    /// The row: label, meter, then the tail of the provisional text, which is
+    /// dimmed because it may still change.
+    fn line(&self, width: usize, ascii: bool) -> Line<'static> {
+        let label = if self.listening {
+            "listening "
+        } else {
+            "transcribing... "
+        };
+        let mut spans = vec![Span::styled(
+            format!("{} {label}", if ascii { "*" } else { "●" }),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )];
+        let mut used = 2 + label.chars().count();
+        if self.listening {
+            let ramp: &[char] = if ascii {
+                &[' ', '.', ':', '-', '=', '+', '*', '#']
+            } else {
+                &['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+            };
+            let meter: String = self
+                .levels
+                .iter()
+                .map(|rms| {
+                    let level = (rms * 10.0).sqrt().clamp(0.0, 1.0);
+                    ramp[(level * (ramp.len() - 1) as f32).round() as usize]
+                })
+                .collect();
+            used += meter.chars().count() + 2;
+            spans.push(Span::styled(meter, Style::default().fg(Color::Green)));
+            spans.push(Span::raw("  "));
+        }
+        let room = width.saturating_sub(used);
+        let provisional = self.provisional.replace('\n', " ");
+        let skip = provisional.chars().count().saturating_sub(room);
+        spans.push(Span::styled(
+            provisional.chars().skip(skip).collect::<String>(),
+            Style::default()
+                .fg(TEXT_DIM)
+                .add_modifier(Modifier::DIM | Modifier::ITALIC),
+        ));
+        Line::from(spans)
+    }
+}
+
 // ── InputPane widget ──────────────────────────────────────────────────────────
 
 /// Claude-style multi-line input box.
@@ -84,6 +142,8 @@ pub struct InputPane<'a> {
     /// Whether the agent is currently generating - shows an "Esc:abort
     /// generation" hint instead of the normal send/newline/history hint.
     pub agent_busy: bool,
+    /// A dictation in progress, if any.
+    pub voice: Option<VoiceStatus<'a>>,
 }
 
 impl Widget for InputPane<'_> {
@@ -144,12 +204,18 @@ impl Widget for InputPane<'_> {
         }
 
         // ── Attachment bullets ────────────────────────────────────────────────
-        let attach_rows = self.attachments.len().min(inner.height as usize / 2);
+        let voice_row = usize::from(self.voice.is_some());
+        let attach_rows = (self.attachments.len() + voice_row).min(inner.height as usize / 2);
         let text_start_y = inner.y + attach_rows as u16;
+        if let (Some(voice), true) = (&self.voice, attach_rows > 0) {
+            Paragraph::new(voice.line(inner.width as usize, self.ascii))
+                .render(Rect::new(inner.x, inner.y, inner.width, 1), buf);
+        }
         let text_height = inner.height.saturating_sub(attach_rows as u16);
 
-        for (i, att) in self.attachments.iter().take(attach_rows).enumerate() {
-            let y = inner.y + i as u16;
+        let shown = attach_rows.saturating_sub(voice_row);
+        for (i, att) in self.attachments.iter().take(shown).enumerate() {
+            let y = inner.y + (voice_row + i) as u16;
             let icon = att.icon(self.ascii);
             let name = att.display_name();
             let full = att.full_path();
@@ -366,6 +432,7 @@ mod tests {
             attachments: &[],
             is_resizing: false,
             agent_busy: false,
+            voice: None,
         }
     }
 
@@ -485,5 +552,72 @@ mod tests {
             !rendered.contains("Enter:send"),
             "the idle hint must not also be shown: {rendered:?}"
         );
+    }
+
+    fn rows(buf: &Buffer, area: Rect) -> Vec<String> {
+        (area.y..area.y + area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn a_dictation_shows_label_meter_and_dimmed_provisional_text_above_the_input() {
+        let area = Rect::new(0, 0, 60, 5);
+        let mut buf = Buffer::empty(area);
+        let levels = [0.0, 0.0, 0.0, 0.0, 0.01, 0.05, 0.1, 0.2];
+        InputPane {
+            content: "fix",
+            cursor_pos: 3,
+            voice: Some(VoiceStatus {
+                listening: true,
+                levels: &levels,
+                provisional: "the login bug",
+            }),
+            ..empty_pane(true)
+        }
+        .render(area, &mut buf);
+        let rows = rows(&buf, area);
+        assert!(rows[1].contains("listening"), "{rows:?}");
+        assert!(rows[1].contains('█'), "meter: {rows:?}");
+        assert!(rows[1].contains("the login bug"), "{rows:?}");
+        assert!(
+            rows[2].contains("> fix"),
+            "the buffer is untouched: {rows:?}"
+        );
+        assert!(
+            !rows[2].contains("login"),
+            "provisional text is not in the buffer"
+        );
+        let at = rows[1].find("the login").unwrap();
+        let x = rows[1][..at].chars().count() as u16;
+        assert!(
+            buf[(x, 1)].modifier.contains(Modifier::DIM),
+            "provisional is dimmed"
+        );
+        assert!(
+            !buf[(2, 1)].modifier.contains(Modifier::DIM),
+            "the label is not"
+        );
+    }
+
+    #[test]
+    fn the_status_row_shows_the_tail_of_provisional_text_that_does_not_fit() {
+        let status = VoiceStatus {
+            listening: false,
+            levels: &[],
+            provisional: "one two three four five six",
+        };
+        let line: String = status
+            .line(30, false)
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect();
+        assert!(line.starts_with("● transcribing..."), "{line}");
+        assert!(
+            line.ends_with("five six") && !line.contains("one"),
+            "{line}"
+        );
+        assert!(line.chars().count() <= 30, "{line}");
     }
 }

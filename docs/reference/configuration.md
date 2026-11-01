@@ -580,6 +580,19 @@ tui:
   # Show the model's thinking in the chat. When off, thinking is kept in the
   # session but not drawn; the status bar says "Thinking" while it streams.
   show_thinking: false
+
+  # Voice dictation (Ctrl+G in the input box).
+  voice:
+    # Who transcribes: "sven" (the service you are signed in to, the default)
+    # or the name of an entry under `providers:`.
+    # provider: sven
+    # Speech-to-text model asked for.
+    model: qwen/qwen3-asr-0.6b
+    # ISO-639-1 hint ("en", "sv"); unset lets the model detect the language.
+    # language: sv
+    # Show provisional text while speaking (one billed request per second of
+    # speech); off sends one request per phrase.
+    live_preview: true
 ```
 
 ---
@@ -1409,6 +1422,15 @@ that use the same server URL.
 | `wrap_width` | `0` | Markdown wrap column (0 = auto) |
 | `ascii_borders` | `false` | Use ASCII instead of Unicode box-drawing characters |
 | `show_thinking` | `false` | Show the model's thinking in the chat; when off it is kept in the session and the status bar says "Thinking" while it streams |
+
+`tui.voice` configures [voice dictation](../guides/interactive.md#voice-dictation):
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `voice.provider` | `sven` | The provider that transcribes: `sven` (signed in with `sven auth login`, or a `providers.sven` entry with a key) or the name of another `providers:` entry, which supplies the base URL and key. Requests go to `{base_url}/audio/transcriptions` |
+| `voice.model` | `"qwen/qwen3-asr-0.6b"` | Speech-to-text model |
+| `voice.language` | unset | ISO-639-1 language hint |
+| `voice.live_preview` | `true` | Show provisional text while speaking. Every request is billed by audio second, so a preview costs about three to five times the spoken seconds; `false` sends only the final request of each phrase |
 
 The `ascii_borders` setting is also controlled by the `SVEN_ASCII_BORDERS=1`
 environment variable, which is useful when you cannot edit the config file
