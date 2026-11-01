@@ -788,13 +788,10 @@ pub async fn stream_turn_attributed(
 /// Adds one finished reasoning block to the turn's reasoning, blocks apart by
 /// a blank line.
 fn keep_reasoning(reasoning: &mut String, block: &str) {
-    if block.is_empty() {
-        return;
+    if !block.is_empty() {
+        reasoning.push_str(if reasoning.is_empty() { "" } else { "\n\n" });
+        reasoning.push_str(block);
     }
-    if !reasoning.is_empty() {
-        reasoning.push_str("\n\n");
-    }
-    reasoning.push_str(block);
 }
 
 #[cfg(test)]
