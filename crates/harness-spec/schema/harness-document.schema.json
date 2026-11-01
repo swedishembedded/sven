@@ -515,7 +515,8 @@
               "type": "string",
               "minLength": 1,
               "description": "A template; {{ failure.gate }}, {{ failure.detail }}, {{ failure.exit_code }}, {{ failure.stdout }}, {{ failure.stderr }} and {{ failure.attempt }} describe the failure."
-            }
+            },
+            "allowance": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/input_hole" }], "description": "Sets the task's remaining tool calls afresh for every repair turn; without it a repair turn draws on what the task's allowance still holds." }
           }
         }
       }

@@ -130,8 +130,8 @@ in the trajectory (`extra.sven.origin`): `task`, `follow_up`, `repair` or
 
 **Stop statuses and budgets.** `execution.limits.tool_calls` may be a single
 `{{ inputs.<name> }}`. A task's `allowance` is the tool calls its first turn may
-make; follow-ups and repairs draw on the rest (a follow-up's own `allowance`
-sets it afresh) and a call beyond it is refused. `max_repeated_results: N` ends a
+make; follow-ups and repairs draw on the rest (a follow-up's own `allowance`,
+and a repair's `allowance` for every repair turn, sets it afresh) and a call beyond it is refused. `max_repeated_results: N` ends a
 turn when the same call has been answered the same way N times. A turn ends
 with a stop status readable as `tasks.<name>.stop` (`concluded`,
 `stopped_without_conclusion`, `output_truncated` when the provider cut the final

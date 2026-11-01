@@ -473,6 +473,11 @@ pub struct Repair {
     /// A prompt template over `failure.*`; a default applies when absent.
     #[serde(default)]
     pub prompt: Option<String>,
+    /// Sets the task's tool-call allowance afresh for every repair turn (a
+    /// whole number or a single `{{ inputs.<name> }}`); without it a repair
+    /// turn draws on what the task's allowance still holds.
+    #[serde(default)]
+    pub allowance: Option<Value>,
 }
 
 /// `for_each:` of a task: the body runs once per item of a collection that is

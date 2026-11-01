@@ -193,6 +193,7 @@ pub(super) fn lower_corrections(
             stop: None,
             pool: None,
             max_repeated_results: None,
+            allowance: None,
             conversation: Some(c.author.name.clone()),
             system: None,
             structured: &t.cx.structured,

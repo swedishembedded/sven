@@ -372,3 +372,44 @@ fn a_gate_may_run_in_a_host_named_directory_and_read_the_trajectory_file() {
             .contains("run.trajectory_file")
     );
 }
+
+const REPAIRS: &str = r#"
+api_version: "2"
+name: repairs
+inputs: { per: number }
+execution: { limits: { model_turns: 20 } }
+gates:
+  judge: { command: [checker, judge] }
+workflow:
+  - name: work
+    allowance: 5
+    task: Do it.
+    verify: [judge]
+    repair: { attempts: 2, allowance: "{{ inputs.per }}" }
+"#;
+
+#[test]
+fn every_repair_turn_gets_its_own_allowance_when_the_repair_sets_one() {
+    let plan = compile(REPAIRS);
+    let repairs: Vec<_> = plan
+        .steps
+        .iter()
+        .filter_map(|(id, step)| match &step.primitive {
+            PlanPrimitive::Agent {
+                origin, allowance, ..
+            } if origin.as_deref() == Some("repair") => Some((id.clone(), allowance.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(repairs.len(), 2, "{repairs:?}");
+    for (id, allowance) in &repairs {
+        assert!(allowance.is_some(), "{id} draws on the task's rest");
+    }
+    // Without it, a repair turn draws on what the task's allowance still holds.
+    let plain = compile(&REPAIRS.replace(", allowance: \"{{ inputs.per }}\"", ""));
+    assert!(plain.steps.values().all(|step| !matches!(
+        &step.primitive,
+        PlanPrimitive::Agent { origin, allowance: Some(_), .. } if origin.as_deref() == Some("repair")
+    )));
+    assert!(rejected(&REPAIRS.replace("inputs.per", "inputs.nope")).contains("allowance"));
+}

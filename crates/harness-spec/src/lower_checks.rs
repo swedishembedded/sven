@@ -151,6 +151,9 @@ pub(super) struct RepairPlan<'a> {
     pub pool: Option<String>,
     /// Ends a repair turn that gets the same answers this many times.
     pub max_repeated_results: Option<u32>,
+    /// The tool-call allowance every repair turn starts with; `None` draws on
+    /// what the task's allowance still holds.
+    pub allowance: Option<String>,
     /// The conversation the repair turn is in: the task's own.
     pub conversation: Option<String>,
     /// The system message of the repair turn's conversation (already moved
@@ -474,7 +477,7 @@ fn on_failure(
                 role: plan.role.clone(),
                 stop_as: plan.stop.clone(),
                 pool: plan.pool.clone(),
-                allowance: None,
+                allowance: plan.allowance.clone(),
                 max_repeated_results: plan.max_repeated_results,
                 decoding: plan.decoding.clone(),
                 attach: Vec::new(),

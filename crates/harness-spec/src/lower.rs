@@ -223,6 +223,17 @@ pub(super) fn lower_task(
         .as_ref()
         .map(|count| u32::try_from(count.unroll).unwrap_or(u32::MAX));
     let answer_repairs_input = repair_count.as_ref().and_then(|count| count.input.clone());
+    let repair_allowance = task
+        .repair
+        .as_ref()
+        .and_then(|r| r.allowance.as_ref())
+        .map(|v| match v {
+            Value::String(text) => {
+                rewrite_text(text, &cx.scope(format!("{place}: repair"), through, vars))
+            }
+            other => Ok(other.to_string()),
+        })
+        .transpose()?;
     let repair = task
         .repair
         .as_ref()
@@ -248,6 +259,7 @@ pub(super) fn lower_task(
             stop: (!task.model_only).then(|| stop_fact(&task.name)),
             pool: (!task.model_only).then(|| pool_fact(&task.name)),
             max_repeated_results: task.max_repeated_results,
+            allowance: repair_allowance.clone(),
             conversation: Some(conversation.clone()),
             system: if task.model_only {
                 task_system.clone()

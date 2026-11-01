@@ -324,6 +324,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
             crate::lower_counts::validate_follow_up(w.inputs.as_ref(), turn, &place)?;
         }
         if let Some(repair) = &task.repair {
+            validate_allowance(w, &format!("{place}: repair"), &repair.allowance)?;
             let repairs_answer = task.model_only && task.schema.is_some();
             if task.verify.is_empty() && task.outputs.is_empty() && !repairs_answer {
                 return Err(invalid(format!(
