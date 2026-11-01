@@ -5,15 +5,15 @@
 //!
 //! A harness addresses run data through a small, explicitly bounded grammar:
 //! dotted paths rooted at a fixed namespace (`inputs`, `facts`, `steps`,
-//! `env`), string interpolation with `{{ path }}`, and — for `branch`
-//! conditions — comparisons and boolean combinators. There are no
+//! `env`), string interpolation with `{{ path }}`, and - for `branch`
+//! conditions - comparisons and boolean combinators. There are no
 //! user-defined functions here: a computation belongs to a gate (a trusted
 //! command) or to the model.
 //!
 //! The grammar is intentionally narrower than the deleted graph DSL's: a
 //! path is validated at compile time against the harness's declared
 //! namespaces, and interpolation is Unicode-correct by construction (the
-//! old `bytes[i] as char` failure mode is structurally impossible — paths
+//! old `bytes[i] as char` failure mode is structurally impossible - paths
 //! are parsed, never byte-cast).
 
 use serde::{Deserialize, Serialize};
@@ -135,7 +135,7 @@ impl Template {
     }
 
     /// `true` when the template is a single hole that covers the whole
-    /// string — such a template carries the referenced value's type through,
+    /// string - such a template carries the referenced value's type through,
     /// not its string form.
     #[must_use]
     pub fn is_single_hole(&self) -> bool {
@@ -151,8 +151,22 @@ impl Template {
         }
     }
 
+    /// The text of a template without holes; `None` when it has one, so its
+    /// value is only known at run time.
+    #[must_use]
+    pub fn literal(&self) -> Option<String> {
+        self.parts
+            .iter()
+            .map(|part| match part {
+                TemplatePart::Text(text) => Some(text.as_str()),
+                TemplatePart::Hole(_) => None,
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(|parts| parts.concat())
+    }
+
     /// The empty template: renders to nothing. A compile-time fallback for
-    /// a prompt that failed to parse — validation rejects it before any
+    /// a prompt that failed to parse - validation rejects it before any
     /// plan is built, so this never reaches the runtime.
     #[must_use]
     pub fn empty() -> Self {
@@ -386,7 +400,7 @@ impl Expr {
     }
 
     /// The always-false expression. A compile-time fallback for a condition
-    /// that failed to parse — validation rejects it before any plan is
+    /// that failed to parse - validation rejects it before any plan is
     /// built, so this never reaches the runtime.
     #[must_use]
     pub fn truthy_false() -> Self {

@@ -5,8 +5,8 @@
 //!
 //! [`HarnessPlan`] is what a validated [`HarnessSpec`](crate::HarnessSpec)
 //! compiles into: a canonical, deterministic form of the program plus its
-//! content digest. The digest is the run-time pin — a resumed run rejects a
-//! plan whose digest no longer matches what it was started with — so it is
+//! content digest. The digest is the run-time pin - a resumed run rejects a
+//! plan whose digest no longer matches what it was started with - so it is
 //! computed over a *canonical serialization* (map keys sorted, whitespace
 //! normalized), which makes it invariant to YAML key order and formatting
 //! and sensitive to any change in program meaning.
@@ -147,7 +147,7 @@ pub struct PlanStep {
     pub primitive: PlanPrimitive,
 }
 
-/// The compiled form of each primitive — resolved references, canonical
+/// The compiled form of each primitive - resolved references, canonical
 /// templates. Same variants as [`StepSpec`](crate::StepSpec); this is the
 /// plan-side twin, so the compiler's output is explicit about what was
 /// validated and resolved rather than re-borrowing the spec.
@@ -364,8 +364,44 @@ impl HarnessPlan {
             .collect()
     }
 
+    /// The model role that answers each conversation whose name is fixed in
+    /// the plan: every turn of it names that role. A conversation whose turns
+    /// name different roles, or whose name is only known at run time (one
+    /// per loop item), is not listed.
+    #[must_use]
+    pub fn conversation_roles(&self) -> std::collections::BTreeMap<String, String> {
+        let mut roles: std::collections::BTreeMap<String, Option<String>> =
+            std::collections::BTreeMap::new();
+        for step in self.steps.values() {
+            let (PlanPrimitive::Predict {
+                role,
+                conversation: Some(conversation),
+                ..
+            }
+            | PlanPrimitive::Agent {
+                role,
+                conversation: Some(conversation),
+                ..
+            }) = &step.primitive
+            else {
+                continue;
+            };
+            let Some(name) = conversation.literal() else {
+                continue;
+            };
+            let entry = roles.entry(name).or_insert_with(|| role.clone());
+            if *entry != *role {
+                *entry = None;
+            }
+        }
+        roles
+            .into_iter()
+            .filter_map(|(name, role)| Some((name, role?)))
+            .collect()
+    }
+
     /// Computes the canonical digest of a plan-shaped value: canonical JSON
-    /// (sorted keys — `serde_json` with the `preserve_order` feature off is
+    /// (sorted keys - `serde_json` with the `preserve_order` feature off is
     /// a `BTreeMap` under the hood) over a tagged envelope.
     #[must_use]
     pub fn canonical_digest(value: &serde_json::Value) -> String {
@@ -452,7 +488,7 @@ pub fn canonical_digest_of_plan(plan: &HarnessPlan) -> String {
 
 /// Compiles one step. Every parse here is guaranteed to succeed: validation
 /// has already accepted the document, so a `Template`/`Expr` parse failure
-/// would mean the validator and the compiler disagree — the fallbacks keep
+/// would mean the validator and the compiler disagree - the fallbacks keep
 /// that from ever becoming a panic, and the plan degrades visibly (an empty
 /// template renders as text, an always-false branch) rather than inventing
 /// control flow.

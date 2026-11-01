@@ -30,6 +30,9 @@ use crate::engine::Engine;
 /// One model conversation of a run: the shared thread, or a conversation a
 /// task opened (`harness.<name>.<conversation>`).
 struct Conversation {
+    /// The model role every turn of the conversation names, and the model
+    /// the host serves it with; `None` for the host's default model.
+    role: Option<(String, Option<String>)>,
     origins: Vec<(usize, String)>,
     reasonings: Vec<(usize, String)>,
     messages: Vec<Message>,
@@ -110,6 +113,7 @@ impl Evidence {
         // loop), in the order each began: the names are resolved at run time,
         // so they come from the store, not from the plan.
         let prefix = format!("{thread}.");
+        let roles = plan.conversation_roles();
         let conversations = handle
             .conversation_store()
             .lock()
@@ -119,9 +123,13 @@ impl Evidence {
                     .into_iter()
                     .filter_map(|id| Some((id.strip_prefix(&prefix)?.to_string(), id.clone())))
                     .map(|(name, thread)| {
+                        let role = roles
+                            .get(&name)
+                            .map(|role| (role.clone(), engine.role_model_name(role)));
                         (
                             name,
                             Conversation {
+                                role,
                                 messages: store.transcript(&thread),
                                 compactions: store.transcript_compactions(&thread),
                                 requests: store.transcript_requests(&thread),
@@ -340,7 +348,11 @@ fn conversation_trajectory(
     name: &str,
     conversation: &Conversation,
 ) -> atif::Trajectory {
-    let mut own = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent.clone());
+    let mut agent = agent.clone();
+    if let Some((_, Some(model))) = &conversation.role {
+        agent.model_name = Some(model.clone());
+    }
+    let mut own = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
     own.trajectory_id = Some(format!("{run_id}/{name}"));
     own.steps = sven_session_store::record_steps::conversation_steps(
         &sven_session_store::record_steps::ConversationFacts {
@@ -356,7 +368,10 @@ fn conversation_trajectory(
         },
         &|message| as_sent(evidence, message),
     );
-    own.extra = Some(json!({ "harness": { "conversation": name } }));
+    own.extra = Some(match &conversation.role {
+        Some((role, _)) => json!({ "harness": { "conversation": name, "role": role } }),
+        None => json!({ "harness": { "conversation": name } }),
+    });
     own
 }
 

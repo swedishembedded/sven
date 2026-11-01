@@ -85,3 +85,41 @@ async fn without_any_role_the_default_provider_is_not_used_for_a_named_role() {
         outcome.result
     );
 }
+
+#[tokio::test]
+async fn each_conversation_records_the_role_that_answered_it() {
+    let planner = provider("from-planner");
+    let engine = Engine::builder()
+        .model_provider(provider("from-default"))
+        .model_role("planner", Arc::clone(&planner))
+        .model_role("worker", provider("from-worker"))
+        .build()
+        .expect("an engine builds");
+    let harness = engine.load_harness_from_str(WORKFLOW).expect("loads");
+    let mut run = harness.start(json!({})).expect("starts");
+    tokio::time::timeout(Duration::from_secs(20), run.execute(RunOptions::new()))
+        .await
+        .expect("the run ends")
+        .expect("an outcome");
+    let conversations = run.conversations().expect("an executed run has them");
+    let role_of = |name: &str| {
+        let (_, trajectory) = conversations
+            .iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("no conversation {name}"));
+        let extra = trajectory.extra.clone().unwrap_or_default();
+        (
+            extra["harness"]["role"].as_str().map(str::to_string),
+            trajectory.agent.model_name.clone(),
+        )
+    };
+    // A task's own `model`, else `agent.model`: training data per role needs to know.
+    assert_eq!(
+        role_of("plan"),
+        (
+            Some("planner".to_string()),
+            Some(planner.model_name().to_string())
+        )
+    );
+    assert_eq!(role_of("work").0.as_deref(), Some("worker"));
+}

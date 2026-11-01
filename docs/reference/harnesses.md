@@ -539,7 +539,10 @@ as its own embedded trajectory, starting with its system message as a `system`
 step (`extra.harness.conversation` names it, and `extra.harness.conversations`
 lists them in the order each began), so no task's exchange is mixed into
 another's; `HarnessRun::conversations()` returns them as `(name, trajectory)`
-pairs. A response's reasoning is the `reasoning_content` of its step; it is
+pairs. When every turn of a conversation names one model role,
+`extra.harness.role` names it and the trajectory's `agent.model_name` is the
+model the host serves that role with, so a conversation can be told apart by
+who answered it. A response's reasoning is the `reasoning_content` of its step; it is
 recorded only, and no later request carries it.
 
 **Workspace per run, tools on every host.** `HarnessRun::in_workspace(dir)` roots

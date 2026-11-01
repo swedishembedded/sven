@@ -279,6 +279,13 @@ impl Engine {
 
     /// The role resolver a harness session's turn executor uses, when the
     /// engine offers any role.
+    /// The model the provider of `role` answers with, when the host gave the role one.
+    pub(crate) fn role_model_name(&self, role: &str) -> Option<String> {
+        self.model_roles
+            .get(role)
+            .map(|provider| provider.model_name().to_string())
+    }
+
     pub(crate) fn model_roles(&self) -> Option<sven_turn::ModelResolver> {
         if self.model_roles.is_empty() {
             return None;
