@@ -27,6 +27,7 @@ pub mod ledger;
 mod ledger_recorder;
 mod oneshot;
 mod repetition;
+mod request_images;
 mod time_budget;
 mod tool_slots;
 

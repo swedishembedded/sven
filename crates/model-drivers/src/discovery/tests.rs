@@ -443,6 +443,41 @@ async fn the_input_modalities_a_server_reports_decide_whether_images_are_sent() 
     assert_eq!(silent.input_modalities(), None, "not reported is unknown");
 }
 
+#[tokio::test]
+async fn the_image_limits_a_server_states_reach_the_provider_and_silence_is_unknown() {
+    use sven_model::catalog::ImageLimits;
+
+    let stated = ImageLimits {
+        max_images: Some(8),
+        max_pixels: Some(16_000_000),
+    };
+    let live = LiveState::new("m", true);
+    let server = Swappable::serving(ServedModel {
+        image_limits: stated,
+        ..model("m", Some(4096))
+    });
+    live.refresh(&server).await;
+    assert_eq!(bounded(server, None, live).image_limits(), stated);
+
+    let live = LiveState::new("m", true);
+    let silent = Swappable::serving(model("m", Some(4096)));
+    live.refresh(&silent).await;
+    assert_eq!(
+        bounded(silent, None, live).image_limits(),
+        ImageLimits::default()
+    );
+}
+
+#[test]
+fn a_models_card_with_image_limits_parses_into_the_served_model() {
+    let body = serde_json::json!({"data": [{
+        "id": "m", "max_images_per_request": 8, "max_image_pixels_per_request": 1000
+    }]});
+    let served = parse_served_models(&body).unwrap();
+    assert_eq!(served[0].image_limits.max_images, Some(8));
+    assert_eq!(served[0].image_limits.max_pixels, Some(1000));
+}
+
 fn bounded(
     server: Swappable,
     configured_cap: Option<u32>,

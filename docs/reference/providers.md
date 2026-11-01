@@ -126,8 +126,21 @@ modalities included) is used for the session.
 | context window | `context_length`, else `max_model_len`, else `context_window`; Google `inputTokenLimit`; Cohere `context_length` |
 | output cap | `top_provider.max_completion_tokens`, else `max_output_tokens`; Google `outputTokenLimit` |
 | input modalities | `architecture.input_modalities`, else `capabilities`; otherwise text only |
+| image limits | `max_images_per_request` (an integer) and `max_image_pixels_per_request` (an integer, pixels summed over the images of one request), read from a local server's start-up probe; each is unknown when absent |
 | price | `pricing` (below) |
 | keeps no data | `zero_data_retention` (a boolean; the sven service serves it) |
+
+When the images of a conversation exceed a stated image limit, the request
+sent to the model carries the newest images that fit and each older one is
+replaced, in place, by a text note (`[earlier image left out: image/png, 800x600,
+the server takes at most 2 images per request]`). Newest first, an image is kept
+while the images kept so far plus it fit; the first that does not fit and every
+older one are left out. The pixel total is read from the image headers; an image
+whose size cannot be read (a remote URL, unreadable bytes) counts as over a
+pixel limit and its note says so. The session history, trajectories and
+recordings keep every image; only the outgoing request is trimmed. With no
+stated limit every image is sent, and a server refusal that names an image
+limit is logged as a warning, never retried or turned into a guessed limit.
 
 A figure the endpoint does not serve is unknown, and the configuration is
 consulted instead (`model.max_tokens`, `max_output_tokens`, `input_modalities`,

@@ -23,6 +23,7 @@ pub mod budget;
 /// dependencies (no reqwest, no cloud SDKs) - like `sven-model` itself - so
 /// re-exporting it here adds no heavy dependency.
 pub use sven_model_catalog as catalog;
+mod image_size;
 pub mod manifest;
 mod provider;
 pub mod registry;

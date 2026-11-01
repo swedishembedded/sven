@@ -321,6 +321,10 @@ impl ModelProvider for RecordingProvider {
     fn input_modalities_reported(&self) -> bool {
         self.inner.input_modalities_reported()
     }
+
+    fn image_limits(&self) -> sven_model::catalog::ImageLimits {
+        self.inner.image_limits()
+    }
 }
 
 /// Writes the response line when the stream it rides on is dropped.

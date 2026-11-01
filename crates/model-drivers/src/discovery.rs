@@ -95,6 +95,7 @@ fn parse_served_model(entry: &Value) -> Option<ServedModel> {
         tools,
         capabilities,
         input_modalities: sven_model::catalog::served_input_modalities(entry),
+        image_limits: sven_model::catalog::served_image_limits(entry),
         adapter,
     })
 }
@@ -223,6 +224,8 @@ pub(crate) struct LiveState {
     tools: AtomicU8,
     /// What the model accepts, as the server reported it; `None` = unknown.
     input_modalities: Mutex<Option<Vec<sven_model::catalog::InputModality>>>,
+    /// Per-request image limits as the server stated them; unknown = default.
+    image_limits: Mutex<sven_model::catalog::ImageLimits>,
     /// The adapter seen on the last answering probe; the outer `None` until
     /// there is one, so the first answer is a baseline and not a change.
     adapter: Mutex<Option<Option<AdapterRef>>>,
@@ -241,6 +244,7 @@ impl LiveState {
             max_output_tokens: AtomicU32::new(0),
             tools: AtomicU8::new(TOOLS_UNKNOWN),
             input_modalities: Mutex::new(None),
+            image_limits: Mutex::new(sven_model::catalog::ImageLimits::default()),
             adapter: Mutex::new(None),
             pending_change: Mutex::new(None),
             last_probe: Mutex::new(None),
@@ -261,6 +265,10 @@ impl LiveState {
             .lock()
             .expect("modalities poisoned")
             .clone()
+    }
+
+    pub(crate) fn image_limits(&self) -> sven_model::catalog::ImageLimits {
+        *self.image_limits.lock().expect("image limits poisoned")
     }
 
     pub(crate) fn tool_support(&self) -> Option<bool> {
@@ -330,6 +338,7 @@ impl LiveState {
             );
             *self.input_modalities.lock().expect("modalities poisoned") =
                 m.input_modalities.clone();
+            *self.image_limits.lock().expect("image limits poisoned") = m.image_limits;
         }
         if served.is_some() {
             self.note_adapter(entry.and_then(|m| m.adapter.clone()));

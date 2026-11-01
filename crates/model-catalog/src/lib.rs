@@ -27,7 +27,7 @@
 mod pricing;
 mod served;
 pub use pricing::{CachePricing, Pricing};
-pub use served::{served_input_modalities, served_pricing_of, token_count};
+pub use served::{served_image_limits, served_input_modalities, served_pricing_of, token_count};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -48,6 +48,25 @@ pub enum InputModality {
     Text,
     Image,
     Audio,
+}
+
+/// The most images one request may carry, as the serving endpoint states it.
+/// A field is `None` when the endpoint did not state it - unknown, never "no
+/// limit" and never a guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ImageLimits {
+    /// Most images in one request.
+    pub max_images: Option<u32>,
+    /// Most pixels, summed over every image of one request.
+    pub max_pixels: Option<u64>,
+}
+
+impl ImageLimits {
+    /// `true` when the endpoint stated at least one limit.
+    #[must_use]
+    pub fn is_known(&self) -> bool {
+        self.max_images.is_some() || self.max_pixels.is_some()
+    }
 }
 
 fn default_input_modalities() -> Vec<InputModality> {

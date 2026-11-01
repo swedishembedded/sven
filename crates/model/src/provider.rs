@@ -8,7 +8,7 @@ use std::pin::Pin;
 pub use sven_vocab::AdapterRef;
 
 use crate::{
-    catalog::{InputModality, ModelCatalogEntry},
+    catalog::{ImageLimits, InputModality, ModelCatalogEntry},
     CompletionRequest, ResponseEvent,
 };
 
@@ -53,6 +53,9 @@ pub struct ServedModel {
     /// What the model accepts besides text, when the server says
     /// (`architecture.input_modalities` or `capabilities`).
     pub input_modalities: Option<Vec<InputModality>>,
+    /// The most images (and pixels over them) one request may carry, as far
+    /// as the server states it; a field it left out is unknown.
+    pub image_limits: ImageLimits,
     /// The adapter currently applied to this model, when the server reports one.
     pub adapter: Option<AdapterRef>,
 }
@@ -201,6 +204,13 @@ pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
     /// are unreported, never that the model is text-only.
     fn input_modalities_reported(&self) -> bool {
         crate::catalog::lookup(self.name(), self.model_name()).is_some()
+    }
+
+    /// The per-request image limits the endpoint stated for this model;
+    /// unknown fields stay `None`. Callers hold a request's images to them
+    /// with [`crate::sanitize::limit_images`]. The default is unknown.
+    fn image_limits(&self) -> ImageLimits {
+        ImageLimits::default()
     }
 
     /// Returns `true` if this model supports image input.

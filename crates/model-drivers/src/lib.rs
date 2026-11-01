@@ -308,6 +308,12 @@ impl ModelProvider for ConfigBoundedProvider {
             .unwrap_or_else(|| self.inner.input_modalities())
     }
 
+    fn image_limits(&self) -> sven_model::catalog::ImageLimits {
+        self.live
+            .as_ref()
+            .map_or_else(|| self.inner.image_limits(), |l| l.image_limits())
+    }
+
     fn input_modalities_reported(&self) -> bool {
         self.input_modalities.is_some()
             || self

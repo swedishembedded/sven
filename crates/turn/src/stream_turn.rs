@@ -20,7 +20,6 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use anyhow::Context as _;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -473,8 +472,7 @@ pub async fn stream_turn_attributed(
     let limits = limits.into();
     let output_limit = output_limit.into();
     let core_tool_count = tools.iter().filter(|s| !s.is_mcp).count();
-    let modalities = model.input_modalities();
-    let messages = sven_model::sanitize::strip_images_if_unsupported(messages, &modalities);
+    let (messages, image_limits) = crate::request_images::fit(model, messages);
 
     let (thinking_token_cap, thinking_time_cap) = thinking_budget_override()
         .unwrap_or(limits.thinking)
@@ -505,7 +503,10 @@ pub async fn stream_turn_attributed(
     let mut watch = StallWatch::new(model, &limits.stall, limits.stream_idle);
     let mut stream = watch
         .connect(
-            async { model.complete(req).await.context("model completion failed") },
+            async {
+                (model.complete(req).await)
+                    .map_err(|e| crate::request_images::note_refusal(e, image_limits))
+            },
             tx,
         )
         .await?;

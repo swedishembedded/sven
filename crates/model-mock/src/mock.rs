@@ -81,6 +81,8 @@ pub struct ScriptedMockProvider {
     name: String,
     /// Claimed input modalities.  Defaults to `[Text]` (conservative).
     modalities: Vec<InputModality>,
+    /// Per-request image limits the mock reports; unknown by default.
+    image_limits: sven_model::catalog::ImageLimits,
     /// The last `CompletionRequest` seen by this provider.
     /// Written on each `complete()` call so tests can inspect what was sent.
     pub last_request: Arc<Mutex<Option<CompletionRequest>>>,
@@ -95,6 +97,7 @@ impl ScriptedMockProvider {
             scripts: Arc::new(Mutex::new(scripts)),
             name: "scripted-mock".into(),
             modalities: vec![InputModality::Text],
+            image_limits: sven_model::catalog::ImageLimits::default(),
             last_request: Arc::new(Mutex::new(None)),
         }
     }
@@ -106,6 +109,12 @@ impl ScriptedMockProvider {
     /// reach the provider.
     pub fn with_vision(mut self) -> Self {
         self.modalities = vec![InputModality::Text, InputModality::Image];
+        self
+    }
+
+    /// Declare the per-request image limits this mock's server states.
+    pub fn with_image_limits(mut self, limits: sven_model::catalog::ImageLimits) -> Self {
+        self.image_limits = limits;
         self
     }
 
@@ -180,6 +189,10 @@ impl sven_model::ModelProvider for ScriptedMockProvider {
 
     fn input_modalities_reported(&self) -> bool {
         true
+    }
+
+    fn image_limits(&self) -> sven_model::catalog::ImageLimits {
+        self.image_limits
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {

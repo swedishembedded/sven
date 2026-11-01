@@ -18,12 +18,13 @@
 //! | `context_window` | `context_length`, else `max_model_len`, else `context_window` |
 //! | `max_output_tokens` | `top_provider.max_completion_tokens`, else `max_output_tokens` |
 //! | `input_modalities` | `architecture.input_modalities`, else `capabilities` |
+//! | image limits ([`served_image_limits`]) | `max_images_per_request`, `max_image_pixels_per_request` |
 //! | `pricing` | `pricing` (see [`served_pricing_of`]) |
 //! | `zero_data_retention` | `zero_data_retention` (a boolean) |
 
 use serde_json::Value;
 
-use crate::{CachePricing, InputModality, ModelCatalogEntry, Pricing};
+use crate::{CachePricing, ImageLimits, InputModality, ModelCatalogEntry, Pricing};
 
 impl ModelCatalogEntry {
     /// Read one `data[]` element of a `/models` response for `provider`.
@@ -63,6 +64,19 @@ impl ModelCatalogEntry {
 pub fn token_count(v: Option<&Value>) -> Option<u32> {
     let n = v?.as_u64().filter(|&n| n > 0)?;
     Some(u32::try_from(n).unwrap_or(u32::MAX))
+}
+
+/// The per-request image limits one `GET /models` entry states:
+/// `max_images_per_request` and `max_image_pixels_per_request`, positive
+/// integers. A missing, zero or non-integer field is unknown.
+#[must_use]
+pub fn served_image_limits(item: &Value) -> ImageLimits {
+    let positive = |key: &str| item.get(key).and_then(Value::as_u64).filter(|&n| n > 0);
+    ImageLimits {
+        max_images: positive("max_images_per_request")
+            .map(|n| u32::try_from(n).unwrap_or(u32::MAX)),
+        max_pixels: positive("max_image_pixels_per_request"),
+    }
 }
 
 fn input_modalities_of(item: &Value) -> Vec<InputModality> {
@@ -169,6 +183,23 @@ mod tests {
         assert_eq!(cache.read_per_mtok, 0.014);
         assert_eq!(cache.write_per_mtok, 0.18);
         assert_eq!(cache.ttl_secs, None);
+    }
+
+    #[test]
+    fn image_limits_are_read_when_stated_and_unknown_otherwise() {
+        let stated = json!({"id": "m", "max_images_per_request": 8,
+            "max_image_pixels_per_request": 16_000_000u64});
+        assert_eq!(
+            served_image_limits(&stated),
+            ImageLimits {
+                max_images: Some(8),
+                max_pixels: Some(16_000_000)
+            }
+        );
+        let junk = json!({"id": "m", "max_images_per_request": 0,
+            "max_image_pixels_per_request": "lots"});
+        assert_eq!(served_image_limits(&junk), ImageLimits::default());
+        assert!(!served_image_limits(&json!({"id": "m"})).is_known());
     }
 
     #[test]
