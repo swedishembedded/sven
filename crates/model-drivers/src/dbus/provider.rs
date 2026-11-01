@@ -165,7 +165,7 @@ impl DbusProvider {
     /// Assemble the `params` JSON object for one request.
     ///
     /// `messages` is a JSON **string** value inside the object, not a nested
-    /// array — brain declares that parameter as `ParamType::Str`, so the array
+    /// array - brain declares that parameter as `ParamType::Str`, so the array
     /// is serialised once into a string and the whole object once more.
     fn build_params(&self, req: &CompletionRequest) -> Result<String> {
         let flattened = flatten_messages(&req.messages);
@@ -414,6 +414,10 @@ impl sven_model::ModelProvider for DbusProvider {
             InputModality::Image,
             InputModality::Audio,
         ]
+    }
+
+    fn input_modalities_reported(&self) -> bool {
+        true
     }
 
     /// The model ids the server serves (`Brain1.Manager.ListModels`), which

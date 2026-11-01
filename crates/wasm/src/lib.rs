@@ -56,7 +56,7 @@ use sven_kernel::ErasedRuntime;
 use sven_machines::machines::reactive_agent::CHAT_THREAD;
 use sven_machines::ReactiveAgentMachine;
 use sven_model::ModelProvider;
-use sven_model_drivers::OpenAiProvider;
+use sven_model_drivers::OpenAICompatProvider;
 #[cfg(target_arch = "wasm32")]
 use sven_tool_api::{ApprovalPolicy, Tool};
 use sven_tool_registry::ToolRegistry;
@@ -222,17 +222,13 @@ impl SvenSession {
     ) -> Result<SvenSession, JsError> {
         let options: SessionOptions = serde_json::from_str(options)
             .map_err(|e| JsError::new(&format!("session options: {e}")))?;
-        let model: Arc<dyn ModelProvider> = Arc::new(match options.api_key {
-            Some(key) => OpenAiProvider::new(
-                options.model,
-                Some(key),
-                Some(options.base_url),
-                None,
-                None,
-                serde_json::Value::Null,
-            ),
-            None => OpenAiProvider::authenticated_by_origin(options.model, &options.base_url),
-        });
+        // No key: the endpoint is same-origin and the page's session cookie
+        // authenticates the caller.
+        let model: Arc<dyn ModelProvider> = Arc::new(OpenAICompatProvider::openai(
+            options.model,
+            options.api_key,
+            &options.base_url,
+        ));
         let capabilities: HashSet<ToolCapability> = options
             .tools
             .iter()

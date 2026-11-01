@@ -43,16 +43,18 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::debug;
 
-use sven_model::{catalog::ModelCatalogEntry, CompletionRequest, ResponseStream};
-/// How to send the API key in HTTP requests.
+use sven_model::{catalog::ModelCatalogEntry, CompletionRequest, DriverMeta, ResponseStream};
+
+use crate::ModelConfig;
+/// How to send the API key in HTTP requests. A request carries no
+/// credential at all when there is no key (a local server, or an endpoint its
+/// caller reaches by other means).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthStyle {
     /// `Authorization: Bearer <key>` - standard for most providers.
     Bearer,
     /// `api-key: <key>` - Azure OpenAI style.
     ApiKeyHeader,
-    /// No authentication header - local servers (Ollama, vLLM, LM Studio).
-    None,
 }
 
 /// OpenAI-compatible chat completion provider.
@@ -113,7 +115,7 @@ impl OpenAICompatProvider {
     /// - `base_url` - API base that ends **before** `/chat/completions`, e.g.
     ///   `https://api.groq.com/openai/v1`
     /// - `max_tokens` - `None` uses the catalog default or 4096
-    /// - `temperature` - `None` defaults to [`crate::DEFAULT_TEMPERATURE`]
+    /// - `temperature` - `None` defaults to the driver default temperature
     /// - `extra_headers` - additional `(name, value)` pairs sent on every request
     /// - `auth_style` - how the key is attached to requests
     /// - `extra_body` - JSON object merged verbatim into the request body
@@ -146,6 +148,64 @@ impl OpenAICompatProvider {
             response_format_refused: std::sync::atomic::AtomicBool::new(false),
             sends_reasoning: crate::discovery::is_local_endpoint(base),
         }
+    }
+
+    /// The client for the registry driver `driver`, configured by its data:
+    /// the headers it adds, the options it rewrites, the bearer key if one
+    /// resolved. `base_url` is the resolved API root.
+    #[must_use]
+    pub fn for_driver(
+        driver: &'static DriverMeta,
+        cfg: &ModelConfig,
+        api_key: Option<String>,
+        base_url: &str,
+        max_tokens: Option<u32>,
+    ) -> Self {
+        let extras = &driver.requests;
+        let mut headers: Vec<(String, String)> = extras
+            .headers
+            .iter()
+            .map(|(name, value)| ((*name).into(), (*value).into()))
+            .collect();
+        for (option, header) in extras.headers_from_options {
+            if let Some(value) = cfg.driver_options.get(option).and_then(|v| v.as_str()) {
+                headers.push(((*header).into(), value.into()));
+            }
+        }
+        let options = match extras.rewrite_options {
+            Some(rewrite) => rewrite(cfg.driver_options.clone()),
+            None => cfg.driver_options.clone(),
+        };
+        Self::new(
+            driver.id,
+            cfg.name.clone(),
+            api_key,
+            base_url,
+            max_tokens,
+            cfg.temperature,
+            headers,
+            AuthStyle::Bearer,
+            options,
+        )
+    }
+
+    /// A plain OpenAI-protocol endpoint named `openai`, for an embedder that
+    /// has no configuration file: `api_key` is sent as a bearer token, and
+    /// `None` sends no credential (an endpoint its caller reaches by other
+    /// means, such as a page's same-origin endpoint under its session cookie).
+    #[must_use]
+    pub fn openai(model: String, api_key: Option<String>, base_url: &str) -> Self {
+        Self::new(
+            "openai",
+            model,
+            api_key,
+            base_url,
+            None,
+            None,
+            vec![],
+            AuthStyle::Bearer,
+            serde_json::Value::Null,
+        )
     }
 
     /// Construct a provider from a **pre-built** chat completions URL.
@@ -193,7 +253,6 @@ impl OpenAICompatProvider {
             Some(key) => match self.auth_style {
                 AuthStyle::Bearer => req.bearer_auth(key),
                 AuthStyle::ApiKeyHeader => req.header("api-key", key),
-                AuthStyle::None => req,
             },
             None => req,
         }
@@ -607,23 +666,7 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
 
         let request = |body: &Value| -> anyhow::Result<reqwest::RequestBuilder> {
             let mut http_req = self.client.post(&self.chat_url).json(body);
-            http_req = match self.auth_style {
-                AuthStyle::Bearer => {
-                    let key = self
-                    .api_key
-                    .as_deref()
-                    .context("API key not set; store one with `sven auth set <provider>`, or give api_key or api_key_file in config")?;
-                    http_req.bearer_auth(key)
-                }
-                AuthStyle::ApiKeyHeader => {
-                    let key = self
-                    .api_key
-                    .as_deref()
-                    .context("API key not set; store one with `sven auth set <provider>`, or give api_key or api_key_file in config")?;
-                    http_req.header("api-key", key)
-                }
-                AuthStyle::None => http_req,
-            };
+            http_req = self.authed(http_req);
             for (name, val) in &self.extra_headers {
                 http_req = http_req.header(name.as_str(), val.as_str());
             }
@@ -690,9 +733,59 @@ mod tests {
             Some(1024),
             Some(0.0),
             vec![],
-            AuthStyle::None,
+            AuthStyle::Bearer,
             serde_json::Value::Null,
         )
+    }
+
+    fn config(provider: &str, options: serde_json::Value) -> ModelConfig {
+        ModelConfig {
+            provider: provider.into(),
+            name: "m".into(),
+            driver_options: options,
+            ..ModelConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_gateways_headers_and_option_rewrites_come_from_its_registry_entry() {
+        let driver = |id| sven_model::get_driver(id).unwrap();
+        let openrouter = OpenAICompatProvider::for_driver(
+            driver("openrouter"),
+            &config("openrouter", json!({"auto_router_allowed_models": ["a/*"]})),
+            Some("k".into()),
+            "http://localhost:9999/v1",
+            None,
+        );
+        assert!(openrouter
+            .extra_headers
+            .contains(&("X-Title".into(), "sven".into())));
+        assert_eq!(
+            openrouter.extra_body["plugins"][0]["allowed_models"],
+            json!(["a/*"])
+        );
+
+        let portkey = OpenAICompatProvider::for_driver(
+            driver("portkey"),
+            &config("portkey", json!({"portkey_virtual_key": "pk"})),
+            Some("k".into()),
+            "http://localhost:9999/v1",
+            None,
+        );
+        assert_eq!(
+            portkey.extra_headers,
+            [("x-portkey-virtual-key".to_string(), "pk".to_string())]
+        );
+
+        let groq = OpenAICompatProvider::for_driver(
+            driver("groq"),
+            &config("groq", serde_json::Value::Null),
+            None,
+            "http://localhost:9999/v1",
+            None,
+        );
+        assert!(groq.extra_headers.is_empty());
+        assert_eq!(groq.name(), "groq");
     }
 
     #[test]
@@ -723,7 +816,7 @@ mod tests {
             None,
             None,
             vec![],
-            AuthStyle::None,
+            AuthStyle::Bearer,
             serde_json::Value::Null,
         );
         assert_eq!(p.chat_url, "http://localhost:1234/v1/chat/completions");
@@ -762,7 +855,7 @@ mod tests {
             None,
             None,
             vec![],
-            AuthStyle::None,
+            AuthStyle::Bearer,
             extra,
         );
 
@@ -814,7 +907,7 @@ mod tests {
             None,
             Some(0.2),
             vec![],
-            AuthStyle::None,
+            AuthStyle::Bearer,
             extra,
         );
 

@@ -317,6 +317,10 @@ impl ModelProvider for RecordingProvider {
     fn input_modalities(&self) -> Vec<sven_model::catalog::InputModality> {
         self.inner.input_modalities()
     }
+
+    fn input_modalities_reported(&self) -> bool {
+        self.inner.input_modalities_reported()
+    }
 }
 
 /// Writes the response line when the stream it rides on is dropped.

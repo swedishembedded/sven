@@ -3,7 +3,7 @@
 This document describes the driver architecture in `sven-model-drivers` and
 explains how to add support for a new model provider. (`sven-model` itself
 is just the `ModelProvider` trait + request/response types + the pure
-`ModelResolver`/`resolve_model_cfg` config-resolution logic — no reqwest, no
+`ModelResolver`/`resolve_model_cfg` config-resolution logic - no reqwest, no
 per-provider dependency closure. See that crate's `lib.rs` for how the two
 fit together, and `sven-model-catalog`/`sven-model-mock` for the cache of
 served models and the mock providers.)
@@ -16,15 +16,14 @@ sven_model_drivers::ModelConfig
         ▼
 sven_model_drivers::from_config()  ← single dispatch function
         │
-        ├─ "openai"    → OpenAiProvider      (wraps OpenAICompatProvider)
         ├─ "anthropic" → AnthropicProvider   (native Anthropic Messages API)
         ├─ "google"    → GoogleProvider      (native Gemini API)
         ├─ "aws"       → BedrockProvider     (native Bedrock Converse + SigV4)
         ├─ "cohere"    → CohereProvider      (native Cohere Chat v2 API)
         ├─ "azure"     → AzureCompatProvider (Azure OpenAI: different URL/auth)
-        ├─ "groq"      → OpenAICompatProvider("groq", ...)
-        ├─ "ollama"    → OpenAICompatProvider("ollama", ...)
-        │  ...30+ more providers...
+        ├─ every other registered driver (openai, groq, ollama, vllm, litellm,
+        │  openrouter, portkey, cloudflare, sven, brain, ...)
+        │                → OpenAICompatProvider, configured by its registry entry
         │
         ▼
     Box<dyn ModelProvider>
@@ -99,20 +98,14 @@ DriverMeta {
 },
 ```
 
-2. **Add a match arm** in `src/lib.rs` `from_config`:
-
-```rust
-"myprovider" => Ok(Box::new(OpenAICompatProvider::new(
-    "myprovider",
-    cfg.name.clone(),
-    key(),
-    &base_url("https://api.myprovider.com/v1"),
-    resolved_max_tokens,
-    cfg.temperature,
-    vec![], // extra headers if needed
-    AuthStyle::Bearer,
-))),
-```
+   No code is needed for a plain OpenAI-protocol endpoint. Leave
+   `default_base_url` as `None` when the user must supply the URL, set
+   `local: true` for a server on the user's own hardware, and fill `requests`
+   (`RequestExtras`) when the gateway needs fixed headers, a header taken from
+   `driver_options`, or `driver_options` rewritten into body fields. The
+   catch-all arm in `from_config` builds `OpenAICompatProvider::for_driver`
+   from that entry, so discovery, modalities, context window, tool support,
+   reasoning resend and request recording behave the same for every driver.
 
 3. **Models need no entries.** An OpenAI-compatible `/models` list is read as
    it stands, including `context_length`, `top_provider.max_completion_tokens`,
@@ -135,25 +128,19 @@ SigV4), and `src/cohere.rs` (Cohere Chat v2) for reference implementations.
 
 ## Auth styles
 
-`OpenAICompatProvider` supports three auth modes:
+`OpenAICompatProvider` supports two auth styles; a request carries no
+credential when no key resolved (Ollama, LM Studio, vLLM):
 
 | Style           | Header                         | Used by                    |
 |-----------------|-------------------------------|----------------------------|
 | `Bearer`        | `Authorization: Bearer <key>` | Most hosted providers      |
 | `ApiKeyHeader`  | `api-key: <key>`              | Azure OpenAI               |
-| `None`          | (no header)                   | Ollama, LM Studio, vLLM    |
 
 ## Extra headers
 
-Some providers require custom headers (e.g. OpenRouter's `HTTP-Referer`).
-Pass them as the `extra_headers` parameter:
-
-```rust
-vec![
-    ("HTTP-Referer".into(), "https://github.com/yourorg/sven".into()),
-    ("X-Title".into(), "sven".into()),
-]
-```
+Some gateways require custom headers (OpenRouter's `HTTP-Referer`, Portkey's
+virtual key). They are data in the driver's `requests` entry in
+`crates/model/src/registry.rs`, never code in the client.
 
 ## AWS Bedrock specifics
 

@@ -178,6 +178,10 @@ impl sven_model::ModelProvider for ScriptedMockProvider {
         self.modalities.clone()
     }
 
+    fn input_modalities_reported(&self) -> bool {
+        true
+    }
+
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         *self.last_request.lock().unwrap() = Some(req);
         let events = {

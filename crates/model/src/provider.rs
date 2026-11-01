@@ -195,6 +195,14 @@ pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
             .unwrap_or_else(|| vec![InputModality::Text])
     }
 
+    /// Whether the endpoint (or the configuration) has said which inputs the
+    /// model takes. `false` means [`Self::input_modalities`] is only the
+    /// conservative guess, so a refusal built on it must say the modalities
+    /// are unreported, never that the model is text-only.
+    fn input_modalities_reported(&self) -> bool {
+        crate::catalog::lookup(self.name(), self.model_name()).is_some()
+    }
+
     /// Returns `true` if this model supports image input.
     fn supports_images(&self) -> bool {
         self.input_modalities().contains(&InputModality::Image)

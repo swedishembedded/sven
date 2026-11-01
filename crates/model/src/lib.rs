@@ -37,6 +37,6 @@ pub use manifest::{PromptManifest, PromptSections, SectionSpan, ToolDigest};
 pub use provider::{
     AdapterRef, ModelChange, ModelProvider, ResponseStream, ServedModel, ServedModels,
 };
-pub use registry::{get_driver, list_drivers, DriverMeta};
+pub use registry::{get_driver, list_drivers, DriverMeta, RequestExtras};
 pub use turns::{turns, Turn, TurnCall};
 pub use types::*;

@@ -38,9 +38,7 @@ mod discovery;
 mod embedding;
 mod google;
 pub mod listing;
-mod openai;
 pub(crate) mod openai_compat;
-mod openrouter;
 mod provider_check;
 pub mod reachable;
 pub mod request_log;
@@ -53,14 +51,13 @@ pub use api_key::{provider_base_url, provider_key};
 pub use config::{providers_schema, ModelConfig, ModelParams, ProviderEntry, Providers};
 #[cfg(not(target_arch = "wasm32"))]
 pub use embedding::OpenAiEmbedder;
-pub use openai::OpenAiProvider;
+pub use openai_compat::OpenAICompatProvider;
 pub use provider_check::{check_provider, ProviderCheck, ProviderReport, Verdict};
 pub use resolve::{resolve_model_cfg, resolve_model_from_config, ModelResolver};
 
 use anyhow::bail;
 use api_key::resolve_api_key;
 use async_trait::async_trait;
-use openai_compat::{AuthStyle, OpenAICompatProvider};
 use std::sync::Arc;
 use sven_model::{catalog, registry, ModelProvider};
 use sven_model_mock::{MockProvider, YamlMockProvider};
@@ -311,6 +308,15 @@ impl ModelProvider for ConfigBoundedProvider {
             .unwrap_or_else(|| self.inner.input_modalities())
     }
 
+    fn input_modalities_reported(&self) -> bool {
+        self.input_modalities.is_some()
+            || self
+                .live
+                .as_ref()
+                .is_some_and(|l| l.input_modalities().is_some())
+            || self.inner.input_modalities_reported()
+    }
+
     fn config_context_window(&self) -> Option<u32> {
         self.effective_context_window()
     }
@@ -391,20 +397,8 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
     // Either way, exposing max_tokens here is correct.
     let config_ctx = cfg.max_tokens;
 
-    // Helper that reads `base_url` from config or falls back to a static default.
-    let base_url =
-        |default: &str| -> String { cfg.base_url.clone().unwrap_or_else(|| default.into()) };
-
     let inner: Box<dyn ModelProvider> = match cfg.provider.as_str() {
         // ── Native drivers ────────────────────────────────────────────────────
-        "openai" => Box::new(OpenAiProvider::new(
-            cfg.name.clone(),
-            key(),
-            cfg.base_url.clone(),
-            resolved_max_tokens,
-            cfg.temperature,
-            cfg.driver_options.clone(),
-        )),
         "anthropic" => Box::new(AnthropicProvider::with_cache(
             cfg.name.clone(),
             key(),
@@ -469,119 +463,6 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
             ))
         }
 
-        // ── OpenAI-compatible gateways (special-cased for custom behaviour) ──
-        "openrouter" => {
-            let or_base = base_url("https://openrouter.ai/api/v1");
-            Box::new(OpenAICompatProvider::new(
-                "openrouter",
-                cfg.name.clone(),
-                key(),
-                &or_base,
-                resolved_max_tokens,
-                cfg.temperature,
-                vec![
-                    (
-                        "HTTP-Referer".into(),
-                        "https://github.com/svenai/sven".into(),
-                    ),
-                    ("X-Title".into(), "sven".into()),
-                ],
-                AuthStyle::Bearer,
-                openrouter::transform_openrouter_options(cfg),
-            ))
-        }
-        "portkey" => Box::new(OpenAICompatProvider::new(
-            "portkey",
-            cfg.name.clone(),
-            key(),
-            &base_url("https://api.portkey.ai/v1"),
-            resolved_max_tokens,
-            cfg.temperature,
-            portkey_extra_headers(cfg),
-            AuthStyle::Bearer,
-            cfg.driver_options.clone(),
-        )),
-        "litellm" => {
-            let b = cfg
-                .base_url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("litellm provider requires base_url in config"))?;
-            Box::new(OpenAICompatProvider::new(
-                "litellm",
-                cfg.name.clone(),
-                key(),
-                b,
-                resolved_max_tokens,
-                cfg.temperature,
-                vec![],
-                AuthStyle::Bearer,
-                cfg.driver_options.clone(),
-            ))
-        }
-        "cloudflare" => {
-            let b = cfg.base_url.as_deref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "cloudflare provider requires base_url in config (account-specific URL)"
-                )
-            })?;
-            Box::new(OpenAICompatProvider::new(
-                "cloudflare",
-                cfg.name.clone(),
-                key(),
-                b,
-                resolved_max_tokens,
-                cfg.temperature,
-                vec![],
-                AuthStyle::Bearer,
-                cfg.driver_options.clone(),
-            ))
-        }
-        // The sven server signed in to (`sven auth login`), the hosted
-        // service by default, or another one at `base_url`; see
-        // `sven_service`.
-        "sven" => {
-            let base = discovery::effective_base_url(cfg).unwrap_or_default();
-            let k = key();
-            let auth = if k.is_some() {
-                AuthStyle::Bearer
-            } else {
-                AuthStyle::None
-            };
-            Box::new(OpenAICompatProvider::new(
-                "sven",
-                cfg.name.clone(),
-                k,
-                &base,
-                resolved_max_tokens,
-                cfg.temperature,
-                vec![],
-                auth,
-                cfg.driver_options.clone(),
-            ))
-        }
-
-        // vLLM accepts an optional bearer token; auth style depends on whether
-        // a key is actually configured.
-        "vllm" => {
-            let k = key();
-            let auth = if k.is_some() {
-                AuthStyle::Bearer
-            } else {
-                AuthStyle::None
-            };
-            Box::new(OpenAICompatProvider::new(
-                "vllm",
-                cfg.name.clone(),
-                k,
-                &base_url("http://localhost:8000/v1"),
-                resolved_max_tokens,
-                cfg.temperature,
-                vec![],
-                auth,
-                cfg.driver_options.clone(),
-            ))
-        }
-
         // brain over D-Bus: not HTTP, so never the catch-all below.
         "dbus" => dbus::build(cfg, resolved_max_tokens, cfg.temperature)?,
 
@@ -597,13 +478,11 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
             }
         }
 
-        // ── Registry-driven OpenAI-compat catch-all ───────────────────────────
+        // ── Every other registered driver speaks the OpenAI protocol ──────────
         //
-        // All remaining registered providers are OpenAI-compatible and differ
-        // only in their default base URL and whether they require a bearer
-        // token.  Both values are already stored in the driver registry, so we
-        // can construct the provider generically rather than repeating the same
-        // eight-line block for every provider.
+        // One client, configured by the driver registry: default base URL,
+        // whether a base URL must be given, the headers and option rewrites
+        // of a gateway. A driver's name is never a reason for different code.
         other => {
             let meta = registry::get_driver(other).ok_or_else(|| {
                 let known: Vec<&str> = registry::known_driver_ids().collect();
@@ -614,24 +493,15 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
                     known.join(", ")
                 )
             })?;
-            let default_url = meta
-                .default_base_url
-                .ok_or_else(|| anyhow::anyhow!("{other} provider requires base_url in config"))?;
-            let auth = if meta.requires_api_key {
-                AuthStyle::Bearer
-            } else {
-                AuthStyle::None
-            };
-            Box::new(OpenAICompatProvider::new(
-                meta.id,
-                cfg.name.clone(),
+            let base_url = discovery::effective_base_url(cfg).ok_or_else(|| {
+                anyhow::anyhow!("the {other} provider requires base_url in config")
+            })?;
+            Box::new(OpenAICompatProvider::for_driver(
+                meta,
+                cfg,
                 key(),
-                &base_url(default_url),
+                &base_url,
                 resolved_max_tokens,
-                cfg.temperature,
-                vec![],
-                auth,
-                cfg.driver_options.clone(),
             ))
         }
     };
@@ -652,7 +522,7 @@ fn build_inner(cfg: &ModelConfig) -> anyhow::Result<BuiltProvider> {
 /// correct values even for models no endpoint has served limits for.
 ///
 /// Does no I/O beyond what driver construction itself requires (none, for
-/// every current driver) — for a version that additionally probes the live
+/// every current driver) - for a version that additionally probes the live
 /// server for its actual context window, see [`from_config_probed`].
 pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> {
     let (inner, context_window, max_output_tokens) = build_inner(cfg)?;
@@ -736,18 +606,6 @@ pub(crate) async fn resolve_probed(cfg: &ModelConfig) -> ModelConfig {
     discovery::resolve_empty_model_name(&cfg).await
 }
 
-fn portkey_extra_headers(cfg: &ModelConfig) -> Vec<(String, String)> {
-    let mut headers = Vec::new();
-    if let Some(vk) = cfg
-        .driver_options
-        .get("portkey_virtual_key")
-        .and_then(|v| v.as_str())
-    {
-        headers.push(("x-portkey-virtual-key".into(), vk.to_string()));
-    }
-    headers
-}
-
 /// Serializes every test of this crate that points process-global state
 /// (`XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR`, provider key variables) elsewhere:
 /// `cargo test` runs tests on parallel threads of one process, and two locks
@@ -792,7 +650,7 @@ mod tests {
             None,
             None,
             vec![],
-            openai_compat::AuthStyle::None,
+            openai_compat::AuthStyle::Bearer,
             serde_json::Value::Null,
         ));
         assert!(!inner.is_local(), "the driver alone says hosted");

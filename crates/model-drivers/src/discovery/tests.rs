@@ -529,19 +529,72 @@ async fn an_unreachable_server_yields_to_the_reserve() {
     );
 }
 
+/// Every OpenAI-protocol driver is one client configured by the driver
+/// registry, so each learns from its server what the model accepts: a
+/// driver that dropped discovery would take every model for text-only and
+/// refuse the images the server would take.
 #[tokio::test]
-async fn a_probed_client_of_a_local_vision_model_accepts_images() {
+async fn every_openai_compatible_driver_learns_what_its_server_accepts() {
     let url = serve(
         json!({"data": [{"id": "vl", "architecture": {"input_modalities": ["text", "image"]}}]})
             .to_string(),
     )
     .await;
+    for driver in [
+        "openai",
+        "vllm",
+        "litellm",
+        "ollama",
+        "lmstudio",
+        "openrouter",
+        "portkey",
+        "cloudflare",
+        "groq",
+    ] {
+        let cfg = ModelConfig {
+            provider: driver.into(),
+            name: "vl".into(),
+            base_url: Some(url.clone()),
+            api_key: Some("k".into()),
+            ..ModelConfig::default()
+        };
+        let client = crate::from_config_probed(&cfg).await.unwrap();
+        assert!(
+            client.supports_images(),
+            "{driver}: {:?}",
+            client.input_modalities()
+        );
+        assert!(client.input_modalities_reported(), "{driver}");
+    }
+}
+
+/// A server that cannot be asked has told nothing: its model is not known to
+/// be text-only, and the client says so rather than claim it.
+#[tokio::test]
+async fn a_server_that_cannot_be_asked_leaves_the_input_modalities_unreported() {
     let cfg = ModelConfig {
-        provider: "vllm".into(),
+        provider: "openai".into(),
         name: "vl".into(),
-        base_url: Some(url),
+        base_url: Some(closed().await),
+        api_key: Some("k".into()),
         ..ModelConfig::default()
     };
     let client = crate::from_config_probed(&cfg).await.unwrap();
-    assert!(client.supports_images(), "{:?}", client.input_modalities());
+    assert!(!client.supports_images());
+    assert!(!client.input_modalities_reported());
+
+    let text_only = serve(
+        json!({"data": [{"id": "vl", "architecture": {"input_modalities": ["text"]}}]}).to_string(),
+    )
+    .await;
+    let cfg = ModelConfig {
+        base_url: Some(text_only),
+        ..cfg
+    };
+    let client = crate::from_config_probed(&cfg).await.unwrap();
+    assert!(!client.supports_images());
+    assert!(
+        client.input_modalities_reported(),
+        "a server that said text only has been heard"
+    );
 }

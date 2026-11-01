@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **providers**: every OpenAI-protocol driver (`openai`, `openrouter`, `portkey`, `litellm`, `cloudflare`, `vllm`, `sven`, `brain`, `ollama` and the rest of the registry) is one client, `OpenAICompatProvider`, configured by its driver registry entry (default base URL, whether a base URL is required, locality, gateway headers and option rewrites). The `OpenAiProvider` type is gone from `sven-model-drivers`; an embedder builds `OpenAICompatProvider::openai(model, api_key, base_url)` (`api_key: None` sends no credential). A registry driver that needs no key now sends the key when one is configured.
+
+### Fixed
+- **providers**: an `openai` provider pointed at a local server or proxy now asks it what the model accepts, like every other OpenAI-compatible provider; it took every model for text-only and refused image attachments.
+
 ## [4.2.5] - 2026-10-30
 
 ## [4.2.4] - 2026-10-30

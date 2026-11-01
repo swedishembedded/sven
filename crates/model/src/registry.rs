@@ -25,6 +25,54 @@ pub struct DriverMeta {
     /// can legitimately take minutes to answer (prefill of a long prompt on
     /// modest hardware), so its stall limits are far more generous.
     pub local: bool,
+    /// What the driver adds to the OpenAI-protocol requests it sends.
+    /// Ignored by drivers that speak another protocol.
+    pub requests: RequestExtras,
+}
+
+/// What one OpenAI-protocol gateway needs on top of the plain protocol, as
+/// data: every such driver is the same client, configured by these.
+#[derive(Debug, Clone, Copy)]
+pub struct RequestExtras {
+    /// Headers sent on every request.
+    pub headers: &'static [(&'static str, &'static str)],
+    /// Headers taken from the user's `driver_options`, as
+    /// `(driver_options key, header name)`: the header is sent when the key
+    /// holds a string.
+    pub headers_from_options: &'static [(&'static str, &'static str)],
+    /// Rewrites the user's `driver_options` into the body fields the gateway
+    /// expects.
+    pub rewrite_options: Option<fn(serde_json::Value) -> serde_json::Value>,
+}
+
+impl RequestExtras {
+    /// The plain protocol: nothing added.
+    pub const NONE: Self = Self {
+        headers: &[],
+        headers_from_options: &[],
+        rewrite_options: None,
+    };
+}
+
+/// Rewrite the `auto_router_allowed_models` convenience key of OpenRouter's
+/// `driver_options` into the nested `plugins` structure its API expects:
+///
+/// ```yaml
+/// driver_options:
+///   auto_router_allowed_models: ["anthropic/*", "openai/gpt-5.1"]
+/// ```
+/// becomes `{ "plugins": [{ "id": "auto-router", "allowed_models": [...] }] }`.
+/// A raw `plugins` key is passed through unchanged.
+fn rewrite_openrouter_options(mut opts: serde_json::Value) -> serde_json::Value {
+    if let Some(allowed) = opts.get("auto_router_allowed_models").cloned() {
+        if let Some(map) = opts.as_object_mut() {
+            map.remove("auto_router_allowed_models");
+            map.entry("plugins").or_insert_with(
+                || serde_json::json!([{ "id": "auto-router", "allowed_models": allowed }]),
+            );
+        }
+    }
+    opts
 }
 
 /// Complete registry of supported drivers.
@@ -37,6 +85,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.openai.com/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "anthropic",
@@ -45,6 +94,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.anthropic.com"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "google",
@@ -53,6 +103,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://generativelanguage.googleapis.com"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "azure",
@@ -61,6 +112,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: None,
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "aws",
@@ -69,6 +121,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: None,
         requires_api_key: false,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "cohere",
@@ -77,6 +130,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.cohere.com"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     // ── Gateways ──────────────────────────────────────────────────────────────
     DriverMeta {
@@ -86,6 +140,14 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://openrouter.ai/api/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras {
+            headers: &[
+                ("HTTP-Referer", "https://github.com/svenai/sven"),
+                ("X-Title", "sven"),
+            ],
+            rewrite_options: Some(rewrite_openrouter_options),
+            ..RequestExtras::NONE
+        },
     },
     DriverMeta {
         id: "litellm",
@@ -94,6 +156,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: None,
         requires_api_key: false,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "portkey",
@@ -102,6 +165,10 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.portkey.ai/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras {
+            headers_from_options: &[("portkey_virtual_key", "x-portkey-virtual-key")],
+            ..RequestExtras::NONE
+        },
     },
     DriverMeta {
         id: "vercel",
@@ -110,6 +177,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://sdk.vercel.ai/openai"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "cloudflare",
@@ -118,6 +186,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: None,
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     // ── Fast inference platforms ───────────────────────────────────────────────
     DriverMeta {
@@ -127,6 +196,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.groq.com/openai/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "cerebras",
@@ -135,6 +205,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.cerebras.ai/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     // ── Open model platforms ───────────────────────────────────────────────────
     DriverMeta {
@@ -144,6 +215,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.together.xyz/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "fireworks",
@@ -152,6 +224,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.fireworks.ai/inference/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "deepinfra",
@@ -160,6 +233,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.deepinfra.com/v1/openai"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "nebius",
@@ -168,6 +242,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.studio.nebius.ai/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "sambanova",
@@ -176,6 +251,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.sambanova.ai/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "huggingface",
@@ -184,6 +260,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://router.huggingface.co/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "nvidia",
@@ -192,6 +269,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://integrate.api.nvidia.com/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     // ── Specialized ───────────────────────────────────────────────────────────
     DriverMeta {
@@ -201,6 +279,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.perplexity.ai"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "mistral",
@@ -209,6 +288,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.mistral.ai/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "xai",
@@ -217,6 +297,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.x.ai/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     // ── Regional providers ────────────────────────────────────────────────────
     DriverMeta {
@@ -226,6 +307,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.deepseek.com/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "moonshot",
@@ -234,6 +316,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.moonshot.cn/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "dashscope",
@@ -242,6 +325,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://dashscope.aliyuncs.com/compatible-mode/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "glm",
@@ -250,6 +334,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://open.bigmodel.cn/api/paas/v4"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "minimax",
@@ -258,6 +343,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://api.minimax.chat/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "qianfan",
@@ -266,6 +352,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://qianfan.baidubce.com/v2"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "sven",
@@ -274,6 +361,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("https://sven.swedishembedded.com/v1"),
         requires_api_key: true,
         local: false,
+        requests: RequestExtras::NONE,
     },
     // ── Local / OSS ───────────────────────────────────────────────────────────
     DriverMeta {
@@ -283,6 +371,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("http://127.0.0.1:8788/v1"),
         requires_api_key: true,
         local: true,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "ollama",
@@ -291,6 +380,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("http://localhost:11434/v1"),
         requires_api_key: false,
         local: true,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "vllm",
@@ -299,6 +389,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("http://localhost:8000/v1"),
         requires_api_key: false,
         local: true,
+        requests: RequestExtras::NONE,
     },
     DriverMeta {
         id: "lmstudio",
@@ -307,6 +398,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: Some("http://localhost:1234/v1"),
         requires_api_key: false,
         local: true,
+        requests: RequestExtras::NONE,
     },
     // ── Local IPC ─────────────────────────────────────────────────────────────
     DriverMeta {
@@ -320,6 +412,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: None,
         requires_api_key: false,
         local: true,
+        requests: RequestExtras::NONE,
     },
     // ── Testing ───────────────────────────────────────────────────────────────
     DriverMeta {
@@ -329,6 +422,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         default_base_url: None,
         requires_api_key: false,
         local: false,
+        requests: RequestExtras::NONE,
     },
 ];
 
@@ -357,6 +451,29 @@ mod tests {
         local.sort_unstable();
         // `sven` is the hosted service, not a server here.
         assert_eq!(local, ["brain", "dbus", "lmstudio", "ollama", "vllm"]);
+    }
+
+    #[test]
+    fn gateways_declare_what_they_add_to_a_request() {
+        let openrouter = get_driver("openrouter").unwrap().requests;
+        assert!(openrouter.headers.contains(&("X-Title", "sven")));
+        let rewrite = openrouter
+            .rewrite_options
+            .expect("openrouter rewrites options");
+        assert_eq!(
+            rewrite(serde_json::json!({"auto_router_allowed_models": ["a/*"], "k": 1})),
+            serde_json::json!({"plugins": [{"id": "auto-router", "allowed_models": ["a/*"]}], "k": 1}),
+        );
+        assert_eq!(
+            rewrite(serde_json::json!({"plugins": [], "auto_router_allowed_models": ["a/*"]})),
+            serde_json::json!({"plugins": []}),
+            "a raw plugins key wins"
+        );
+        assert_eq!(
+            get_driver("portkey").unwrap().requests.headers_from_options,
+            [("portkey_virtual_key", "x-portkey-virtual-key")]
+        );
+        assert!(get_driver("groq").unwrap().requests.headers.is_empty());
     }
 
     #[test]
