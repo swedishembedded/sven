@@ -48,6 +48,48 @@ pub enum McpCommands {
         brave_api_key: Option<String>,
     },
 
+    /// Add an MCP server to a configuration file and check it.
+    ///
+    ///   sven mcp add docs https://mcp.example.com/mcp --oauth
+    ///   sven mcp add github --env GITHUB_TOKEN='${GITHUB_TOKEN}' -- npx -y @modelcontextprotocol/server-github
+    ///
+    /// A URL is a Streamable HTTP server; anything else is the command (and
+    /// arguments) of a stdio server. Write a secret as `${VAR}`, so the file
+    /// holds the variable's name rather than the secret.
+    Add {
+        /// The server's name, which prefixes its tools: letters, digits,
+        /// `_` and `-`.
+        name: String,
+        /// The server's URL, or the stdio command and its arguments; put
+        /// a command after `--` when its arguments start with `-`.
+        #[arg(required = true, num_args = 1..)]
+        target: Vec<String>,
+        /// An HTTP header to send, `Name=value` (repeatable).
+        #[arg(long = "header", value_name = "NAME=VALUE")]
+        headers: Vec<String>,
+        /// An environment variable for a stdio server, `NAME=value`
+        /// (repeatable).
+        #[arg(long = "env", value_name = "NAME=VALUE")]
+        env: Vec<String>,
+        /// The server signs in with OAuth (`oauth: {}`); scopes are
+        /// discovered from the server.
+        #[arg(long)]
+        oauth: bool,
+        /// Which configuration file: `user` (yours, every project),
+        /// `project` (this directory's) or `workspace` (the nearest above).
+        #[arg(long, default_value = "user")]
+        scope: sven_config::scope::Scope,
+    },
+
+    /// Remove an MCP server from a configuration file.
+    Remove {
+        /// The server's name in `mcp_servers:`.
+        name: String,
+        /// Which configuration file: `user`, `project` or `workspace`.
+        #[arg(long, default_value = "user")]
+        scope: sven_config::scope::Scope,
+    },
+
     /// List the MCP servers sven is configured to use (`mcp_servers:`), each
     /// with whether it connects, how many tools it offers, and whether it
     /// needs a sign-in.
@@ -91,6 +133,18 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             ));
             crate::serve_stdio(registry).await
         }
+        McpCommands::Add {
+            name,
+            target,
+            headers,
+            env,
+            oauth,
+            scope,
+        } => {
+            let entry = sven_mcp_client::config_edit::server_entry(target, headers, env, *oauth)?;
+            add(name, entry, *scope).await
+        }
+        McpCommands::Remove { name, scope } => remove(name, *scope),
         McpCommands::List => list().await,
         McpCommands::Auth { server } => auth(server).await,
         McpCommands::Logout { server } => {
@@ -100,6 +154,71 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+async fn add(
+    name: &str,
+    entry: serde_yaml::Value,
+    scope: sven_config::scope::Scope,
+) -> anyhow::Result<()> {
+    let file = sven_mcp_client::config_edit::add(scope, name, entry)?;
+    println!("Added MCP server '{name}' to {}.", file.display());
+
+    // Say at once whether it works, and what it needs if not.
+    let manager = manager(false)?;
+    if let Some((status, detail)) = check(&manager, &[name.to_string()]).await.pop() {
+        match status {
+            sven_mcp_client::ServerStatus::Connected => println!("It connects: {detail}."),
+            sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
+                println!("It needs a sign-in: run `sven mcp auth {name}`.");
+            }
+            _ => println!("It does not connect yet: {detail}"),
+        }
+    }
+    Ok(())
+}
+
+/// Connect each of `names` once and say how it went: its status and a line
+/// of detail (its tools, what it needs, or the error).
+async fn check(
+    manager: &std::sync::Arc<sven_mcp_client::McpManager>,
+    names: &[String],
+) -> Vec<(sven_mcp_client::ServerStatus, String)> {
+    let mut errors = std::collections::HashMap::new();
+    for name in names {
+        if let Err(e) = manager.connect(name).await {
+            errors.insert(name.clone(), format!("{e:#}"));
+        }
+    }
+    // A server that needs a sign-in reports so from a task of its own.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let statuses = manager.server_statuses().await;
+    names
+        .iter()
+        .filter_map(|name| statuses.iter().find(|s| &s.name == name))
+        .map(|s| {
+            let detail = match &s.status {
+                sven_mcp_client::ServerStatus::Connected => {
+                    format!("{} tools, {} prompts", s.tool_count, s.prompt_count)
+                }
+                sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
+                    format!("run `sven mcp auth {}`", s.name)
+                }
+                sven_mcp_client::ServerStatus::Disabled => "disabled in the configuration".into(),
+                other => errors
+                    .get(&s.name)
+                    .cloned()
+                    .unwrap_or_else(|| other.label().to_string()),
+            };
+            (s.status.clone(), detail)
+        })
+        .collect()
+}
+
+fn remove(name: &str, scope: sven_config::scope::Scope) -> anyhow::Result<()> {
+    let file = sven_mcp_client::config_edit::remove(scope, name)?;
+    println!("Removed MCP server '{name}' from {}.", file.display());
+    Ok(())
 }
 
 /// A manager over the configured servers. The events it emits are not
@@ -123,29 +242,14 @@ async fn list() -> anyhow::Result<()> {
         .map(|s| s.name)
         .collect();
     if names.is_empty() {
-        println!("No MCP servers are configured (`mcp_servers:` in the configuration file).");
+        println!(
+            "No MCP servers are configured. Add one with `sven mcp add NAME URL` \
+             or `sven mcp add NAME -- COMMAND ARGS...`."
+        );
         return Ok(());
     }
-    for name in &names {
-        let _ = manager.connect(name).await;
-    }
-    // A server that needs a sign-in reports so from a task of its own.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    for status in manager.server_statuses().await {
-        let detail = match &status.status {
-            sven_mcp_client::ServerStatus::Connected => {
-                format!(
-                    "{} tools, {} prompts",
-                    status.tool_count, status.prompt_count
-                )
-            }
-            sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
-                format!("run `sven mcp auth {}`", status.name)
-            }
-            sven_mcp_client::ServerStatus::Failed { error } => error.clone(),
-            _ => String::new(),
-        };
-        println!("{:<20} {:<14} {detail}", status.name, status.status.label());
+    for (name, (status, detail)) in names.iter().zip(check(&manager, &names).await) {
+        println!("{name:<20} {:<14} {detail}", status.label());
     }
     Ok(())
 }

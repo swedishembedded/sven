@@ -22,9 +22,9 @@ url          = "2.5"
 webbrowser   = "1"
 rmcp         = { workspace = true, features = ["client", "auth", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 fs4          = { workspace = true }
+serde_yaml   = { workspace = true }
 
 [dev-dependencies]
-serde_yaml = { workspace = true }
 tempfile   = "3"
 rmcp       = { workspace = true, features = ["server", "transport-io", "transport-streamable-http-server"] }
 # A server of the previous protocol era, for the conformance suite only.

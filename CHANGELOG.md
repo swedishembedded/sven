@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **mcp**: `sven mcp add` and `/mcp add` add a server (a URL, or a stdio command) to a configuration file and check it at once; `sven mcp remove` and `/mcp remove` take it out. No more hand-editing `mcp_servers:`.
 - **mcp**: `sven mcp list`, `sven mcp auth SERVER` and `sven mcp logout SERVER`. Signing in works from any terminal, over SSH and from a container too: paste the address the browser ends on. In the TUI, `/mcp logout`, `/mcp enable` and `/mcp disable` work (they were listed but did nothing), the sign-in link is shown beside the browser, and a server's changed tool list reaches the running session. A headless run reports MCP servers that need a sign-in with a `[sven:mcp]` line instead of saying nothing, and a server that refuses its sign-in asks for a new one instead of failing.
 - **remote**: `sven rc --login-file PATH` signs in from a single-use start credential (a YAML file with `server` and `start_credential`), so a container started by a server runs an ordinary `sven rc` without a device grant. The credential is traded once for a token kept in memory only; nothing is written to disk. `sven rc` now also stops cleanly on SIGTERM.
 

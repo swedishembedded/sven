@@ -153,7 +153,7 @@ impl SlashCommand for McpCommand {
     }
 
     fn description(&self) -> &str {
-        "Show and manage MCP servers. Usage: /mcp [list|auth|logout|enable|disable] [name]"
+        "Show and manage MCP servers. Usage: /mcp [list|add|remove|auth|logout|enable|disable] [name] [url | command args...]"
     }
 
     fn complete(
@@ -163,17 +163,19 @@ impl SlashCommand for McpCommand {
         ctx: &CommandContext,
     ) -> Vec<CompletionItem> {
         if arg_index == 0 {
-            ["list", "auth", "logout", "enable", "disable"]
-                .iter()
-                .filter(|s| s.starts_with(partial))
-                .map(|s| CompletionItem {
-                    value: s.to_string(),
-                    display: s.to_string(),
-                    description: None,
-                    score: 0,
-                    light: None,
-                })
-                .collect()
+            [
+                "list", "add", "remove", "auth", "logout", "enable", "disable",
+            ]
+            .iter()
+            .filter(|s| s.starts_with(partial))
+            .map(|s| CompletionItem {
+                value: s.to_string(),
+                display: s.to_string(),
+                description: None,
+                score: 0,
+                light: None,
+            })
+            .collect()
         } else if arg_index == 1 {
             let servers: Vec<&str> = ctx.mcp_servers.keys().map(String::as_str).collect();
             servers
@@ -196,11 +198,29 @@ impl SlashCommand for McpCommand {
         let sub = args.first().map(String::as_str).unwrap_or("");
         let server = args.get(1).cloned().unwrap_or_default();
 
+        if sub == "add" {
+            return match args.get(1..) {
+                Some([server, target @ ..]) if !target.is_empty() => CommandResult {
+                    immediate_action: Some(ImmediateAction::McpAdd {
+                        server: server.clone(),
+                        target: target.to_vec(),
+                    }),
+                    ..Default::default()
+                },
+                _ => CommandResult {
+                    immediate_action: Some(ImmediateAction::Notice {
+                        text: "Usage: /mcp add <name> <url>   or   /mcp add <name> <command> [args...]".into(),
+                    }),
+                    ..Default::default()
+                },
+            };
+        }
         let action = match sub {
             "auth" => Some(crate::McpAction::SignIn),
             "logout" => Some(crate::McpAction::SignOut),
             "enable" => Some(crate::McpAction::Enable),
             "disable" => Some(crate::McpAction::Disable),
+            "remove" => Some(crate::McpAction::Remove),
             _ => None,
         };
         match (action, server.as_str()) {

@@ -25,6 +25,7 @@ pub mod auth;
 pub mod bridge;
 mod callback;
 pub mod config;
+pub mod config_edit;
 mod connection;
 mod events;
 pub mod health;

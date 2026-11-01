@@ -23,11 +23,13 @@ sven-machines      = { path = "../machines" }
 sven-turn          = { path = "../turn" }
 sven-bootstrap = { path = "../bootstrap" }
 sven-mcp-client = { path = "../mcp-client" }
+sven-config     = { path = "../config" }
 sven-workspace   = { path = "../workspace" }
 sven-frontend  = { path = "../frontend" }
 sven-tui-nvim  = { path = "../tui-nvim" }
 atif           = { path = "../atif" }
 anyhow      = { workspace = true }
+serde_yaml  = { workspace = true }
 tokio       = { workspace = true }
 futures     = { workspace = true }
 tracing     = { workspace = true }

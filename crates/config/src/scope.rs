@@ -173,6 +173,29 @@ pub fn with_value_at(
     Ok(root)
 }
 
+/// `root` without the value at `path`, and whether there was one.
+#[must_use]
+pub fn without_value_at(mut root: serde_yaml::Value, path: &[String]) -> (serde_yaml::Value, bool) {
+    let Some((last, parents)) = path.split_last() else {
+        return (root, false);
+    };
+    let mut at = &mut root;
+    for key in parents {
+        match at {
+            serde_yaml::Value::Mapping(map) => match map.get_mut(key.as_str()) {
+                Some(next) => at = next,
+                None => return (root, false),
+            },
+            _ => return (root, false),
+        }
+    }
+    let removed = match at {
+        serde_yaml::Value::Mapping(map) => map.remove(last.as_str()).is_some(),
+        _ => false,
+    };
+    (root, removed)
+}
+
 /// The document `path` holds; a file that does not exist holds nothing.
 ///
 /// # Errors
@@ -207,6 +230,22 @@ pub fn write_file(path: &Path, document: &serde_yaml::Value) -> anyhow::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_value_is_removed_keeping_the_rest() {
+        let doc: serde_yaml::Value =
+            serde_yaml::from_str("mcp_servers: {a: {x: 1}, b: {y: 2}}\nmodel: m\n").unwrap();
+        let path = |p: &str| parse_path(p).unwrap();
+        let (doc, removed) = without_value_at(doc, &path("mcp_servers.a"));
+        assert!(removed);
+        assert_eq!(
+            doc,
+            serde_yaml::from_str::<serde_yaml::Value>("mcp_servers: {b: {y: 2}}\nmodel: m\n")
+                .unwrap()
+        );
+        let (_, removed) = without_value_at(doc, &path("mcp_servers.a"));
+        assert!(!removed);
+    }
 
     #[test]
     fn a_key_path_splits_at_dots_outside_quotes() {

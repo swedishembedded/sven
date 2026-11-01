@@ -608,6 +608,21 @@ impl McpManager {
         }
     }
 
+    /// Start using server `name` with `config` (just added to a
+    /// configuration file) and connect it; an HTTP server that answers 401
+    /// is signed in to as on any connection.
+    pub async fn add_server(self: &Arc<Self>, name: &str, config: McpServerConfig) -> Result<()> {
+        self.config.write().await.insert(name.to_string(), config);
+        self.connect(name).await
+    }
+
+    /// Stop using server `name` (just removed from a configuration file).
+    pub async fn remove_server(self: &Arc<Self>, name: &str) {
+        self.disconnect(name).await;
+        self.config.write().await.remove(name);
+        self.servers.write().await.remove(name);
+    }
+
     /// Forget the sign-in of `server`; it asks for a new one when it is
     /// next connected.
     pub async fn sign_out(self: &Arc<Self>, server: &str) -> Result<()> {

@@ -33,7 +33,7 @@ Still as before:
 | Finding | Evidence |
 | --- | --- |
 | Every MCP tool is `NetworkAccess` with `Ask`; tool annotations not used | `bridge.rs` |
-| The inspector is a read-only pager; servers are added only by editing the configuration file | `tui/src/ui/inspector.rs` |
+| The inspector is a read-only pager; acting on a server is a `/mcp` subcommand | `tui/src/ui/inspector.rs` |
 | In a container the callback listener binds `0.0.0.0:5598` (for `docker -p`; `state` refuses a forged callback; `sven mcp auth` with a pasted address needs no forwarded port) | `callback.rs` `bind` |
 
 ## Decisions
@@ -64,9 +64,9 @@ with a pasted return address for remote shells, the sign-in link shown in the
 TUI (`McpEvent::SignInLink`), `/mcp logout|enable|disable`, a refused sign-in
 asking for a new one, a changed tool list reaching the TUI session, headless
 `[sven:mcp]` notices; checked by `tests/sign_in.rs`, `tests/conformance.rs`
-and the callback tests. Left: `/mcp add` and `sven mcp add` writing a server
-into the configuration file, an inspector you act from, and a bats e2e of
-`sven mcp auth` against the local authorization server fixture.
+and the callback tests; `sven mcp add|remove` and `/mcp add|remove` (one
+`config_edit` module), checked end to end by `tests/mcp_cli.rs` (sven adds
+itself as a stdio server). Left: an inspector you act from.
 
 **M4 Tool policy by action.** Per-server and per-tool policy in config
 (`allow`, `ask`, `deny`) with annotations tightening the default. Number:

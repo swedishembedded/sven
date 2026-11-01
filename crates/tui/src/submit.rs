@@ -233,6 +233,16 @@ impl App {
                                         McpAction::Disable => {
                                             ("disabled", mgr.set_enabled(&server, false).await)
                                         }
+                                        McpAction::Remove => {
+                                            let removed = sven_mcp_client::config_edit::remove(
+                                                sven_config::scope::Scope::User,
+                                                &server,
+                                            );
+                                            if removed.is_ok() {
+                                                mgr.remove_server(&server).await;
+                                            }
+                                            ("removed", removed.map(|_| ()))
+                                        }
                                     };
                                     let toast = match outcome {
                                         Ok(()) => {
@@ -243,6 +253,61 @@ impl App {
                                         }
                                     };
                                     let _ = toast_tx.send(toast).await;
+                                });
+                            }
+                            _ => self.ui.push_toast(crate::app::ui_state::Toast::error(
+                                "MCP servers are not available: the session has not started yet",
+                            )),
+                        }
+                        return false;
+                    }
+
+                    if let Some(ImmediateAction::McpAdd {
+                        ref server,
+                        ref target,
+                    }) = result.immediate_action
+                    {
+                        match (&self.mcp_manager, &self.toast_tx) {
+                            (Some(mgr), Some(toast_tx)) => {
+                                let (mgr, toast_tx) = (Arc::clone(mgr), toast_tx.clone());
+                                let (server, target) = (server.clone(), target.clone());
+                                tokio::spawn(async move {
+                                    use crate::app::ui_state::Toast;
+                                    let added = (|| {
+                                        let entry = sven_mcp_client::config_edit::server_entry(
+                                            &target,
+                                            &[],
+                                            &[],
+                                            false,
+                                        )?;
+                                        let config: sven_mcp_client::McpServerConfig =
+                                            serde_yaml::from_value(entry.clone())?;
+                                        let file = sven_mcp_client::config_edit::add(
+                                            sven_config::scope::Scope::User,
+                                            &server,
+                                            entry,
+                                        )?;
+                                        anyhow::Ok((file, config))
+                                    })();
+                                    match added {
+                                        Ok((file, config)) => {
+                                            let _ = toast_tx
+                                                .send(Toast::success(format!(
+                                                    "Added MCP server '{server}' to {}",
+                                                    file.display()
+                                                )))
+                                                .await;
+                                            // Its connection (or sign-in) reports itself.
+                                            let _ = mgr.add_server(&server, config).await;
+                                        }
+                                        Err(e) => {
+                                            let _ = toast_tx
+                                                .send(Toast::error(format!(
+                                                    "MCP server '{server}' not added: {e:#}"
+                                                )))
+                                                .await;
+                                        }
+                                    }
                                 });
                             }
                             _ => self.ui.push_toast(crate::app::ui_state::Toast::error(

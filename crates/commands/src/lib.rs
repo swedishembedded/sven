@@ -108,10 +108,16 @@ pub enum ImmediateAction {
     OpenInspector {
         kind: InspectorKind,
     },
-    /// Act on a configured MCP server (`/mcp auth|logout|enable|disable`).
+    /// Act on a configured MCP server (`/mcp auth|logout|enable|disable|remove`).
     Mcp {
         server: String,
         action: McpAction,
+    },
+    /// Add an MCP server to the user's configuration and connect it
+    /// (`/mcp add <name> <url | command args...>`).
+    McpAdd {
+        server: String,
+        target: Vec<String>,
     },
     /// Surface a block of text to the user as a notice (shown in the
     /// frontend's pager), rather than sending it to the agent as a message.
@@ -138,6 +144,8 @@ pub enum McpAction {
     Enable,
     /// Disconnect it and withdraw its tools, for this session.
     Disable,
+    /// Remove it from the user's configuration and disconnect it.
+    Remove,
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -311,6 +319,7 @@ mod dispatch_tests {
             ("/mcp logout docs", McpAction::SignOut),
             ("/mcp enable docs", McpAction::Enable),
             ("/mcp disable docs", McpAction::Disable),
+            ("/mcp remove docs", McpAction::Remove),
         ] {
             let (_, result) = try_dispatch(line, &registry()).unwrap();
             assert!(
@@ -318,6 +327,12 @@ mod dispatch_tests {
                 "{line}"
             );
         }
+        let (_, result) =
+            try_dispatch("/mcp add docs https://mcp.example.com/mcp", &registry()).unwrap();
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::McpAdd { ref server, ref target }) if server == "docs" && target == &["https://mcp.example.com/mcp"]
+        ));
     }
 
     #[test]

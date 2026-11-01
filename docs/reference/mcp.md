@@ -18,7 +18,8 @@ editor that drives sven as a whole agent, use [ACP](acp.md) instead.
 
 ## Using MCP servers (client)
 
-Each entry of `mcp_servers` in `config.yaml` is one server. The entry's key is
+Each entry of `mcp_servers` in `config.yaml` is one server; `sven mcp add`
+and `/mcp add` write one for you (see [Managing servers](#managing-servers)). The entry's key is
 its name and the prefix of its tools. The key reference is in
 [configuration](configuration.md#mcp_servers); this page explains behaviour.
 
@@ -92,8 +93,12 @@ and lists them again when the server says they changed.
 | Where | Command | Effect |
 |-------|---------|--------|
 | TUI | `/mcp` | the servers, their status and tools |
+| TUI | `/mcp add <name> <url>`, `/mcp add <name> <command> [args...]` | add a server to your configuration file and connect it; an http server that asks for a sign-in gets one |
+| TUI | `/mcp remove <name>` | remove it from your configuration file and disconnect it |
 | TUI | `/mcp auth <name>`, `/mcp logout <name>` | sign in, forget the sign-in |
 | TUI | `/mcp enable <name>`, `/mcp disable <name>` | connect it and offer its tools, or withdraw them, for this session (the configuration file is unchanged) |
+| shell | `sven mcp add <name> <url>` (`--header`, `--oauth`), `sven mcp add <name> [--env NAME=VALUE] -- <command> [args...]` | add a server to a configuration file (`--scope user`, the default, `project` or `workspace`), then say whether it connects and what it needs |
+| shell | `sven mcp remove <name>` | remove it from that file |
 | shell | `sven mcp list` | each configured server, whether it connects, its tool count, or what it needs |
 | shell | `sven mcp auth <name>`, `sven mcp logout <name>` | sign in, forget the sign-in |
 
