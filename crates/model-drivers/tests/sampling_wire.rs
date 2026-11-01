@@ -299,3 +299,52 @@ async fn openai_compat_sends_no_limit_when_the_budget_is_only_the_room_left() {
         assert!(body.get("max_tokens").is_none(), "{body}");
     }
 }
+
+// ── Thinking budget (server-side budget forcing) ──────────────────────────────
+
+async fn body_for(base_url: impl Fn(u16) -> String, request: CompletionRequest) -> Value {
+    let sse = sse_body(&[r#"{"choices":[{"delta":{"content":"hi"}}]}"#]);
+    let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
+    let cfg = ModelConfig {
+        provider: "openai".into(),
+        name: "local-model".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(base_url(port)),
+        ..ModelConfig::default()
+    };
+    let provider = from_config(&cfg).unwrap();
+    let mut stream = provider.complete(request).await.unwrap();
+    while stream.next().await.is_some() {}
+    req_rx.await.unwrap().body
+}
+
+#[tokio::test]
+async fn a_local_server_is_asked_to_end_the_thinking_at_the_budget() {
+    // A server that forces the end of the think block at the budget makes the
+    // model answer; a client that only aborts at the budget throws the whole
+    // turn away. The thinking switch goes along too, whatever the driver's name.
+    let request = CompletionRequest {
+        messages: vec![Message::user("hello")],
+        stream: true,
+        enable_thinking: Some(true),
+        thinking_budget: Some(8000),
+        ..Default::default()
+    };
+    let body = body_for(|port| format!("http://127.0.0.1:{port}/v1"), request).await;
+    assert_eq!(body["thinking_budget"], 8000, "{body}");
+    assert_eq!(
+        body["chat_template_kwargs"]["enable_thinking"], true,
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn no_thinking_budget_is_sent_when_none_is_set() {
+    let request = CompletionRequest {
+        messages: vec![Message::user("hello")],
+        stream: true,
+        ..Default::default()
+    };
+    let body = body_for(|port| format!("http://127.0.0.1:{port}/v1"), request).await;
+    assert!(body.get("thinking_budget").is_none(), "{body}");
+}

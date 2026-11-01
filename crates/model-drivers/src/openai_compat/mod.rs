@@ -98,11 +98,11 @@ pub struct OpenAICompatProvider {
     /// leave the field out. The caller post-parses a structured answer
     /// either way, so the constraint is an optimisation, not the contract.
     response_format_refused: std::sync::atomic::AtomicBool,
-    /// Whether past turns' reasoning goes back as `reasoning_content`: on a
-    /// local server (brain, vLLM, llama.cpp), whose chat template renders it.
-    /// Hosted APIs define reasoning replay differently (DeepSeek refuses the
-    /// field), so they get none.
-    sends_reasoning: bool,
+    /// Whether the server is a local one (brain, vLLM, llama.cpp): past turns'
+    /// reasoning goes back as `reasoning_content`, which its chat template
+    /// renders, and it gets the thinking controls. Hosted APIs define reasoning
+    /// replay differently (DeepSeek refuses the field), so they get neither.
+    local_endpoint: bool,
 }
 
 impl OpenAICompatProvider {
@@ -146,7 +146,7 @@ impl OpenAICompatProvider {
             extra_body,
             server_root: Some(derive_server_root(base)),
             response_format_refused: std::sync::atomic::AtomicBool::new(false),
-            sends_reasoning: crate::discovery::is_local_endpoint(base),
+            local_endpoint: crate::discovery::is_local_endpoint(base),
         }
     }
 
@@ -242,7 +242,7 @@ impl OpenAICompatProvider {
             extra_body,
             server_root: None,
             response_format_refused: std::sync::atomic::AtomicBool::new(false),
-            sends_reasoning: false,
+            local_endpoint: false,
         }
     }
 
@@ -432,7 +432,7 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         let messages: Vec<Value> = if use_block_cache {
             // Build messages without merging the dynamic suffix; it will be
             // handled below as a separate uncached system content block.
-            build_openai_messages_with(&req.messages, self.sends_reasoning)
+            build_openai_messages_with(&req.messages, self.local_endpoint)
         } else if let Some(suffix) = &req.system_dynamic_suffix {
             // Standard path: merge dynamic suffix into the system message text.
             // OpenAI has a single "system" message; there is no separate
@@ -447,9 +447,9 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
                     }
                 }
             }
-            build_openai_messages_with(&msgs, self.sends_reasoning)
+            build_openai_messages_with(&msgs, self.local_endpoint)
         } else {
-            build_openai_messages_with(&req.messages, self.sends_reasoning)
+            build_openai_messages_with(&req.messages, self.local_endpoint)
         };
 
         let mut tools: Vec<Value> = req.tools.iter().map(function_tool).collect();
@@ -649,8 +649,11 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             }
         }
 
-        if self.driver_name != "openai" {
+        // OpenAI's own API rejects fields outside its schema; every other server
+        // (a local one, whatever the driver is called) gets the thinking controls.
+        if self.driver_name != "openai" || self.local_endpoint {
             crate::thinking::apply_request_switch(&mut body, req.enable_thinking);
+            crate::thinking::apply_thinking_budget(&mut body, req.thinking_budget);
         }
 
         debug!(

@@ -493,6 +493,9 @@ pub async fn stream_turn_attributed(
         response_format,
         sampling: limits.sampling,
         enable_thinking: limits.enable_thinking,
+        // A server that forces the end of the reasoning at this budget makes the
+        // model answer; the watchdog below only backs it up.
+        thinking_budget: thinking_token_cap,
         tool_choice: limits.tool_choice,
         want_logprobs: limits.want_logprobs,
         manifest,
@@ -579,7 +582,10 @@ pub async fn stream_turn_attributed(
                 // Thinking-loop watchdog: whichever cap fires first aborts
                 // the turn, ended like a cancel but marked as the watchdog's
                 // (see `AbortedError`'s doc comment for why).
-                if let Some(cap) = thinking_token_cap {
+                // The request carries the budget, and a server that forces the
+                // end of the reasoning there lets the model answer: the turn is
+                // aborted only a quarter past it, for a server that does not.
+                if let Some(cap) = thinking_token_cap.map(|cap| cap.saturating_add(cap / 4)) {
                     if thinking_token_estimate >= cap {
                         return Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
                             "thinking-token limit exceeded ({thinking_token_estimate} >= {cap} estimated tokens); \

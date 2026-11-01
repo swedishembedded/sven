@@ -620,6 +620,11 @@ pub struct CompletionRequest {
     /// thinking`). `None` leaves the configured behaviour; providers without
     /// the switch ignore it.
     pub enable_thinking: Option<bool>,
+    /// The most tokens the model may spend thinking in this response. A
+    /// server that forces the end of the reasoning at that point (and then
+    /// lets the model answer) is sent it; providers without it ignore it,
+    /// and the turn's own runaway guard still applies.
+    pub thinking_budget: Option<u32>,
     /// Whether the model may call the offered tools. Only a provider that
     /// answers `true` to [`crate::ModelProvider::supports_tool_choice_none`] is sent
     /// [`ToolChoice::None`].

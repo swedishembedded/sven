@@ -36,12 +36,21 @@ impl ModelConfig {
 /// Carries a request's own thinking switch into `body`, where a server that
 /// reads it (llama.cpp, vLLM, brain) finds it in `chat_template_kwargs`. It
 /// beats the configured switch and `driver_options`. The key is not in the
-/// OpenAI schema, which rejects unknown fields, so the `openai` driver never
-/// calls this.
+/// OpenAI schema, which rejects unknown fields, so OpenAI's own API is never
+/// sent it.
 pub(crate) fn apply_request_switch(body: &mut serde_json::Value, enabled: Option<bool>) {
     let Some(enabled) = enabled else { return };
     if !body["chat_template_kwargs"].is_object() {
         body["chat_template_kwargs"] = serde_json::json!({});
     }
     body["chat_template_kwargs"]["enable_thinking"] = serde_json::json!(enabled);
+}
+
+/// Carries a request's thinking budget into `body` as `thinking_budget`, which
+/// a server that forces the end of the reasoning (budget forcing) reads; like
+/// the switch it is never sent to OpenAI's own API.
+pub(crate) fn apply_thinking_budget(body: &mut serde_json::Value, budget: Option<u32>) {
+    if let Some(budget) = budget {
+        body["thinking_budget"] = serde_json::json!(budget);
+    }
 }
