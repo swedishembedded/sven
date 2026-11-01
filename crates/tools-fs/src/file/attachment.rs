@@ -51,14 +51,18 @@ pub fn classify(path: &Path) -> Option<AttachmentKind> {
 
 /// How to load an attachment for a particular target model.
 ///
-/// The [`Default`] is deliberately conservative — no image support, no native
-/// audio — because that combination always produces something every provider
+/// The [`Default`] is deliberately conservative - no image support, no native
+/// audio - because that combination always produces something every provider
 /// can consume (a refusal for images, a transcript for audio).
 #[derive(Debug, Clone, Default)]
 pub struct AttachOptions {
     /// Whether the target model accepts image input.  When `false`, images are
     /// refused up front instead of being attached and silently stripped later.
     pub supports_images: bool,
+    /// Whether the model's server has not said which inputs it takes (it
+    /// could not be asked, or has not listed the model). Then a refused image
+    /// is reported as unverifiable, never as a model without vision.
+    pub modalities_unreported: bool,
     /// Whether the target model accepts audio input natively.  When `false`,
     /// audio is transcribed instead.
     pub supports_audio: bool,
@@ -76,12 +80,24 @@ pub struct AttachOptions {
     pub asr_client: Option<sven_model_drivers::dbus::ActionClient>,
 }
 
+impl AttachOptions {
+    /// What `model` accepts, as far as it is known.
+    pub fn for_model(model: &dyn sven_model::ModelProvider) -> Self {
+        Self {
+            supports_images: model.supports_images(),
+            supports_audio: model.supports_audio(),
+            modalities_unreported: !model.input_modalities_reported(),
+            ..Self::default()
+        }
+    }
+}
+
 /// A file that has been loaded and is ready to be turned into content parts.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadedAttachment {
-    /// An image, as a `data:image/…;base64,…` URL.
+    /// An image, as a `data:image/...;base64,...` URL.
     Image { description: String, url: String },
-    /// Audio attached natively, as a `data:audio/wav;base64,…` URL.
+    /// Audio attached natively, as a `data:audio/wav;base64,...` URL.
     Audio { description: String, url: String },
     /// Audio turned into text.  Carries no blob, so it survives every provider.
     Transcript { text: String },
@@ -144,6 +160,14 @@ pub enum AttachError {
     )]
     ImagesUnsupported { model: String, path: String },
 
+    #[error(
+        "the server of the active model ({model}) has not reported whether it accepts \
+         image input (it could not be asked, or it does not list the model), so \
+         '{path}' was not attached. Retry when the server answers, or declare \
+         `input_modalities: [text, image]` on the provider entry."
+    )]
+    ImagesUnverifiable { model: String, path: String },
+
     #[error("failed to read image '{path}': {source}")]
     Image {
         path: String,
@@ -197,9 +221,11 @@ pub async fn load_attachment(
         }
         Some(AttachmentKind::Image) => {
             if !opts.supports_images {
-                return Err(AttachError::ImagesUnsupported {
-                    model: model_label.to_string(),
-                    path: display,
+                let (model, path) = (model_label.to_string(), display);
+                return Err(if opts.modalities_unreported {
+                    AttachError::ImagesUnverifiable { model, path }
+                } else {
+                    AttachError::ImagesUnsupported { model, path }
                 });
             }
             let img = sven_image::load_image(path).map_err(|e| AttachError::Image {
@@ -443,6 +469,28 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AttachError::ImagesUnsupported { .. }));
         assert!(err.to_string().contains("text-only-model"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_image_for_a_model_whose_inputs_are_unreported_is_not_called_text_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("a.png");
+        std::fs::write(&png, MINIMAL_PNG).unwrap();
+        let opts = AttachOptions {
+            modalities_unreported: true,
+            ..AttachOptions::default()
+        };
+        let err = load_attachment(&png, &opts, "openai/visual")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AttachError::ImagesUnverifiable { .. }),
+            "{err}"
+        );
+        let text = err.to_string();
+        assert!(text.contains("openai/visual"), "{text}");
+        assert!(text.contains("has not reported"), "{text}");
+        assert!(!text.contains("does not accept"), "{text}");
     }
 
     #[tokio::test]

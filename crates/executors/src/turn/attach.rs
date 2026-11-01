@@ -77,11 +77,7 @@ fn attachable(_path: &Path) -> bool {
 
 #[cfg(feature = "media")]
 async fn load(path: &Path, model: &dyn ModelProvider) -> Result<Vec<ContentPart>, String> {
-    let opts = sven_tools_fs::AttachOptions {
-        supports_images: model.supports_images(),
-        supports_audio: model.supports_audio(),
-        ..sven_tools_fs::AttachOptions::default()
-    };
+    let opts = sven_tools_fs::AttachOptions::for_model(model);
     let label = format!("{}/{}", model.name(), model.model_name());
     sven_tools_fs::load_attachment(path, &opts, &label)
         .await

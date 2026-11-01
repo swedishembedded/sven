@@ -22,10 +22,8 @@ pub(super) async fn build_attachment_parts(
     asr: &sven_tools_fs::AsrConfig,
 ) -> anyhow::Result<Vec<sven_model::ContentPart>> {
     let opts = sven_tools_fs::AttachOptions {
-        supports_images: model.supports_images(),
-        supports_audio: model.supports_audio(),
         asr: asr.clone(),
-        ..sven_tools_fs::AttachOptions::default()
+        ..sven_tools_fs::AttachOptions::for_model(&**model)
     };
     let label = format!("{}/{}", model.name(), model.model_name());
 

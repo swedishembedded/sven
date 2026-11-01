@@ -1,11 +1,11 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! `attach_file` — attach an image or audio file to the conversation.
+//! `attach_file` - attach an image or audio file to the conversation.
 //!
 //! Images become an image content part.  Audio takes one of two routes:
 //! attached natively when the active model accepts audio, or transcribed to
-//! plain text otherwise — so the result is always something the target model
+//! plain text otherwise - so the result is always something the target model
 //! can actually consume. A build without the `asr` feature cannot transcribe,
 //! and refuses audio the model cannot take; its schema then offers no
 //! `force_transcribe`.
@@ -46,7 +46,7 @@ const DESCRIPTION: &str = description!("otherwise refused.");
 pub struct AttachFileTool {
     /// The live model, when one is available.
     ///
-    /// `None` (e.g. the `sven tool call …` CLI registry) means "assume
+    /// `None` (e.g. the `sven tool call ...` CLI registry) means "assume
     /// text-only": images are refused and audio is always transcribed, which
     /// is the only answer that is correct for every possible target model.
     model: Option<Arc<dyn ModelProvider>>,
@@ -94,13 +94,20 @@ impl AttachFileTool {
 
     /// Capabilities of the target model, conservative when none is known.
     fn options(&self, force_transcribe: bool) -> AttachOptions {
+        let known = match self.model.as_deref() {
+            Some(model) => AttachOptions::for_model(model),
+            // No live model: nothing is known, so nothing is claimed.
+            None => AttachOptions {
+                modalities_unreported: true,
+                ..AttachOptions::default()
+            },
+        };
         AttachOptions {
-            supports_images: self.model.as_ref().is_some_and(|m| m.supports_images()),
-            supports_audio: self.model.as_ref().is_some_and(|m| m.supports_audio()),
             force_transcribe,
             asr: self.asr.clone(),
             #[cfg(all(target_os = "linux", feature = "asr"))]
             asr_client: self.asr_client.clone(),
+            ..known
         }
     }
 
@@ -414,7 +421,7 @@ mod tests {
         std::fs::write(&wav, tiny_wav()).unwrap();
         let (client, _server) = fake_asr("cli transcript").await;
 
-        // model: None — the `sven tool call …` registry case.
+        // model: None - the `sven tool call ...` registry case.
         let t = AttachFileTool::new(None, asr_cfg()).with_asr_client(client);
         let out = t
             .execute(&call(json!({"path": wav.display().to_string()})))
