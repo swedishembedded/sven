@@ -84,11 +84,35 @@ impl Tool for WriteTool {
             .get("path")
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        let text_val = call
-            .args
-            .get("text")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        // The file's contents. A JSON object or array is written as JSON (a model
+        // writing a .json file often passes the value itself) and the result says so;
+        // any other type is refused by its name, never reported as missing.
+        let (text_val, as_json) = match call.args.get("text") {
+            Some(serde_json::Value::String(text)) => (Some(text.clone()), false),
+            Some(value @ (serde_json::Value::Object(_) | serde_json::Value::Array(_))) => {
+                let mut text = serde_json::to_string_pretty(value).unwrap_or_default();
+                text.push('\n');
+                (Some(text), true)
+            }
+            None | Some(serde_json::Value::Null) => (None, false),
+            Some(other) => {
+                let kind = match other {
+                    serde_json::Value::Bool(_) => "a boolean",
+                    _ => "a number",
+                };
+                return ToolOutput::err(
+                    &call.id,
+                    format!(
+                        "`text` must be a string (the file's contents); it was {kind}. Pass the contents as a string."
+                    ),
+                );
+            }
+        };
+        let note = if as_json {
+            " (`text` was a JSON value, not a string: written as JSON)"
+        } else {
+            ""
+        };
 
         let missing: Vec<_> = [("path", &path_val), ("text", &text_val)]
             .iter()
@@ -141,7 +165,7 @@ impl Tool for WriteTool {
                     match result {
                         Ok(_) => ToolOutput::ok(
                             &call.id,
-                            format!("appended {} bytes to {path}", content.len()),
+                            format!("appended {} bytes to {path}{note}", content.len()),
                         ),
                         Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
                     }
@@ -150,9 +174,10 @@ impl Tool for WriteTool {
             }
         } else {
             match tokio::fs::write(&target, &content).await {
-                Ok(_) => {
-                    ToolOutput::ok(&call.id, format!("wrote {} bytes to {path}", content.len()))
-                }
+                Ok(_) => ToolOutput::ok(
+                    &call.id,
+                    format!("wrote {} bytes to {path}{note}", content.len()),
+                ),
                 Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
             }
         }
@@ -273,6 +298,40 @@ mod tests {
         let out = t.execute(&call(json!({"path": "x.txt"}))).await;
         assert!(out.is_error);
         assert!(out.content.contains("Missing required parameters: text"));
+    }
+
+    #[tokio::test]
+    async fn a_json_value_given_as_the_text_is_written_as_json_and_said_so() {
+        // Models writing a .json file often pass the object itself, not a string.
+        let path = tmp_path();
+        let t = WriteTool::default();
+        let out = t
+            .execute(&call(
+                json!({"path": path, "text": {"verdict": "accept", "discrepancies": []}}),
+            ))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("written as JSON"), "{}", out.content);
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(written, json!({"verdict": "accept", "discrepancies": []}));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn a_text_that_is_neither_a_string_nor_json_is_refused_by_its_type() {
+        let t = WriteTool::default();
+        let out = t
+            .execute(&call(json!({"path": tmp_path(), "text": 42})))
+            .await;
+        assert!(out.is_error);
+        assert!(
+            out.content.contains("`text` must be a string"),
+            "{}",
+            out.content
+        );
+        assert!(out.content.contains("a number"), "{}", out.content);
+        assert!(!out.content.contains("Missing"), "{}", out.content);
     }
 
     #[test]
