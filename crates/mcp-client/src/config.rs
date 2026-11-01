@@ -60,8 +60,8 @@ impl Default for McpTransport {
 /// OAuth configuration for an MCP server that requires OAuth 2.0 authentication.
 ///
 /// When present, sven will use the OAuth PKCE flow (RFC 7636) to obtain tokens.
-/// Tokens are cached in `~/.config/sven/mcp-credentials.json` and refreshed
-/// automatically before expiry.
+/// Tokens are kept in `~/.config/sven/mcp-oauth.json` and refreshed
+/// automatically when they expire.
 ///
 /// **Scopes are optional** - sven follows the MCP Authorization spec scope
 /// discovery strategy and discovers them automatically:
@@ -107,6 +107,12 @@ pub struct McpOAuthConfig {
     /// Default: 5598. When in a container, ensure this port is forwarded (e.g. -p 5598:5598).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub callback_port: Option<u16>,
+    /// HTTPS URL of a Client ID Metadata Document describing this client.
+    /// When the authorization server supports such documents it is used as
+    /// the client id instead of registering one (Dynamic Client
+    /// Registration).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_metadata_url: Option<String>,
 }
 
 fn default_mcp_timeout() -> u64 {
@@ -180,6 +186,7 @@ impl McpServerConfig {
                     "client_secret",
                     "redirect_uri",
                     "callback_port",
+                    "client_metadata_url",
                 ]),
             ),
             ("timeout_secs", Schema::value()),

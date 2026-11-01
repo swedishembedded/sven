@@ -7,7 +7,7 @@ crates/bootstrap/tests/live_ui_test_dispatch.rs	SVEN_UI_TEST_LIVE
 crates/chain/tests/processes.rs	<WRITER_LOG>
 crates/ci/src/template.rs	<key>
 crates/config/src/document.rs	<name>
-crates/mcp-client/src/transport.rs	PATH
+crates/mcp-client/src/connection.rs	PATH
 crates/mcp/src/cli.rs	BRAVE_API_KEY
 crates/model-drivers/src/aws.rs	AWS_ACCESS_KEY_ID
 crates/model-drivers/src/aws.rs	AWS_DEFAULT_REGION

@@ -1365,10 +1365,11 @@ mcp_servers:
 | Key | Description |
 |-----|-------------|
 | `scopes` | OAuth scopes (leave empty for auto-discovery) |
-| `client_id` | Pre-registered client ID (omit for default) |
+| `client_id` | Pre-registered client ID (omit to register one) |
 | `client_secret` | Client secret for confidential clients |
 | `redirect_uri` | Custom redirect URI (omit for default; see below) |
 | `callback_port` | Port for local callback when using custom redirect (default: 5598) |
+| `client_metadata_url` | HTTPS URL of a Client ID Metadata Document, used as the client id where the authorization server accepts one |
 
 **Default OAuth redirect: `sven://sven.mcp/callback`**
 
@@ -1407,8 +1408,8 @@ to `http://127.0.0.1:5598/callback?code=...&state=...`. A helper script is at
 
 **Credentials storage**
 
-OAuth tokens are stored in `~/.config/sven/mcp-credentials.json`, readable by
-its owner only, and refreshed automatically before expiry. The same
+OAuth tokens are stored in `~/.config/sven/mcp-oauth.json`, readable by its
+owner only, and refreshed automatically when they expire. The same
 credentials are reused across projects that give the server the same name and
 URL.
 

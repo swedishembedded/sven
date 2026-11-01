@@ -5,31 +5,27 @@
 //!
 //! `McpManager` owns all live server connections, handles connect/disconnect
 //! lifecycle, exposes a unified tool and prompt catalogue, and drives the
-//! reconnection loop.
+//! reconnection loop. Requests run on a clone of a server's connection,
+//! taken under the lock and used after it is released, so a slow tool call
+//! never holds up a reconnect, a sign-in or another server.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use rmcp::model::{CallToolResult, Prompt, Tool};
 use serde_json::Value;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, info, warn};
 
+use crate::auth::{self, SignIn, TokenStore};
+use crate::bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 use crate::config::{McpServerConfig, McpTransport};
+use crate::connection::{AuthRequired, Connection, Endpoint, ListChanged};
+use crate::health::{HealthState, ServerStatus, ServerStatusSummary};
 
 use sven_tool_api::Tool as _;
-
-use crate::bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
-use crate::client::McpConnection;
-use crate::health::{HealthState, ServerStatus, ServerStatusSummary};
-use crate::oauth::{
-    discover_oauth_info, ensure_fresh, run_oauth_flow, CredentialsStore, OAuthRedirectOptions,
-    RunOAuthFlowParams,
-};
-use crate::transport::{
-    build_http_transport, AuthState, OnNotification, StdioTransport, Transport, UnauthorizedError,
-};
 
 // ── McpEvent ──────────────────────────────────────────────────────────────────
 
@@ -52,37 +48,22 @@ pub enum McpEvent {
 
 // ── ServerState ───────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 struct ServerState {
-    connection: Option<McpConnection>,
+    connection: Option<Connection>,
     health: HealthState,
-    tools: Vec<crate::protocol::McpTool>,
-    prompts: Vec<crate::protocol::McpPrompt>,
-    /// Set while an OAuth flow is in progress to prevent spawning a second
-    /// concurrent flow if another 401 arrives before the first completes.
+    tools: Vec<Tool>,
+    prompts: Vec<Prompt>,
+    /// Set while a sign-in is in progress, so a second 401 arriving before
+    /// the first sign-in completes does not open the browser twice.
     auth_in_progress: bool,
 }
 
 impl ServerState {
     fn new_disabled() -> Self {
-        let mut health = HealthState::new();
-        health.status = ServerStatus::Disabled;
-        Self {
-            connection: None,
-            health,
-            tools: vec![],
-            prompts: vec![],
-            auth_in_progress: false,
-        }
-    }
-
-    fn new() -> Self {
-        Self {
-            connection: None,
-            health: HealthState::new(),
-            tools: vec![],
-            prompts: vec![],
-            auth_in_progress: false,
-        }
+        let mut state = Self::default();
+        state.health.status = ServerStatus::Disabled;
+        state
     }
 }
 
@@ -92,15 +73,14 @@ impl ServerState {
 pub struct McpManager {
     config: RwLock<HashMap<String, McpServerConfig>>,
     servers: RwLock<HashMap<String, ServerState>>,
-    store: Arc<CredentialsStore>,
-    http_client: reqwest::Client,
+    store: Arc<TokenStore>,
     event_tx: mpsc::Sender<McpEvent>,
     /// When false (headless/CI mode), never trigger interactive OAuth flows.
     /// Batch runs must complete without user interaction.
     allow_interactive_oauth: bool,
-    /// Channel for server-initiated notifications (tools/list_changed, etc.).
-    notif_tx: mpsc::Sender<(String, String)>,
-    notif_rx: Mutex<Option<mpsc::Receiver<(String, String)>>>,
+    /// Servers' `list_changed` notifications.
+    changed_tx: mpsc::Sender<(String, ListChanged)>,
+    changed_rx: Mutex<Option<mpsc::Receiver<(String, ListChanged)>>>,
 }
 
 impl McpManager {
@@ -113,38 +93,49 @@ impl McpManager {
         event_tx: mpsc::Sender<McpEvent>,
         allow_interactive_oauth: bool,
     ) -> Arc<Self> {
-        let http_client = reqwest::Client::builder().build().unwrap_or_default();
-        let (notif_tx, notif_rx) = mpsc::channel(32);
+        Self::with_token_store(
+            config,
+            event_tx,
+            allow_interactive_oauth,
+            TokenStore::new(TokenStore::default_path()),
+        )
+    }
 
+    /// Like [`Self::new`], keeping sign-ins in `store`.
+    pub fn with_token_store(
+        config: HashMap<String, McpServerConfig>,
+        event_tx: mpsc::Sender<McpEvent>,
+        allow_interactive_oauth: bool,
+        store: TokenStore,
+    ) -> Arc<Self> {
+        let (changed_tx, changed_rx) = mpsc::channel(32);
         Arc::new(Self {
             config: RwLock::new(config),
             servers: RwLock::new(HashMap::new()),
-            store: Arc::new(CredentialsStore::with_default_path()),
-            http_client,
+            store: Arc::new(store),
             event_tx,
             allow_interactive_oauth,
-            notif_tx,
-            notif_rx: Mutex::new(Some(notif_rx)),
+            changed_tx,
+            changed_rx: Mutex::new(Some(changed_rx)),
         })
     }
 
     // ── Background tasks ──────────────────────────────────────────────────────
 
-    /// Start background tasks: reconnection loop.
+    /// Start background tasks: list refreshes and the reconnection loop.
     ///
-    /// Call once after `connect_all()`.  The loop periodically checks for
+    /// Call once after `connect_all()`. The loop periodically checks for
     /// servers in the `Reconnecting` state and retries them when the backoff
     /// delay has elapsed.
     pub fn start_background_tasks(self: &Arc<Self>) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
-            let mut rx = match this.notif_rx.lock().await.take() {
-                Some(r) => r,
-                None => return,
+            let Some(mut rx) = this.changed_rx.lock().await.take() else {
+                return;
             };
-            while let Some((server_name, method)) = rx.recv().await {
-                if let Err(e) = this.handle_server_notification(&server_name, &method).await {
-                    debug!(server = %server_name, method = %method, error = %e, "server notification handling failed");
+            while let Some((server, what)) = rx.recv().await {
+                if let Err(e) = this.refresh(&server, what).await {
+                    debug!(server = %server, error = %format!("{e:#}"), "refresh after list_changed failed");
                 }
             }
         });
@@ -153,8 +144,7 @@ impl McpManager {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
-
-                let servers_to_retry: Vec<String> = {
+                let due: Vec<String> = {
                     let servers = this.servers.read().await;
                     servers
                         .iter()
@@ -162,14 +152,12 @@ impl McpManager {
                         .map(|(name, _)| name.clone())
                         .collect()
                 };
-
-                for name in servers_to_retry {
-                    let this2 = Arc::clone(&this);
-                    let n = name.clone();
+                for name in due {
+                    let this = Arc::clone(&this);
                     tokio::spawn(async move {
-                        debug!(server = %n, "background reconnect attempt");
-                        if let Err(e) = this2.connect(&n).await {
-                            debug!(server = %n, error = %e, "background reconnect failed");
+                        debug!(server = %name, "background reconnect attempt");
+                        if let Err(e) = this.connect(&name).await {
+                            debug!(server = %name, error = %e, "background reconnect failed");
                         }
                     });
                 }
@@ -189,16 +177,11 @@ impl McpManager {
             .filter(|(_, c)| c.enabled)
             .map(|(n, _)| n.clone())
             .collect();
-
         for name in names {
             let this = Arc::clone(self);
             tokio::spawn(async move {
                 if let Err(e) = this.connect(&name).await {
-                    let chain = format!("{:#}", e);
-                    warn!(
-                        server = %name,
-                        "MCP server connect failed: {chain}"
-                    );
+                    warn!(server = %name, "MCP server connect failed: {e:#}");
                 }
             });
         }
@@ -206,65 +189,87 @@ impl McpManager {
 
     /// Connect to a single named server (by name from config).
     pub async fn connect(self: &Arc<Self>, name: &str) -> Result<()> {
-        let cfg = {
-            let guard = self.config.read().await;
-            guard
-                .get(name)
-                .cloned()
-                .with_context(|| format!("no MCP server config for {name}"))?
-        };
-
+        let cfg = self.server_config(name).await?;
         if !cfg.enabled {
-            let mut servers = self.servers.write().await;
-            servers
+            self.servers
+                .write()
+                .await
                 .entry(name.to_string())
                 .or_insert_with(ServerState::new_disabled);
             return Ok(());
         }
+        self.servers
+            .write()
+            .await
+            .entry(name.to_string())
+            .or_default()
+            .health
+            .status = ServerStatus::Connecting;
 
-        {
-            let mut servers = self.servers.write().await;
-            let state = servers
-                .entry(name.to_string())
-                .or_insert_with(ServerState::new);
-            state.health.status = ServerStatus::Connecting;
-        }
-
-        // Proactive OAuth: if OAuth is configured but no tokens exist yet, trigger
-        // the auth flow before wasting a connection attempt. This avoids the initial
-        // round-trip failure on servers (e.g. Atlassian) that return a hard 400/401
-        // for any unauthenticated request.
-        //
-        // We call handle_unauthorized (sync, non-blocking) which spawns the OAuth
-        // task and reconnects automatically after tokens are obtained. Awaiting
-        // authenticate_with_www_auth here would make connect()'s future !Send,
-        // breaking the tokio::spawn sites that drive the connection lifecycle.
-        let had_auth = if let McpTransport::Http { url, .. } = &cfg.transport {
-            let auth = self.load_http_auth(name, url, &cfg).await;
-            if auth.is_none() && cfg.oauth.is_some() {
-                debug!(server = %name, "no OAuth tokens; triggering proactive auth flow");
-                let synthetic_unauth = UnauthorizedError {
-                    url: url.clone(),
-                    www_authenticate: None,
-                };
-                self.handle_unauthorized(name, &cfg, &synthetic_unauth, false);
-                return Ok(());
-            }
-            auth.is_some()
+        let timeout = Duration::from_secs(if cfg.timeout_secs == 0 {
+            30
         } else {
-            false
+            cfg.timeout_secs
+        });
+        let (endpoint, signed_in) = match &cfg.transport {
+            McpTransport::Stdio { command, args } => (
+                Endpoint::Stdio {
+                    command,
+                    args,
+                    env: &cfg.env,
+                },
+                false,
+            ),
+            McpTransport::Http { url, headers } => {
+                let key = TokenStore::key(name, url);
+                let client = match auth::signed_in_client(&self.store, &key, url).await {
+                    Ok(client) => client,
+                    Err(e) => {
+                        warn!(server = %name, error = %format!("{e:#}"), "stored MCP sign-in unusable; signing in again");
+                        None
+                    }
+                };
+                // A server configured for OAuth and never signed in to is
+                // signed in to first: some refuse every unauthenticated
+                // request with a 400 rather than a 401 challenge.
+                if client.is_none() && cfg.oauth.is_some() {
+                    self.needs_sign_in(name, &cfg, None, false);
+                    return Ok(());
+                }
+                let signed_in = client.is_some();
+                (
+                    Endpoint::Http {
+                        url,
+                        headers,
+                        auth: client,
+                    },
+                    signed_in,
+                )
+            }
         };
 
-        match self.try_connect(name, &cfg).await {
-            Ok((conn, tools, prompts)) => {
-                let tc = tools.len();
-                let pc = prompts.len();
+        let opened = Connection::open(name, endpoint, timeout, self.changed_tx.clone()).await;
+        let result = match opened {
+            Ok(connection) => {
+                let tools = connection.list_tools().await.unwrap_or_else(|e| {
+                    warn!(server = %name, error = %format!("{e:#}"), "tools/list failed");
+                    vec![]
+                });
+                let prompts = connection.list_prompts().await.unwrap_or_else(|e| {
+                    debug!(server = %name, error = %format!("{e:#}"), "prompts/list failed");
+                    vec![]
+                });
+                Ok((connection, tools, prompts))
+            }
+            Err(e) => Err(e),
+        };
+        match result {
+            Ok((connection, tools, prompts)) => {
+                let (tc, pc) = (tools.len(), prompts.len());
                 {
                     let mut servers = self.servers.write().await;
-                    let state = servers
-                        .entry(name.to_string())
-                        .or_insert_with(ServerState::new);
-                    state.connection = Some(conn);
+                    let state = servers.entry(name.to_string()).or_default();
+                    state.connection = Some(connection);
                     state.tools = tools;
                     state.prompts = prompts;
                     state.health.report_ok(tc, pc);
@@ -278,26 +283,24 @@ impl McpManager {
                 Ok(())
             }
             Err(e) => {
-                if let Some(unauth) = e.downcast_ref::<UnauthorizedError>() {
-                    self.handle_unauthorized(name, &cfg, unauth, had_auth);
+                if let Some(challenge) = e.downcast_ref::<AuthRequired>() {
+                    self.needs_sign_in(name, &cfg, challenge.www_authenticate.clone(), signed_in);
                 } else if is_auth_required_error(&e) {
-                    // Some servers (e.g. Atlassian) return 400 instead of 401 when
-                    // unauthenticated. Treat as auth-required and trigger OAuth.
-                    self.handle_auth_required_error(name, &cfg, &e, had_auth);
+                    self.needs_sign_in(name, &cfg, None, signed_in);
                 } else {
-                    // Use the full anyhow chain so the error message includes
-                    // the underlying HTTP response body or transport error.
-                    let error_str = format!("{:#}", e);
-                    let mut servers = self.servers.write().await;
-                    let state = servers
+                    let error = format!("{e:#}");
+                    self.servers
+                        .write()
+                        .await
                         .entry(name.to_string())
-                        .or_insert_with(ServerState::new);
-                    state.health.report_error(error_str.clone());
+                        .or_default()
+                        .health
+                        .report_error(error.clone());
                     let _ = self
                         .event_tx
                         .send(McpEvent::ServerFailed {
                             name: name.to_string(),
-                            error: error_str,
+                            error,
                         })
                         .await;
                 }
@@ -306,196 +309,92 @@ impl McpManager {
         }
     }
 
-    /// Handle a 401 Unauthorized response from an MCP server.
+    /// The server needs a sign-in: it answered 401 (`challenge` is its
+    /// `WWW-Authenticate`), or it is configured for OAuth and has none.
     ///
-    /// Sets the status to `NeedsAuth` and emits an event. If the server config
-    /// has an `oauth` section, also automatically spawns the browser-based
-    /// OAuth flow (background task).
-    ///
-    /// When `had_auth` is true, we already sent a Bearer token and the server
-    /// returned 401/400. Re-running OAuth would not help (credentials already
-    /// invalid). Clear stored tokens and report the error instead of looping.
-    fn handle_unauthorized(
+    /// When `signed_in` is true the server refused the sign-in sven sent; the
+    /// sign-in is forgotten and the server reported failed, rather than
+    /// opening the browser in a loop. Otherwise an interactive session signs
+    /// in now (once, however many 401s arrive meanwhile) and reconnects; a
+    /// headless one reports [`McpEvent::AuthRequired`] and never waits for a
+    /// person.
+    fn needs_sign_in(
         self: &Arc<Self>,
         name: &str,
         cfg: &McpServerConfig,
-        unauth: &UnauthorizedError,
-        had_auth: bool,
+        challenge: Option<String>,
+        signed_in: bool,
     ) {
-        if had_auth {
-            // We already had valid tokens and the server rejected them. Don't
-            // trigger OAuth again - that would loop perpetually. Clear stale
-            // credentials and report the error.
-            let server_url = match &cfg.transport {
-                McpTransport::Http { url, .. } => url.clone(),
-                _ => return,
-            };
-            self.store.remove(name, &server_url);
-            let error_str = build_rejected_credentials_error(&server_url);
-            let this = Arc::clone(self);
-            let name_owned = name.to_string();
-            tokio::spawn(async move {
-                let mut servers = this.servers.write().await;
-                if let Some(state) = servers.get_mut(&name_owned) {
+        let McpTransport::Http { url, .. } = &cfg.transport else {
+            return;
+        };
+        let url = url.clone();
+        let name = name.to_string();
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            if signed_in {
+                if let Err(e) = this.store.remove(&TokenStore::key(&name, &url)) {
+                    warn!(server = %name, error = %format!("{e:#}"), "could not forget the refused MCP sign-in");
+                }
+                let error = build_rejected_credentials_error(&url);
+                if let Some(state) = this.servers.write().await.get_mut(&name) {
                     state.auth_in_progress = false;
-                    state.health.report_error(error_str.clone());
+                    state.health.report_error(error.clone());
                 }
                 let _ = this
                     .event_tx
-                    .send(McpEvent::ServerFailed {
-                        name: name_owned,
-                        error: error_str,
-                    })
+                    .send(McpEvent::ServerFailed { name, error })
                     .await;
-            });
-            return;
-        }
-
-        let www_auth = unauth.www_authenticate.clone();
-        let server_url = match &cfg.transport {
-            McpTransport::Http { url, .. } => url.clone(),
-            _ => return,
-        };
-
-        let config_scopes = cfg
-            .oauth
-            .as_ref()
-            .map(|o| o.scopes.as_slice())
-            .unwrap_or(&[])
-            .to_vec();
-        // Treat any server that explicitly signals auth-required (401 or 400
-        // "session ID" error) as OAuth-capable, even when `oauth` is absent from
-        // config. The MCP spec requires clients to attempt OAuth discovery when
-        // the server returns a 401/WWW-Authenticate challenge.
-        let has_oauth_config = true;
-
-        let this = Arc::clone(self);
-        let name_owned = name.to_string();
-
-        tokio::spawn(async move {
-            // Check and set the auth_in_progress flag atomically.
-            // If an auth flow is already running for this server, skip starting
-            // another one (prevents infinite re-auth loops on persistent 401s).
-            let should_start_auth = {
-                let mut servers = this.servers.write().await;
-                let state = servers
-                    .entry(name_owned.clone())
-                    .or_insert_with(ServerState::new);
-                if state.auth_in_progress {
-                    debug!(server = %name_owned, "auth already in progress, skipping duplicate");
-                    false
-                } else {
-                    state.auth_in_progress = has_oauth_config;
-                    state.health.status = ServerStatus::NeedsAuth {
-                        auth_url: String::new(),
-                    };
-                    true
-                }
-            };
-
-            if !should_start_auth {
                 return;
             }
 
-            // Discover the authorization server URL for display purposes.
-            let discovery_result = discover_oauth_info(
-                &this.http_client,
-                &server_url,
-                www_auth.as_deref(),
-                &config_scopes,
-            )
-            .await;
-
-            // Build a display-only auth URL using the authorization endpoint directly.
-            // We do NOT construct a full authorization URL with a placeholder redirect_uri
-            // here because any port we pick would differ from the actual dynamic port
-            // chosen when run_oauth_flow() binds the callback listener.
-            let auth_url = match discovery_result {
-                Ok(ref disc) => disc.auth_server_metadata.authorization_endpoint.clone(),
-                Err(ref e) => {
-                    warn!(server = %name_owned, error = %e, "OAuth discovery failed");
-                    String::new()
-                }
-            };
-
-            // Update status with the discovered auth URL.
             {
                 let mut servers = this.servers.write().await;
-                if let Some(state) = servers.get_mut(&name_owned) {
-                    state.health.status = ServerStatus::NeedsAuth {
-                        auth_url: auth_url.clone(),
-                    };
+                let state = servers.entry(name.clone()).or_default();
+                if state.auth_in_progress {
+                    debug!(server = %name, "sign-in already in progress");
+                    return;
                 }
+                state.auth_in_progress = this.allow_interactive_oauth;
+                state.health.status = ServerStatus::NeedsAuth {
+                    auth_url: url.clone(),
+                };
             }
 
-            if has_oauth_config && this.allow_interactive_oauth {
-                let _ = this
-                    .event_tx
-                    .send(McpEvent::AuthStarted {
-                        server: name_owned.clone(),
-                    })
-                    .await;
-
-                let auth_result = this
-                    .authenticate_with_www_auth(&name_owned, www_auth.as_deref(), true)
-                    .await;
-
-                // Clear the in-progress flag regardless of outcome.
-                {
-                    let mut servers = this.servers.write().await;
-                    if let Some(state) = servers.get_mut(&name_owned) {
-                        state.auth_in_progress = false;
-                    }
-                }
-
-                match auth_result {
-                    Ok(_) => {
-                        debug!(server = %name_owned, "auto-auth completed successfully");
-                    }
-                    Err(e) => {
-                        warn!(server = %name_owned, error = %e, "auto-auth failed");
-                        let error_str = format!("{:#}", e);
-                        let mut servers = this.servers.write().await;
-                        if let Some(state) = servers.get_mut(&name_owned) {
-                            // Set Failed (not Reconnecting) so the background loop
-                            // does not retry and open the browser again.
-                            state.health.status = ServerStatus::Failed {
-                                error: error_str.clone(),
-                            };
-                        }
-                        let _ = this
-                            .event_tx
-                            .send(McpEvent::ServerFailed {
-                                name: name_owned,
-                                error: error_str,
-                            })
-                            .await;
-                    }
-                }
-            } else if has_oauth_config && !this.allow_interactive_oauth {
-                // Headless/CI mode: never trigger interactive OAuth. Emit AuthRequired
-                // so the run can fail fast; batch flows must not block on user input.
-                {
-                    let mut servers = this.servers.write().await;
-                    if let Some(state) = servers.get_mut(&name_owned) {
-                        state.auth_in_progress = false;
-                    }
-                }
+            if !this.allow_interactive_oauth {
                 let _ = this
                     .event_tx
                     .send(McpEvent::AuthRequired {
-                        server: name_owned,
-                        auth_url,
+                        server: name,
+                        auth_url: url,
                     })
                     .await;
-            } else {
-                // Manual auth required - user must run `/mcp auth <name>`.
+                return;
+            }
+
+            let _ = this
+                .event_tx
+                .send(McpEvent::AuthStarted {
+                    server: name.clone(),
+                })
+                .await;
+            let signed = this.sign_in(&name, challenge.as_deref()).await;
+            if let Some(state) = this.servers.write().await.get_mut(&name) {
+                state.auth_in_progress = false;
+            }
+            if let Err(e) = signed {
+                warn!(server = %name, error = %format!("{e:#}"), "MCP sign-in failed");
+                let error = format!("{e:#}");
+                if let Some(state) = this.servers.write().await.get_mut(&name) {
+                    // Failed, not Reconnecting: the background loop must not
+                    // open the browser again on its own.
+                    state.health.status = ServerStatus::Failed {
+                        error: error.clone(),
+                    };
+                }
                 let _ = this
                     .event_tx
-                    .send(McpEvent::AuthRequired {
-                        server: name_owned,
-                        auth_url,
-                    })
+                    .send(McpEvent::ServerFailed { name, error })
                     .await;
             }
         });
@@ -503,8 +402,7 @@ impl McpManager {
 
     /// Disconnect and remove a server.
     pub async fn disconnect(&self, name: &str) {
-        let mut servers = self.servers.write().await;
-        if let Some(state) = servers.get_mut(name) {
+        if let Some(state) = self.servers.write().await.get_mut(name) {
             state.connection = None;
             state.tools.clear();
             state.prompts.clear();
@@ -529,9 +427,9 @@ impl McpManager {
             for t in &state.tools {
                 tools.push(McpTool::new(
                     name.clone(),
-                    t.name.clone(),
-                    t.description.clone(),
-                    t.input_schema.clone(),
+                    t.name.to_string(),
+                    t.description.as_deref().map(str::to_string),
+                    Value::Object((*t.input_schema).clone()),
                     Arc::clone(self),
                 ));
             }
@@ -548,25 +446,22 @@ impl McpManager {
                 continue;
             }
             for p in &state.prompts {
-                let args = p
+                let arguments = p
                     .arguments
-                    .as_ref()
-                    .map(|args| {
-                        args.iter()
-                            .map(|a| McpPromptArgInfo {
-                                name: a.name.clone(),
-                                description: a.description.clone().unwrap_or_default(),
-                                required: a.required.unwrap_or(false),
-                            })
-                            .collect()
+                    .iter()
+                    .flatten()
+                    .map(|a| McpPromptArgInfo {
+                        name: a.name.clone(),
+                        description: a.description.clone().unwrap_or_default(),
+                        required: a.required.unwrap_or(false),
                     })
-                    .unwrap_or_default();
+                    .collect();
                 prompts.push(McpPromptInfo {
                     slash_path: format!("{}/{}", name, p.name),
                     server_name: name.clone(),
                     prompt_name: p.name.clone(),
                     description: p.description.clone().unwrap_or_default(),
-                    arguments: args,
+                    arguments,
                 });
             }
         }
@@ -576,16 +471,25 @@ impl McpManager {
 
     // ── Tool execution ────────────────────────────────────────────────────────
 
-    pub async fn call_tool(&self, server: &str, tool: &str, args: &Value) -> Result<String> {
-        let servers = self.servers.read().await;
-        let state = servers
+    /// The live connection to `server`, cloned so the caller holds no lock.
+    async fn connection(&self, server: &str) -> Result<Connection> {
+        self.servers
+            .read()
+            .await
             .get(server)
-            .with_context(|| format!("no MCP server state for {server}"))?;
-        let conn = state
+            .with_context(|| format!("no MCP server state for {server}"))?
             .connection
-            .as_ref()
-            .with_context(|| format!("MCP server {server} is not connected"))?;
-        conn.call_tool(tool, args).await
+            .clone()
+            .with_context(|| format!("MCP server {server} is not connected"))
+    }
+
+    pub async fn call_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        args: &Value,
+    ) -> Result<CallToolResult> {
+        self.connection(server).await?.call_tool(tool, args).await
     }
 
     pub async fn get_prompt(
@@ -594,15 +498,10 @@ impl McpManager {
         prompt: &str,
         args: HashMap<String, String>,
     ) -> Result<String> {
-        let servers = self.servers.read().await;
-        let state = servers
-            .get(server)
-            .with_context(|| format!("no MCP server state for {server}"))?;
-        let conn = state
-            .connection
-            .as_ref()
-            .with_context(|| format!("MCP server {server} is not connected"))?;
-        conn.get_prompt(prompt, &args).await
+        self.connection(server)
+            .await?
+            .get_prompt(prompt, &args)
+            .await
     }
 
     // ── Server status ─────────────────────────────────────────────────────────
@@ -610,35 +509,27 @@ impl McpManager {
     pub async fn server_statuses(&self) -> Vec<ServerStatusSummary> {
         let servers = self.servers.read().await;
         let config = self.config.read().await;
-
         let mut names: Vec<String> = config.keys().cloned().collect();
         names.sort();
-
         names
             .into_iter()
             .map(|name| {
-                let (status, tool_count, prompt_count) = servers
-                    .get(&name)
-                    .map(|s| {
+                let (status, tool_count, prompt_count) = servers.get(&name).map_or_else(
+                    || {
+                        let status = match config.get(&name) {
+                            Some(c) if !c.enabled => ServerStatus::Disabled,
+                            _ => ServerStatus::Initializing,
+                        };
+                        (status, 0, 0)
+                    },
+                    |s| {
                         (
                             s.health.status.clone(),
                             s.health.tool_count,
                             s.health.prompt_count,
                         )
-                    })
-                    .unwrap_or_else(|| {
-                        let status = config
-                            .get(&name)
-                            .map(|c| {
-                                if c.enabled {
-                                    ServerStatus::Initializing
-                                } else {
-                                    ServerStatus::Disabled
-                                }
-                            })
-                            .unwrap_or(ServerStatus::Initializing);
-                        (status, 0, 0)
-                    });
+                    },
+                );
                 ServerStatusSummary {
                     name,
                     status,
@@ -654,318 +545,121 @@ impl McpManager {
     pub async fn update_config(self: &Arc<Self>, new_config: HashMap<String, McpServerConfig>) {
         let (to_remove, to_add, to_update) = {
             let current = self.config.read().await;
-            let mut to_remove = Vec::new();
+            let to_remove: Vec<String> = current
+                .keys()
+                .filter(|name| !new_config.contains_key(*name))
+                .cloned()
+                .collect();
             let mut to_add = Vec::new();
             let mut to_update = Vec::new();
-
-            for name in current.keys() {
-                if !new_config.contains_key(name) {
-                    to_remove.push(name.clone());
-                }
-            }
-
             for (name, new_cfg) in &new_config {
                 match current.get(name) {
                     None => to_add.push(name.clone()),
-                    Some(old_cfg) => {
-                        if config_changed(old_cfg, new_cfg) {
-                            to_update.push(name.clone());
-                        }
+                    Some(old_cfg) if config_changed(old_cfg, new_cfg) => {
+                        to_update.push(name.clone());
                     }
+                    Some(_) => {}
                 }
             }
-
             (to_remove, to_add, to_update)
         };
-
-        {
-            let mut config = self.config.write().await;
-            *config = new_config;
-        }
+        *self.config.write().await = new_config;
 
         for name in to_remove {
             self.disconnect(&name).await;
         }
-
-        for name in to_update {
-            self.disconnect(&name).await;
-            let this = Arc::clone(self);
-            let n = name.clone();
-            tokio::spawn(async move {
-                if let Err(e) = this.connect(&n).await {
-                    warn!(server = %n, error = %e, "MCP server reconnect failed");
-                }
-            });
+        for name in &to_update {
+            self.disconnect(name).await;
         }
-
-        for name in to_add {
+        for name in to_update.into_iter().chain(to_add) {
             let this = Arc::clone(self);
-            let n = name.clone();
             tokio::spawn(async move {
-                if let Err(e) = this.connect(&n).await {
-                    warn!(server = %n, error = %e, "MCP server initial connect failed");
+                if let Err(e) = this.connect(&name).await {
+                    warn!(server = %name, error = %e, "MCP server connect failed");
                 }
             });
         }
     }
 
-    // ── OAuth support ─────────────────────────────────────────────────────────
+    // ── Sign-in ───────────────────────────────────────────────────────────────
 
-    /// Run the full interactive OAuth PKCE flow (opens browser, waits for
-    /// callback) for `server`.
-    ///
-    /// This method blocks until the user completes browser-based authentication
-    /// (up to 5 minutes) or an error occurs.  On success, tokens are persisted
-    /// and the server is automatically reconnected.
+    /// Sign in to `server` in the browser (`/mcp auth <name>`), then
+    /// reconnect it. Waits until the browser comes back (at most five
+    /// minutes). Refused in a headless run.
     pub async fn authenticate(self: &Arc<Self>, server: &str) -> Result<()> {
-        self.authenticate_with_www_auth(server, None, true).await
+        self.sign_in(server, None).await
     }
 
-    /// Like [`Self::authenticate`] but accepts `www_authenticate` from a 401 response.
-    /// Use this when re-auth is triggered by an HTTP 401 so discovery can use
-    /// the server's `resource_metadata` URL if present.
-    ///
-    /// When `spawn_reconnect` is true (default), spawns a task to reconnect after
-    /// OAuth. When false, the caller is responsible for reconnecting (e.g. when
-    /// called from connect() during proactive OAuth).
-    pub async fn authenticate_with_www_auth(
-        self: &Arc<Self>,
-        server: &str,
-        www_authenticate: Option<&str>,
-        spawn_reconnect: bool,
-    ) -> Result<()> {
+    async fn sign_in(self: &Arc<Self>, server: &str, challenge: Option<&str>) -> Result<()> {
         if !self.allow_interactive_oauth {
             anyhow::bail!(
-                "OAuth flow cannot run in headless/CI mode. \
-                 Pre-authenticate in an interactive session before running batch."
+                "MCP sign-in cannot run in a headless or CI run. \
+                 Sign in from an interactive session first (`/mcp auth {server}`)."
             );
         }
         let cfg = self.server_config(server).await?;
-
-        let url = match &cfg.transport {
-            McpTransport::Http { url, .. } => url.clone(),
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "OAuth is only supported for HTTP MCP servers"
-                ))
-            }
+        let McpTransport::Http { url, .. } = &cfg.transport else {
+            anyhow::bail!("{server} is a stdio server; only HTTP servers sign in");
         };
-
-        let oauth_cfg = cfg.oauth.as_ref();
-        let config_scopes = oauth_cfg.map(|o| o.scopes.as_slice()).unwrap_or(&[]);
-        let client_id = oauth_cfg.and_then(|o| o.client_id.clone());
-        let client_secret = oauth_cfg.and_then(|o| o.client_secret.clone());
-        let redirect_opts = OAuthRedirectOptions {
-            redirect_uri: oauth_cfg.and_then(|o| o.redirect_uri.clone()),
-            callback_port: oauth_cfg.and_then(|o| o.callback_port),
-        };
-
-        let discovery =
-            discover_oauth_info(&self.http_client, &url, www_authenticate, config_scopes).await?;
-
-        run_oauth_flow(RunOAuthFlowParams {
-            client: &self.http_client,
-            server_name: server,
-            server_url: &url,
-            discovery,
-            config_client_id: client_id,
-            config_client_secret: client_secret,
-            store: &self.store,
-            redirect_opts,
-        })
+        auth::sign_in(
+            &self.store,
+            SignIn {
+                key: &TokenStore::key(server, url),
+                url,
+                oauth: cfg.oauth.as_ref(),
+                challenge,
+                present: &crate::callback::open_browser,
+            },
+        )
         .await?;
-
-        if spawn_reconnect {
-            let this = Arc::clone(self);
-            let name = server.to_string();
-            tokio::spawn(async move {
-                if let Err(e) = this.connect(&name).await {
-                    warn!(server = %name, error = %e, "reconnect after OAuth failed");
-                }
-            });
-        }
-
+        let this = Arc::clone(self);
+        let name = server.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = this.connect(&name).await {
+                warn!(server = %name, error = %e, "reconnect after sign-in failed");
+            }
+        });
         Ok(())
     }
 
-    /// Look up the config for a named server.
     async fn server_config(&self, server: &str) -> Result<McpServerConfig> {
         self.config
             .read()
             .await
             .get(server)
             .cloned()
-            .with_context(|| format!("no config for server {server}"))
+            .with_context(|| format!("no MCP server config for {server}"))
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /// Handle server-initiated notifications (tools/list_changed, prompts/list_changed, etc.).
-    /// Refetches the affected lists and emits ToolsChanged.
-    async fn handle_server_notification(
-        self: &Arc<Self>,
-        server_name: &str,
-        method: &str,
-    ) -> Result<()> {
+    /// Refetch what a server's `list_changed` notification named, on a clone
+    /// of its connection, and announce the change.
+    async fn refresh(self: &Arc<Self>, server: &str, what: ListChanged) -> Result<()> {
+        let connection = self.connection(server).await?;
+        let (tools, prompts) = match what {
+            ListChanged::Tools => (Some(connection.list_tools().await?), None),
+            ListChanged::Prompts => (None, Some(connection.list_prompts().await?)),
+        };
         let (tc, pc) = {
             let mut servers = self.servers.write().await;
             let state = servers
-                .get_mut(server_name)
-                .with_context(|| format!("no server state for {server_name}"))?;
-            let conn = state
-                .connection
-                .as_ref()
-                .with_context(|| format!("server {server_name} is not connected"))?;
-
-            let refetch_tools = method == "notifications/tools/list_changed"
-                || method == "notifications/resources/list_changed";
-            let refetch_prompts = method == "notifications/prompts/list_changed";
-
-            if refetch_tools {
-                state.tools = conn.list_tools().await.unwrap_or_else(|e| {
-                    warn!(server = %server_name, error = %e, "tools/list failed after notification");
-                    vec![]
-                });
+                .get_mut(server)
+                .with_context(|| format!("no MCP server state for {server}"))?;
+            if let Some(tools) = tools {
+                state.tools = tools;
             }
-            if refetch_prompts {
-                state.prompts = conn.list_prompts().await.unwrap_or_else(|e| {
-                    warn!(server = %server_name, error = %e, "prompts/list failed after notification");
-                    vec![]
-                });
+            if let Some(prompts) = prompts {
+                state.prompts = prompts;
             }
-
+            state
+                .health
+                .report_ok(state.tools.len(), state.prompts.len());
             (state.tools.len(), state.prompts.len())
         };
-
-        info!(
-            server = %server_name,
-            method = %method,
-            tools = tc,
-            prompts = pc,
-            "refreshed after server notification"
-        );
+        info!(server = %server, tools = tc, prompts = pc, "refreshed after list_changed");
         let _ = self.event_tx.send(McpEvent::ToolsChanged).await;
         Ok(())
-    }
-
-    async fn try_connect(
-        &self,
-        name: &str,
-        cfg: &McpServerConfig,
-    ) -> Result<(
-        McpConnection,
-        Vec<crate::protocol::McpTool>,
-        Vec<crate::protocol::McpPrompt>,
-    )> {
-        let transport = self.build_transport(name, cfg).await?;
-        let conn = McpConnection::initialize(transport, name).await?;
-
-        let tools = conn.list_tools().await.unwrap_or_else(|e| {
-            warn!(server = %name, error = %e, "tools/list failed");
-            vec![]
-        });
-
-        let prompts = conn.list_prompts().await.unwrap_or_else(|e| {
-            debug!(server = %name, error = %e, "prompts/list failed (server may not support it)");
-            vec![]
-        });
-
-        Ok((conn, tools, prompts))
-    }
-
-    async fn build_transport(&self, name: &str, cfg: &McpServerConfig) -> Result<Transport> {
-        match &cfg.transport {
-            McpTransport::Stdio { command, args } => {
-                let notif_tx = self.notif_tx.clone();
-                let server_name = name.to_string();
-                let on_notification: OnNotification = Arc::new(move |method| {
-                    let _ = notif_tx.try_send((server_name.clone(), method.to_string()));
-                });
-                let t = StdioTransport::spawn(
-                    command,
-                    args,
-                    &cfg.env,
-                    cfg.timeout_secs,
-                    Some(on_notification),
-                )
-                .await?;
-                Ok(Transport::Stdio(Box::new(t)))
-            }
-            McpTransport::Http { url, headers } => {
-                let auth = self.load_http_auth(name, url, cfg).await;
-                let t = build_http_transport(
-                    url,
-                    headers,
-                    cfg.timeout_secs,
-                    auth,
-                    name,
-                    url,
-                    Arc::clone(&self.store),
-                )?;
-                Ok(Transport::Http(t))
-            }
-        }
-    }
-
-    async fn load_http_auth(
-        &self,
-        name: &str,
-        url: &str,
-        cfg: &McpServerConfig,
-    ) -> Option<AuthState> {
-        // 1. Check for stored OAuth tokens, refresh if near expiry.
-        if let Some(stored) = self.store.load(name, url) {
-            match ensure_fresh(&self.http_client, stored, &self.store).await {
-                Ok(fresh) => {
-                    return Some(AuthState::OAuth {
-                        access_token: fresh.access_token,
-                        refresh_token: fresh.refresh_token,
-                        expires_at: fresh.expires_at,
-                        token_endpoint: fresh.token_endpoint,
-                        client_id: fresh
-                            .client_id
-                            .unwrap_or_else(|| "sven-mcp-client".to_string()),
-                        client_secret: fresh.client_secret,
-                    });
-                }
-                Err(e) => {
-                    // Refresh failed or token completely expired - clear and let
-                    // the connection attempt trigger fresh OAuth.
-                    warn!(server = %name, error = %e, "stored token invalid, will re-authenticate");
-                    return None;
-                }
-            }
-        }
-
-        // 2. Fall back to a bearer token in the configured headers.
-        if let McpTransport::Http { headers, .. } = &cfg.transport {
-            if let Some(auth_header) = headers.get("Authorization") {
-                if let Some(token) = auth_header.strip_prefix("Bearer ") {
-                    return Some(AuthState::BearerToken(token.to_string()));
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Handle auth-required errors (400/401) by triggering OAuth flow.
-    fn handle_auth_required_error(
-        self: &Arc<Self>,
-        name: &str,
-        cfg: &McpServerConfig,
-        _e: &anyhow::Error,
-        had_auth: bool,
-    ) {
-        // Reuse the 401 handler with a synthetic UnauthorizedError.
-        let unauth = UnauthorizedError {
-            url: match &cfg.transport {
-                McpTransport::Http { url, .. } => url.clone(),
-                _ => return,
-            },
-            www_authenticate: None,
-        };
-        self.handle_unauthorized(name, cfg, &unauth, had_auth);
     }
 }
 

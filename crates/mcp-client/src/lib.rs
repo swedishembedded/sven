@@ -21,20 +21,18 @@
 //! `mcp_servers:` section of the configuration file. The manager accepts a
 //! [`McpServers`] map where the key is the server name used as the tool prefix.
 
+pub mod auth;
 pub mod bridge;
-pub mod client;
+mod callback;
 pub mod config;
+mod connection;
 pub mod health;
 pub mod manager;
-pub mod oauth;
-pub mod protocol;
-pub mod transport;
 
 // ── Public re-exports ─────────────────────────────────────────────────────────
 
+pub use auth::TokenStore;
 pub use bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 pub use config::{mcp_servers_schema, McpOAuthConfig, McpServerConfig, McpServers, McpTransport};
 pub use health::{ServerStatus, ServerStatusSummary};
 pub use manager::{McpEvent, McpManager};
-pub use oauth::{CredentialsStore, OAuthDiscovery, RunOAuthFlowParams, StoredTokens};
-pub use transport::UnauthorizedError;

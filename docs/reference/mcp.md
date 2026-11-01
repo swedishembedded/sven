@@ -57,15 +57,23 @@ written into it.
 
 ### Transports
 
-- **stdio** starts `command` with `args` and `env` and talks line-delimited
+- **stdio** starts `command` with `args` and the variables in `env` (and
+  `PATH`, nothing else of sven's environment) and talks line-delimited
   JSON-RPC on its standard streams.
-- **http** implements the Streamable HTTP transport: each request is a POST
-  that accepts a JSON or `text/event-stream` reply, and a server-issued
-  `mcp-session-id` is sent back on later requests.
+- **http** implements the Streamable HTTP transport, with or without a
+  server session.
+
+sven speaks the current protocol revision (2026-07-28: `server/discover` and
+per-request metadata) and the earlier ones (`initialize`), whichever the
+server does. Over http the first request finds out; a stdio server of an
+earlier revision that closes on the unfamiliar first request is started again
+and spoken to with `initialize`. Requests to one server run side by side, and
+each ends at `timeout_secs` however the server goes quiet.
 
 ### Tools and prompts
 
-On connection sven lists the server's tools and prompts.
+On connection sven lists the server's tools and prompts, every page of them,
+and lists them again when the server says they changed.
 
 - A tool is registered as `<server>-<tool>`, with any character outside
   `[a-zA-Z0-9_-]` in either part replaced by `_`; a description is cut at 500
@@ -73,6 +81,9 @@ On connection sven lists the server's tools and prompts.
   (`NetworkAccess`): the session mode's policy decides whether it may run at
   all, and its default policy is to ask, so under manual approval, or through
   an ACP client, each call is put to a person.
+- A tool's result reaches the agent whole: text, images and audio as
+  themselves, an embedded resource as its text, a resource link as its URI,
+  and a structured result as JSON when the server sent nothing else.
 - A prompt is a slash command named `/<server>/<prompt>` in the TUI, with the
   prompt's arguments completed as `<name>`.
 
@@ -89,15 +100,20 @@ An http server that requires OAuth 2.0 is configured with an `oauth` block;
 | Key | Meaning |
 |-----|---------|
 | `scopes` | scopes to request; empty means discover them (the `WWW-Authenticate` challenge, then the server's protected-resource metadata, then none) |
-| `client_id`, `client_secret` | a pre-registered client; without them sven uses its public client `sven-mcp-client` |
+| `client_id`, `client_secret` | a pre-registered client; without them sven registers one (Dynamic Client Registration), or uses the public client id `sven-mcp-client` when the server offers no registration |
+| `client_metadata_url` | an HTTPS Client ID Metadata Document describing the client, used as the client id by authorization servers that accept such documents |
 | `redirect_uri` | where the browser returns; by default `sven://sven.mcp/callback` natively and `http://127.0.0.1:5598/callback` in a container |
 | `callback_port` | port of the local callback listener (default 5598) |
 
-The flow is authorization code with PKCE (RFC 7636). Tokens are cached in
-`~/.config/sven/mcp-credentials.json`, readable by its owner only, shared by
-every project that names the server the same and uses the same URL, and
-refreshed before they expire; sven processes running at once update the file
-under a lock and never lose each other's tokens. A server that answers 401
+The flow follows the MCP authorization rules: authorization code with PKCE,
+the token bound to the server it is for (the `resource` parameter, RFC 8707),
+and the issuer of the browser's answer checked against the authorization
+server's (RFC 9207), so an answer from another authorization server signs in
+nothing. Tokens are kept in `~/.config/sven/mcp-oauth.json`, readable by its
+owner only, shared by every project that names the server the same and uses
+the same URL, and refreshed when they expire; a sign-in is forgotten when the
+server's authorization server changes. sven processes running at once update
+the file under a lock, and refresh one at a time. A server that answers 401
 shows as `needs-auth`; `/mcp auth <name>` in the TUI starts the flow. A static
 bearer token needs no `oauth` block: put it in `transport.headers`. Setup of
 the `sven://` and `cursor://` redirect handlers is in

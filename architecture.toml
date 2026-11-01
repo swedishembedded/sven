@@ -351,9 +351,6 @@ lines = 1729
 path = "crates/ci/src/runner/mod.rs"
 lines = 1433
 [[allow.large_file]]
-path = "crates/mcp-client/src/oauth.rs"
-lines = 1430
-[[allow.large_file]]
 path = "crates/tools-ctx/tests/context_integration.rs"
 lines = 1418
 [[allow.large_file]]
@@ -368,9 +365,6 @@ lines = 1066
 [[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
 lines = 995
-[[allow.large_file]]
-path = "crates/mcp-client/src/manager.rs"
-lines = 1016
 [[allow.large_file]]
 path = "crates/tools-ctx/src/context/store.rs"
 lines = 885

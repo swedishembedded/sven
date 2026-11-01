@@ -9,9 +9,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use rmcp::model::{CallToolResult, ContentBlock, ResourceContents};
 use serde_json::Value;
 
-use sven_tool_api::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolCapability, ToolOutput};
+use sven_tool_api::{
+    ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolCapability, ToolOutput, ToolOutputPart,
+};
 
 use crate::manager::McpManager;
 
@@ -122,9 +125,69 @@ impl Tool for McpTool {
             .call_tool(&self.server_name, &self.original_name, &call.args)
             .await
         {
-            Ok(text) => ToolOutput::ok(&call.id, text),
-            Err(e) => ToolOutput::err(&call.id, e.to_string()),
+            Ok(result) => tool_output(&call.id, result),
+            Err(e) => ToolOutput::err(&call.id, format!("{e:#}")),
         }
+    }
+}
+
+/// An MCP tool result as sven's tool output, nothing dropped: text, images
+/// and audio as themselves, an embedded resource as its text (or a note
+/// naming a binary one), a resource link as its URI, and the structured
+/// result as JSON when the server sent no content to read it from.
+pub fn tool_output(call_id: &str, result: CallToolResult) -> ToolOutput {
+    let mut parts: Vec<ToolOutputPart> = result.content.into_iter().map(content_part).collect();
+    if parts.is_empty() {
+        if let Some(structured) = &result.structured_content {
+            parts.push(ToolOutputPart::Text(structured.to_string()));
+        }
+    }
+    let mut output = ToolOutput::with_parts(call_id, parts);
+    output.is_error = result.is_error.unwrap_or(false);
+    output
+}
+
+fn content_part(block: ContentBlock) -> ToolOutputPart {
+    match block {
+        ContentBlock::Text(t) => ToolOutputPart::Text(t.text),
+        ContentBlock::Image(i) => {
+            ToolOutputPart::Image(format!("data:{};base64,{}", i.mime_type, i.data))
+        }
+        ContentBlock::Audio(a) => {
+            ToolOutputPart::Audio(format!("data:{};base64,{}", a.mime_type, a.data))
+        }
+        ContentBlock::Resource(r) => match r.resource {
+            ResourceContents::TextResourceContents { uri, text, .. } => {
+                ToolOutputPart::Text(format!("[resource {uri}]\n{text}"))
+            }
+            ResourceContents::BlobResourceContents {
+                uri,
+                mime_type,
+                blob,
+                ..
+            } => match mime_type.as_deref() {
+                Some(mime) if mime.starts_with("image/") => {
+                    ToolOutputPart::Image(format!("data:{mime};base64,{blob}"))
+                }
+                Some(mime) if mime.starts_with("audio/") => {
+                    ToolOutputPart::Audio(format!("data:{mime};base64,{blob}"))
+                }
+                mime => ToolOutputPart::Text(format!(
+                    "[binary resource {uri} ({}), {} bytes base64]",
+                    mime.unwrap_or("application/octet-stream"),
+                    blob.len()
+                )),
+            },
+            _ => ToolOutputPart::Text("[a resource of a kind sven does not read]".to_string()),
+        },
+        ContentBlock::ResourceLink(link) => ToolOutputPart::Text(match &link.description {
+            Some(description) => format!(
+                "[resource link {} ({}): {description}]",
+                link.uri, link.name
+            ),
+            None => format!("[resource link {} ({})]", link.uri, link.name),
+        }),
+        _ => ToolOutputPart::Text("[content of a kind sven does not read]".to_string()),
     }
 }
 

@@ -13,19 +13,25 @@ anyhow       = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 tokio        = { workspace = true }
-tokio-util   = { version = "0.7", features = ["codec"] }
 reqwest      = { workspace = true }
 tracing      = { workspace = true }
 async-trait  = { workspace = true }
-thiserror    = { workspace = true }
 dirs         = { workspace = true }
 sha2         = { workspace = true }
 url          = "2.5"
-rand         = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
-base64       = "0.22"
 webbrowser   = "1"
+rmcp         = { workspace = true, features = ["client", "auth", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 fs4          = { workspace = true }
 
 [dev-dependencies]
 serde_yaml = { workspace = true }
 tempfile   = "3"
+rmcp       = { workspace = true, features = ["server", "transport-io", "transport-streamable-http-server"] }
+# A server of the previous protocol era, for the conformance suite only.
+legacy     = { package = "rmcp", version = "=0.15.0", default-features = false, features = ["server", "transport-io"] }
+hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
+
+# Its own main: the binary is also the stdio servers it tests against.
+[[test]]
+name    = "conformance"
+harness = false

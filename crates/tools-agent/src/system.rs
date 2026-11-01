@@ -418,10 +418,7 @@ fn build_mcp_config_from_args(args: &Value) -> McpServerConfig {
                 .iter()
                 .filter_map(|s| s.as_str().map(str::to_string))
                 .collect(),
-            client_id: None,
-            client_secret: None,
-            redirect_uri: None,
-            callback_port: None,
+            ..McpOAuthConfig::default()
         });
 
     McpServerConfig {

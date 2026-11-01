@@ -18,36 +18,26 @@ Grounded against sven ea973df2 on 2026-11-01 and the MCP 2026-07-28
 specification (changelog, authorization and Streamable HTTP pages). Every
 file reference below was read.
 
-## Where the client is today
+## Where the client is
 
-`crates/mcp-client` (5048 lines, hand-written) beside `crates/mcp` (sven as
-an MCP server, built on `rmcp` 0.15). Two implementations of the same wire
-types in one workspace.
+`crates/mcp-client` runs on `rmcp` 3.8 (2550 lines, from 5048 hand-written),
+as does `crates/mcp`. Done and described in `docs/reference/mcp.md`: both
+protocol eras over both transports, full pagination, concurrent requests, a
+timeout on every request, every content type to the agent, no lock held
+across a call, OAuth with `iss` and `resource` checked by
+`tests/sign_in.rs`, sign-ins bound to their issuer. The conformance suite is
+`tests/conformance.rs`.
+
+Still as before:
 
 | Finding | Evidence |
 | --- | --- |
-| Legacy-only: always `initialize`, version `2024-11-05`, no negotiation | `protocol.rs:149`, `client.rs:32-64`, `transport.rs:325`, `oauth.rs:318,369,419,963` |
-| Lists stop at the first page; `nextCursor` parsed, never followed | `client.rs:89,145,190`; `protocol.rs:168,229,284` |
-| Results keep text only; images and resources dropped; no audio, `resource_link` or `structuredContent` | `protocol.rs:~198,215` |
-| SSE body read whole, then split; server requests on the stream ignored | `transport.rs:483` |
-| stdio has no pending-request map: concurrent calls can eat each other's replies, then time out | `transport.rs:~143-235` |
-| Server-initiated requests dropped, not answered; `roots.listChanged` advertised without a handler | `protocol.rs:~150` |
-| Manager holds the servers read lock across the network call; reconnect and 401 handling wait a tool timeout | `manager.rs:579-606` |
-| Every MCP tool is `NetworkAccess` with `Ask`; tool annotations not parsed | `bridge.rs:100,115-117` |
+| Every MCP tool is `NetworkAccess` with `Ask`; tool annotations not used | `bridge.rs` |
 | `/mcp enable` and `/mcp disable` advertised, not implemented; inspector is a read-only pager | `commands/src/builtin/inspect.rs:~145-215`, `tui/src/ui/inspector.rs` |
-
-## Security findings still open
-
-Fixed on 2026-11-01: a refresh bypassing `tools.only` / `tools.disabled`
-(registry `NamePolicy`), `--hosted` and `--container` starting configured MCP
-servers, token text in the sign-in result, and the token store's unprotected
-read-modify-write (`sven_config::write_private` plus a lock).
-
-| Finding | Evidence | Closed by |
-| --- | --- | --- |
-| No `iss` check of the authorization response (RFC 9207); no `resource` parameter (RFC 8707) in authorize, code exchange or refresh | `oauth.rs:~1040-1075,595-603,1298-1355` | M2: the flow moves onto `rmcp`'s, which does both (`transport/auth.rs`, 3.8.0) |
-| Credentials keyed by server name and URL, not by issuer (2026-07-28 requires issuer keying) | `oauth.rs` `CredentialsStore::key` | M2: `rmcp`'s `StoredCredentials` carries the issuer; sven's store keys by it |
-| In a container the callback listener binds `0.0.0.0:5598` (needed for `docker -p` forwarding; `state` stops a forged callback) | `oauth.rs:65,713-725` | M3: paste-the-redirect sign-in needs no listener reachable from outside |
+| A refreshed tool list reaches no live session in the shipped frontends: the TUI's refresh channel has no subscriber | `tui/src/app/run.rs:72-73,385-387` |
+| A refused stored sign-in fails the server instead of offering a new sign-in | `manager.rs` `needs_sign_in` |
+| The sign-in link is only opened in a browser or printed to stderr; no frontend shows it | `callback.rs` `open_browser` |
+| In a container the callback listener binds `0.0.0.0:5598` (for `docker -p`; `state` refuses a forged callback) | `callback.rs` `bind` |
 
 ## Decisions
 
@@ -65,32 +55,12 @@ read-modify-write (`sven_config::write_private` plus a lock).
 
 Each closes with `make check && make test` and the number named.
 
-**M0 Security fixes.** Four done (see above); the rest close with M2 and M3,
-each with a regression test: a callback with a wrong `iss` persists no token;
-`resource` is sent in all three requests.
-
-**M1 rmcp spike: done 2026-11-01.** A scratch client on `rmcp` 3.8.0
-against an `rmcp` 0.15 server over a pipe: `Auto` fails because the legacy
-server closes on `server/discover`; respawn with `Initialize` connects (2 ms,
-negotiates `2025-03-26`); `list_all_tools` follows three pages; four
-concurrent 300 ms calls on one connection finish in 303 ms. From the 3.8.0
-source: `iss` checked when present or required, `resource` sent in all three
-OAuth requests, CIMD supported, issuer kept with stored credentials,
-pluggable `CredentialStore` with a refresh guard, MRTR in `call_tool`,
-`ttlMs` cache hints, audio, `resource_link` and `structuredContent` types.
-Cost: it requires `reqwest` 0.13 (the workspace is on 0.12), so the
-workspace moves to 0.13 first.
-
-**M2 Client on rmcp.** Workspace `reqwest` 0.13, then `crates/mcp` on `rmcp`
-3.8, then port the manager and bridge; delete the hand-written
-protocol layer. Pagination followed to the end (bounded page count and
-total size); all content types carried to the model as typed parts
-(`structuredContent` kept, images and audio through the existing media path,
-large resources as artifacts, not inlined); `ttlMs` respected for lists; MRTR
-`input_required` answered through the session's question path. Number: a
-conformance suite in `crates/mcp-client/tests` against both eras and both
-transports, including 3-page lists, every content type, two concurrent calls
-on one stdio server, and a server that drops the connection mid-call.
+**M0-M2: done 2026-11-01.** Security fixes, the `rmcp` spike, and the client
+on `rmcp` (see above). Left from M2: MRTR `input_required` answered through
+the session's question path (today sven advertises neither elicitation nor
+sampling, so a server cannot ask),
+`ttlMs` used to skip refetching a fresh list, and large resources kept as
+artifacts instead of inlined.
 
 **M3 Sign-in UX.** `/mcp` becomes a real manager: add a server (URL or
 command), sign in, sign out, enable, disable, inspect tools and their policy.
