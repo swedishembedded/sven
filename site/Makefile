@@ -4,7 +4,8 @@ IMAGE     := swedishembedded/sven-site
 VERSION   := $(shell node -p "require('./package.json').version")
 PORT      := 3000
 DOCKER    ?= sudo docker
-TARGET    ?= agentsven.com
+# The edge host that serves agentsven.com, by the name SSH knows it as.
+TARGET    ?= swedishembedded.com
 NO_CACHE  ?= 0
 
 DOCKER_BUILD_FLAGS :=
@@ -24,7 +25,7 @@ build: install
 serve: install
 	npm run dev -- --port $(PORT)
 
-## publish        - upload the Docker image to martin@swedishembedded.com via SSH
+## publish        - upload the Docker image to the edge host ($(TARGET)) via SSH
 publish: build
 	@echo "Publishing $(IMAGE):v$(VERSION) to $(TARGET)..."
 	$(DOCKER) save $(IMAGE):v$(VERSION) | ssh $(TARGET) docker load
