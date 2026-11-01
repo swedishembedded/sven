@@ -26,17 +26,11 @@ uuid                 = { workspace = true }
 tokio-tungstenite    = { version = "0.24", features = ["rustls-tls-native-roots"] }
 rustls               = { workspace = true }
 futures-util         = { version = "0.3", default-features = false, features = ["sink", "std"] }
-rmcp = { version = "0.15", default-features = false, features = [
-    "server",
-    "transport-io",
-] }
+rmcp = { workspace = true, features = ["server", "transport-io"] }
 
 [dev-dependencies]
 tempfile     = { workspace = true }
 tokio        = { workspace = true }
 serde_json   = { workspace = true }
 async-trait  = { workspace = true }
-rmcp = { version = "0.15", default-features = false, features = [
-    "server",
-    "transport-io",
-] }
+rmcp = { workspace = true, features = ["server", "transport-io", "client"] }

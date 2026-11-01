@@ -19,8 +19,8 @@ use std::sync::Arc;
 use rmcp::{
     handler::server::ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams,
-        ServerCapabilities, ServerInfo,
+        CacheScope, CallToolRequestParams, CallToolResponse, ListToolsResult,
+        PaginatedRequestParams, ServerCapabilities, ServerConfig,
     },
     service::{RequestContext, RoleServer},
     ErrorData as McpError,
@@ -54,11 +54,8 @@ impl SvenMcpServer {
 }
 
 impl ServerHandler for SvenMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..ServerInfo::default()
-        }
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
     }
 
     fn list_tools(
@@ -73,11 +70,11 @@ impl ServerHandler for SvenMcpServer {
                 .into_iter()
                 .map(schema_to_mcp_tool)
                 .collect();
-            Ok(ListToolsResult {
-                tools,
-                next_cursor: None,
-                meta: None,
-            })
+            // The list is this session's own tools (private) and may change
+            // when its MCP servers refresh theirs, so it is not to be reused.
+            Ok(ListToolsResult::with_all_items(tools)
+                .with_ttl_ms(0)
+                .with_cache_scope(CacheScope::Private))
         }
     }
 
@@ -85,7 +82,7 @@ impl ServerHandler for SvenMcpServer {
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let args = request
             .arguments
             .map(|m| serde_json::Value::Object(m.into_iter().collect()))
@@ -98,7 +95,7 @@ impl ServerHandler for SvenMcpServer {
         };
 
         let output = self.registry.execute(&call).await;
-        Ok(output_to_call_result(output))
+        Ok(CallToolResponse::Complete(output_to_call_result(output)))
     }
 }
 

@@ -616,3 +616,46 @@ async fn filtered_registry_limits_exposed_tools() {
     assert!(names.contains("read_file"));
     assert!(names.contains("grep"));
 }
+
+/// A client of the 2026-07-28 revision (`server/discover`, no `initialize`)
+/// lists and calls sven's tools as a legacy client does.
+#[tokio::test]
+async fn a_current_revision_client_discovers_lists_and_calls_tools() {
+    use rmcp::model::{CallToolRequestParams, ProtocolVersion};
+    use rmcp::{ClientHandler, ClientLifecycleMode, ClientServiceExt};
+
+    #[derive(Clone, Default)]
+    struct Client;
+    impl ClientHandler for Client {}
+
+    let mut reg = ToolRegistry::new();
+    reg.register(EchoTool);
+    let server = SvenMcpServer::new(Arc::new(reg));
+    let (client_stream, server_stream) = tokio::io::duplex(65536);
+    tokio::spawn(async move {
+        if let Ok(running) = server.serve(server_stream).await {
+            let _ = running.waiting().await;
+        }
+    });
+    let client = Client
+        .serve_with_lifecycle(
+            client_stream,
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .expect("server/discover succeeds");
+    let tools = client.peer().list_all_tools().await.unwrap();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name.as_ref(), "echo");
+    let mut args = serde_json::Map::new();
+    args.insert("message".into(), json!("hi"));
+    let result = client
+        .peer()
+        .call_tool(CallToolRequestParams::new("echo").with_arguments(args))
+        .await
+        .unwrap();
+    assert_eq!(result.content[0].as_text().unwrap().text, "hi");
+    client.cancel().await.unwrap();
+}

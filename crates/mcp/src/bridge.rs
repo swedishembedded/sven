@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use rmcp::model::{CallToolResult, Content, JsonObject, Tool as McpTool};
+use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Tool as McpTool};
 use sven_tool_registry::{ToolOutput, ToolOutputPart, ToolSchema};
 
 /// Convert a [`ToolSchema`] (sven) into an rmcp [`McpTool`] descriptor.
@@ -49,38 +49,29 @@ fn value_to_object(v: serde_json::Value) -> JsonObject {
 
 /// Convert a sven [`ToolOutput`] into an rmcp [`CallToolResult`].
 ///
-/// Text parts become [`Content::text`]; image parts (base64 data URIs) become
-/// [`Content::image`] with the MIME type extracted from the data URI.
+/// Text parts become text blocks; image and audio parts (base64 data URIs)
+/// become image and audio blocks with the MIME type taken from the data URI.
 /// The MCP `is_error` flag mirrors sven's [`ToolOutput::is_error`].
 pub fn output_to_call_result(output: ToolOutput) -> CallToolResult {
-    let content: Vec<Content> = output
+    let content: Vec<ContentBlock> = output
         .parts
         .into_iter()
         .map(|part| match part {
-            ToolOutputPart::Text(t) => Content::text(t),
+            ToolOutputPart::Text(t) => ContentBlock::text(t),
+            // data URIs: `data:<mime>;base64,<b64>`
             ToolOutputPart::Image(data_uri) => {
-                // data URIs: `data:<mime>;base64,<b64>`
                 let (mime, data) = parse_data_uri(&data_uri);
-                Content::image(data.to_string(), mime.to_string())
+                ContentBlock::image(data, mime)
             }
-            // MCP's content schema has no audio block, so audio degrades to a
-            // text note naming its MIME type rather than being dropped.
             ToolOutputPart::Audio(data_uri) => {
-                let (mime, _data) = parse_data_uri(&data_uri);
-                Content::text(format!(
-                    "[audio attachment ({mime}) omitted: MCP tool results carry no audio block]"
-                ))
+                let (mime, data) = parse_data_uri(&data_uri);
+                ContentBlock::audio(data, mime)
             }
         })
         .collect();
 
     if output.is_error {
-        CallToolResult {
-            content,
-            is_error: Some(true),
-            structured_content: None,
-            meta: None,
-        }
+        CallToolResult::error(content)
     } else {
         CallToolResult::success(content)
     }
@@ -181,6 +172,21 @@ mod tests {
         let result = output_to_call_result(out);
         assert_eq!(result.is_error, Some(false));
         assert_eq!(result.content.len(), 1);
+    }
+
+    /// MCP results carry audio blocks, so audio reaches the client as audio.
+    #[test]
+    fn output_to_call_result_audio_part_is_an_audio_block() {
+        let out = ToolOutput::with_parts(
+            "id5",
+            vec![ToolOutputPart::Audio(
+                "data:audio/wav;base64,UklG".to_string(),
+            )],
+        );
+        let result = output_to_call_result(out);
+        let audio = result.content[0].as_audio().expect("an audio block");
+        assert_eq!(audio.mime_type, "audio/wav");
+        assert_eq!(audio.data, "UklG");
     }
 
     #[test]

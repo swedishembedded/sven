@@ -121,7 +121,9 @@ sven mcp serve
 ```
 
 The server speaks line-delimited JSON-RPC on stdin/stdout until stdin reaches
-EOF. It binds no port and has no authentication of its own: security is
+EOF, to hosts of the current MCP revision (2026-07-28, `server/discover`) and
+of earlier ones (`initialize`). Tool results carry text, image and audio
+blocks. It binds no port and has no authentication of its own: security is
 inherited from the host process that launched it. The same server is built as
 the standalone binary `sven-mcp`.
 
