@@ -12,16 +12,16 @@ ifeq ($(NO_CACHE),1)
 DOCKER_BUILD_FLAGS += --no-cache
 endif
 
-.PHONY: build serve publish install copy-install
+.PHONY: build serve publish install
 
 ## build          - build the Docker image (swedishembedded/sven-site:v<package.json version>)
 ##                  use NO_CACHE=1 to rebuild without layer cache
-build: install copy-install
+build: install
 	npm run build
 	$(DOCKER) build $(DOCKER_BUILD_FLAGS) -t $(IMAGE):v$(VERSION) .
 
 ## serve          - run the Vite dev server locally on http://localhost:$(PORT)
-serve: install copy-install
+serve: install
 	npm run dev -- --port $(PORT)
 
 ## publish        - upload the Docker image to martin@swedishembedded.com via SSH
@@ -33,8 +33,3 @@ publish: build
 ## install        - install npm dependencies
 install:
 	npm install
-
-## copy-install   - copy ../scripts/install.sh → public/install.sh (served at /install.sh)
-copy-install:
-	cp ../scripts/install.sh public/install.sh
-	chmod +x public/install.sh

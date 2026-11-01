@@ -1,13 +1,5 @@
 {
   "rewrites": [
     { "source": "/**", "destination": "/index.html" }
-  ],
-  "headers": [
-    {
-      "source": "/install.sh",
-      "headers": [
-        { "key": "Content-Disposition", "value": "inline" }
-      ]
-    }
   ]
 }

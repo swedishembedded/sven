@@ -1,6 +1,11 @@
 import Logo from './Logo'
+import { SERVICE_URL, SIGN_UP_URL } from '../links'
 
 const PRODUCT_LINKS = [
+  { label: 'Create your account', href: SIGN_UP_URL, external: true },
+  { label: 'sven in the browser', href: SERVICE_URL, external: true },
+  { label: 'Pricing', href: `${SERVICE_URL}/pricing`, external: true },
+  { label: 'API', href: `${SERVICE_URL}/docs/api`, external: true },
   { label: 'Features', href: '#features' },
   { label: 'Install', href: '#install' },
   { label: 'Documentation', href: 'https://swedishembedded.com/docs/sven', external: true },

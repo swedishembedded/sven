@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { motion, useInView } from 'framer-motion'
+import { INSTALL_COMMAND, PROVIDERS_DOCS_URL, SIGN_IN_COMMAND, SIGN_UP_URL } from '../links'
 
 type TabId = 'oneliner' | 'deb' | 'source' | 'macos'
 
@@ -21,19 +22,23 @@ interface TabContent {
   note?: React.ReactNode
 }
 
+// Signing in is every install path's second step: it opens the browser to
+// approve this machine on the sven account and gives the CLI its models.
+const SIGN_IN_STEP = {
+  label: 'Sign in to your sven account',
+  code: SIGN_IN_COMMAND,
+  comment: '# Approve in the browser; no API key needed',
+}
+
 const TAB_CONTENT: Record<TabId, TabContent> = {
   oneliner: {
     steps: [
       {
         label: 'Install (Linux x86_64 or aarch64)',
-        code: 'curl -fsSL https://agentsven.com/install.sh | sh',
-        comment: '# Installs to /usr/local/bin',
+        code: INSTALL_COMMAND,
+        comment: '# Installs to ~/.local/bin, no sudo',
       },
-      {
-        label: 'Set your API key',
-        code: 'export OPENAI_API_KEY="sk-..."',
-        comment: '# Or ANTHROPIC_API_KEY, etc.',
-      },
+      SIGN_IN_STEP,
       {
         label: 'Run',
         code: 'sven',
@@ -60,10 +65,8 @@ const TAB_CONTENT: Record<TabId, TabContent> = {
         code: 'sudo dpkg -i sven-linux-x86_64.deb',
         comment: '# Shell completions installed automatically',
       },
-      {
-        label: 'Set your API key and run',
-        code: 'export OPENAI_API_KEY="sk-..."\nsven',
-      },
+      SIGN_IN_STEP,
+      { label: 'Run', code: 'sven' },
     ],
     note: (
       <p className="text-xs text-text-secondary">
@@ -86,6 +89,7 @@ const TAB_CONTENT: Record<TabId, TabContent> = {
         label: 'Install binary',
         code: 'sudo cp target/release/sven /usr/local/bin/',
       },
+      SIGN_IN_STEP,
     ],
     note: (
       <p className="text-xs text-text-secondary">
@@ -103,10 +107,8 @@ const TAB_CONTENT: Record<TabId, TabContent> = {
         label: 'Make executable and install',
         code: 'chmod +x sven\nsudo mv sven /usr/local/bin/',
       },
-      {
-        label: 'Set your API key and run',
-        code: 'export OPENAI_API_KEY="sk-..."\nsven',
-      },
+      SIGN_IN_STEP,
+      { label: 'Run', code: 'sven' },
     ],
     note: (
       <p className="text-xs text-text-secondary">
@@ -137,7 +139,8 @@ export default function InstallSection() {
           <p className="text-xs font-mono uppercase tracking-widest text-accent-blue mb-4">Get started</p>
           <h2 className="section-heading mb-4">Up and running in 10 seconds.</h2>
           <p className="section-subheading max-w-xl mx-auto">
-            A single binary. No Node.js. No Python. No Docker. Just download and run.
+            A single binary. No Node.js. No Python. No Docker. Install it, sign in to your sven
+            account and start working: the models come with the account.
           </p>
         </motion.div>
 
@@ -206,16 +209,30 @@ export default function InstallSection() {
               </span>
             ))}
           </div>
-          <a
-            href="https://github.com/swedishembedded/sven/releases/latest"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-primary flex-shrink-0"
-          >
-            <DownloadIcon />
-            Download Latest Release
-          </a>
+          <div className="flex flex-col sm:flex-row gap-3 flex-shrink-0">
+            <a href={SIGN_UP_URL} className="btn-primary">
+              Create your sven account
+            </a>
+            <a
+              href="https://github.com/swedishembedded/sven/releases/latest"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-secondary"
+            >
+              <DownloadIcon />
+              Download Latest Release
+            </a>
+          </div>
         </motion.div>
+
+        <p className="mt-6 text-xs text-text-secondary text-center">
+          Already have a key from another provider, or a local model server? sven runs with those
+          too:{' '}
+          <a href={PROVIDERS_DOCS_URL} className="underline hover:text-text-primary">
+            providers
+          </a>
+          .
+        </p>
       </div>
     </section>
   )

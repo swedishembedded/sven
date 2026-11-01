@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import Logo from './Logo'
+import { SIGN_UP_URL } from '../links'
 
 const NAV_LINKS = [
   { label: 'Features', href: '#features' },
@@ -68,7 +69,7 @@ export default function Header() {
             >
               <GitHubIcon />
             </a>
-            <a href="#install" className="btn-primary text-sm px-5 py-2">
+            <a href={SIGN_UP_URL} className="btn-primary text-sm px-5 py-2">
               Get Started
             </a>
           </div>
@@ -107,7 +108,7 @@ export default function Header() {
                 </a>
               ))}
               <div className="px-4 pt-2">
-                <a href="#install" onClick={() => setMenuOpen(false)} className="btn-primary w-full justify-center text-sm">
+                <a href={SIGN_UP_URL} onClick={() => setMenuOpen(false)} className="btn-primary w-full justify-center text-sm">
                   Get Started
                 </a>
               </div>
