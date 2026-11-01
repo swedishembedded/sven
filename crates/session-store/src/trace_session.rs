@@ -846,8 +846,8 @@ fn push_turn_record(assembler: &mut StepAssembler, turn: &TurnRecord) {
 
 /// Directory sven stores ATIF trajectory session files in.
 ///
-/// Defaults to `$XDG_DATA_HOME/sven/sessions` (i.e. `~/.local/share/sven/sessions`)
-/// - deliberately a *new* directory, distinct from the legacy
+/// Defaults to `$XDG_DATA_HOME/sven/sessions` (i.e. `~/.local/share/sven/sessions`),
+/// deliberately a *new* directory, distinct from the legacy
 /// `chat_document::chat_dir()` (`.../sven/chats`), so old `.yaml` files and
 /// new `.json` trajectory files never collide in the same directory listing.
 pub fn session_dir() -> PathBuf {
