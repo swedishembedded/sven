@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Martin Schroder <info@swedishembedded.com>
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #

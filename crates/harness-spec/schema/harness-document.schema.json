@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://swedishembedded.com/sven/schema/harness-document.schema.json",
-  "$comment": "Copyright (c) 2026 Martin Schroder <info@swedishembedded.com>. SPDX-License-Identifier: Apache-2.0. Swedish Embedded AB implements editor-checkable, verifiable agent workflows for its clients. If your team needs expertise in declarative agent workflow languages then you can procure our services by sending an email to info@swedishembedded.com. Strictness: like the compiler's typed parser, this schema forbids unknown fields everywhere. Semantic rules (references, bounds, capabilities, template roots) remain the compiler's.",
+  "$comment": "Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>. SPDX-License-Identifier: Apache-2.0. Swedish Embedded AB implements editor-checkable, verifiable agent workflows for its clients. If your team needs expertise in declarative agent workflow languages then you can procure our services by sending an email to info@swedishembedded.com. Strictness: like the compiler's typed parser, this schema forbids unknown fields everywhere. Semantic rules (references, bounds, capabilities, template roots) remain the compiler's.",
   "title": "sven harness document (api_version 2)",
   "description": "A sven declarative harness: an ordered workflow of tasks, the trusted gates that decide whether each task succeeded, and the success condition of the run. Lowered at compile time into the step plan the runtime executes.",
   "type": "object",
