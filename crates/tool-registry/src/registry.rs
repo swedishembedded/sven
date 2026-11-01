@@ -91,6 +91,9 @@ pub struct ToolRegistry {
     /// `session/request_permission` round-trip to the IDE before executing,
     /// bounded by the requester's own timeout.
     permission_requester: Option<Arc<dyn PermissionRequester>>,
+    /// Which names may be registered and run; see
+    /// [`ToolRegistry::set_name_policy`].
+    name_policy: crate::NamePolicy,
 }
 
 impl ToolRegistry {
@@ -105,7 +108,31 @@ impl ToolRegistry {
             refused: std::sync::Mutex::default(),
             display_registry: Arc::new(RwLock::new(ToolDisplayRegistry::new())),
             permission_requester: None,
+            name_policy: crate::NamePolicy::default(),
         }
+    }
+
+    /// Hold the registry to `policy` from now on: registered tools it
+    /// excludes are removed, a later registration of an excluded name (an MCP
+    /// server's refreshed tool list included) is ignored, and
+    /// [`execute`](Self::execute) refuses an excluded name.
+    pub fn set_name_policy(&mut self, policy: crate::NamePolicy) {
+        if let Ok(mut guard) = self.tools.write() {
+            guard.retain(|name, _| policy.permits(name));
+        }
+        self.name_policy = policy;
+    }
+
+    /// Insert `tool` under its name unless the name policy excludes it.
+    fn insert(&self, tool: Arc<dyn Tool>) -> bool {
+        let name = tool.name().to_string();
+        if !self.name_policy.permits(&name) {
+            return false;
+        }
+        self.tools.write().is_ok_and(|mut guard| {
+            guard.insert(name, tool);
+            true
+        })
     }
 
     /// Wire up an IDE-backed permission requester.
@@ -118,9 +145,7 @@ impl ToolRegistry {
     }
 
     pub fn register(&mut self, tool: impl Tool + 'static) {
-        if let Ok(mut guard) = self.tools.write() {
-            guard.insert(tool.name().to_string(), Arc::new(tool));
-        }
+        self.insert(Arc::new(tool));
     }
 
     /// Register an already-`Arc`-wrapped tool.
@@ -133,9 +158,7 @@ impl ToolRegistry {
     /// [`replace_mcp_tools`](Self::replace_mcp_tools) already stores
     /// `Arc<dyn Tool>` directly for MCP-sourced tools.
     pub fn register_arc(&mut self, tool: Arc<dyn Tool>) {
-        if let Ok(mut guard) = self.tools.write() {
-            guard.insert(tool.name().to_string(), tool);
-        }
+        self.insert(tool);
     }
 
     /// Register a tool that also provides display metadata. The same instance
@@ -146,8 +169,8 @@ impl ToolRegistry {
     ) {
         let arc = Arc::new(tool);
         let name = arc.name().to_string();
-        if let Ok(mut guard) = self.tools.write() {
-            guard.insert(name.clone(), Arc::clone(&arc) as Arc<dyn Tool>);
+        if !self.insert(Arc::clone(&arc) as Arc<dyn Tool>) {
+            return;
         }
         if let Ok(mut disp) = self.display_registry.write() {
             disp.register_arc(name, arc as Arc<dyn sven_tool_api::tool::ToolDisplay>);
@@ -156,11 +179,15 @@ impl ToolRegistry {
 
     /// Replace all MCP tools with the given set.  Call when MCP servers connect,
     /// disconnect, or tools are reloaded so the agent uses the updated list.
+    /// Tools the name policy excludes are left out, as at startup.
     pub fn replace_mcp_tools(&self, new_tools: Vec<Arc<dyn Tool>>) {
         if let Ok(mut guard) = self.tools.write() {
             guard.retain(|_, t| !t.is_mcp());
             for tool in new_tools {
-                guard.insert(tool.name().to_string(), tool);
+                let name = tool.name().to_string();
+                if self.name_policy.permits(&name) {
+                    guard.insert(name, tool);
+                }
             }
         }
     }
@@ -250,6 +277,12 @@ impl ToolRegistry {
     /// person approves a call in an agent session is the kernel's decision
     /// (the session's approval mode), not this one.
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        if !self.name_policy.permits(&call.name) {
+            return ToolOutput::err(
+                &call.id,
+                format!("tool '{}' is not enabled for this session", call.name),
+            );
+        }
         let tool = match self
             .tools
             .read()
@@ -413,6 +446,83 @@ mod tests {
         async fn execute(&self, call: &ToolCall) -> ToolOutput {
             ToolOutput::ok(&call.id, format!("echo:{}", call.args))
         }
+    }
+
+    /// An MCP-sourced tool, as a server's tool-list refresh delivers it.
+    struct McpEchoTool {
+        name: &'static str,
+    }
+
+    #[async_trait]
+    impl Tool for McpEchoTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn is_mcp(&self) -> bool {
+            true
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::NetworkAccess
+        }
+        fn description(&self) -> &str {
+            "an MCP server's tool"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "ran")
+        }
+    }
+
+    fn mcp(name: &'static str) -> Arc<dyn Tool> {
+        Arc::new(McpEchoTool { name })
+    }
+
+    /// The operator's `tools.only` / `tools.disabled` hold for the life of the
+    /// registry: a tool an MCP server adds later, by a refresh, is neither
+    /// offered nor run when the policy excludes it.
+    #[tokio::test]
+    async fn a_refresh_cannot_add_a_tool_the_name_policy_excludes() {
+        let mut reg = ToolRegistry::new();
+        reg.register(EchoTool { name: "kept" });
+        reg.register(EchoTool { name: "dropped" });
+        reg.set_name_policy(crate::NamePolicy::new(
+            &["off".to_string()],
+            Some(&[
+                "kept".to_string(),
+                "srv__allowed".to_string(),
+                "off".to_string(),
+            ]),
+        ));
+        assert_eq!(reg.names(), vec!["kept".to_string()]);
+
+        reg.replace_mcp_tools(vec![mcp("srv__allowed"), mcp("srv__other"), mcp("off")]);
+        let mut names = reg.names();
+        names.sort();
+        assert_eq!(names, vec!["kept".to_string(), "srv__allowed".to_string()]);
+
+        for name in ["srv__other", "off", "dropped"] {
+            let out = reg
+                .execute(&ToolCall {
+                    id: "1".into(),
+                    name: name.into(),
+                    args: json!({}),
+                })
+                .await;
+            assert!(out.is_error, "{name} ran despite the policy");
+        }
+        let out = reg
+            .execute(&ToolCall {
+                id: "2".into(),
+                name: "srv__allowed".into(),
+                args: json!({}),
+            })
+            .await;
+        assert!(!out.is_error);
     }
 
     /// Tool that explicitly declares a non-default output category.

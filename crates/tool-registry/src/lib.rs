@@ -22,7 +22,7 @@ pub use disclosure::{
 pub use expansion::Expansion;
 pub use index::FieldWeights;
 pub use matches::{present_matches, RELATED_NAMES};
-pub use policy::ToolPolicy;
+pub use policy::{NamePolicy, ToolPolicy};
 pub use registry::{SharedToolDisplays, SharedTools, ToolDisplayInfo, ToolRegistry, ToolSchema};
 pub use search::{Bm25Ranker, PreparedRanking, RankedTool, RankingParams, ToolRanker};
 // Re-export the tool-api vocabulary a registry consumer typically needs

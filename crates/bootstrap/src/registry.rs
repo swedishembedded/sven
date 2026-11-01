@@ -767,8 +767,8 @@ pub(crate) struct Completion<'a> {
 }
 
 /// Registers MCP and caller-supplied tools, enables deferred disclosure and
-/// removes disabled names last, so a disabled name is gone whoever registered
-/// it.
+/// applies the `tools.disabled` / `tools.only` name policy last, so a disabled
+/// name is gone whoever registered it.
 pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) {
     for tool in completion.mcp_tools {
         registry.register(tool);
@@ -782,16 +782,12 @@ pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) 
     if let (Some(ranker), true) = (completion.skill_ranker, registry.get("skill").is_some()) {
         registry.register(SkillTool::new(completion.skills).with_ranker(ranker));
     }
-    for name in completion.disabled {
-        registry.remove(name);
-    }
-    if let Some(only) = completion.only {
-        for name in registry.names() {
-            if !only.contains(&name) {
-                registry.remove(&name);
-            }
-        }
-    }
+    // Last, so a disabled name is gone whoever registered it, and held for
+    // the registry's life, so an MCP refresh cannot bring one back.
+    registry.set_name_policy(sven_tool_registry::NamePolicy::new(
+        completion.disabled,
+        completion.only,
+    ));
 }
 
 #[cfg(test)]

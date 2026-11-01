@@ -236,3 +236,33 @@ mod tests {
         let _ = p.decide("rm -rf /");
     }
 }
+
+/// Which tool names a session may have at all: the `tools.disabled` and
+/// `tools.only` settings. A registry holds it for its whole life
+/// ([`crate::ToolRegistry::set_name_policy`]), so a tool registered later -
+/// an MCP server's refreshed tool list - is held to the same rule as the
+/// tools present when the session started, and a call to an excluded name
+/// is refused even if one slipped in.
+#[derive(Debug, Clone, Default)]
+pub struct NamePolicy {
+    disabled: std::collections::HashSet<String>,
+    only: Option<std::collections::HashSet<String>>,
+}
+
+impl NamePolicy {
+    /// Names in `disabled` are never allowed; when `only` is set, nothing
+    /// outside it is either. [`Default`] allows every name.
+    #[must_use]
+    pub fn new(disabled: &[String], only: Option<&[String]>) -> Self {
+        Self {
+            disabled: disabled.iter().cloned().collect(),
+            only: only.map(|names| names.iter().cloned().collect()),
+        }
+    }
+
+    /// Whether a tool named `name` may be registered and run.
+    #[must_use]
+    pub fn permits(&self, name: &str) -> bool {
+        !self.disabled.contains(name) && self.only.as_ref().is_none_or(|only| only.contains(name))
+    }
+}
