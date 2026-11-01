@@ -717,7 +717,7 @@ impl McpManager {
     /// This method blocks until the user completes browser-based authentication
     /// (up to 5 minutes) or an error occurs.  On success, tokens are persisted
     /// and the server is automatically reconnected.
-    pub async fn authenticate(self: &Arc<Self>, server: &str) -> Result<String> {
+    pub async fn authenticate(self: &Arc<Self>, server: &str) -> Result<()> {
         self.authenticate_with_www_auth(server, None, true).await
     }
 
@@ -733,7 +733,7 @@ impl McpManager {
         server: &str,
         www_authenticate: Option<&str>,
         spawn_reconnect: bool,
-    ) -> Result<String> {
+    ) -> Result<()> {
         if !self.allow_interactive_oauth {
             anyhow::bail!(
                 "OAuth flow cannot run in headless/CI mode. \
@@ -763,7 +763,7 @@ impl McpManager {
         let discovery =
             discover_oauth_info(&self.http_client, &url, www_authenticate, config_scopes).await?;
 
-        let tokens = run_oauth_flow(RunOAuthFlowParams {
+        run_oauth_flow(RunOAuthFlowParams {
             client: &self.http_client,
             server_name: server,
             server_url: &url,
@@ -785,10 +785,7 @@ impl McpManager {
             });
         }
 
-        Ok(format!(
-            "Authenticated as {}",
-            tokens.access_token.chars().take(8).collect::<String>()
-        ))
+        Ok(())
     }
 
     /// Look up the config for a named server.
