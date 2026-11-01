@@ -12,11 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **providers**: every OpenAI-protocol driver (`openai`, `openrouter`, `portkey`, `litellm`, `cloudflare`, `vllm`, `sven`, `brain`, `ollama` and the rest of the registry) is one client, `OpenAICompatProvider`, configured by its driver registry entry (default base URL, whether a base URL is required, locality, gateway headers and option rewrites). The `OpenAiProvider` type is gone from `sven-model-drivers`; an embedder builds `OpenAICompatProvider::openai(model, api_key, base_url)` (`api_key: None` sends no credential). A registry driver that needs no key now sends the key when one is configured.
+- **tls**: HTTPS connections (model providers, web tools, MCP servers, sign-in) trust the operating system's certificate store instead of a list built into sven, so a company or proxy certificate authority installed on the machine is trusted too. A system without CA certificates installed (`ca-certificates`) can no longer reach HTTPS servers.
 
 ### Fixed
 - **providers**, **turn**: a conversation with more images than the server takes per request no longer fails the turn. Discovery reads `max_images_per_request` and `max_image_pixels_per_request` from a served model's `/models` entry (`ModelProvider::image_limits`); when the images exceed a stated limit the request carries the newest images that fit and replaces each older one in place with a short text note, while the stored conversation keeps every image (`sven_model::sanitize::limit_images`). Pixel totals come from the image headers (PNG, JPEG, WebP, GIF), never a full decode; an image whose size cannot be read counts as over. A refusal that names an image limit sven was not told is logged, never retried.
 - **sven-sdk**, **sven**: a harness conversation's trajectory records what its model was actually given. The user turn that carries a task's `attach` files is a step with its text and images, an image a tool returned stays in the tool's result, and `agent.tool_definitions` lists the tools the conversation's requests offered, not every tool of the run. Images are ATIF image segments whose path is `images/<sha256>.<ext>`, stored once next to the trajectory files (`--conversations DIR`, `--trajectory FILE`; `HarnessRun::trajectory_images`, `write_trajectory_images`, `ConversationUpdate::images`); an image that cannot be kept (audio, an unsupported type, a remote URL) is named as such in the step, never dropped silently.
 - **providers**: an `openai` provider pointed at a local server or proxy now asks it what the model accepts, like every other OpenAI-compatible provider; it took every model for text-only and refused image attachments.
+
+### Security
+- **tools**: `tools.only` and `tools.disabled` now hold for the whole session: an MCP server's refreshed tool list cannot bring back a tool they removed, and a call to an excluded name is refused.
+- **remote**: `sven rc --hosted` and `--container` no longer start or reach MCP servers named in their configuration.
+- **mcp**: MCP OAuth tokens are written readable by their owner only, replaced atomically, and under a lock so sven processes running at once never lose each other's tokens.
 
 ## [4.2.5] - 2026-10-30
 
