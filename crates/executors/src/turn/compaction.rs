@@ -131,6 +131,13 @@ impl TurnExecutor {
         });
     }
 
+    /// Keeps the tools a request on `thread` offers, for the thread's record.
+    pub(super) fn record_offered_tools(&self, thread: &str, tools: &[sven_model::ToolSchema]) {
+        if let Ok(mut store) = self.store.lock() {
+            store.record_offered_tools(thread, tools);
+        }
+    }
+
     /// Says, once per session and again whenever it changes, when this
     /// session compacts and what room a response has, so that neither a
     /// compaction nor a cut-off response comes as a surprise.

@@ -545,6 +545,19 @@ model the host serves that role with, so a conversation can be told apart by
 who answered it. A response's reasoning is the `reasoning_content` of its step; it is
 recorded only, and no later request carries it.
 
+A conversation's trajectory records what its model was given. A task's
+attachments are part of its user step (text and images in order); an image a
+tool returned stays in that tool's observation; `agent.tool_definitions` is the
+set of tools the conversation's requests offered (the task's own `tools`, not
+the run's whole set). An image is an ATIF image segment whose `path` is
+`images/<sha256 of its bytes>.<png|jpg|gif|webp>`, relative to the trajectory
+file, so a trajectory stays small, one picture shown twice is stored once and
+the name verifies the bytes. `HarnessRun::trajectory_images()` returns the
+files; `write_trajectory_images(dir, &images)` writes them, and `sven harness
+run` does so next to `--trajectory` and under `--conversations`. An image that
+cannot be kept (audio, a type ATIF has no name for, a remote URL, bad base64)
+appears in its step as a text segment `[image not recorded: <reason>]`.
+
 **Workspace per run, tools on every host.** `HarnessRun::in_workspace(dir)` roots
 one run's file, search and shell tools, its gates and its snapshot reads in
 `dir`, so one engine serves many concurrent runs, each in a tree the host laid

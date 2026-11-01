@@ -749,7 +749,7 @@ impl HarnessRun {
             children.finished(),
         ));
         if live.is_some() && self.keep_trajectory_file {
-            live_trajectory::write_final(&scratch.trajectory_file(), self.trajectory());
+            live_trajectory::write_final(&scratch.trajectory_file(), self.trajectory_with_images());
         }
         Ok(outcome)
     }

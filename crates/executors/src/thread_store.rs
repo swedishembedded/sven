@@ -18,7 +18,7 @@ use atif::{CallTiming, GateAuthority, GateDecision, GateOutcome, MemoryRetrieval
 use sven_hsm::{ProposedToolCall, ToolCallId, ToolCapability};
 use sven_tool_registry::ToolRegistry;
 
-use sven_model::{Message, MessageContent, PromptSections, Role};
+use sven_model::{Message, MessageContent, PromptSections, Role, ToolSchema};
 use sven_turn::prompts::ComposedPrompt;
 use sven_vocab::{CompactionRecord, RequestRecord};
 
@@ -74,6 +74,9 @@ pub struct ThreadStore {
     /// length when its response was complete (before the response's own
     /// messages were appended).
     requests: Vec<(ThreadId, usize, RequestRecord)>,
+    /// The tools the requests on each thread offered the model, in the order
+    /// each was first offered.
+    offered_tools: HashMap<ThreadId, Vec<ToolSchema>>,
     /// The named sections of the system message a thread was seeded with.
     /// Kept beside the thread, not on its message: the message is what every
     /// provider converts, and a rewrite of it (a compaction) must not carry
@@ -449,6 +452,23 @@ impl ThreadStore {
     pub fn record_request(&mut self, id: &str, request: RequestRecord) {
         let before = self.transcript_len(id);
         self.requests.push((id.to_string(), before, request));
+    }
+
+    /// Keeps the tools a request on `id` offered the model, as sent.
+    pub fn record_offered_tools(&mut self, id: &str, tools: &[ToolSchema]) {
+        let known = self.offered_tools.entry(id.to_string()).or_default();
+        for tool in tools {
+            if !known.iter().any(|k| k.name == tool.name) {
+                known.push(tool.clone());
+            }
+        }
+    }
+
+    /// Every tool the requests on `id` offered the model, in the order each
+    /// was first offered.
+    #[must_use]
+    pub fn transcript_tools(&self, id: &str) -> Vec<ToolSchema> {
+        self.offered_tools.get(id).cloned().unwrap_or_default()
     }
 
     /// The requests made on `id`, oldest first, each with the number of

@@ -18,7 +18,7 @@
 use async_trait::async_trait;
 use futures::stream;
 
-use sven_model::{CompletionRequest, ResponseEvent, ResponseStream};
+use sven_model::{catalog::InputModality, CompletionRequest, ResponseEvent, ResponseStream};
 
 /// What a [`CallbackProvider`] runs for each request.
 type Reply = dyn Fn(&CompletionRequest) -> Vec<ResponseEvent> + Send + Sync;
@@ -26,6 +26,7 @@ type Reply = dyn Fn(&CompletionRequest) -> Vec<ResponseEvent> + Send + Sync;
 /// A provider whose every reply is computed from its request.
 pub struct CallbackProvider {
     reply: Box<Reply>,
+    modalities: Vec<InputModality>,
 }
 
 impl CallbackProvider {
@@ -36,7 +37,16 @@ impl CallbackProvider {
     ) -> Self {
         Self {
             reply: Box::new(reply),
+            modalities: vec![InputModality::Text],
         }
+    }
+
+    /// Declares that the provider accepts image input, so images reach
+    /// `reply` instead of being refused or stripped.
+    #[must_use]
+    pub fn with_vision(mut self) -> Self {
+        self.modalities.push(InputModality::Image);
+        self
     }
 }
 
@@ -49,6 +59,14 @@ impl sven_model::ModelProvider for CallbackProvider {
 
     fn model_name(&self) -> &str {
         "callback-mock-model"
+    }
+
+    fn input_modalities(&self) -> Vec<InputModality> {
+        self.modalities.clone()
+    }
+
+    fn input_modalities_reported(&self) -> bool {
+        true
     }
 
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {

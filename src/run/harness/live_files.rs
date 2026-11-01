@@ -72,6 +72,7 @@ impl TraceAppender {
 pub(super) fn write_conversations(dir: &PathBuf, updates: &[ConversationUpdate]) {
     let written = std::fs::create_dir_all(dir).and_then(|()| {
         updates.iter().try_for_each(|update| {
+            sven_sdk::write_trajectory_images(dir, &update.images)?;
             let target = dir.join(conversation_file(update.index, &update.name));
             let partial = target.with_extension("json.partial");
             let text =

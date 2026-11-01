@@ -130,11 +130,30 @@ fn write_files(args: &HarnessRunArgs, result: &RunResult, times: &[u64]) -> Resu
     }
     if let (Some(file), Some(trajectory)) = (&args.trajectory, &result.trajectory) {
         write(file, &to_json(trajectory)?)?;
+        if let Some(dir) = file.parent() {
+            write_images(dir, &result.trajectory_images)?;
+        }
     }
     if let (Some(dir), Some(trajectory)) = (&args.conversations, &result.trajectory) {
         write_conversations(dir, trajectory)?;
+        write_images(dir, &result.trajectory_images)?;
     }
     Ok(())
+}
+
+/// Writes the image files the trajectories name under `dir`, beside the
+/// trajectory files.
+fn write_images(
+    dir: &std::path::Path,
+    images: &[sven_sdk::TrajectoryImage],
+) -> Result<(), Failure> {
+    sven_sdk::write_trajectory_images(dir, images).map_err(|e| Failure {
+        code: 5,
+        message: format!(
+            "cannot write the trajectory images in {}: {e}",
+            dir.display()
+        ),
+    })
 }
 
 /// Writes each conversation embedded in `trajectory` to `dir` as its own

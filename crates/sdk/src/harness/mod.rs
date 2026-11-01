@@ -49,7 +49,8 @@ mod trajectory;
 pub use live_trajectory::ConversationUpdate;
 pub use record::{HarnessRecording, HarnessReplay};
 pub use run::{HarnessFailure, HarnessOutcome, HarnessRun};
-pub use trajectory::{Correction, RefusedMessage};
+pub use sven_session_store::trace_images::TrajectoryImage;
+pub use trajectory::{write_trajectory_images, Correction, RefusedMessage};
 
 /// Compiles a bare harness document offline, exactly as
 /// [`Engine::load_harness_from_str`] would, without an engine or a

@@ -22,6 +22,7 @@ use sven_bootstrap::RuntimeHandle;
 use sven_harness_runtime::harness_thread;
 use sven_harness_spec::HarnessPlan;
 use sven_model::Message;
+use sven_session_store::trace_images::TrajectoryImage;
 
 use super::run::HarnessOutcome;
 use super::HarnessRun;
@@ -38,6 +39,8 @@ struct Conversation {
     messages: Vec<Message>,
     compactions: Vec<(usize, sven_vocab::CompactionRecord)>,
     requests: Vec<(usize, sven_vocab::RequestRecord)>,
+    /// The tools the conversation's requests offered the model, as sent.
+    tools: Vec<sven_model::ToolSchema>,
 }
 
 /// What an executed run keeps for its trajectory: the plan thread's
@@ -135,6 +138,7 @@ impl Evidence {
                                 requests: store.transcript_requests(&thread),
                                 origins: store.transcript_origins(&thread),
                                 reasonings: store.transcript_reasonings(&thread),
+                                tools: store.transcript_tools(&thread),
                             },
                         )
                     })
@@ -194,8 +198,25 @@ impl HarnessRun {
     /// not included.
     #[must_use]
     pub fn trajectory(&self) -> Option<atif::Trajectory> {
+        Some(self.trajectory_with_images()?.0)
+    }
+
+    /// The trajectory with the image files it refers to.
+    pub(super) fn trajectory_with_images(
+        &self,
+    ) -> Option<(atif::Trajectory, Vec<TrajectoryImage>)> {
         let evidence = self.evidence.as_ref()?;
         Some(build_trajectory(evidence, &self.plan, &self.run_id))
+    }
+
+    /// The image files the run's trajectories refer to (the attachments of a
+    /// task, an image a tool returned), each by the path the trajectory names
+    /// it with, relative to the trajectory file. Write them with
+    /// [`write_trajectory_images`] next to the files the trajectories are
+    /// written to. `None` until the run has executed.
+    #[must_use]
+    pub fn trajectory_images(&self) -> Option<Vec<TrajectoryImage>> {
+        Some(self.trajectory_with_images()?.1)
     }
 
     /// Each conversation of the run as a trajectory of its own, with its name
@@ -221,16 +242,17 @@ impl HarnessRun {
     }
 }
 
-/// The ATIF trajectory `evidence` makes for the run `run_id` of `plan`.
+/// The ATIF trajectory `evidence` makes for the run `run_id` of `plan`, and
+/// the image files it refers to.
 pub(super) fn build_trajectory(
     evidence: &Evidence,
     plan: &HarnessPlan,
     run_id: &str,
-) -> atif::Trajectory {
+) -> (atif::Trajectory, Vec<TrajectoryImage>) {
     {
         let mut trajectory =
             atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, run_agent(evidence));
-        trajectory.steps = sven_session_store::record_steps::conversation_steps(
+        let (steps, mut images) = sven_session_store::record_steps::conversation_steps_with_images(
             &sven_session_store::record_steps::ConversationFacts {
                 messages: &evidence.messages,
                 compactions: &evidence.compactions,
@@ -244,11 +266,20 @@ pub(super) fn build_trajectory(
             },
             &|message| as_sent(evidence, message),
         );
+        trajectory.steps = steps;
         let conversations: Vec<atif::Trajectory> = evidence
             .conversations
             .iter()
             .map(|(name, conversation)| {
-                conversation_trajectory(evidence, &trajectory.agent, run_id, name, conversation)
+                let (own, own_images) = conversation_trajectory(
+                    evidence,
+                    &trajectory.agent,
+                    run_id,
+                    name,
+                    conversation,
+                );
+                merge_images(&mut images, own_images);
+                own
             })
             .collect();
         let children: Vec<serde_json::Value> = evidence
@@ -294,8 +325,42 @@ pub(super) fn build_trajectory(
             }
         }));
         trajectory.final_metrics = Some(step_totals(&trajectory, evidence.outcome.steps));
-        trajectory
+        (trajectory, images)
     }
+}
+
+/// Adds the images of `more` that `images` does not hold yet.
+fn merge_images(images: &mut Vec<TrajectoryImage>, more: Vec<TrajectoryImage>) {
+    for image in more {
+        if !images.iter().any(|known| known.path == image.path) {
+            images.push(image);
+        }
+    }
+}
+
+/// Writes `images` under `dir` (the directory of the trajectory files they
+/// belong to) at the paths the trajectories name them by. Images are named by
+/// the digest of their bytes, so one already there is left alone.
+///
+/// # Errors
+/// The first directory or file that cannot be written.
+pub fn write_trajectory_images(
+    dir: &std::path::Path,
+    images: &[TrajectoryImage],
+) -> std::io::Result<()> {
+    for image in images {
+        let target = dir.join(&image.path);
+        if target.exists() {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let partial = target.with_extension("partial");
+        std::fs::write(&partial, &image.bytes)?;
+        std::fs::rename(&partial, &target)?;
+    }
+    Ok(())
 }
 
 /// The run's totals, summed over the steps of the shared thread and of every
@@ -347,14 +412,22 @@ fn conversation_trajectory(
     run_id: &str,
     name: &str,
     conversation: &Conversation,
-) -> atif::Trajectory {
+) -> (atif::Trajectory, Vec<TrajectoryImage>) {
     let mut agent = agent.clone();
+    // The tools this conversation's requests offered, not the run's whole set.
+    agent.tool_definitions = (!conversation.tools.is_empty()).then(|| {
+        conversation
+            .tools
+            .iter()
+            .map(|s| atif::function_tool(&s.name, &s.description, &s.parameters))
+            .collect()
+    });
     if let Some((_, Some(model))) = &conversation.role {
         agent.model_name = Some(model.clone());
     }
     let mut own = atif::Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
     own.trajectory_id = Some(format!("{run_id}/{name}"));
-    own.steps = sven_session_store::record_steps::conversation_steps(
+    let (steps, images) = sven_session_store::record_steps::conversation_steps_with_images(
         &sven_session_store::record_steps::ConversationFacts {
             messages: &conversation.messages,
             compactions: &conversation.compactions,
@@ -368,11 +441,12 @@ fn conversation_trajectory(
         },
         &|message| as_sent(evidence, message),
     );
+    own.steps = steps;
     own.extra = Some(match &conversation.role {
         Some((role, _)) => json!({ "harness": { "conversation": name, "role": role } }),
         None => json!({ "harness": { "conversation": name } }),
     });
-    own
+    (own, images)
 }
 
 impl Evidence {
@@ -383,17 +457,15 @@ impl Evidence {
         &self,
         run_id: &str,
         delivered: &mut std::collections::HashMap<String, (usize, usize)>,
-    ) -> Vec<(usize, String, atif::Trajectory)> {
+    ) -> Vec<(usize, String, atif::Trajectory, Vec<TrajectoryImage>)> {
         let agent = run_agent(self);
         let mut changed = Vec::new();
         for (index, (name, conversation)) in self.conversations.iter().enumerate() {
             let version = (conversation.messages.len(), conversation.requests.len());
             if delivered.insert(name.clone(), version) != Some(version) {
-                changed.push((
-                    index,
-                    name.clone(),
-                    conversation_trajectory(self, &agent, run_id, name, conversation),
-                ));
+                let (trajectory, images) =
+                    conversation_trajectory(self, &agent, run_id, name, conversation);
+                changed.push((index, name.clone(), trajectory, images));
             }
         }
         changed

@@ -28,9 +28,10 @@ use sven_hsm::Snapshot;
 use sven_tools_exec::TrajectoryHook;
 
 use super::run::HarnessOutcome;
-use super::trajectory::{build_trajectory, Evidence};
+use super::trajectory::{build_trajectory, write_trajectory_images, Evidence};
 use crate::engine::Engine;
 use crate::run::{RunConclusion, Usage};
+use sven_session_store::trace_images::{TrajectoryImage, IMAGE_DIR};
 
 /// Removes the run's trajectory file when dropped, unless the host asked to
 /// keep it: the file is for the gates of the run, and a host that runs
@@ -55,6 +56,11 @@ impl Drop for Cleanup {
         if let Some(file) = &self.file {
             let _ = std::fs::remove_file(file);
             let _ = std::fs::remove_file(partial(file));
+            // The images the trajectory names live in the run's private
+            // directory beside it.
+            if let Some(dir) = file.parent() {
+                let _ = std::fs::remove_dir_all(dir.join(IMAGE_DIR));
+            }
         }
     }
 }
@@ -115,18 +121,20 @@ impl Source {
     }
 
     /// The trajectory so far, as JSON text.
-    fn render(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(&build_trajectory(
-            &self.evidence(),
-            &self.plan,
-            &self.run_id,
-        ))
-        .map_err(|e| e.to_string())
+    fn render(&self) -> Result<(String, Vec<TrajectoryImage>), String> {
+        let (trajectory, images) = build_trajectory(&self.evidence(), &self.plan, &self.run_id);
+        let text = serde_json::to_string_pretty(&trajectory).map_err(|e| e.to_string())?;
+        Ok((text, images))
     }
 
-    /// Writes the trajectory so far to `path`, replacing it whole.
+    /// Writes the trajectory so far to `path`, replacing it whole, and the
+    /// image files it names under `IMAGE_DIR` beside it.
     pub(super) fn write(&self, path: &Path) -> Result<(), String> {
-        write_atomically(path, &self.render()?)
+        let (text, images) = self.render()?;
+        if let Some(dir) = path.parent() {
+            write_trajectory_images(dir, &images).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        write_atomically(path, &text)
     }
 }
 
@@ -140,6 +148,8 @@ pub struct ConversationUpdate {
     pub name: String,
     /// The conversation so far, as a trajectory of its own.
     pub trajectory: atif::Trajectory,
+    /// The image files the trajectory refers to, to write next to it.
+    pub images: Vec<TrajectoryImage>,
 }
 
 /// Receives the conversations that changed since the host was last told.
@@ -194,10 +204,11 @@ impl Handoff {
             .evidence()
             .changed_conversations(&self.source.run_id, &mut self.delivered)
             .into_iter()
-            .map(|(index, name, trajectory)| ConversationUpdate {
+            .map(|(index, name, trajectory, images)| ConversationUpdate {
                 index,
                 name,
                 trajectory,
+                images,
             })
             .collect();
         if !updates.is_empty() {
@@ -220,13 +231,22 @@ pub(super) fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
 
 /// Writes the final `trajectory` to `file`, for a host that keeps it; a
 /// failure is a warning, the run's verdict stands.
-pub(super) fn write_final(file: &Path, trajectory: Option<atif::Trajectory>) {
-    let Some(trajectory) = trajectory else {
+pub(super) fn write_final(
+    file: &Path,
+    trajectory: Option<(atif::Trajectory, Vec<TrajectoryImage>)>,
+) {
+    let Some((trajectory, images)) = trajectory else {
         return;
     };
     let written = serde_json::to_string_pretty(&trajectory)
         .map_err(|e| e.to_string())
-        .and_then(|text| write_atomically(file, &text));
+        .and_then(|text| {
+            if let Some(dir) = file.parent() {
+                write_trajectory_images(dir, &images)
+                    .map_err(|e| format!("{}: {e}", dir.display()))?;
+            }
+            write_atomically(file, &text)
+        });
     if let Err(e) = written {
         eprintln!("warning: cannot write the final trajectory: {e}");
     }

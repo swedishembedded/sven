@@ -427,6 +427,7 @@ impl EffectExecutor for TurnExecutor {
         let withheld_tools = planned.offered.withheld;
         let tool_schemas = to_model_schemas(planned.offered.schemas);
         self.offer_fork_tools(model.as_ref(), &tool_schemas);
+        self.record_offered_tools(&thread_id, &tool_schemas);
         if !planned.activate.is_empty() {
             let _ = sink
                 .emit(Event::ToolsActivated {

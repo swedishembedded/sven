@@ -60,6 +60,7 @@ sqlite-memory = ["dep:sven-memory-sqlite"]
 
 [dev-dependencies]
 async-trait     = { workspace = true }
+base64          = { workspace = true }
 schemars        = { workspace = true }
 sven-hsm        = { path = "../hsm" }
 sven-model-mock = { path = "../model-mock" }

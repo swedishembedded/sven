@@ -112,6 +112,9 @@ pub(super) struct RunResult {
     pub recording: Option<HarnessRecording>,
     /// The ATIF trajectory, when `trajectory` was set.
     pub trajectory: Option<Value>,
+    /// The image files the trajectory refers to, by the paths it names them
+    /// with (empty unless `trajectory` was set).
+    pub trajectory_images: Vec<sven_sdk::TrajectoryImage>,
     /// The run's id.
     pub run_id: String,
     /// The run's private directory.
@@ -374,6 +377,11 @@ async fn drive(
             run.trajectory().and_then(|t| serde_json::to_value(t).ok())
         } else {
             None
+        },
+        trajectory_images: if request.trajectory {
+            run.trajectory_images().unwrap_or_default()
+        } else {
+            Vec::new()
         },
         run_id: run.run_id().to_string(),
         scratchpad: run.scratchpad().map(Path::to_path_buf),

@@ -18,6 +18,7 @@ use atif::{CallTiming, GateDecision, MemoryRetrieval, TraceStep};
 use sven_model::Message;
 use sven_vocab::{CompactionRecord, RequestRecord};
 
+use crate::trace_images::TrajectoryImage;
 use crate::trace_session::StepAssembler;
 
 /// What is known about one conversation.
@@ -52,7 +53,24 @@ pub fn conversation_steps(
     facts: &ConversationFacts<'_>,
     as_sent: &dyn Fn(&Message) -> Message,
 ) -> Vec<TraceStep> {
-    let mut assembler = StepAssembler::new();
+    build(facts, as_sent, StepAssembler::new()).0
+}
+
+/// Like [`conversation_steps`], and the steps also carry the images the
+/// model was given (a user turn's attachments, an image a tool returned) as
+/// references to files; those files are returned with the steps.
+pub fn conversation_steps_with_images(
+    facts: &ConversationFacts<'_>,
+    as_sent: &dyn Fn(&Message) -> Message,
+) -> (Vec<TraceStep>, Vec<TrajectoryImage>) {
+    build(facts, as_sent, StepAssembler::new().recording_images())
+}
+
+fn build(
+    facts: &ConversationFacts<'_>,
+    as_sent: &dyn Fn(&Message) -> Message,
+    mut assembler: StepAssembler,
+) -> (Vec<TraceStep>, Vec<TrajectoryImage>) {
     let marks = |assembler: &mut StepAssembler, position: usize| {
         for (_, c) in facts.compactions.iter().filter(|(at, _)| *at == position) {
             assembler.push_context_compacted(
@@ -110,5 +128,5 @@ pub fn conversation_steps(
     if !facts.messages.is_empty() {
         marks(&mut assembler, facts.messages.len());
     }
-    assembler.finish()
+    assembler.finish_with_images()
 }

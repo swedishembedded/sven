@@ -17,6 +17,7 @@ pub mod step_request;
 mod steps_view;
 pub mod title;
 mod tool_invocation;
+pub mod trace_images;
 pub mod trace_session;
 
 // Legacy YAML chat support: only the read-only import surface the TUI

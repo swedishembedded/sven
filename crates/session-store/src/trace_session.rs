@@ -1,7 +1,7 @@
 // Copyright (c) 2024-2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! ATIF-trajectory-backed session storage — sven's session persistence
+//! ATIF-trajectory-backed session storage - sven's session persistence
 //! format. [`crate::chat_document`]'s YAML `ChatDocument` is read-only legacy
 //! input that [`import_legacy_chat_document`] converts when it is opened.
 //!
@@ -10,18 +10,18 @@
 //!
 //! # Layout
 //!
-//! - [`SvenSessionMeta`] — sven-specific session metadata (title, status,
+//! - [`SvenSessionMeta`] - sven-specific session metadata (title, status,
 //!   mode, parent link, timestamps) that has no dedicated ATIF field, stored
 //!   under `Trajectory.extra.sven`.
 //! - [`ChatUsage`]-to-[`atif::FinalMetrics`] mapping helpers.
-//! - [`StepAssembler`] — the turn assembler: folds a flat stream of user
+//! - [`StepAssembler`] - the turn assembler: folds a flat stream of user
 //!   messages / assistant text / tool calls / tool results / thinking /
 //!   context-compaction events into turn-shaped [`atif::TraceStep`]s, and
 //!   the reverse ([`steps_to_messages`]) for reseeding an agent's history.
 //! - File I/O built directly on `atif::persist` (new `sessions/` directory,
 //!   `.json` extension, deliberately separate from the legacy `chats/`
 //!   directory so old and new files never collide in the same listing).
-//! - [`import_legacy_chat_document`] — one-way YAML `ChatDocument` → ATIF
+//! - [`import_legacy_chat_document`] - one-way YAML `ChatDocument` → ATIF
 //!   `Trajectory` importer for opening a user's pre-existing session.
 
 use std::fs;
@@ -36,8 +36,10 @@ use atif::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use sven_model::{FunctionCall, Message, MessageContent, Role};
+use sven_model::{FunctionCall, Message, MessageContent, Role, ToolResultContent};
 use sven_vocab::{RequestBreakdown, RequestRecord};
+
+use crate::trace_images::{ImageSink, TrajectoryImage};
 
 use crate::call_records::{makes_call, CallRecords};
 use crate::chat_document;
@@ -53,7 +55,7 @@ pub const AGENT_NAME: &str = "sven";
 
 /// Build a default [`AgentProfile`] for a fresh trajectory: `name = "sven"`,
 /// `version` = this crate's own package version, which is `version.workspace
-/// = true` in `crates/session-store/Cargo.toml` — i.e. the sven release
+/// = true` in `crates/session-store/Cargo.toml` - i.e. the sven release
 /// version (`[workspace.package].version` in the root `Cargo.toml`), not an
 /// independently-versioned library crate. Callers embedding a *different*
 /// binary's trajectory (e.g. a subagent that could in principle run a
@@ -71,7 +73,7 @@ pub fn default_agent_profile() -> AgentProfile {
 /// so a generic ATIF consumer can tell sven's bespoke fields apart from
 /// anything else stashed in `extra`.
 ///
-/// Fields that *do* have a native ATIF home are NOT duplicated here — see
+/// Fields that *do* have a native ATIF home are NOT duplicated here - see
 /// the module docs: `model` lives on `Trajectory.agent.model_name`, and
 /// usage/cost live on `Trajectory.final_metrics` (via
 /// [`chat_usage_to_final_metrics`] / [`final_metrics_to_chat_usage`]).
@@ -80,7 +82,7 @@ pub fn default_agent_profile() -> AgentProfile {
 ///
 /// `parent_session_id` here is a convenience back-reference on a *child*
 /// trajectory, kept for O(1) "what's my parent" lookups without scanning
-/// every session file on disk — this is the field the TUI reads to link a
+/// every session file on disk - this is the field the TUI reads to link a
 /// child session to its parent. It intentionally duplicates
 /// information that could, in principle, be derived by scanning every
 /// parent's `subagent_trajectories`/observation refs for one that points
@@ -210,7 +212,7 @@ pub fn final_metrics_to_chat_usage(metrics: &FinalMetrics) -> ChatUsage {
 /// Generate a new random session identifier: a v4 UUID string, the same
 /// convention `chat_document::SessionId::new()` uses today. ATIF's
 /// `Trajectory.session_id` (a plain `Option<String>`) is the canonical home
-/// for this — no separate ID newtype is introduced here.
+/// for this - no separate ID newtype is introduced here.
 pub fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -247,7 +249,7 @@ struct PendingAgentStep {
 /// - A user message always closes whatever agent step was pending and
 ///   starts a fresh `User` step (pushed immediately, never buffered).
 /// - A `Thinking` event always closes whatever agent step was pending and
-///   opens a *new* agent step, seeding its `reasoning_content` — a fresh
+///   opens a *new* agent step, seeding its `reasoning_content` - a fresh
 ///   reasoning block signals a new LLM turn.
 /// - Assistant text and tool calls fold into the agent step that is
 ///   currently open (creating one with no `reasoning_content` if none was
@@ -268,6 +270,10 @@ pub struct StepAssembler {
     next_step_id: u64,
     pending: Option<PendingAgentStep>,
     records: CallRecords,
+    /// Where the images of multimodal messages and tool results go; `None`
+    /// leaves them out of the steps (a trajectory with no place for image
+    /// files).
+    images: Option<ImageSink>,
 }
 
 impl StepAssembler {
@@ -279,7 +285,16 @@ impl StepAssembler {
             next_step_id: 1,
             pending: None,
             records: CallRecords::default(),
+            images: None,
         }
+    }
+
+    /// Makes the steps carry the images of multimodal messages and tool
+    /// results, as references to files [`Self::finish_with_images`] returns.
+    #[must_use]
+    pub fn recording_images(mut self) -> Self {
+        self.images = Some(ImageSink::default());
+        self
     }
 
     /// Construct an empty assembler continuing an existing trajectory: the
@@ -287,7 +302,7 @@ impl StepAssembler {
     ///
     /// Used when appending new turns to a trajectory that already has
     /// `steps` on disk (e.g. `--trace`/`--load-trace` continuing a prior
-    /// run) — pass `existing_step_count + 1` so the combined step sequence
+    /// run) - pass `existing_step_count + 1` so the combined step sequence
     /// stays contiguous starting at 1, as
     /// `validate_trajectory` (`sven-atif`) requires.
     pub fn resuming(next_step_id: u64) -> Self {
@@ -296,11 +311,12 @@ impl StepAssembler {
             next_step_id,
             pending: None,
             records: CallRecords::default(),
+            images: None,
         }
     }
 
     /// Steps closed (pushed) so far, in order. Does **not** include any
-    /// still-open pending agent step — call [`Self::finish`] to flush that.
+    /// still-open pending agent step - call [`Self::finish`] to flush that.
     ///
     /// Useful for a real-time streaming consumer that wants to emit each step
     /// as soon as it is known complete, without waiting for the whole
@@ -315,12 +331,9 @@ impl StepAssembler {
     /// `Role::System` messages are skipped (matching
     /// `chat_document::message_to_turn`'s existing convention: the agent
     /// regenerates its system prompt at runtime). Multimodal
-    /// `MessageContent::ContentParts` messages are also dropped — this
-    /// mirrors `chat_document.rs`'s own current behavior (its
-    /// `message_to_turn` only handles `Text`/`ToolCall`/`ToolResult` and
-    /// silently drops anything else), preserved here for parity rather than
-    /// invented fresh; full multimodal fidelity (inline image data URLs vs.
-    /// ATIF's file/path-based `ImageSourceSchema`) is a follow-up concern.
+    /// `MessageContent::ContentParts` messages are dropped unless the
+    /// assembler [records images](Self::recording_images), as are the images
+    /// of a tool result (its text stays).
     /// Records on the step just filed where its turn came from, under
     /// `extra.sven.origin`.
     pub fn label_last_step(&mut self, origin: &str) {
@@ -347,6 +360,13 @@ impl StepAssembler {
             (Role::User, MessageContent::Text(text)) => {
                 self.flush_pending();
                 self.push_immediate_step(StepOrigin::User, MessageBody::text(text.clone()));
+            }
+            (Role::User, MessageContent::ContentParts(parts)) if self.images.is_some() => {
+                let segments = self.images.as_mut().map(|sink| sink.segments(parts));
+                self.flush_pending();
+                if let Some(segments) = segments {
+                    self.push_immediate_step(StepOrigin::User, MessageBody::segments(segments));
+                }
             }
             (Role::Assistant, MessageContent::Text(text)) => {
                 let pending = self.pending_for_response();
@@ -376,7 +396,13 @@ impl StepAssembler {
                     content,
                 },
             ) => {
-                let entry = ObservationEntry::for_call(tool_call_id.clone(), content.to_string());
+                let body = match (content, self.images.as_mut()) {
+                    (ToolResultContent::Parts(parts), Some(sink)) => {
+                        MessageBody::segments(sink.tool_segments(parts))
+                    }
+                    _ => MessageBody::text(content.to_string()),
+                };
+                let entry = ObservationEntry::for_call(tool_call_id.clone(), body);
                 self.pending_or_new().observation_results.push(entry);
             }
             _ => {}
@@ -449,25 +475,25 @@ impl StepAssembler {
     ///
     /// # Why attach instead of closing the step
     ///
-    /// The obvious-looking alternative — flush whatever's pending and push a
-    /// standalone `System` marker step instead — is wrong for a *streaming*
+    /// The obvious-looking alternative - flush whatever's pending and push a
+    /// standalone `System` marker step instead - is wrong for a *streaming*
     /// caller: the `task` tool call that
     /// spawned the subagent is itself part of the currently-pending step
     /// (its `ToolCallStarted` always arrives before the subagent's own
     /// completion signal), and that tool call's own result observation
     /// hasn't necessarily arrived yet either. Flushing here would split the
     /// tool call from its eventual tool-result observation across two
-    /// different steps — which `atif::validate::validate_trajectory`'s
+    /// different steps - which `atif::validate::validate_trajectory`'s
     /// `DanglingSourceCallId` rule rejects, since a `source_call_id` must
     /// resolve against a `tool_calls` entry in the *same* step. Attaching to
     /// the still-open pending step instead keeps everything about this turn
     /// (the tool call, its result, and the subagent it delegated to)
     /// together in one step, the same way a plain tool call's result does.
     /// (This was found by testing against a real `task`-tool run, not
-    /// designed up front — see the CI runner's `event::finalize_subagent_child`.)
+    /// designed up front - see the CI runner's `event::finalize_subagent_child`.)
     ///
     /// `source_call_id`, when given, is the spawning tool call's id (e.g.
-    /// the `task` call's `tool_call_id`) — passing it correlates this
+    /// the `task` call's `tool_call_id`) - passing it correlates this
     /// observation with that `tool_calls` entry the same way the tool's own
     /// result observation will.
     ///
@@ -544,6 +570,13 @@ impl StepAssembler {
         self.steps
     }
 
+    /// Like [`Self::finish`], with the image files the steps refer to.
+    pub fn finish_with_images(mut self) -> (Vec<TraceStep>, Vec<TrajectoryImage>) {
+        self.flush_pending();
+        let images = self.images.take().map(ImageSink::into_images);
+        (self.steps, images.unwrap_or_default())
+    }
+
     /// The agent step an assistant message belongs to. A step that already
     /// holds a tool result is complete: its response's calls were answered, so
     /// what the model says next is a new response and opens a new step. The
@@ -582,7 +615,7 @@ impl StepAssembler {
     }
 
     /// Build the `TraceStep` a [`PendingAgentStep`] would become if flushed,
-    /// without consuming it — the shared core of [`Self::flush_pending`] and
+    /// without consuming it - the shared core of [`Self::flush_pending`] and
     /// [`Self::snapshot_including_pending`].
     fn pending_to_step(
         pending: &PendingAgentStep,
@@ -618,8 +651,8 @@ impl StepAssembler {
     /// [`Self::finish`]).
     ///
     /// Useful for an abrupt-exit flush (timeout, interrupt, fatal error) that
-    /// wants to record interim progress — including a turn that was cut off
-    /// mid-tool-call — before the process exits, mirroring the crash-
+    /// wants to record interim progress - including a turn that was cut off
+    /// mid-tool-call - before the process exits, mirroring the crash-
     /// survivability guarantee the old per-event JSONL flush provided.
     pub fn snapshot_including_pending(&self) -> Vec<TraceStep> {
         let mut steps = self.steps.clone();
@@ -692,7 +725,7 @@ fn push_conversation_record(assembler: &mut StepAssembler, record: &Conversation
 // [`steps_to_conversation_records`], [`steps_to_messages`]) all OMIT steps
 // with `is_copied_context == Some(true)`. Any caller that rebuilds a
 // trajectory's steps from such a display view must therefore carry the
-// omitted steps through separately — otherwise opening and re-saving a
+// omitted steps through separately - otherwise opening and re-saving a
 // trajectory permanently deletes them (they are real steps; the flag only
 // marks them as excluded from SFT export, per [`Trajectory::sft_steps`]).
 
@@ -719,7 +752,7 @@ fn seed_copied(copied: &[TraceStep]) -> (Vec<TraceStep>, StepAssembler) {
 }
 
 /// Like [`conversation_records_to_steps`], but prepends `copied` (the steps
-/// the display view omitted — see [`copied_context_steps`]) so a
+/// the display view omitted - see [`copied_context_steps`]) so a
 /// display→persist round trip does not delete them. Fresh steps are numbered
 /// after the copied prefix, keeping the sequence contiguous from 1.
 pub fn conversation_records_to_steps_with_copied_context(
@@ -737,7 +770,7 @@ pub fn conversation_records_to_steps_with_copied_context(
     out
 }
 
-/// Like [`turn_records_to_steps`], but prepends `copied` — the
+/// Like [`turn_records_to_steps`], but prepends `copied` - the
 /// [`TurnRecord`]-path twin of
 /// [`conversation_records_to_steps_with_copied_context`].
 pub fn turn_records_to_steps_with_copied_context(
@@ -814,7 +847,7 @@ fn push_turn_record(assembler: &mut StepAssembler, turn: &TurnRecord) {
 /// Directory sven stores ATIF trajectory session files in.
 ///
 /// Defaults to `$XDG_DATA_HOME/sven/sessions` (i.e. `~/.local/share/sven/sessions`)
-/// — deliberately a *new* directory, distinct from the legacy
+/// - deliberately a *new* directory, distinct from the legacy
 /// `chat_document::chat_dir()` (`.../sven/chats`), so old `.yaml` files and
 /// new `.json` trajectory files never collide in the same directory listing.
 pub fn session_dir() -> PathBuf {
@@ -924,12 +957,12 @@ pub fn list_sessions(limit: Option<usize>) -> Result<Vec<SessionEntry>> {
 /// # Legacy visibility policy
 ///
 /// A legacy `.yaml` chat is surfaced here **only until** a same-`session_id`
-/// `.json` file exists in [`session_dir`] — once a legacy session is opened
+/// `.json` file exists in [`session_dir`] - once a legacy session is opened
 /// and saved again (which always writes the new format; see
 /// [`import_legacy_chat_document`]'s doc comment), its `.json` twin appears
 /// in the new-format listing under the same id and this function stops
 /// surfacing the old `.yaml` entry. The original `.yaml` file itself is
-/// **never deleted or modified** by this crate — it is left on disk,
+/// **never deleted or modified** by this crate - it is left on disk,
 /// superseded, purely for manual archival/recovery. This keeps the picker
 /// free of duplicate rows while never destroying old data.
 #[derive(Debug, Clone)]
@@ -954,9 +987,9 @@ pub struct UnifiedSessionEntry {
     pub is_legacy: bool,
 }
 
-/// List every known session — native ATIF sessions from [`session_dir`] plus
+/// List every known session - native ATIF sessions from [`session_dir`] plus
 /// any legacy YAML chats from [`crate::chat_document::chat_dir`] that have not
-/// yet been superseded by a same-id `.json` file — most recently updated
+/// yet been superseded by a same-id `.json` file - most recently updated
 /// first. See [`UnifiedSessionEntry`]'s doc comment for the exact legacy
 /// visibility policy.
 ///
@@ -975,7 +1008,7 @@ pub fn list_all_sessions(limit: Option<usize>) -> Result<Vec<UnifiedSessionEntry
 
 /// Pure merge/dedup step behind [`list_all_sessions`], factored out so it can
 /// be unit-tested without touching the real [`session_dir`]/[`crate::chat_document::chat_dir`]
-/// filesystem locations. Does not sort or truncate — callers do that.
+/// filesystem locations. Does not sort or truncate - callers do that.
 fn merge_native_and_legacy(
     native: Vec<SessionEntry>,
     legacy: Vec<crate::chat_document::ChatEntry>,
@@ -1039,7 +1072,7 @@ fn merge_native_and_legacy(
 // ── Legacy YAML importer ────────────────────────────────────────────────────
 
 /// One-way importer: read an existing legacy [`ChatDocument`] (YAML format)
-/// and produce an equivalent ATIF [`Trajectory`]. Read-only — there is no
+/// and produce an equivalent ATIF [`Trajectory`]. Read-only - there is no
 /// writer back to the old format from this module.
 ///
 /// Mapping applied:
@@ -1086,7 +1119,7 @@ pub fn import_legacy_chat_document(doc: &ChatDocument) -> Trajectory {
 pub struct MigrationSummary {
     /// Converted and written out this run (or, under `dry_run`, would be).
     pub migrated: Vec<String>,
-    /// Already had a `.json` trajectory at the target path — left untouched.
+    /// Already had a `.json` trajectory at the target path - left untouched.
     pub skipped_existing: Vec<String>,
     /// `(session_id, error message)` for chats that failed to read or convert.
     pub failed: Vec<(String, String)>,
@@ -1097,7 +1130,7 @@ pub struct MigrationSummary {
 /// [`session_dir`] is converted via [`import_legacy_chat_document`] and
 /// written out.
 ///
-/// Idempotent — an existing `.json` for a session id is left untouched, never
+/// Idempotent - an existing `.json` for a session id is left untouched, never
 /// overwritten (lazy per-open import already produces exactly one write per
 /// session the first time it's opened; this just runs that same conversion
 /// up front for every legacy chat at once instead of one at a time). The
