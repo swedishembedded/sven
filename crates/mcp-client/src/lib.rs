@@ -26,6 +26,7 @@ pub mod bridge;
 mod callback;
 pub mod config;
 mod connection;
+mod events;
 pub mod health;
 pub mod manager;
 
@@ -33,6 +34,8 @@ pub mod manager;
 
 pub use auth::TokenStore;
 pub use bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
+pub use callback::open_browser;
 pub use config::{mcp_servers_schema, McpOAuthConfig, McpServerConfig, McpServers, McpTransport};
+pub use events::{McpEvent, NoticeLevel};
 pub use health::{ServerStatus, ServerStatusSummary};
-pub use manager::{McpEvent, McpManager};
+pub use manager::McpManager;

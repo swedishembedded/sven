@@ -23,28 +23,10 @@ use crate::auth::{self, SignIn, TokenStore};
 use crate::bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 use crate::config::{McpServerConfig, McpTransport};
 use crate::connection::{AuthRequired, Connection, Endpoint, ListChanged};
+use crate::events::McpEvent;
 use crate::health::{HealthState, ServerStatus, ServerStatusSummary};
 
 use sven_tool_api::Tool as _;
-
-// ── McpEvent ──────────────────────────────────────────────────────────────────
-
-/// Events emitted by the manager to signal state changes.
-#[derive(Debug)]
-pub enum McpEvent {
-    /// A server successfully connected.
-    ServerConnected(String),
-    /// A server disconnected or was disabled.
-    ServerDisconnected(String),
-    /// A server connection failed.
-    ServerFailed { name: String, error: String },
-    /// The set of tools/prompts changed; re-register with the tool registry.
-    ToolsChanged,
-    /// An HTTP server requires OAuth authentication.
-    AuthRequired { server: String, auth_url: String },
-    /// OAuth authentication started (browser opened).
-    AuthStarted { server: String },
-}
 
 // ── ServerState ───────────────────────────────────────────────────────────────
 
@@ -336,14 +318,19 @@ impl McpManager {
                 if let Err(e) = this.store.remove(&TokenStore::key(&name, &url)) {
                     warn!(server = %name, error = %format!("{e:#}"), "could not forget the refused MCP sign-in");
                 }
-                let error = build_rejected_credentials_error(&url);
+                warn!(server = %name, "{}", build_rejected_credentials_error(&url));
                 if let Some(state) = this.servers.write().await.get_mut(&name) {
                     state.auth_in_progress = false;
-                    state.health.report_error(error.clone());
+                    state.health.status = ServerStatus::NeedsAuth {
+                        auth_url: url.clone(),
+                    };
                 }
                 let _ = this
                     .event_tx
-                    .send(McpEvent::ServerFailed { name, error })
+                    .send(McpEvent::AuthRequired {
+                        server: name,
+                        auth_url: url,
+                    })
                     .await;
                 return;
             }
@@ -590,7 +577,69 @@ impl McpManager {
         self.sign_in(server, None).await
     }
 
+    /// Like [`Self::authenticate`], showing the sign-in page with `present`
+    /// and also completing from an address the person pastes into `pasted`
+    /// (a command line on a remote shell, whose browser is elsewhere).
+    pub async fn authenticate_with(
+        self: &Arc<Self>,
+        server: &str,
+        present: &(dyn Fn(&str) + Send + Sync),
+        pasted: Option<mpsc::Receiver<String>>,
+    ) -> Result<()> {
+        self.sign_in_with(server, None, present, pasted).await
+    }
+
+    /// Connect `server` and offer its tools (`true`), or disconnect it and
+    /// withdraw them (`false`), for the life of this manager; the
+    /// configuration file is not changed.
+    pub async fn set_enabled(self: &Arc<Self>, server: &str, enabled: bool) -> Result<()> {
+        {
+            let mut config = self.config.write().await;
+            let cfg = config
+                .get_mut(server)
+                .with_context(|| format!("no MCP server config for {server}"))?;
+            cfg.enabled = enabled;
+        }
+        if enabled {
+            self.connect(server).await
+        } else {
+            self.disconnect(server).await;
+            Ok(())
+        }
+    }
+
+    /// Forget the sign-in of `server`; it asks for a new one when it is
+    /// next connected.
+    pub async fn sign_out(self: &Arc<Self>, server: &str) -> Result<()> {
+        let cfg = self.server_config(server).await?;
+        let McpTransport::Http { url, .. } = &cfg.transport else {
+            anyhow::bail!("{server} is a stdio server; it has no sign-in");
+        };
+        self.store.remove(&TokenStore::key(server, url))?;
+        self.disconnect(server).await;
+        Ok(())
+    }
+
     async fn sign_in(self: &Arc<Self>, server: &str, challenge: Option<&str>) -> Result<()> {
+        let events = self.event_tx.clone();
+        let name = server.to_string();
+        let present = move |url: &str| {
+            crate::callback::open_browser(url);
+            let _ = events.try_send(McpEvent::SignInLink {
+                server: name.clone(),
+                url: url.to_string(),
+            });
+        };
+        self.sign_in_with(server, challenge, &present, None).await
+    }
+
+    async fn sign_in_with(
+        self: &Arc<Self>,
+        server: &str,
+        challenge: Option<&str>,
+        present: &(dyn Fn(&str) + Send + Sync),
+        pasted: Option<mpsc::Receiver<String>>,
+    ) -> Result<()> {
         if !self.allow_interactive_oauth {
             anyhow::bail!(
                 "MCP sign-in cannot run in a headless or CI run. \
@@ -608,7 +657,8 @@ impl McpManager {
                 url,
                 oauth: cfg.oauth.as_ref(),
                 challenge,
-                present: &crate::callback::open_browser,
+                present,
+                pasted,
             },
         )
         .await?;
@@ -683,12 +733,15 @@ fn build_rejected_credentials_error(server_url: &str) -> String {
     }
 }
 
-/// Check if an error indicates the server requires authentication (e.g. 400 from
-/// Atlassian when sending unauthenticated requests).
+/// Check if an error indicates the server requires authentication without
+/// saying so in the standard way: a 400 (Atlassian, for unauthenticated
+/// requests) or a 401 with no challenge.
 fn is_auth_required_error(e: &anyhow::Error) -> bool {
     let s = format!("{:#}", e);
     s.contains("Request must be an initialize request if no session ID is provided")
         || s.contains("No valid session ID provided")
+        // A 401 without the `WWW-Authenticate` challenge the spec requires.
+        || s.contains("HTTP 401")
 }
 
 fn config_changed(old: &McpServerConfig, new: &McpServerConfig) -> bool {

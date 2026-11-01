@@ -137,9 +137,6 @@ pub struct App {
     /// Checked alongside `command_registry` during slash command dispatch.
     pub(crate) mcp_prompt_commands:
         std::collections::HashMap<String, Arc<dyn crate::commands::SlashCommand>>,
-    /// Broadcast sender for MCP tool refresh. When ToolsChanged fires, we send
-    /// so all agent tasks update their registries.
-    pub(crate) mcp_refresh_tx: Option<tokio::sync::broadcast::Sender<()>>,
     /// Tool display registry - set by the runtime builder after the registry is built.
     /// Used for chat view (collapsed summary, display name) when present.
     pub(crate) shared_tool_displays: sven_tool_registry::SharedToolDisplays,

@@ -69,9 +69,6 @@ impl App {
             // A conversation running elsewhere: its agent is not started here.
             tokio::spawn(task(submit_rx, event_tx, question_tx.clone()));
         } else {
-            let (mcp_refresh_tx, _) = tokio::sync::broadcast::channel(16);
-            self.mcp_refresh_tx = Some(mcp_refresh_tx.clone());
-
             let cfg = self.config.clone();
             let mode = self.session.mode;
             let approval = self.approval;
@@ -110,9 +107,9 @@ impl App {
                 // Spawn a background task to forward MCP events as TUI toasts.
                 if let Some(ref tx) = self.toast_tx {
                     let toast_tx = tx.clone();
-                    let mgr_clone = Arc::clone(&mgr);
+                    let agent_tx = submit_tx.clone();
                     tokio::spawn(async move {
-                        mcp_event_consumer(mcp_event_rx, toast_tx, mcp_refresh_tx, mgr_clone).await;
+                        mcp_event_consumer(mcp_event_rx, toast_tx, agent_tx).await;
                     });
                 }
             }
@@ -372,51 +369,29 @@ impl App {
 
 // ── MCP event consumer ────────────────────────────────────────────────────────
 
-/// Background task that consumes `McpEvent`s and forwards them as TUI toasts.
-/// When `ToolsChanged` fires, sends on `refresh_tx` so all agent tasks refresh
-/// their MCP tool registries.
+/// Background task that consumes `McpEvent`s and shows each one's notice as
+/// a toast. When `ToolsChanged` fires, the agent re-reads its MCP tools, so a
+/// server's refreshed list (or a server that just connected or signed in)
+/// reaches the live session, held to its `tools.only` / `tools.disabled`.
 async fn mcp_event_consumer(
     mut rx: mpsc::Receiver<McpEvent>,
     toast_tx: mpsc::Sender<ui_state::Toast>,
-    refresh_tx: tokio::sync::broadcast::Sender<()>,
-    _mgr: Arc<McpManager>,
+    agent_tx: mpsc::Sender<AgentRequest>,
 ) {
+    use sven_mcp_client::NoticeLevel;
     while let Some(event) = rx.recv().await {
         if matches!(event, McpEvent::ToolsChanged) {
-            let _ = refresh_tx.send(());
+            let _ = agent_tx.send(AgentRequest::RefreshMcpTools).await;
         }
-        let toast = match event {
-            McpEvent::AuthStarted { ref server } => Some(ui_state::Toast::info(format!(
-                "Opening browser to authenticate with '{server}'..."
-            ))),
-            McpEvent::AuthRequired { ref server, .. } => Some(ui_state::Toast::warning(format!(
-                "'{server}' requires authentication - run `/mcp auth {server}`"
-            ))),
-            McpEvent::ServerConnected(ref server) => Some(ui_state::Toast::success(format!(
-                "MCP server '{server}' connected"
-            ))),
-            McpEvent::ServerFailed {
-                ref name,
-                ref error,
-            } => {
-                // Only surface non-auth failures as toasts (auth failures
-                // are already shown via AuthStarted/AuthRequired).
-                if error.contains("401") || error.contains("Unauthorized") {
-                    None
-                } else {
-                    // Show a generous slice of the full error chain so the
-                    // user sees the actual HTTP response, not just the context
-                    // wrapper (e.g. "HTTP 403: ..." rather than "MCP initialize").
-                    let summary = error.chars().take(300).collect::<String>();
-                    Some(ui_state::Toast::error(format!(
-                        "MCP '{name}': {summary} · /mcp for details"
-                    )))
-                }
-            }
-            _ => None,
+        let Some((level, text)) = event.notice() else {
+            continue;
         };
-        if let Some(t) = toast {
-            let _ = toast_tx.send(t).await;
-        }
+        let toast = match level {
+            NoticeLevel::Info => ui_state::Toast::info(text),
+            NoticeLevel::Success => ui_state::Toast::success(text),
+            NoticeLevel::Warning => ui_state::Toast::warning(text),
+            NoticeLevel::Error => ui_state::Toast::error(format!("{text} · /mcp for details")),
+        };
+        let _ = toast_tx.send(toast).await;
     }
 }

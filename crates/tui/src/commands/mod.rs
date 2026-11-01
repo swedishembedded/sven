@@ -8,5 +8,5 @@ pub use sven_frontend::commands::mcp;
 pub use sven_frontend::commands::parser;
 pub use sven_frontend::commands::{
     dispatch_command, parse, CommandContext, CommandRegistry, CompletionItem, CompletionManager,
-    ImmediateAction, Light, ParsedCommand, SlashCommand,
+    ImmediateAction, Light, McpAction, ParsedCommand, SlashCommand,
 };

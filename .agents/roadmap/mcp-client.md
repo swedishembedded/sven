@@ -33,11 +33,8 @@ Still as before:
 | Finding | Evidence |
 | --- | --- |
 | Every MCP tool is `NetworkAccess` with `Ask`; tool annotations not used | `bridge.rs` |
-| `/mcp enable` and `/mcp disable` advertised, not implemented; inspector is a read-only pager | `commands/src/builtin/inspect.rs:~145-215`, `tui/src/ui/inspector.rs` |
-| A refreshed tool list reaches no live session in the shipped frontends: the TUI's refresh channel has no subscriber | `tui/src/app/run.rs:72-73,385-387` |
-| A refused stored sign-in fails the server instead of offering a new sign-in | `manager.rs` `needs_sign_in` |
-| The sign-in link is only opened in a browser or printed to stderr; no frontend shows it | `callback.rs` `open_browser` |
-| In a container the callback listener binds `0.0.0.0:5598` (for `docker -p`; `state` refuses a forged callback) | `callback.rs` `bind` |
+| The inspector is a read-only pager; servers are added only by editing the configuration file | `tui/src/ui/inspector.rs` |
+| In a container the callback listener binds `0.0.0.0:5598` (for `docker -p`; `state` refuses a forged callback; `sven mcp auth` with a pasted address needs no forwarded port) | `callback.rs` `bind` |
 
 ## Decisions
 
@@ -62,13 +59,14 @@ sampling, so a server cannot ask),
 `ttlMs` used to skip refetching a fresh list, and large resources kept as
 artifacts instead of inlined.
 
-**M3 Sign-in UX.** `/mcp` becomes a real manager: add a server (URL or
-command), sign in, sign out, enable, disable, inspect tools and their policy.
-A 401 on a stored token offers sign-in again instead of failing the server.
-SSH and containers get a printed link and a pasted code, not a listening
-port. Client ID Metadata Document as the default registration, DCR as the
-fallback. Number: an e2e bats suite against a local OAuth-protected MCP
-server fixture (sign in, expire, refresh, revoke, re-sign-in).
+**M3 Sign-in UX: mostly done 2026-11-01.** Done: `sven mcp list|auth|logout`
+with a pasted return address for remote shells, the sign-in link shown in the
+TUI (`McpEvent::SignInLink`), `/mcp logout|enable|disable`, a refused sign-in
+asking for a new one, a changed tool list reaching the TUI session, headless
+`[sven:mcp]` notices; checked by `tests/sign_in.rs`, `tests/conformance.rs`
+and the callback tests. Left: `/mcp add` and `sven mcp add` writing a server
+into the configuration file, an inspector you act from, and a bats e2e of
+`sven mcp auth` against the local authorization server fixture.
 
 **M4 Tool policy by action.** Per-server and per-tool policy in config
 (`allow`, `ask`, `deny`) with annotations tightening the default. Number:

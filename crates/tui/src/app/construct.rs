@@ -159,7 +159,6 @@ impl App {
             shared_tool_displays,
             mcp_manager: None,
             mcp_prompt_commands: std::collections::HashMap::new(),
-            mcp_refresh_tx: None,
             needs_terminal_recover: false,
             buffer_store,
             chat,

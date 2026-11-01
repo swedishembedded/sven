@@ -402,12 +402,22 @@ jq . trace.json | less
 
 ## MCP OAuth authentication
 
-### OAuth browser opens repeatedly (perpetual loop)
+### Signing in from a remote shell or a container
 
-If the OAuth flow completes successfully (you see "Authentication successful" in
-the browser) but the browser keeps opening again, the server is rejecting your
-credentials. Sven stops after the first failure instead of retrying
-indefinitely.
+`sven mcp auth <server>` signs in from any terminal. It prints the sign-in
+page's address and opens it if this machine has a browser. When the browser
+runs elsewhere (SSH, a container), it cannot come back to sven on its own:
+after signing in, copy the address the browser ends on (it starts with
+`sven://` or `http://127.0.0.1:5598/callback?code=`, and the page may say it
+cannot be reached) and paste it into the terminal. The sign-in is kept for
+every later run, the TUI's included.
+
+### The server refuses the sign-in
+
+If signing in completes (you see "Authentication successful" in the browser)
+but the server then answers 401, sven forgets that sign-in, marks the server
+`needs-auth` and asks you to sign in again rather than opening the browser in a
+loop.
 
 **Atlassian MCP:** Custom clients must be allowlisted by an Atlassian admin.
 Even with valid OAuth tokens, `mcp.atlassian.com` returns 401 for clients whose
@@ -419,11 +429,8 @@ for how to add your client.
 config with `redirect_uri: "cursor://cursor.mcp/callback"` and set up a
 protocol handler to forward the callback to Sven (see [Configuration](../reference/configuration.md#mcp_servers)).
 
-### "Server rejected credentials after authentication"
-
-This means you had valid OAuth tokens but the MCP server returned 401. For
-Atlassian MCP, ensure your client's domain is allowlisted. For other servers,
-check that the token has the correct scopes and audience.
+A server that refuses every sign-in usually needs the client allowed on its
+side (Atlassian, above) or other scopes (`oauth.scopes`).
 
 ### Setting up the cursor:// protocol handler
 
@@ -473,12 +480,15 @@ docker run -p 5598:5598 ... sven ...
 
 The OAuth browser opens on the host; the redirect goes to `http://127.0.0.1:5598`,
 which Docker forwards to the container. No `redirect_uri` config is needed.
+Without the forwarded port, sign in with `sven mcp auth <server>` and paste the
+address the browser ends on.
 
 ### OAuth fails and browser does not open again
 
 When OAuth fails (user cancels, error, etc.), Sven sets the server status to
 Failed and does not retry automatically. This prevents an annoying loop of
-browser windows. Run `/mcp auth <server>` manually to try again.
+browser windows. Run `/mcp auth <server>` (or `sven mcp auth <server>`) to try
+again.
 
 ---
 

@@ -65,13 +65,16 @@ pub async fn bind(redirect_uri: Option<&str>, port: Option<u16>) -> Result<Redir
 }
 
 /// Show the person `auth_url` with `present`, then wait for the browser to
-/// come back. Returns the callback's query string, e.g.
+/// come back: to the listener, or as the address it ended on, pasted by the
+/// person into `pasted` (a browser on another machine than sven cannot reach
+/// the listener). Returns the callback's query string, e.g.
 /// `code=...&state=...&iss=...`. The authorization server's own error (the
 /// person declined) fails the sign-in with its description.
 pub async fn wait(
     listener: TcpListener,
     auth_url: &str,
     present: &(dyn Fn(&str) + Send + Sync),
+    pasted: Option<tokio::sync::mpsc::Receiver<String>>,
     timeout: Duration,
 ) -> Result<String> {
     present(auth_url);
@@ -133,7 +136,27 @@ pub async fn wait(
             return Ok(query);
         }
     };
-    tokio::time::timeout(timeout, accept).await.map_err(|_| {
+    let paste = async {
+        let Some(mut pasted) = pasted else {
+            return std::future::pending().await;
+        };
+        loop {
+            let Some(address) = pasted.recv().await else {
+                return std::future::pending().await;
+            };
+            match query_of_pasted(&address) {
+                Ok(query) => return Ok(query),
+                Err(e) => warn!(error = %e, "not the sign-in's return address; paste it again"),
+            }
+        }
+    };
+    let either = async {
+        tokio::select! {
+            result = accept => result,
+            result = paste => result,
+        }
+    };
+    tokio::time::timeout(timeout, either).await.map_err(|_| {
         anyhow!(
             "OAuth callback timed out after {}s. Complete the login in your browser and \
              make sure you are redirected back to localhost.",
@@ -198,6 +221,27 @@ pub fn open_browser(url: &str) {
             );
         }
     }
+}
+
+/// The query of an address the browser ended on, as pasted by the person
+/// (`http://127.0.0.1:5598/callback?code=...&state=...`, or the `sven://`
+/// address the browser could not open).
+fn query_of_pasted(address: &str) -> Result<String> {
+    let query = address
+        .trim()
+        .split_once('?')
+        .map(|(_, q)| q.split('#').next().unwrap_or(q).to_string())
+        .ok_or_else(|| anyhow!("the address has no `?code=...&state=...` part"))?;
+    if let Some(error) = parse_query_param(&query, "error") {
+        return Err(anyhow!(
+            "OAuth authorization failed: {}",
+            error.replace('_', " ")
+        ));
+    }
+    if parse_query_param(&query, "code").is_none() || parse_query_param(&query, "state").is_none() {
+        return Err(anyhow!("the address carries no code and state"));
+    }
+    Ok(query)
 }
 
 /// Extract the path (including query string) from a raw HTTP request line.
@@ -407,6 +451,38 @@ mod tests {
         );
         assert_eq!(url_decode("100%"), "100%");
         assert_eq!(url_decode("%zz"), "%zz");
+    }
+
+    #[test]
+    fn a_pasted_return_address_gives_its_query() {
+        assert_eq!(
+            query_of_pasted("  sven://sven.mcp/callback?code=a&state=b&iss=x#frag \n").unwrap(),
+            "code=a&state=b&iss=x"
+        );
+        assert!(query_of_pasted("https://example.com/").is_err());
+        assert!(query_of_pasted("http://h/callback?state=b").is_err());
+    }
+
+    /// A sign-in whose browser cannot reach the listener completes from the
+    /// address the person pastes.
+    #[tokio::test]
+    async fn a_sign_in_completes_from_a_pasted_address() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        tx.send("not it".into()).await.unwrap();
+        tx.send("http://127.0.0.1:5598/callback?code=c&state=s".into())
+            .await
+            .unwrap();
+        let query = wait(
+            listener,
+            "https://auth.example/x",
+            &|_| {},
+            Some(rx),
+            CALLBACK_TIMEOUT,
+        )
+        .await
+        .unwrap();
+        assert_eq!(query, "code=c&state=s");
     }
 
     #[test]

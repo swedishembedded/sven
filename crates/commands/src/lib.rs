@@ -108,8 +108,10 @@ pub enum ImmediateAction {
     OpenInspector {
         kind: InspectorKind,
     },
-    McpAuth {
+    /// Act on a configured MCP server (`/mcp auth|logout|enable|disable`).
+    Mcp {
         server: String,
+        action: McpAction,
     },
     /// Surface a block of text to the user as a notice (shown in the
     /// frontend's pager), rather than sending it to the agent as a message.
@@ -123,6 +125,19 @@ pub enum ImmediateAction {
     /// every session/subagent in this process starting with the next turn -
     /// no session rebuild needed, unlike `/model`.
     SetThinkingBudget(Option<sven_turn::ThinkingBudget>),
+}
+
+/// What `/mcp` does to a server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpAction {
+    /// Sign in in the browser.
+    SignIn,
+    /// Forget the sign-in.
+    SignOut,
+    /// Connect it and offer its tools, for this session.
+    Enable,
+    /// Disconnect it and withdraw its tools, for this session.
+    Disable,
 }
 
 // ── Trait ─────────────────────────────────────────────────────────────────────
@@ -290,8 +305,19 @@ mod dispatch_tests {
         assert_eq!(name, "mcp");
         assert!(matches!(
             result.immediate_action,
-            Some(ImmediateAction::McpAuth { ref server }) if server == "atlassian-mcp"
+            Some(ImmediateAction::Mcp { ref server, action: McpAction::SignIn }) if server == "atlassian-mcp"
         ));
+        for (line, wanted) in [
+            ("/mcp logout docs", McpAction::SignOut),
+            ("/mcp enable docs", McpAction::Enable),
+            ("/mcp disable docs", McpAction::Disable),
+        ] {
+            let (_, result) = try_dispatch(line, &registry()).unwrap();
+            assert!(
+                matches!(result.immediate_action, Some(ImmediateAction::Mcp { ref server, action }) if server == "docs" && action == wanted),
+                "{line}"
+            );
+        }
     }
 
     #[test]

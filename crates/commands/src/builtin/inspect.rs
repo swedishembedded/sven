@@ -153,7 +153,7 @@ impl SlashCommand for McpCommand {
     }
 
     fn description(&self) -> &str {
-        "Show and manage MCP servers. Usage: /mcp [list|enable|disable|auth] [name]"
+        "Show and manage MCP servers. Usage: /mcp [list|auth|logout|enable|disable] [name]"
     }
 
     fn complete(
@@ -163,7 +163,7 @@ impl SlashCommand for McpCommand {
         ctx: &CommandContext,
     ) -> Vec<CompletionItem> {
         if arg_index == 0 {
-            ["list", "enable", "disable", "auth"]
+            ["list", "auth", "logout", "enable", "disable"]
                 .iter()
                 .filter(|s| s.starts_with(partial))
                 .map(|s| CompletionItem {
@@ -196,10 +196,18 @@ impl SlashCommand for McpCommand {
         let sub = args.first().map(String::as_str).unwrap_or("");
         let server = args.get(1).cloned().unwrap_or_default();
 
-        match (sub, server.as_str()) {
-            ("auth", name) if !name.is_empty() => CommandResult {
-                immediate_action: Some(ImmediateAction::McpAuth {
+        let action = match sub {
+            "auth" => Some(crate::McpAction::SignIn),
+            "logout" => Some(crate::McpAction::SignOut),
+            "enable" => Some(crate::McpAction::Enable),
+            "disable" => Some(crate::McpAction::Disable),
+            _ => None,
+        };
+        match (action, server.as_str()) {
+            (Some(action), name) if !name.is_empty() => CommandResult {
+                immediate_action: Some(ImmediateAction::Mcp {
                     server: name.to_string(),
+                    action,
                 }),
                 ..Default::default()
             },

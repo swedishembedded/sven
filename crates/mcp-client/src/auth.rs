@@ -252,6 +252,8 @@ pub struct SignIn<'a> {
     /// Shows the person the page to sign in on (opens the browser, prints
     /// the link, or hands it to a frontend).
     pub present: &'a (dyn Fn(&str) + Send + Sync),
+    /// Addresses the person pastes when the browser cannot reach sven.
+    pub pasted: Option<tokio::sync::mpsc::Receiver<String>>,
 }
 
 /// Sign in to an MCP server in the browser and keep the result in `store`.
@@ -300,6 +302,7 @@ pub async fn sign_in(store: &Arc<TokenStore>, params: SignIn<'_>) -> Result<()> 
         redirect.listener,
         session.get_authorization_url(),
         params.present,
+        params.pasted,
         callback::CALLBACK_TIMEOUT,
     )
     .await?;

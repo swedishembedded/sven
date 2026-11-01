@@ -15,6 +15,7 @@ sven-tool-api        = { path = "../tool-api" }
 sven-tool-registry   = { path = "../tool-registry" }
 sven-tools-fs        = { path = "../tools-fs" }
 sven-tools-web       = { path = "../tools-web" }
+sven-mcp-client      = { path = "../mcp-client" }
 anyhow               = { workspace = true }
 clap                 = { workspace = true }
 serde                = { workspace = true }

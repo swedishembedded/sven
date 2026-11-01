@@ -147,9 +147,18 @@ impl KernelAgent {
         options.allow_interactive_oauth = false;
         options.wait_for_mcp_tools_ms = Some(self.wait_for_mcp_ms);
         let spec = SessionSpec::for_mode(self.agent_mode, self.model_cfg.clone());
-        let (session, _mcp_events) = SessionController::open(options, spec, history)
+        let (session, mut mcp_events) = SessionController::open(options, spec, history)
             .await
             .context("failed to build kernel session")?;
+        // What happens to the MCP servers is reported, never waited on: a
+        // server that wants a sign-in says how to give it one.
+        tokio::spawn(async move {
+            while let Some(event) = mcp_events.recv().await {
+                if let Some((_, text)) = event.notice() {
+                    crate::output::write_progress(&format!("[sven:mcp] {text}"));
+                }
+            }
+        });
         Ok((session, events_rx))
     }
 

@@ -47,6 +47,28 @@ pub enum McpCommands {
         #[arg(long, env = "BRAVE_API_KEY", value_name = "KEY")]
         brave_api_key: Option<String>,
     },
+
+    /// List the MCP servers sven is configured to use (`mcp_servers:`), each
+    /// with whether it connects, how many tools it offers, and whether it
+    /// needs a sign-in.
+    List,
+
+    /// Sign in to an OAuth-protected MCP server, from any terminal.
+    ///
+    /// Opens the sign-in page in the browser and prints its address. When
+    /// the browser runs on another machine (a remote shell, a container) it
+    /// cannot come back to sven by itself: paste the address it ends on
+    /// here instead. The sign-in is kept for every later sven run.
+    Auth {
+        /// The server's name in `mcp_servers:`.
+        server: String,
+    },
+
+    /// Forget the sign-in of an MCP server.
+    Logout {
+        /// The server's name in `mcp_servers:`.
+        server: String,
+    },
 }
 
 /// Runs a `sven mcp` subcommand.
@@ -69,5 +91,89 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             ));
             crate::serve_stdio(registry).await
         }
+        McpCommands::List => list().await,
+        McpCommands::Auth { server } => auth(server).await,
+        McpCommands::Logout { server } => {
+            let manager = manager(false)?;
+            manager.sign_out(server).await?;
+            println!("Signed out of '{server}'.");
+            Ok(())
+        }
     }
+}
+
+/// A manager over the configured servers. The events it emits are not
+/// needed here: each command reports what it did.
+fn manager(interactive: bool) -> anyhow::Result<std::sync::Arc<sven_mcp_client::McpManager>> {
+    let config = sven_bootstrap::Config::load(None)?;
+    let (events, _) = tokio::sync::mpsc::channel(64);
+    Ok(sven_mcp_client::McpManager::new(
+        config.mcp_servers,
+        events,
+        interactive,
+    ))
+}
+
+async fn list() -> anyhow::Result<()> {
+    let manager = manager(false)?;
+    let names: Vec<String> = manager
+        .server_statuses()
+        .await
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    if names.is_empty() {
+        println!("No MCP servers are configured (`mcp_servers:` in the configuration file).");
+        return Ok(());
+    }
+    for name in &names {
+        let _ = manager.connect(name).await;
+    }
+    // A server that needs a sign-in reports so from a task of its own.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    for status in manager.server_statuses().await {
+        let detail = match &status.status {
+            sven_mcp_client::ServerStatus::Connected => {
+                format!(
+                    "{} tools, {} prompts",
+                    status.tool_count, status.prompt_count
+                )
+            }
+            sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
+                format!("run `sven mcp auth {}`", status.name)
+            }
+            sven_mcp_client::ServerStatus::Failed { error } => error.clone(),
+            _ => String::new(),
+        };
+        println!("{:<20} {:<14} {detail}", status.name, status.status.label());
+    }
+    Ok(())
+}
+
+async fn auth(server: &str) -> anyhow::Result<()> {
+    let manager = manager(true)?;
+    let (pasted_tx, pasted) = tokio::sync::mpsc::channel(4);
+    // Lines typed while the sign-in waits are offered to it as the address
+    // the browser ended on.
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lines() {
+            let Ok(line) = line else { break };
+            if pasted_tx.blocking_send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let present = |url: &str| {
+        eprintln!(
+            "Sign in to '{server}' on this page:\n\n  {url}\n\n\
+             If the browser cannot come back to this machine, paste the address it \
+             ends on here and press Enter."
+        );
+        sven_mcp_client::open_browser(url);
+    };
+    manager
+        .authenticate_with(server, &present, Some(pasted))
+        .await?;
+    println!("Signed in to '{server}'.");
+    Ok(())
 }

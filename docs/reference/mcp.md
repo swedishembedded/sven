@@ -87,6 +87,19 @@ and lists them again when the server says they changed.
 - A prompt is a slash command named `/<server>/<prompt>` in the TUI, with the
   prompt's arguments completed as `<name>`.
 
+### Managing servers
+
+| Where | Command | Effect |
+|-------|---------|--------|
+| TUI | `/mcp` | the servers, their status and tools |
+| TUI | `/mcp auth <name>`, `/mcp logout <name>` | sign in, forget the sign-in |
+| TUI | `/mcp enable <name>`, `/mcp disable <name>` | connect it and offer its tools, or withdraw them, for this session (the configuration file is unchanged) |
+| shell | `sven mcp list` | each configured server, whether it connects, its tool count, or what it needs |
+| shell | `sven mcp auth <name>`, `sven mcp logout <name>` | sign in, forget the sign-in |
+
+A server's tool list that changes while a TUI session runs reaches the agent at
+once, held to `tools.only` and `tools.disabled`.
+
 A connected server that drops is reconnected with exponential backoff; after
 ten consecutive failures its status becomes `failed` and sven stops trying.
 The other statuses are `initializing`, `connecting`, `connected`, `disabled`,
@@ -113,8 +126,14 @@ nothing. Tokens are kept in `~/.config/sven/mcp-oauth.json`, readable by its
 owner only, shared by every project that names the server the same and uses
 the same URL, and refreshed when they expire; a sign-in is forgotten when the
 server's authorization server changes. sven processes running at once update
-the file under a lock, and refresh one at a time. A server that answers 401
-shows as `needs-auth`; `/mcp auth <name>` in the TUI starts the flow. A static
+the file under a lock, and refresh one at a time. In the TUI a server that
+answers 401 is signed in to at once: the browser opens and the sign-in link is
+shown as well. `sven mcp auth <name>` signs in from any terminal; over SSH or
+from a container, paste the address the browser ends on (see
+[troubleshooting](../guides/troubleshooting.md#signing-in-from-a-remote-shell-or-a-container)).
+A headless run never opens a browser or waits: the server shows as
+`needs-auth` and the run prints a `[sven:mcp]` line saying how to sign in. A
+server that refuses its sign-in is signed out and asks for a new one. A static
 bearer token needs no `oauth` block: put it in `transport.headers`. Setup of
 the `sven://` and `cursor://` redirect handlers is in
 [troubleshooting](../guides/troubleshooting.md#mcp-oauth-authentication).

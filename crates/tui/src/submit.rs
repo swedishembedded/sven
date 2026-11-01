@@ -207,43 +207,47 @@ impl App {
                         return false;
                     }
 
-                    if let Some(ImmediateAction::McpAuth { ref server }) = result.immediate_action {
-                        if let Some(ref mgr) = self.mcp_manager {
-                            let mgr = Arc::clone(mgr);
-                            let server = server.clone();
-                            if let Some(ref toast_tx) = self.toast_tx {
-                                let toast_tx = toast_tx.clone();
-                                // Show immediate feedback that auth is starting.
-                                let _ = toast_tx
-                                    .send(crate::app::ui_state::Toast::info(format!(
-                                        "Opening browser to authenticate '{server}'..."
-                                    )))
-                                    .await;
+                    if let Some(ImmediateAction::Mcp { ref server, action }) =
+                        result.immediate_action
+                    {
+                        match (&self.mcp_manager, &self.toast_tx) {
+                            (Some(mgr), Some(toast_tx)) => {
+                                let (mgr, toast_tx) = (Arc::clone(mgr), toast_tx.clone());
+                                let server = server.clone();
+                                // The manager's own events report progress (the
+                                // sign-in link, the connection); this says how
+                                // the request itself ended.
                                 tokio::spawn(async move {
-                                    match mgr.authenticate(&server).await {
-                                        Ok(_) => {
-                                            let _ = toast_tx
-                                                .send(crate::app::ui_state::Toast::success(
-                                                    format!(
-                                                        "'{server}' authenticated successfully"
-                                                    ),
-                                                ))
-                                                .await;
+                                    use crate::app::ui_state::Toast;
+                                    use crate::commands::McpAction;
+                                    let (done, outcome) = match action {
+                                        McpAction::SignIn => {
+                                            ("signed in", mgr.authenticate(&server).await)
+                                        }
+                                        McpAction::SignOut => {
+                                            ("signed out", mgr.sign_out(&server).await)
+                                        }
+                                        McpAction::Enable => {
+                                            ("enabled", mgr.set_enabled(&server, true).await)
+                                        }
+                                        McpAction::Disable => {
+                                            ("disabled", mgr.set_enabled(&server, false).await)
+                                        }
+                                    };
+                                    let toast = match outcome {
+                                        Ok(()) => {
+                                            Toast::success(format!("MCP server '{server}' {done}"))
                                         }
                                         Err(e) => {
-                                            let _ = toast_tx
-                                                .send(crate::app::ui_state::Toast::error(format!(
-                                                    "OAuth failed for '{server}': {e}"
-                                                )))
-                                                .await;
+                                            Toast::error(format!("MCP server '{server}': {e:#}"))
                                         }
-                                    }
+                                    };
+                                    let _ = toast_tx.send(toast).await;
                                 });
                             }
-                        } else {
-                            self.ui.push_toast(crate::app::ui_state::Toast::error(
-                                "MCP auth is not available: the session has not started yet",
-                            ));
+                            _ => self.ui.push_toast(crate::app::ui_state::Toast::error(
+                                "MCP servers are not available: the session has not started yet",
+                            )),
                         }
                         return false;
                     }

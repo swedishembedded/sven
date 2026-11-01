@@ -93,6 +93,8 @@ async fn authorization_server(iss_in_response: Option<String>) -> (String, Arc<M
                             "refresh_token": "the-refresh-token",
                         }))
                     }
+                    // The MCP endpoint refuses every token it is given.
+                    ("POST", "/mcp") => (401, "text/plain", String::new(), Some(String::new())),
                     _ => (404, "text/plain", String::new(), None),
                 };
                 write_response(&mut socket, response).await;
@@ -139,7 +141,12 @@ async fn write_response(
     socket: &mut tokio::net::TcpStream,
     (status, kind, body, location): (u16, &str, String, Option<String>),
 ) {
-    let location = location.map_or(String::new(), |l| format!("location: {l}\r\n"));
+    // A 401 carries its challenge; anything else with a location redirects.
+    let location = match location {
+        Some(_) if status == 401 => "www-authenticate: Bearer\r\n".to_string(),
+        Some(l) => format!("location: {l}\r\n"),
+        None => String::new(),
+    };
     let answer = format!(
         "HTTP/1.1 {status} X\r\ncontent-type: {kind}\r\n{location}content-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len()
@@ -195,6 +202,7 @@ async fn run(
             oauth: Some(&oauth),
             challenge: None,
             present: &present,
+            pasted: None,
         },
     )
     .await;
@@ -246,4 +254,61 @@ async fn a_response_from_another_issuer_signs_in_nothing() {
         seen.lock().unwrap().token_body.is_none(),
         "the code was never exchanged"
     );
+}
+
+/// A server that refuses the sign-in sven kept for it: the sign-in is
+/// forgotten and the person asked for a new one, rather than the browser
+/// opening in a loop or the server failing for good.
+#[tokio::test]
+async fn a_refused_sign_in_is_forgotten_and_a_new_one_asked_for() {
+    use sven_mcp_client::{McpEvent, McpManager, McpServerConfig, McpTransport, ServerStatus};
+    let (origin, _) = authorization_server(None).await;
+    let mcp = format!("{origin}/mcp");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp-oauth.json");
+    let key = TokenStore::key("srv", &mcp);
+    std::fs::write(
+        &path,
+        serde_json::json!({ key.clone(): {
+            "client_id": "registered",
+            "token_response": {"access_token": "stale", "token_type": "bearer"},
+            "issuer": origin,
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let config = McpServerConfig {
+        transport: McpTransport::Http {
+            url: mcp.clone(),
+            headers: Default::default(),
+        },
+        timeout_secs: 10,
+        ..McpServerConfig::default()
+    };
+    let (tx, mut events) = tokio::sync::mpsc::channel(16);
+    let manager = McpManager::with_token_store(
+        [("srv".to_string(), config)].into(),
+        tx,
+        true,
+        TokenStore::new(path.clone()),
+    );
+    assert!(manager.connect("srv").await.is_err());
+    let asked = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match events.recv().await {
+                Some(McpEvent::AuthRequired { server, .. }) => break server,
+                Some(McpEvent::AuthStarted { .. }) => panic!("the browser must not open again"),
+                Some(_) => {}
+                None => panic!("no AuthRequired"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(asked, "srv");
+    assert!(TokenStore::new(path).load(&key).unwrap().is_none());
+    assert!(matches!(
+        manager.server_statuses().await[0].status,
+        ServerStatus::NeedsAuth { .. }
+    ));
 }
