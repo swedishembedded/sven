@@ -99,15 +99,19 @@ sven --version
 
 ## Quick start
 
-Run a local model with brain (below), or store a hosted provider's key once
-with `sven auth set openrouter` (or `anthropic`, `openai`, ...), then:
+Sign in to your [sven account](https://sven.swedishembedded.com/sign-up) once
+and its models are sven's, with no provider key to manage:
 
 ```sh
+sven auth login                       # approve this machine in the browser
 sven doctor provider                  # can sven reach a model?
 sven                                  # interactive TUI
 sven "Summarise the project"          # one-shot, headless
 sven --file plan.md                   # multi-step workflow file
 ```
+
+sven also runs on a local model with brain (below), or on a key of your own:
+`sven auth set openrouter` (or `anthropic`, `openai`, ...).
 
 ## Running on Brain
 

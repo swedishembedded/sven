@@ -1,8 +1,22 @@
 # Quick Start
 
 This guide gets you running in about five minutes. It assumes you have sven
-installed and an API key in your environment. If not, see
-[Installation](installation.md) first.
+installed; if not, see [Installation](installation.md) first.
+
+---
+
+## Sign in
+
+Sign this machine in to your [sven account](https://sven.swedishembedded.com/sign-up):
+
+```sh
+sven auth login
+```
+
+It prints an address and a one-time code; approve the connection in the
+browser and the account's models are sven's, starting with its default model.
+To use a key of your own or a local model server instead, see
+[Providers](../reference/providers.md).
 
 ---
 

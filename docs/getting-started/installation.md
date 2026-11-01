@@ -4,8 +4,10 @@
 
 - Linux (x86_64 or aarch64) or macOS; the install script supports both
 - A terminal emulator that supports 256 colours (almost all modern terminals do)
-- A model to talk to: an API key for a hosted provider (OpenRouter, Anthropic,
-  OpenAI and others, see [Providers](../reference/providers.md)) or a local model server
+- A model to talk to: a [sven account](https://sven.swedishembedded.com/sign-up),
+  which `sven auth login` signs this machine in to, an API key for another
+  hosted provider (OpenRouter, Anthropic, OpenAI and others), or a local model
+  server; see [Providers](../reference/providers.md)
 
 ---
 
