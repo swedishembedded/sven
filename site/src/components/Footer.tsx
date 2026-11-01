@@ -23,6 +23,9 @@ const COMMUNITY_LINKS = [
 
 const COMPANY_LINKS = [
   { label: 'Swedish Embedded AB', href: 'https://swedishembedded.com', external: true },
+  { label: 'Company details', href: `${SERVICE_URL}/legal`, external: true },
+  { label: 'Terms of Service', href: `${SERVICE_URL}/terms`, external: true },
+  { label: 'Privacy Policy', href: `${SERVICE_URL}/privacy`, external: true },
 ]
 
 export default function Footer() {

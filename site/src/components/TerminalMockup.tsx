@@ -52,7 +52,7 @@ export default function TerminalMockup() {
           sven - research mode
         </span>
         <span className="ml-auto text-xs font-mono px-2 py-0.5 rounded" style={{ color: '#5b8dee', background: 'rgba(91,141,238,0.1)' }}>
-          gpt-4o
+          your default model
         </span>
       </div>
 
@@ -81,7 +81,7 @@ export default function TerminalMockup() {
             </div>
             <div className="flex items-center gap-2 text-xs font-mono" style={{ color: '#555568' }}>
               <span className="w-2 h-2 rounded-full" style={{ background: '#5b8dee' }} />
-              <span>35 providers</span>
+              <span>your sven account</span>
             </div>
           </div>
         </div>

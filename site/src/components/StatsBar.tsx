@@ -3,10 +3,10 @@ import { useInView } from 'framer-motion'
 import { useRef } from 'react'
 
 const STATS = [
-  { value: '30+', label: 'AI Models', sub: 'OpenAI, Anthropic, Ollama & more - no lock-in' },
+  { value: '1', label: 'Command to install', sub: 'Linux x86_64 and aarch64, macOS' },
   { value: '1', label: 'Binary', sub: 'TUI, headless, and CI in one' },
-  { value: '0', label: 'Context Switches', sub: 'Entire dev lifecycle in one session' },
-  { value: '0', label: 'Runtime Dependencies', sub: 'Pure Rust, install and run immediately' },
+  { value: '3', label: 'Ways to a model', sub: 'Your sven account, your own key, or a local model' },
+  { value: '0', label: 'Runtimes to install', sub: 'No Node.js, no Python' },
 ]
 
 export default function StatsBar() {

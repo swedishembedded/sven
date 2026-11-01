@@ -93,7 +93,7 @@ const TAB_CONTENT: Record<TabId, TabContent> = {
     ],
     note: (
       <p className="text-xs text-text-secondary">
-        Requires Rust stable 1.75+. Build time ~2 min on modern hardware with sccache.
+        Needs a recent stable Rust toolchain.
       </p>
     ),
   },
@@ -137,7 +137,7 @@ export default function InstallSection() {
           className="text-center mb-12"
         >
           <p className="text-xs font-mono uppercase tracking-widest text-accent-blue mb-4">Get started</p>
-          <h2 className="section-heading mb-4">Up and running in 10 seconds.</h2>
+          <h2 className="section-heading mb-4">One command to install.</h2>
           <p className="section-subheading max-w-xl mx-auto">
             A single binary. No Node.js. No Python. No Docker. Install it, sign in to your sven
             account and start working: the models come with the account.

@@ -1,25 +1,8 @@
-import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import TerminalMockup from './TerminalMockup'
 import { INSTALL_COMMAND, SIGN_UP_URL } from '../links'
 
-function useLatestVersion(): string {
-  const [version, setVersion] = useState<string>('latest')
-  useEffect(() => {
-    fetch('https://api.github.com/repos/swedishembedded/sven/releases/latest', {
-      headers: { Accept: 'application/vnd.github+json' },
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { tag_name?: string } | null) => {
-        if (data?.tag_name) setVersion(data.tag_name)
-      })
-      .catch(() => {})
-  }, [])
-  return version
-}
-
 export default function Hero() {
-  const latestVersion = useLatestVersion()
   return (
     <section className="relative min-h-screen flex flex-col justify-center overflow-hidden pt-16">
       {/* Background glow */}
@@ -52,7 +35,7 @@ export default function Hero() {
             >
               <span className="w-1.5 h-1.5 rounded-full bg-status-green animate-pulse-dot" />
               Open source
-              <span className="text-accent-blue ml-1">{latestVersion}</span>
+              <span className="text-accent-blue ml-1">Apache-2.0</span>
             </motion.div>
 
             <motion.h1
@@ -82,7 +65,7 @@ export default function Hero() {
             >
               Research, code, debug hardware, run CI pipelines, and delegate to other agents
               - without leaving your terminal.{' '}
-              <span className="text-text-primary font-medium">One binary. Zero context switches.</span>
+              <span className="text-text-primary font-medium">One binary, on your machine or in CI.</span>
             </motion.p>
 
             <motion.div
