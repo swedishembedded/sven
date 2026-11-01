@@ -36,23 +36,25 @@ types in one workspace.
 | Every MCP tool is `NetworkAccess` with `Ask`; tool annotations not parsed | `bridge.rs:100,115-117` |
 | `/mcp enable` and `/mcp disable` advertised, not implemented; inspector is a read-only pager | `commands/src/builtin/inspect.rs:~145-215`, `tui/src/ui/inspector.rs` |
 
-## Security findings (fixed first, M0)
+## Security findings still open
 
-| Finding | Evidence |
-| --- | --- |
-| A tool-list refresh re-adds tools that `tools.only` / `tools.disabled` removed at startup; nothing checks the allow list at execution. No shipped caller triggers a refresh today (the TUI's refresh channel has no subscriber), so it is latent until one does | `tool-registry/src/registry.rs:159-166`; startup filter `bootstrap/src/registry.rs:764-795`; callers `bootstrap/src/kernel_bridge.rs:362-369`, `frontend/src/agent.rs:305-313` |
-| `--hosted` sets `tools.only` but keeps `mcp_servers`: configured servers are still spawned or connected, only their tools are hidden | `remote/src/host/hosted.rs:103-111` |
-| Sign-in success message carries the first 8 characters of the access token | `mcp-client/src/manager.rs:788-791` |
-| Tokens and registered clients written with `std::fs::write`: umask permissions, no atomic replace, lost updates between processes | `mcp-client/src/oauth.rs:165-192` |
-| In a container the callback listener binds `0.0.0.0:5598` | `mcp-client/src/oauth.rs:65,713-725` |
-| No `iss` check of the authorization response (RFC 9207); no `resource` parameter (RFC 8707) in authorize, code exchange or refresh | `oauth.rs:~1040-1075,595-603,1298-1355` |
-| Credentials keyed by server name and URL, not by issuer (2026-07-28 requires issuer keying); docs say URL only | `oauth.rs:~224`; `docs/reference/mcp.md:97-98`, `docs/reference/configuration.md:1410-1412` |
+Fixed on 2026-11-01: a refresh bypassing `tools.only` / `tools.disabled`
+(registry `NamePolicy`), `--hosted` and `--container` starting configured MCP
+servers, token text in the sign-in result, and the token store's unprotected
+read-modify-write (`sven_config::write_private` plus a lock).
+
+| Finding | Evidence | Closed by |
+| --- | --- | --- |
+| No `iss` check of the authorization response (RFC 9207); no `resource` parameter (RFC 8707) in authorize, code exchange or refresh | `oauth.rs:~1040-1075,595-603,1298-1355` | M2: the flow moves onto `rmcp`'s, which does both (`transport/auth.rs`, 3.8.0) |
+| Credentials keyed by server name and URL, not by issuer (2026-07-28 requires issuer keying) | `oauth.rs` `CredentialsStore::key` | M2: `rmcp`'s `StoredCredentials` carries the issuer; sven's store keys by it |
+| In a container the callback listener binds `0.0.0.0:5598` (needed for `docker -p` forwarding; `state` stops a forged callback) | `oauth.rs:65,713-725` | M3: paste-the-redirect sign-in needs no listener reachable from outside |
 
 ## Decisions
 
 | Topic | Choice |
 | --- | --- |
-| Protocol implementation | The client moves onto `rmcp` 3.x (README: implements 2026-07-28, compatible with 2025-11-25 and earlier, `Auto` lifecycle probes `server/discover` and falls back to `initialize`). `crates/mcp` upgrades with it. The hand-written protocol, transports and SSE parser are deleted, not kept as a fallback. Confirmed by the M1 spike before anything is ported |
+| Protocol implementation | The client moves onto `rmcp` 3.8 (Apache-2.0), protocol and OAuth; `crates/mcp` upgrades from 0.15 with it. The hand-written protocol, transports, SSE parser and OAuth flow are deleted, not kept as a fallback |
+| Lifecycle | HTTP: `ClientLifecycleMode::Auto` (modern first, `initialize` on a legacy answer). stdio: `Auto`, and when the server closes the pipe on `server/discover` (an `rmcp` 0.15 server does), start the process again with `Initialize` |
 | What stays sven's | Manager (health, reconnect, events), the bridge to `Tool`, the credential store, the sign-in UX and the tool policy. `rmcp` types stay inside `crates/mcp-client` |
 | Tool policy | An immutable policy value held by the registry and checked in `execute` as well as when building the list, so no later insertion path can bypass it |
 | Tool annotations | Untrusted hints: they may only tighten a tool's default (`destructiveHint` makes it always ask), never loosen it |
@@ -63,24 +65,24 @@ types in one workspace.
 
 Each closes with `make check && make test` and the number named.
 
-**M0 Security fixes.** The seven findings above, one commit each, each with a
-regression test: refresh after `list_changed` keeps an excluded tool
-uncallable (asserted at `execute`, not only in schemas); `--hosted` with a
-configured server starts no process and opens no connection; the sign-in
-message holds no token material; the credential files are 0600 and replaced
-atomically under a lock; the callback binds loopback unless a forwarded port
-is configured explicitly; a callback with a wrong `iss` persists no token;
-`resource` is sent in all three requests. Docs corrected in the same commits.
+**M0 Security fixes.** Four done (see above); the rest close with M2 and M3,
+each with a regression test: a callback with a wrong `iss` persists no token;
+`resource` is sent in all three requests.
 
-**M1 rmcp spike.** One branch that connects `rmcp` 3.x's client to a
-2026-07-28 server and to a legacy server (`crates/mcp`'s own server, and one
-stdio reference server), over stdio and Streamable HTTP. Answers, with code:
-does its OAuth client do PKCE, RFC 9207, RFC 8707, Client ID Metadata
-Documents and issuer-keyed storage, or does sven keep its own flow; does it
-multiplex concurrent requests; licence and transitive dependencies
-(`cargo deny`). Outcome recorded here before M2 starts.
+**M1 rmcp spike: done 2026-11-01.** A scratch client on `rmcp` 3.8.0
+against an `rmcp` 0.15 server over a pipe: `Auto` fails because the legacy
+server closes on `server/discover`; respawn with `Initialize` connects (2 ms,
+negotiates `2025-03-26`); `list_all_tools` follows three pages; four
+concurrent 300 ms calls on one connection finish in 303 ms. From the 3.8.0
+source: `iss` checked when present or required, `resource` sent in all three
+OAuth requests, CIMD supported, issuer kept with stored credentials,
+pluggable `CredentialStore` with a refresh guard, MRTR in `call_tool`,
+`ttlMs` cache hints, audio, `resource_link` and `structuredContent` types.
+Cost: it requires `reqwest` 0.13 (the workspace is on 0.12), so the
+workspace moves to 0.13 first.
 
-**M2 Client on rmcp.** Port the manager and bridge; delete the hand-written
+**M2 Client on rmcp.** Workspace `reqwest` 0.13, then `crates/mcp` on `rmcp`
+3.8, then port the manager and bridge; delete the hand-written
 protocol layer. Pagination followed to the end (bounded page count and
 total size); all content types carried to the model as typed parts
 (`structuredContent` kept, images and audio through the existing media path,
