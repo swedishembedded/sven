@@ -21,6 +21,12 @@ pub(crate) struct AgentConn {
     /// Latest notice about the model server (an adapter swap, a missing
     /// capability), shown in the status bar until the next one replaces it.
     pub notice: Option<String>,
+    /// The session's compaction budget, as announced with its first request;
+    /// shown by `/context`.
+    pub context_budget: Option<sven_vocab::ContextBudget>,
+    /// The token ledger's attribution of the last request; `/context` draws
+    /// it by category.
+    pub last_breakdown: Option<sven_vocab::RequestBreakdown>,
     /// Context window usage for the last turn (0-100 %), relative to the
     /// usable input budget (`sven_model::budget::effective_input_budget`).
     pub context_pct: u8,
@@ -79,6 +85,8 @@ impl AgentConn {
             current_tool: None,
             model_waiting: None,
             notice: None,
+            context_budget: None,
+            last_breakdown: None,
             context_pct: 0,
             context_tokens: 0,
             total_context_tokens: 0,

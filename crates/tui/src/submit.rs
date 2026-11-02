@@ -334,11 +334,26 @@ impl App {
                             InspectorKind::Peers => {
                                 InspectorOverlay::for_peers(&agents, Some(buffer_store), ascii)
                             }
-                            InspectorKind::Context => InspectorOverlay::for_context(
-                                project_root.as_deref(),
-                                Some(buffer_store),
-                                ascii,
-                            ),
+                            InspectorKind::Context => {
+                                let registered = self.shared_tools.get();
+                                let usage = sven_frontend::ContextUsage::compute(
+                                    &sven_frontend::ContextInputs {
+                                        model: &self.session.model_display,
+                                        window: u32::try_from(self.agent.max_tokens)
+                                            .unwrap_or(u32::MAX),
+                                        budget: self.agent.context_budget,
+                                        breakdown: self.agent.last_breakdown.as_ref(),
+                                        registered_tools: &registered,
+                                        skill_count: skills.len(),
+                                    },
+                                );
+                                InspectorOverlay::for_context(
+                                    &usage,
+                                    project_root.as_deref(),
+                                    Some(buffer_store),
+                                    ascii,
+                                )
+                            }
                             InspectorKind::Tools => {
                                 let tools = self.shared_tools.get().to_vec();
                                 InspectorOverlay::for_tools(&tools, ascii)

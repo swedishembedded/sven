@@ -31,8 +31,12 @@ use sven_workspace::{
     find_workspace_root, format_agents_list, format_skills_tree, AgentInfo, SkillInfo,
 };
 
+use ratatui::text::Line;
+use sven_frontend::ContextUsage;
+
 use crate::markdown::{render_markdown, StyledLines};
 use crate::pager::PagerOverlay;
+use crate::ui::context_panel::context_panel_lines;
 use crate::ui::width_utils::truncate_to_width_exact;
 
 // ── InspectorKind ─────────────────────────────────────────────────────────────
@@ -97,14 +101,22 @@ impl InspectorOverlay {
 
     /// Build the context inspector from runtime session state.
     ///
-    /// Shows date/time, project root, workspace root, and active buffer handles.
+    /// Shows what a request carries against the context window (see
+    /// [`context_panel_lines`]), then date/time, project root, workspace root
+    /// and active buffer handles.
     pub fn for_context(
+        usage: &ContextUsage,
         project_root: Option<&std::path::Path>,
         buffer_store: Option<Arc<Mutex<OutputBufferStore>>>,
         ascii: bool,
     ) -> Self {
-        let md = format_context_markdown(project_root, buffer_store);
-        let lines = render_markdown(&md, 0, ascii);
+        let mut lines = context_panel_lines(usage, ascii);
+        lines.push(Line::default());
+        lines.extend(render_markdown(
+            &format_context_markdown(project_root, buffer_store),
+            0,
+            ascii,
+        ));
         Self {
             pager: PagerOverlay::with_title(lines, InspectorKind::Context.title()),
         }
@@ -221,10 +233,9 @@ fn format_context_markdown(
     project_root: Option<&std::path::Path>,
     buffer_store: Option<Arc<Mutex<OutputBufferStore>>>,
 ) -> String {
-    let mut out = String::from("## Context\n\n");
+    let mut out = String::from("## Runtime\n\n");
 
     // ── Runtime context ───────────────────────────────────────────────────────
-    out.push_str("### Runtime\n\n");
     out.push_str(&format!(
         "**Date/Time:** `{}`\n\n",
         Local::now().format("%Y-%m-%d %H:%M:%S %Z")

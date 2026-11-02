@@ -15,6 +15,7 @@ use ratatui::{
 pub(crate) mod activity_panel;
 pub(crate) mod chat_pane;
 pub(crate) mod completion_menu;
+pub(crate) mod context_panel;
 pub(crate) mod help_overlay;
 pub(crate) mod input_pane;
 pub(crate) mod inspector;

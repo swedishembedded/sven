@@ -104,7 +104,7 @@ impl App {
                 self.agent.notice = Some(format!("warning: {text}"));
             }
             AgentEvent::ContextBudget(budget) => {
-                self.agent.notice = Some(sven_vocab::context_budget_text(&budget));
+                self.agent.context_budget = Some(budget);
             }
             AgentEvent::UserMessage(text) => {
                 // Sent from another client of this conversation; its answer
@@ -230,8 +230,12 @@ impl App {
                 max_tokens,
                 max_output_tokens,
                 cost_usd,
+                breakdown,
                 ..
             } => {
+                if let Some(breakdown) = breakdown {
+                    self.agent.last_breakdown = Some(*breakdown);
+                }
                 // Input side: update when provider reports prompt token counts.
                 // For Anthropic this arrives in the message_start event at the
                 // beginning of each API call within the turn.
