@@ -37,10 +37,19 @@ pub fn add(config: &mut Config, mcp_url: &str, token_url: Option<&str>, key: &st
 }
 
 /// [`add`] for the server this user signed in to, when it advertised an MCP
-/// endpoint.
+/// endpoint. It joins the servers the person configured on this machine and
+/// never replaces one of them.
 pub fn add_signed_in(config: &mut Config) {
     if let Some(signed_in) = sven_model_drivers::sven_service::signed_in() {
         if let Some(url) = &signed_in.mcp_url {
+            if signed_in.mcp_token_url.is_none() {
+                tracing::warn!(
+                    "the sven sign-in at {} is from an older release and has no token \
+                     endpoint, so its long-lived key is sent to the connectors server as a \
+                     bearer token; run `sven auth login` again",
+                    origin_of(url)
+                );
+            }
             add(
                 config,
                 url,
@@ -61,33 +70,154 @@ pub fn account_target(target: &[String]) -> Option<&str> {
     }
 }
 
-/// Add the server at `url`, called `name`, to the account this user signed
-/// in to, as a connector of their own; its sign-in then happens in their
-/// browser and its tokens stay with the account. None when not signed in to
-/// a server that offers connectors.
+/// `scheme://host[:port]` of `url`: where a server lives, for saying so.
+#[must_use]
+pub fn origin_of(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("https", url));
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    format!("{scheme}://{authority}")
+}
+
+/// The sven server this person is signed in to, as far as adding a
+/// connector to their account needs it. Holds the key: never printed.
+pub struct Account {
+    /// Where the server lives, for saying so.
+    pub origin: String,
+    mcp_url: String,
+    exchange: sven_mcp_client::TokenExchange,
+}
+
+/// Where `/mcp add` puts a server.
+pub enum Placement {
+    /// On the signed-in person's account: usable from every session and
+    /// computer, its sign-in kept with the account.
+    Account(Account),
+    /// In a configuration file on this machine, signed in to from here.
+    Local,
+    /// The person is signed in, but with a record from a release that
+    /// predates adding servers to an account; no silent fallback to a file.
+    OutdatedSignIn { origin: String },
+}
+
+/// Decide where `/mcp add` puts a server. A plain web address goes to the
+/// account of a signed-in person (one connection reused everywhere, tokens
+/// off this machine) unless they ask for `local`. `plain` is false when the
+/// request carries headers, environment or an OAuth client of its own, which
+/// only a file here can hold.
+#[must_use]
+pub fn placement(
+    target: &[String],
+    plain: bool,
+    local: bool,
+    signed_in: Option<sven_model_drivers::sven_service::SignedIn>,
+) -> Placement {
+    if local || !plain || account_target(target).is_none() {
+        return Placement::Local;
+    }
+    let Some(signed_in) = signed_in else {
+        return Placement::Local;
+    };
+    match (signed_in.mcp_url, signed_in.mcp_token_url) {
+        (Some(mcp_url), Some(token_url)) => Placement::Account(Account {
+            origin: origin_of(&mcp_url),
+            mcp_url,
+            exchange: sven_mcp_client::TokenExchange {
+                url: token_url,
+                key: signed_in.key,
+            },
+        }),
+        (Some(mcp_url), None) => Placement::OutdatedSignIn {
+            origin: origin_of(&mcp_url),
+        },
+        (None, _) => Placement::Local,
+    }
+}
+
+/// [`placement`] for the sign-in of this machine's user.
+#[must_use]
+pub fn current_placement(target: &[String], plain: bool, local: bool) -> Placement {
+    placement(
+        target,
+        plain,
+        local,
+        sven_model_drivers::sven_service::signed_in(),
+    )
+}
+
+/// Where the account this user signed in to lives, when it offers
+/// connectors: what a list of servers names the account by.
+#[must_use]
+pub fn signed_in_origin() -> Option<String> {
+    sven_model_drivers::sven_service::signed_in()?
+        .mcp_url
+        .map(|url| origin_of(&url))
+}
+
+/// The one line that says where `name` is being added, before anything is
+/// done.
+#[must_use]
+pub fn adding_notice(name: &str, placement: &Placement, config_file: &std::path::Path) -> String {
+    match placement {
+        Placement::Account(account) => format!(
+            "Adding {name} to your sven account at {} (usable from all your sessions; \
+             use --local to keep it on this machine only) ...",
+            account.origin
+        ),
+        _ => format!(
+            "Adding {name} to {} on this machine ...",
+            config_file.display()
+        ),
+    }
+}
+
+/// What to say when the sign-in record predates adding servers to an
+/// account.
+#[must_use]
+pub fn outdated_sign_in_notice(origin: &str) -> String {
+    format!(
+        "Your sven sign-in at {origin} is from an older release; run `sven auth login` again \
+         to add servers to your account, or use `--local`."
+    )
+}
+
+/// Add the server at `url`, called `name`, to `account`, as a connector of
+/// their own; its sign-in then happens in their browser and its tokens stay
+/// with the account.
 pub async fn connect_through_account(
+    account: &Account,
     name: &str,
     url: &str,
-) -> Option<anyhow::Result<sven_mcp_client::AccountConnection>> {
-    let signed_in = sven_model_drivers::sven_service::signed_in()?;
-    let (mcp_url, token_url) = (signed_in.mcp_url?, signed_in.mcp_token_url?);
-    let exchange = sven_mcp_client::TokenExchange {
-        url: token_url,
-        key: signed_in.key,
-    };
-    Some(sven_mcp_client::connect_account(&exchange, &mcp_url, name, url).await)
+) -> anyhow::Result<sven_mcp_client::AccountConnection> {
+    sven_mcp_client::connect_account(&account.exchange, &account.mcp_url, name, url).await
 }
 
 /// What to tell the person once a connector is added to their account: the
-/// page that connects their account of it, and where its tools then appear.
+/// page that connects their account of it (alone on its own line, to copy),
+/// and where its tools then appear.
 #[must_use]
 pub fn sign_in_notice(connection: &sven_mcp_client::AccountConnection) -> String {
+    let name = &connection.connector.name;
     format!(
-        "Added {} to your account. Connect your account of it on this page, signed in \
-         to sven as yourself:\n\n  {}\n\nIts tools reach sven through the '{SERVER}' \
+        "Added {name} to your account.\n\n{}\n\nIts tools reach sven through the '{SERVER}' \
          server once you finish; your sign-in stays with your account.",
-        connection.connector.name, connection.sign_in_url
+        sven_mcp_client::sign_in_link(name, &connection.sign_in_url),
     )
+}
+
+/// The services and accounts behind the `connectors` server's tools, from
+/// the tool names (`connectors-<service>_<account>__<tool>`): what a list
+/// of the account's servers shows.
+#[must_use]
+pub fn account_groups<'a>(tool_names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let prefix = format!("{SERVER}-");
+    let mut groups: Vec<String> = tool_names
+        .into_iter()
+        .filter_map(|n| n.strip_prefix(&prefix))
+        .map(|n| n.split("__").next().unwrap_or(n).to_string())
+        .collect();
+    groups.sort();
+    groups.dedup();
+    groups
 }
 
 #[cfg(test)]
@@ -106,6 +236,112 @@ mod tests {
             account_target(&["https://a.example/mcp".into(), "extra".into()]),
             None
         );
+    }
+
+    fn signed_in(token_url: Option<&str>) -> Option<sven_model_drivers::sven_service::SignedIn> {
+        Some(sven_model_drivers::sven_service::SignedIn {
+            base_url: "https://sven.example/v1".into(),
+            key: "key".into(),
+            mcp_url: Some("https://sven.example/api/mcp".into()),
+            mcp_token_url: token_url.map(str::to_string),
+        })
+    }
+
+    fn url() -> Vec<String> {
+        vec!["https://mcp.example.com/mcp".to_string()]
+    }
+
+    #[test]
+    fn a_plain_address_goes_to_the_account_unless_asked_otherwise() {
+        let token = Some("https://sven.example/api/mcp/token");
+        let account =
+            |p: Placement| matches!(p, Placement::Account(a) if a.origin == "https://sven.example");
+        assert!(account(placement(&url(), true, false, signed_in(token))));
+        // --local, headers/env/a client of one's own, a command, no sign-in.
+        assert!(matches!(
+            placement(&url(), true, true, signed_in(token)),
+            Placement::Local
+        ));
+        assert!(matches!(
+            placement(&url(), false, false, signed_in(token)),
+            Placement::Local
+        ));
+        let command = vec!["npx".to_string()];
+        assert!(matches!(
+            placement(&command, true, false, signed_in(token)),
+            Placement::Local
+        ));
+        assert!(matches!(
+            placement(&url(), true, false, None),
+            Placement::Local
+        ));
+    }
+
+    #[test]
+    fn an_older_sign_in_is_refused_not_silently_replaced_by_a_file() {
+        let Placement::OutdatedSignIn { origin } = placement(&url(), true, false, signed_in(None))
+        else {
+            panic!("an older sign-in record must be refused");
+        };
+        assert_eq!(
+            outdated_sign_in_notice(&origin),
+            "Your sven sign-in at https://sven.example is from an older release; run \
+             `sven auth login` again to add servers to your account, or use `--local`."
+        );
+        // --local still works with it.
+        assert!(matches!(
+            placement(&url(), true, true, signed_in(None)),
+            Placement::Local
+        ));
+    }
+
+    #[test]
+    fn where_a_server_goes_is_said_in_one_line() {
+        let account = placement(
+            &url(),
+            true,
+            false,
+            signed_in(Some("https://sven.example/t")),
+        );
+        let file = std::path::Path::new("config/sven/config.yaml");
+        assert_eq!(
+            adding_notice("docs", &account, file),
+            "Adding docs to your sven account at https://sven.example (usable from all your \
+             sessions; use --local to keep it on this machine only) ..."
+        );
+        assert_eq!(
+            adding_notice("docs", &Placement::Local, file),
+            "Adding docs to config/sven/config.yaml on this machine ..."
+        );
+    }
+
+    #[test]
+    fn the_sign_in_address_stands_alone_in_the_account_notice() {
+        let connection = sven_mcp_client::AccountConnection {
+            connector: sven_mcp_client::AccountConnector {
+                id: "c1".into(),
+                name: "docs".into(),
+            },
+            sign_in_url: "https://sven.example/connect/abc".into(),
+        };
+        let text = sign_in_notice(&connection);
+        assert!(
+            text.lines()
+                .any(|l| l == "https://sven.example/connect/abc"),
+            "{text}"
+        );
+        assert!(text.contains("Open this link in a browser to sign in to docs:"));
+    }
+
+    #[test]
+    fn the_accounts_servers_are_named_by_their_tools() {
+        let names = [
+            "connectors-github_me__search",
+            "connectors-github_me__read",
+            "connectors-linear_me__list",
+            "web_fetch",
+        ];
+        assert_eq!(account_groups(names), vec!["github_me", "linear_me"]);
     }
 
     #[test]

@@ -74,7 +74,7 @@ fn a_server_is_added_checked_listed_and_removed() {
     let (ok, text) = home.sven(&["mcp", "add", "self", "--", sven, "mcp", "serve"]);
     assert!(ok, "{text}");
     assert!(text.contains("Added MCP server 'self'"), "{text}");
-    assert!(text.contains("It connects:"), "{text}");
+    assert!(text.contains("Connected self:"), "{text}");
 
     let file = home.0.join("config/sven/config.yaml");
     let written = std::fs::read_to_string(&file).unwrap();

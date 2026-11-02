@@ -377,3 +377,44 @@ async fn a_configured_client_signs_in_where_nobody_may_register() {
     let query = seen.lock().unwrap().authorize_query.clone().unwrap();
     assert!(query.contains("client_id=own-app"), "{query}");
 }
+
+/// A browser on another machine cannot reach sven's loopback callback: the
+/// person pastes the address it ended on, and the sign-in completes from it
+/// (registration, PKCE and the issuer check all the same).
+#[tokio::test]
+async fn a_pasted_redirect_address_completes_the_sign_in() {
+    let (origin, _) = authorization_server(None, true).await;
+    let mcp = format!("{origin}/mcp");
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(TokenStore::new(dir.path().join("mcp-oauth.json")));
+    let key = TokenStore::key("srv", &mcp);
+    let (pasted_tx, pasted) = tokio::sync::mpsc::channel(4);
+    // The page opens "elsewhere"; the person copies where it ended and pastes.
+    let present = move |auth_url: &str| {
+        let (auth_url, pasted_tx) = (auth_url.to_string(), pasted_tx.clone());
+        tokio::spawn(async move {
+            let http = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap();
+            let answer = http.get(&auth_url).send().await.unwrap();
+            let back = answer.headers()["location"].to_str().unwrap().to_string();
+            pasted_tx.send(back).await.unwrap();
+        });
+    };
+    sign_in(
+        &store,
+        SignIn {
+            name: "fixture",
+            key: &key,
+            url: &mcp,
+            oauth: None,
+            challenge: None,
+            present: &present,
+            pasted: Some(pasted),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(store.load(&key).unwrap().unwrap().token_response.is_some());
+}

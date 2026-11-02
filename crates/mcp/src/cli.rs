@@ -5,6 +5,7 @@
 //! `sven` binary's `Commands::Mcp` dispatch and the standalone `sven-mcp`
 //! binary.
 
+use anyhow::Context as _;
 use clap::Subcommand;
 
 /// `sven mcp` subcommands.
@@ -54,14 +55,19 @@ pub enum McpCommands {
     ///   `sven mcp add docs https://mcp.example.com/mcp --local --oauth`
     ///   `sven mcp add github --env GITHUB_TOKEN='${GITHUB_TOKEN}' -- npx -y @modelcontextprotocol/server-github`
     ///
-    /// Signed in to sven (`sven auth login`), a URL alone is added to your
-    /// account: sven prints the service's sign-in page, which you open in
-    /// any browser signed in to sven, and your sign-in stays with your
-    /// account, never on this machine. Otherwise, or with `--local`, a URL is
-    /// a Streamable HTTP server and anything else the command (and
-    /// arguments) of a stdio server, written to a configuration file. Write
-    /// a secret as `${VAR}`, so the file holds the variable's name rather
-    /// than the secret.
+    /// It first says where the server is going. Signed in to sven (`sven
+    /// auth login`), a URL alone is added to your account (usable from all
+    /// your sessions and computers; the sign-in stays with your account,
+    /// never on this machine): sven prints the service's sign-in link, opens
+    /// the browser, and waits until the server connects. Otherwise, or with
+    /// `--local`, a URL is a Streamable HTTP server and anything else the
+    /// command (and arguments) of a stdio server, written to a configuration
+    /// file; when it asks for an OAuth sign-in, sven starts it at once,
+    /// printing the link, opening the browser and accepting a pasted
+    /// address. Servers on your account and servers on this machine are
+    /// offered together; a server configured here hides the account's copy.
+    /// Write a secret as `${VAR}`, so the file holds the variable's name
+    /// rather than the secret.
     Add {
         /// The server's name, which prefixes its tools: letters, digits,
         /// `_` and `-`.
@@ -162,34 +168,35 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             scope,
             local,
         } => {
-            // A plain address goes to the account, when signed in to one.
+            use sven_bootstrap::connectors::{self, Placement};
             let plain = headers.is_empty() && env.is_empty() && client_id.is_none();
-            if let (false, true, Some(url)) = (
-                *local,
-                plain,
-                sven_bootstrap::connectors::account_target(target),
-            ) {
-                if let Some(connected) =
-                    sven_bootstrap::connectors::connect_through_account(name, url).await
-                {
-                    let connection = connected?;
-                    println!(
-                        "{}",
-                        sven_bootstrap::connectors::sign_in_notice(&connection)
-                    );
-                    sven_mcp_client::open_browser(&connection.sign_in_url);
-                    return Ok(());
+            let placement = connectors::current_placement(target, plain, *local);
+            let file = sven_mcp_client::config_edit::config_file(*scope)
+                .unwrap_or_else(|_| std::path::PathBuf::from("a configuration file"));
+            println!("{}", connectors::adding_notice(name, &placement, &file));
+            match placement {
+                Placement::OutdatedSignIn { origin } => {
+                    anyhow::bail!("{}", connectors::outdated_sign_in_notice(&origin))
+                }
+                Placement::Account(account) => {
+                    let url = connectors::account_target(target)
+                        .context("an account takes one web address")?;
+                    add_to_account(name, url, &account).await
+                }
+                Placement::Local => {
+                    let client =
+                        client_id
+                            .as_deref()
+                            .map(|id| sven_mcp_client::config_edit::OAuthClient {
+                                id,
+                                secret: client_secret.as_deref(),
+                            });
+                    let entry = sven_mcp_client::config_edit::server_entry(
+                        target, headers, env, *oauth, client,
+                    )?;
+                    add(name, entry, *scope).await
                 }
             }
-            let client = client_id
-                .as_deref()
-                .map(|id| sven_mcp_client::config_edit::OAuthClient {
-                    id,
-                    secret: client_secret.as_deref(),
-                });
-            let entry =
-                sven_mcp_client::config_edit::server_entry(target, headers, env, *oauth, client)?;
-            add(name, entry, *scope).await
         }
         McpCommands::Remove { name, scope } => remove(name, *scope),
         McpCommands::List => list().await,
@@ -203,6 +210,48 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
     }
 }
 
+/// Add the server to the signed-in person's account, show where they
+/// connect their account of it, and wait for them to finish.
+async fn add_to_account(
+    name: &str,
+    url: &str,
+    account: &sven_bootstrap::connectors::Account,
+) -> anyhow::Result<()> {
+    use sven_bootstrap::connectors;
+    let connection = connectors::connect_through_account(account, name, url).await?;
+    println!("{}", connectors::sign_in_notice(&connection));
+    sven_mcp_client::open_browser(&connection.sign_in_url);
+    println!(
+        "\nWaiting for you to finish signing in in the browser... \
+         (Ctrl+C to stop; the server stays added to your account)"
+    );
+    let manager = manager(false)?;
+    // Its tools arrive once the person finishes (a sign-in lasts 10 minutes).
+    let _ = manager.connect(connectors::SERVER).await;
+    let before = manager.tool_count(connectors::SERVER).await;
+    let finished = manager
+        .reconnect_until_more_tools(
+            connectors::SERVER,
+            before,
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(600),
+        )
+        .await;
+    if finished {
+        println!(
+            "Connected {name}: its tools reach sven as '{}-*' tools.",
+            connectors::SERVER
+        );
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "{name} is not connected yet: the sign-in did not finish within 10 minutes. \
+             It stays added to your account; finish signing in on the link above, \
+             then check with `sven mcp list`."
+        )
+    }
+}
+
 async fn add(
     name: &str,
     entry: serde_yaml::Value,
@@ -211,16 +260,19 @@ async fn add(
     let file = sven_mcp_client::config_edit::add(scope, name, entry)?;
     println!("Added MCP server '{name}' to {}.", file.display());
 
-    // Say at once whether it works, and what it needs if not.
+    // Say at once whether it works; when it needs a sign-in, do it now.
     let manager = manager(false)?;
-    if let Some((status, detail)) = check(&manager, &[name.to_string()]).await.pop() {
-        match status {
-            sven_mcp_client::ServerStatus::Connected => println!("It connects: {detail}."),
-            sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
-                println!("It needs a sign-in: run `sven mcp auth {name}`.");
-            }
-            _ => println!("It does not connect yet: {detail}"),
+    let Some((status, detail)) = check(&manager, &[name.to_string()]).await.pop() else {
+        return Ok(());
+    };
+    match status {
+        sven_mcp_client::ServerStatus::Connected => println!("Connected {name}: {detail}."),
+        sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
+            println!("{name} needs a sign-in; starting it now.");
+            let tools = sign_in_and_connect(name).await?;
+            println!("Connected {name}: {tools} tools.");
         }
+        _ => println!("It does not connect yet: {detail}"),
     }
     Ok(())
 }
@@ -282,6 +334,8 @@ fn manager(interactive: bool) -> anyhow::Result<std::sync::Arc<sven_mcp_client::
 }
 
 async fn list() -> anyhow::Result<()> {
+    use sven_bootstrap::connectors;
+    use sven_tool_api::Tool as _;
     let manager = manager(false)?;
     let names: Vec<String> = manager
         .server_statuses()
@@ -296,13 +350,41 @@ async fn list() -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    for (name, (status, detail)) in names.iter().zip(check(&manager, &names).await) {
-        println!("{name:<20} {:<14} {detail}", status.label());
+    let rows = check(&manager, &names).await;
+    // Servers configured here and the account's `connectors` are offered
+    // together; list them apart so it is clear where each lives.
+    let (local, account): (Vec<_>, Vec<_>) = names
+        .iter()
+        .zip(rows)
+        .partition(|(name, _)| name.as_str() != connectors::SERVER);
+    if !local.is_empty() {
+        println!("On this machine (mcp_servers in your configuration files):");
+        for (name, (status, detail)) in local {
+            println!("{name:<20} {:<14} {detail}", status.label());
+        }
+    }
+    if let Some((name, (status, detail))) = account.into_iter().next() {
+        let origin = connectors::signed_in_origin().unwrap_or_default();
+        println!(
+            "Your sven account at {origin} ('{}-*' tools):",
+            connectors::SERVER
+        );
+        let tools = manager.tools().await;
+        let groups = connectors::account_groups(tools.iter().map(|t| t.name()));
+        let from = if groups.is_empty() {
+            String::new()
+        } else {
+            format!("; connected services: {}", groups.join(", "))
+        };
+        println!("{name:<20} {:<14} {detail}{from}", status.label());
     }
     Ok(())
 }
 
-async fn auth(server: &str) -> anyhow::Result<()> {
+/// Sign in to `server` (printing the link, opening the browser, accepting
+/// the address a browser elsewhere ended on), and wait for it to connect;
+/// its tool count.
+async fn sign_in_and_connect(server: &str) -> anyhow::Result<usize> {
     let manager = manager(true)?;
     let (pasted_tx, pasted) = tokio::sync::mpsc::channel(4);
     // Lines typed while the sign-in waits are offered to it as the address
@@ -315,17 +397,26 @@ async fn auth(server: &str) -> anyhow::Result<()> {
             }
         }
     });
-    let present = |url: &str| {
-        eprintln!(
-            "Sign in to '{server}' on this page:\n\n  {url}\n\n\
-             If the browser cannot come back to this machine, paste the address it \
-             ends on here and press Enter."
+    let name = server.to_string();
+    let present = move |url: &str| {
+        println!(
+            "{}\n\nIf the browser cannot come back to this machine, paste the address it \
+             ends on here and press Enter.",
+            sven_mcp_client::sign_in_link(&name, url)
         );
         sven_mcp_client::open_browser(url);
     };
     manager
         .authenticate_with(server, &present, Some(pasted))
         .await?;
-    println!("Signed in to '{server}'.");
+    manager
+        .wait_connected(server, std::time::Duration::from_secs(60))
+        .await
+        .map_err(|e| anyhow::anyhow!("signed in, but {server} did not connect: {e:#}"))
+}
+
+async fn auth(server: &str) -> anyhow::Result<()> {
+    let tools = sign_in_and_connect(server).await?;
+    println!("Signed in to '{server}'. Connected {server}: {tools} tools.");
     Ok(())
 }

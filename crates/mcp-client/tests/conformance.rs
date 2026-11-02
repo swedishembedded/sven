@@ -336,19 +336,20 @@ async fn serve_oauth(refresh: Refresh) -> String {
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             let (service, base) = (service.clone(), origin.clone());
-            let handle =
-                hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+            let handle = hyper::service::service_fn(
+                move |req: hyper::Request<hyper::body::Incoming>| {
                     let (mut service, base) = (service.clone(), base.clone());
                     async move {
                         type Body = BoxBody<Bytes, std::convert::Infallible>;
-                        let reply = |status: u16, json: serde_json::Value| -> hyper::Response<Body> {
-                            hyper::Response::builder()
-                                .status(status)
-                                .header("content-type", "application/json")
-                                .header("www-authenticate", "Bearer")
-                                .body(Full::new(Bytes::from(json.to_string())).boxed())
-                                .unwrap()
-                        };
+                        let reply =
+                            |status: u16, json: serde_json::Value| -> hyper::Response<Body> {
+                                hyper::Response::builder()
+                                    .status(status)
+                                    .header("content-type", "application/json")
+                                    .header("www-authenticate", "Bearer")
+                                    .body(Full::new(Bytes::from(json.to_string())).boxed())
+                                    .unwrap()
+                            };
                         let path = req.uri().path().to_string();
                         let auth = req
                             .headers()
@@ -391,7 +392,8 @@ async fn serve_oauth(refresh: Refresh) -> String {
                         };
                         Ok(answer)
                     }
-                });
+                },
+            );
             tokio::spawn(async move {
                 let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
                     .serve_connection(TokioIo::new(stream), handle)
@@ -466,7 +468,9 @@ async fn a_refresh_that_cannot_reach_the_server_keeps_the_sign_in() {
         loop {
             match c.events.recv().await {
                 Some(McpEvent::ServerFailed { .. }) => break,
-                Some(McpEvent::AuthRequired { .. }) => panic!("a server outage asked for a sign-in"),
+                Some(McpEvent::AuthRequired { .. }) => {
+                    panic!("a server outage asked for a sign-in")
+                }
                 Some(_) => {}
                 None => panic!("no ServerFailed"),
             }
@@ -481,29 +485,24 @@ async fn a_refresh_that_cannot_reach_the_server_keeps_the_sign_in() {
 }
 
 async fn a_sign_in_that_cannot_be_read_for_want_of_the_network_does_not_open_a_browser() {
-    // The server is unreachable, so its authorization server cannot be
-    // discovered to read the stored sign-in: the server fails (and is tried
-    // again later); it must not be treated as signed out.
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/mcp", closed.local_addr().unwrap());
-    drop(closed);
+    // The server answers 401 but its authorization server cannot be reached,
+    // so the stored sign-in cannot be read: the server fails (and is tried
+    // again later); the person is not treated as signed out and asked to
+    // sign in.
+    let url = serve_unauthorized().await;
     let (mut c, path, key) = signed_in_client(&url);
-    let events = &mut c.events;
     assert!(c.manager.connect("gate").await.is_err());
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            match events.recv().await {
-                Some(McpEvent::ServerFailed { .. }) => break,
-                Some(McpEvent::AuthStarted { .. } | McpEvent::AuthRequired { .. }) => {
-                    panic!("an unreachable server asked for a sign-in")
-                }
-                Some(_) => {}
-                None => panic!("no ServerFailed"),
+    let mut failed = false;
+    while let Ok(event) = c.events.try_recv() {
+        match event {
+            McpEvent::ServerFailed { .. } => failed = true,
+            McpEvent::AuthStarted { .. } | McpEvent::AuthRequired { .. } => {
+                panic!("an unreadable sign-in asked for a new one")
             }
+            _ => {}
         }
-    })
-    .await
-    .expect("ServerFailed in time");
+    }
+    assert!(failed, "the server was not reported failed");
     assert!(TokenStore::new(path).load(&key).unwrap().is_some());
 }
 

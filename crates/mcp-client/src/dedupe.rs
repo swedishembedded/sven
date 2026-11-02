@@ -99,8 +99,14 @@ mod tests {
     #[test]
     fn the_local_server_wins_over_the_accounts_copy_of_it() {
         let configured = HashMap::from([
-            ("github".to_string(), http("https://api.githubcopilot.com/mcp/")),
-            ("connectors".to_string(), http("https://sven.example/api/mcp")),
+            (
+                "github".to_string(),
+                http("https://api.githubcopilot.com/mcp/"),
+            ),
+            (
+                "connectors".to_string(),
+                http("https://sven.example/api/mcp"),
+            ),
         ]);
         let github = meta("github", "https://api.githubcopilot.com/mcp");
         let notion = meta("notion", "https://mcp.notion.com/mcp");

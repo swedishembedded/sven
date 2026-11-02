@@ -108,6 +108,14 @@ pub struct AppOptions {
     pub agent_task: Option<AgentTask>,
 }
 
+/// A block of text for the pager, with an address the person can copy with
+/// `y` (a sign-in link, which the pager cuts at the screen's edge).
+#[derive(Debug, Clone)]
+pub(crate) struct Notice {
+    pub text: String,
+    pub copy: Option<String>,
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
 /// The top-level TUI application state.
@@ -176,7 +184,7 @@ pub struct App {
     /// Sender for a notice from a background task, shown in the pager as an
     /// immediate notice is: for text a toast's one line cannot hold (an
     /// address to open). `None` before `run()` is called.
-    pub(crate) notice_tx: Option<mpsc::Sender<String>>,
+    pub(crate) notice_tx: Option<mpsc::Sender<Notice>>,
     /// The voice dictation in progress, if any (Ctrl+G).
     pub(crate) voice: crate::voice::VoiceState,
 }

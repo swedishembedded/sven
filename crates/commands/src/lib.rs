@@ -113,11 +113,14 @@ pub enum ImmediateAction {
         server: String,
         action: McpAction,
     },
-    /// Add an MCP server to the user's configuration and connect it
-    /// (`/mcp add <name> <url | command args...>`).
+    /// Add an MCP server and connect it
+    /// (`/mcp add [--local] <name> <url | command args...>`): to the
+    /// signed-in account for a plain address, else to the user's
+    /// configuration file. `local` keeps it on this machine either way.
     McpAdd {
         server: String,
         target: Vec<String>,
+        local: bool,
     },
     /// Surface a block of text to the user as a notice (shown in the
     /// frontend's pager), rather than sending it to the agent as a message.
@@ -331,7 +334,31 @@ mod dispatch_tests {
             try_dispatch("/mcp add docs https://mcp.example.com/mcp", &registry()).unwrap();
         assert!(matches!(
             result.immediate_action,
-            Some(ImmediateAction::McpAdd { ref server, ref target }) if server == "docs" && target == &["https://mcp.example.com/mcp"]
+            Some(ImmediateAction::McpAdd { ref server, ref target, local: false }) if server == "docs" && target == &["https://mcp.example.com/mcp"]
+        ));
+    }
+
+    #[test]
+    fn mcp_add_local_keeps_the_server_on_this_machine() {
+        for line in [
+            "/mcp add --local docs https://mcp.example.com/mcp",
+            "/mcp add docs --local https://mcp.example.com/mcp",
+        ] {
+            let (_, result) = try_dispatch(line, &registry()).unwrap();
+            assert!(
+                matches!(
+                    result.immediate_action,
+                    Some(ImmediateAction::McpAdd { ref server, ref target, local: true })
+                        if server == "docs" && target == &["https://mcp.example.com/mcp"]
+                ),
+                "{line}"
+            );
+        }
+        // A stdio command's own `--local` is the command's.
+        let (_, result) = try_dispatch("/mcp add tool npx --local", &registry()).unwrap();
+        assert!(matches!(
+            result.immediate_action,
+            Some(ImmediateAction::McpAdd { ref target, local: false, .. }) if target == &["npx", "--local"]
         ));
     }
 

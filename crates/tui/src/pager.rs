@@ -27,6 +27,8 @@ pub enum PagerAction {
     SearchNext,
     /// Navigate to previous search match.
     SearchPrev,
+    /// Copy this text to the clipboard (`y`, when the pager carries one).
+    Copy(String),
     /// Key was handled internally; nothing else needed.
     Handled,
 }
@@ -47,6 +49,8 @@ pub struct PagerOverlay {
     pub last_visible_height: usize,
     /// Title shown in the header bar (e.g. "TRANSCRIPT", "SKILLS").
     title: String,
+    /// What `y` copies (a sign-in link), when the pager has something to copy.
+    copy_text: Option<String>,
 }
 
 impl PagerOverlay {
@@ -58,6 +62,7 @@ impl PagerOverlay {
             last_was_g: false,
             last_visible_height: 24,
             title: "TRANSCRIPT".to_string(),
+            copy_text: None,
         }
     }
 
@@ -69,7 +74,15 @@ impl PagerOverlay {
             last_was_g: false,
             last_visible_height: 24,
             title: title.into(),
+            copy_text: None,
         }
+    }
+
+    /// Let `y` copy `text` to the clipboard (shown in the key hints).
+    #[must_use]
+    pub fn with_copy_text(mut self, text: String) -> Self {
+        self.copy_text = Some(text);
+        self
     }
 
     /// Replace the displayed lines (e.g. after a chat update while pager is open).
@@ -124,6 +137,9 @@ impl PagerOverlay {
         match event.code {
             // ── Close ─────────────────────────────────────────────────────────
             KeyCode::Char('q') | KeyCode::Esc => return PagerAction::Close,
+            KeyCode::Char('y') if self.copy_text.is_some() => {
+                return PagerAction::Copy(self.copy_text.clone().unwrap_or_default());
+            }
 
             // ── Line scrolling ────────────────────────────────────────────────
             KeyCode::Char('j') | KeyCode::Down => self.scroll_down(1),
@@ -273,7 +289,7 @@ impl PagerOverlay {
         // ── Key hints ─────────────────────────────────────────────────────────
         let k = Style::default().fg(Color::Gray);
         let d = Style::default().fg(Color::DarkGray);
-        let hints = Line::from(vec![
+        let mut hints = Line::from(vec![
             Span::styled(" j/k", k),
             Span::styled(":line  ", d),
             Span::styled("^u/^d", k),
@@ -289,6 +305,10 @@ impl PagerOverlay {
             Span::styled("q/Esc", k),
             Span::styled(":close", d),
         ]);
+        if self.copy_text.is_some() {
+            hints.spans.push(Span::styled("  y", k));
+            hints.spans.push(Span::styled(":copy link", d));
+        }
         frame.render_widget(Paragraph::new(hints), hints_area);
     }
 }
@@ -361,4 +381,27 @@ pub(crate) fn tint_match_line(line: Line<'static>) -> Line<'static> {
             .map(|s| Span::styled(s.content, s.style.patch(tint)))
             .collect::<Vec<_>>(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyEventKind;
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new_with_kind(KeyCode::Char(c), KeyModifiers::NONE, KeyEventKind::Press)
+    }
+
+    /// A sign-in link is cut by the pager's edge on a narrow screen, so `y`
+    /// hands the whole address to the clipboard; a pager with nothing to
+    /// copy ignores the key.
+    #[test]
+    fn y_copies_the_whole_link_of_a_pager_that_carries_one() {
+        let link = "https://auth.example/authorize?client_id=a&state=b";
+        let mut pager = PagerOverlay::new(StyledLines::from(vec![Line::from(link)]))
+            .with_copy_text(link.to_string());
+        assert!(matches!(pager.handle_key(key('y')), PagerAction::Copy(t) if t == link));
+        let mut plain = PagerOverlay::new(StyledLines::from(vec![Line::from("x")]));
+        assert!(!matches!(plain.handle_key(key('y')), PagerAction::Copy(_)));
+    }
 }

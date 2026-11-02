@@ -673,6 +673,12 @@ impl App {
                     }
                 }
             }
+            PagerAction::Copy(text) => {
+                crate::app::chat_ops::osc52_copy(&text);
+                self.ui.push_toast(crate::app::ui_state::Toast::success(
+                    "Copied the link to the clipboard",
+                ));
+            }
             PagerAction::Handled => {}
         }
         false
@@ -699,6 +705,8 @@ impl App {
         };
 
         match inspector.pager.handle_key(k) {
+            // An inspector page has nothing to copy.
+            PagerAction::Copy(_) => {}
             PagerAction::Close => {
                 self.ui.inspector = None;
                 self.ui.search.active = false;

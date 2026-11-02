@@ -10,6 +10,7 @@ mod input_wrap;
 mod keys;
 mod layout;
 mod markdown;
+mod mcp_add;
 mod overlay;
 mod pager;
 mod state;

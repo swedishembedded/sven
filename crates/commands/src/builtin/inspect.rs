@@ -153,7 +153,7 @@ impl SlashCommand for McpCommand {
     }
 
     fn description(&self) -> &str {
-        "Show and manage MCP servers. Usage: /mcp [list|add|remove|auth|logout|enable|disable] [name] [url | command args...]"
+        "Show and manage MCP servers. Usage: /mcp [list|add|remove|auth|logout|enable|disable] [name] [url | command args...]; /mcp add --local NAME URL keeps a server on this machine instead of your account"
     }
 
     fn complete(
@@ -199,17 +199,29 @@ impl SlashCommand for McpCommand {
         let server = args.get(1).cloned().unwrap_or_default();
 
         if sub == "add" {
-            return match args.get(1..) {
-                Some([server, target @ ..]) if !target.is_empty() => CommandResult {
+            // `--local` leads the arguments or follows the name; a stdio
+            // command's own `--local` stays with the command.
+            let mut rest: Vec<String> = args.get(1..).unwrap_or_default().to_vec();
+            let mut local = false;
+            if rest.first().is_some_and(|a| a == "--local") {
+                rest.remove(0);
+                local = true;
+            } else if rest.get(1).is_some_and(|a| a == "--local") {
+                rest.remove(1);
+                local = true;
+            }
+            return match rest.as_slice() {
+                [server, target @ ..] if !target.is_empty() => CommandResult {
                     immediate_action: Some(ImmediateAction::McpAdd {
                         server: server.clone(),
                         target: target.to_vec(),
+                        local,
                     }),
                     ..Default::default()
                 },
                 _ => CommandResult {
                     immediate_action: Some(ImmediateAction::Notice {
-                        text: "Usage: /mcp add <name> <url>   or   /mcp add <name> <command> [args...]".into(),
+                        text: "Usage: /mcp add [--local] <name> <url>   or   /mcp add <name> <command> [args...]".into(),
                     }),
                     ..Default::default()
                 },

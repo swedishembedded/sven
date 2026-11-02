@@ -248,7 +248,7 @@ impl App {
 /// Copy `text` to the terminal clipboard using the OSC 52 escape sequence.
 /// Works in most modern terminals (kitty, alacritty, tmux with allow-passthrough,
 /// iTerm2, foot, wezterm) without any native library dependency.
-fn osc52_copy(text: &str) {
+pub(crate) fn osc52_copy(text: &str) {
     use std::io::Write;
     let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, text);
     let seq = format!("\x1b]52;c;{encoded}\x07");

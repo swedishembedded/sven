@@ -311,9 +311,9 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
         out.push_str(
             "_No MCP servers yet._\n\n\
              Add one, and its tools are offered at once:\n\n\
-             - `/mcp add <name> <url>` - a server on the web (it asks you to sign in when it needs to)\n\
+             - `/mcp add <name> <url>` - a server on the web (it asks you to sign in when it needs to); signed in to sven it goes to your account, with `--local` it stays on this machine\n\
              - `/mcp add <name> <command> [args...]` - a server run on this machine\n\n\
-             Both are written to your configuration file; `sven mcp add` does the same from a shell.\n",
+             `sven mcp add` does the same from a shell.\n",
         );
         return out;
     }
@@ -342,9 +342,16 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
             }
             _ => String::new(),
         };
+        // The account's servers come through `connectors`; the rest are
+        // configured on this machine, and both are offered together.
+        let place = if s.name == sven_bootstrap::connectors::SERVER {
+            " (your sven account)"
+        } else {
+            ""
+        };
         out.push_str(&format!(
-            "| **{}** | {} {}{} | {} | {} |\n",
-            s.name, icon, status, detail, s.tool_count, s.prompt_count,
+            "| **{}**{} | {} {}{} | {} | {} |\n",
+            s.name, place, icon, status, detail, s.tool_count, s.prompt_count,
         ));
     }
 

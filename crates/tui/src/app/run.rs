@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     agent::{kernel_session_task, AgentRequest},
-    app::{ui_state, App, FocusPane},
+    app::{ui_state, App, FocusPane, Notice},
     chat::segment::ChatSegment,
     keys::Action,
     overlay::question::{watch_withdrawal, QuestionModal},
@@ -33,7 +33,7 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(512);
         let (question_tx, mut question_rx) = mpsc::channel::<sven_tools_agent::QuestionRequest>(4);
         let (toast_tx, mut toast_rx) = mpsc::channel::<ui_state::Toast>(32);
-        let (notice_tx, mut notice_rx) = mpsc::channel::<String>(8);
+        let (notice_tx, mut notice_rx) = mpsc::channel::<Notice>(8);
         let (withdrawn_tx, mut withdrawn_rx) = mpsc::channel::<String>(8);
         let (voice_tx, mut voice_rx) = mpsc::channel::<crate::voice::VoiceEvent>(64);
         self.voice.tx = Some(voice_tx);
@@ -107,11 +107,11 @@ impl App {
                 }
                 self.mcp_manager = Some(Arc::clone(&mgr));
                 // Spawn a background task to forward MCP events as TUI toasts.
-                if let Some(ref tx) = self.toast_tx {
-                    let toast_tx = tx.clone();
+                if let (Some(toast_tx), Some(notice_tx)) = (&self.toast_tx, &self.notice_tx) {
+                    let (toast_tx, notice_tx) = (toast_tx.clone(), notice_tx.clone());
                     let agent_tx = submit_tx.clone();
                     tokio::spawn(async move {
-                        mcp_event_consumer(mcp_event_rx, toast_tx, agent_tx).await;
+                        mcp_event_consumer(mcp_event_rx, toast_tx, notice_tx, agent_tx).await;
                     });
                 }
             }
@@ -275,8 +275,8 @@ impl App {
                 Some(toast) = toast_rx.recv() => {
                     self.ui.push_toast(toast);
                 }
-                Some(text) = notice_rx.recv() => {
-                    self.show_notice(&text);
+                Some(notice) = notice_rx.recv() => {
+                    self.show_link_notice(&notice);
                 }
                 Some(event) = voice_rx.recv() => {
                     self.handle_voice_event(event);
@@ -381,12 +381,23 @@ impl App {
 async fn mcp_event_consumer(
     mut rx: mpsc::Receiver<McpEvent>,
     toast_tx: mpsc::Sender<ui_state::Toast>,
+    notice_tx: mpsc::Sender<Notice>,
     agent_tx: mpsc::Sender<AgentRequest>,
 ) {
     use sven_mcp_client::NoticeLevel;
     while let Some(event) = rx.recv().await {
         if matches!(event, McpEvent::ToolsChanged) {
             let _ = agent_tx.send(AgentRequest::RefreshMcpTools).await;
+        }
+        // A sign-in link is shown whole, to copy, whatever the browser did.
+        if let McpEvent::SignInLink { server, url } = &event {
+            let _ = notice_tx
+                .send(Notice {
+                    text: sven_mcp_client::sign_in_link(server, url),
+                    copy: Some(url.clone()),
+                })
+                .await;
+            continue;
         }
         let Some((level, text)) = event.notice() else {
             continue;

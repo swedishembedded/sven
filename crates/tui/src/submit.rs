@@ -57,14 +57,28 @@ impl App {
     /// Show `text` in the pager, a line per line: a notice for the person to
     /// read (and copy from) rather than a message to the agent.
     pub(crate) fn show_notice(&mut self, text: &str) {
+        self.show_link_notice(&crate::app::Notice {
+            text: text.to_string(),
+            copy: None,
+        });
+    }
+
+    /// [`Self::show_notice`] for a notice that carries a link to copy.
+    pub(crate) fn show_link_notice(&mut self, notice: &crate::app::Notice) {
         use crate::markdown::StyledLines;
         use crate::pager::PagerOverlay;
         let lines = StyledLines::from(
-            text.lines()
+            notice
+                .text
+                .lines()
                 .map(|l| ratatui::text::Line::from(l.to_string()))
                 .collect::<Vec<_>>(),
         );
-        self.ui.pager = Some(PagerOverlay::new(lines));
+        let pager = PagerOverlay::new(lines);
+        self.ui.pager = Some(match &notice.copy {
+            Some(text) => pager.with_copy_text(text.clone()),
+            None => pager,
+        });
     }
 
     // ── Submit path ───────────────────────────────────────────────────────────
@@ -271,6 +285,7 @@ impl App {
                     if let Some(ImmediateAction::McpAdd {
                         ref server,
                         ref target,
+                        local,
                     }) = result.immediate_action
                     {
                         match (&self.mcp_manager, &self.toast_tx, &self.notice_tx) {
@@ -279,90 +294,10 @@ impl App {
                                     (Arc::clone(mgr), toast_tx.clone(), notice_tx.clone());
                                 let (server, target) = (server.clone(), target.clone());
                                 tokio::spawn(async move {
-                                    use crate::app::ui_state::Toast;
-                                    use sven_bootstrap::connectors;
-                                    // A plain address goes to the account,
-                                    // when signed in to one.
-                                    if let Some(url) = connectors::account_target(&target) {
-                                        if let Some(connected) =
-                                            connectors::connect_through_account(&server, url).await
-                                        {
-                                            match connected {
-                                                Ok(connection) => {
-                                                    let _ = notice_tx
-                                                        .send(connectors::sign_in_notice(
-                                                            &connection,
-                                                        ))
-                                                        .await;
-                                                    sven_mcp_client::open_browser(
-                                                        &connection.sign_in_url,
-                                                    );
-                                                    // Its tools arrive once the
-                                                    // person finishes signing in
-                                                    // (a sign-in lasts 10 minutes).
-                                                    let before =
-                                                        mgr.tool_count(connectors::SERVER).await;
-                                                    if mgr
-                                                        .reconnect_until_more_tools(
-                                                            connectors::SERVER,
-                                                            before,
-                                                            std::time::Duration::from_secs(5),
-                                                            std::time::Duration::from_secs(600),
-                                                        )
-                                                        .await
-                                                    {
-                                                        let _ = toast_tx
-                                                            .send(Toast::success(format!(
-                                                                "{} is connected",
-                                                                connection.connector.name
-                                                            )))
-                                                            .await;
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    // The reason, in full: a
-                                                    // toast's one line cuts it.
-                                                    let _ = notice_tx.send(format!("{e:#}")).await;
-                                                }
-                                            }
-                                            return;
-                                        }
-                                    }
-                                    let added = (|| {
-                                        let entry = sven_mcp_client::config_edit::server_entry(
-                                            &target,
-                                            &[],
-                                            &[],
-                                            false,
-                                            None,
-                                        )?;
-                                        let config: sven_mcp_client::McpServerConfig =
-                                            serde_yaml::from_value(entry.clone())?;
-                                        let file = sven_mcp_client::config_edit::add(
-                                            sven_config::scope::Scope::User,
-                                            &server,
-                                            entry,
-                                        )?;
-                                        anyhow::Ok((file, config))
-                                    })();
-                                    match added {
-                                        Ok((_file, config)) => {
-                                            let _ = toast_tx
-                                                .send(Toast::success(format!(
-                                                    "Added MCP server '{server}'"
-                                                )))
-                                                .await;
-                                            // Its connection (or sign-in) reports itself.
-                                            let _ = mgr.add_server(&server, config).await;
-                                        }
-                                        Err(e) => {
-                                            let _ = toast_tx
-                                                .send(Toast::error(format!(
-                                                    "MCP server '{server}' not added: {e:#}"
-                                                )))
-                                                .await;
-                                        }
-                                    }
+                                    crate::mcp_add::add_mcp_server(
+                                        &mgr, &toast_tx, &notice_tx, &server, &target, local,
+                                    )
+                                    .await;
                                 });
                             }
                             _ => self.ui.push_toast(crate::app::ui_state::Toast::error(
