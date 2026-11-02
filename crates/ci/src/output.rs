@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::io::Write;
 
+use sven_mcp_client::McpEvent;
 use sven_vocab::ModelWaitPhase;
+use tokio::sync::mpsc;
 
 /// Write clean output to stdout - suitable for piping to the next agent.
 pub fn write_stdout(text: &str) {
@@ -21,6 +23,23 @@ pub fn finalise_stdout(text: &str) {
 /// Write a diagnostic / error message to stderr (never pollutes stdout pipeline).
 pub fn write_stderr(msg: &str) {
     eprintln!("{msg}");
+}
+
+/// How long a headless session holds its first step for its MCP servers'
+/// tools: a model answers at once, a server takes a moment to start.
+pub const MCP_TOOLS_WAIT_MS: u64 = 20_000;
+
+/// Report what happens to a headless session's MCP servers as progress
+/// lines, never waiting on it: a server that wants a sign-in says how to
+/// give it one.
+pub fn report_mcp_events(mut events: mpsc::Receiver<McpEvent>) {
+    tokio::spawn(async move {
+        while let Some(event) = events.recv().await {
+            if let Some((_, text)) = event.notice() {
+                write_progress(&format!("[sven:mcp] {text}"));
+            }
+        }
+    });
 }
 
 /// Write a structured progress line to stderr.

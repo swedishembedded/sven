@@ -8,7 +8,8 @@
 // email to info@swedishembedded.com.
 //! `sven mcp add`, `list` and `remove`, end to end: sven adds itself (`sven
 //! mcp serve`) as a stdio MCP server, finds it connects with its tools, and
-//! removes it again, in a home of its own.
+//! removes it again, in a home of its own; and a headless run waits for a
+//! slow server's tools before its model's first step.
 
 #![cfg(feature = "network")]
 
@@ -28,6 +29,10 @@ impl Home {
     }
 
     fn sven(&self, args: &[&str]) -> (bool, String) {
+        self.sven_with(args, &[])
+    }
+
+    fn sven_with(&self, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
         let out = Command::new(env!("CARGO_BIN_EXE_sven"))
             .current_dir(self.0.join("proj"))
             .env_clear()
@@ -35,6 +40,7 @@ impl Home {
             .env("XDG_CONFIG_HOME", self.0.join("config"))
             .env("XDG_RUNTIME_DIR", self.0.join("run"))
             .env("PATH", "/usr/bin:/bin")
+            .envs(env.iter().copied())
             .args(args)
             .stdin(Stdio::null())
             .output()
@@ -127,4 +133,36 @@ fn an_entry_that_is_not_a_server_is_refused_before_anything_is_written() {
     let (ok, text) = home.sven(&["mcp", "add", "bad name", "https://mcp.example.com/mcp"]);
     assert!(!ok && text.contains("letters, digits"), "{text}");
     assert!(!home.0.join("config/sven/config.yaml").exists());
+}
+
+#[test]
+fn a_headless_run_waits_for_a_slow_servers_tools() {
+    let home = Home::new("headless");
+    let sven = env!("CARGO_BIN_EXE_sven");
+    let serve = format!("sleep 2; exec '{sven}' mcp serve");
+    let (ok, text) = home.sven(&["mcp", "add", "slow", "--", "sh", "-c", &serve]);
+    assert!(ok, "{text}");
+
+    std::fs::write(home.0.join("proj/note.txt"), "written before the run").unwrap();
+    let log = home.0.join("requests.jsonl");
+    let mock = home.0.join("mock.yaml");
+    std::fs::write(
+        &mock,
+        format!(
+            "request_log: {}\nresponses:\n  - match_type: default\n    tool_calls:\n      - id: tc-read\n        tool: slow-read_file\n        args: {{ path: note.txt }}\n    after_tool_reply: \"Done.\"\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    // The model answers at once, while the server is still starting: the
+    // run must hold its first step until the server's tools are there.
+    let (_, text) = home.sven_with(
+        &["--headless", "--model", "mock", "read the note"],
+        &[("SVEN_MOCK_RESPONSES", mock.to_str().unwrap())],
+    );
+    let requests = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        requests.contains("written before the run"),
+        "the slow server's tool never ran: {text}"
+    );
 }

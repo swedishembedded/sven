@@ -17,6 +17,7 @@ sven-session-store     = { path = "../session-store" }
 sven-bootstrap = { path = "../bootstrap", default-features = false }
 sven-workspace   = { path = "../workspace" }
 sven-hsm       = { path = "../hsm" }
+sven-mcp-client = { path = "../mcp-client" }
 atif           = { path = "../atif" }
 anyhow         = { workspace = true }
 serde          = { workspace = true }

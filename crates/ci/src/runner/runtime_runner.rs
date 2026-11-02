@@ -191,18 +191,22 @@ impl RuntimeRunner {
         }
 
         // Nobody is at a headless run: its gates are answered at once, and an
-        // MCP server that wants a browser sign-in is not given one.
+        // MCP server that wants a browser sign-in is not given one. Its first
+        // step waits for the MCP servers' tools, which the model may call at
+        // once.
         let (events, mut events_rx) = tokio::sync::mpsc::channel(256);
         let mut options = SessionOptions::new(Arc::clone(&self.config), runtime_ctx, events);
         options.allow_interactive_oauth = false;
+        options.wait_for_mcp_tools_ms = Some(crate::output::MCP_TOOLS_WAIT_MS);
         let spec = SessionSpec {
             machine: kernel_mode.to_string(),
             permissions: opts.agent_mode,
             model: self.config.model.clone(),
         };
-        let (session, _mcp_events) = SessionController::open(options, spec, history)
+        let (session, mcp_events) = SessionController::open(options, spec, history)
             .await
             .context("failed to build kernel session")?;
+        crate::output::report_mcp_events(mcp_events);
 
         // Post the user prompt.
         session
