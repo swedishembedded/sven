@@ -55,11 +55,8 @@ pub(crate) fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
         1 => "debug",
         _ => "trace",
     };
-    // pdf-extract warns once per glyph its font tables do not name: hundreds
-    // of lines per manual page that say nothing about the conversion, whose
-    // own warnings report text-layer problems.
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(format!("{level},pdf_extract=error")));
+        .unwrap_or_else(|_| EnvFilter::new(default_directives(level, verbosity)));
 
     let layer = fmt::layer()
         .with_target(false)
@@ -72,4 +69,33 @@ pub(crate) fn init_logging(verbosity: u8, is_tui: bool, is_node: bool) {
         .with(layer)
         .with(filter)
         .try_init();
+}
+
+/// The log filter when `RUST_LOG` names none.
+///
+/// pdf-extract warns once per glyph its font tables do not name: hundreds of
+/// lines per manual page that say nothing about the conversion, whose own
+/// warnings report text-layer problems. rmcp's transport worker logs every
+/// end of a connection it did not choose as an error, the ordinary "this
+/// server needs a sign-in" among them; sven's MCP client says what happened
+/// and what to do in its own words, so the worker is heard only with `-v`.
+fn default_directives(level: &str, verbosity: u8) -> String {
+    let worker = if verbosity == 0 {
+        ",rmcp::transport::worker=off"
+    } else {
+        ""
+    };
+    format!("{level},pdf_extract=error{worker}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_directives;
+
+    #[test]
+    fn the_mcp_transport_worker_is_heard_only_when_asked() {
+        assert!(default_directives("warn", 0).contains("rmcp::transport::worker=off"));
+        assert!(!default_directives("debug", 1).contains("rmcp::transport::worker"));
+        assert!(default_directives("warn", 0).starts_with("warn,pdf_extract=error"));
+    }
 }
