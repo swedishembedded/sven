@@ -37,6 +37,7 @@
 //! (`pub use sven_commands as commands`) so `sven-tui` is unaffected.
 
 pub mod agent;
+pub mod context_usage;
 pub mod controller;
 pub mod markdown;
 pub mod projection;
@@ -56,6 +57,7 @@ pub use sven_commands as commands;
 // ── Convenience re-exports ────────────────────────────────────────────────────
 
 pub use agent::{kernel_session_task, AgentRequest};
+pub use context_usage::{ContextCategory, ContextInputs, ContextUsage, McpToolsUsage};
 pub use controller::{
     machine_for, AbortSlot, CompactError, Gates, SessionController, SessionOptions, SessionSpec,
     SubmitError,
