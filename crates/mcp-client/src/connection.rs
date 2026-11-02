@@ -146,7 +146,7 @@ impl Connection {
                     timeout,
                     handler
                         .clone()
-                        .serve_with_lifecycle(spawn(command, args, env)?, lifecycle()),
+                        .serve_with_lifecycle(spawn(server, command, args, env)?, lifecycle()),
                 )
                 .await;
                 match first {
@@ -156,12 +156,12 @@ impl Connection {
                         within(
                             timeout,
                             handler.serve_with_lifecycle(
-                                spawn(command, args, env)?,
+                                spawn(server, command, args, env)?,
                                 ClientLifecycleMode::Initialize,
                             ),
                         )
                         .await
-                        .with_context(|| format!("starting MCP server `{command}`"))?
+                        .map_err(|e| anyhow!("starting `{command}`: {}", e.root_cause()))?
                     }
                 }
             }
@@ -204,7 +204,15 @@ impl Connection {
                         .await
                     }
                 };
-                result.map_err(|e| auth_required(&e).map_or(e, anyhow::Error::new))?
+                // A sign-in it asks for stays typed for the manager; anything
+                // else is said as what went wrong, not as the transport's
+                // own wrapping of it.
+                result.map_err(|e| {
+                    auth_required(&e).map_or_else(
+                        || anyhow!("cannot reach {url}: {}", e.root_cause()),
+                        anyhow::Error::new,
+                    )
+                })?
             }
         };
         Ok(Self {
@@ -290,7 +298,10 @@ where
 
 /// The server process, with a clean environment: only `PATH` and the
 /// variables its configuration names, so sven's own secrets never reach it.
+/// What it writes to stderr goes to sven's log as that server's, never to
+/// the terminal, where it would draw over a TUI.
 fn spawn(
+    server: &str,
     command: &str,
     args: &[String],
     env: &HashMap<String, String>,
@@ -301,10 +312,20 @@ fn spawn(
         cmd.env("PATH", path);
     }
     cmd.envs(env);
-    let (process, _stderr) = TokioChildProcess::builder(cmd)
-        .stderr(std::process::Stdio::inherit())
+    let (process, stderr) = TokioChildProcess::builder(cmd)
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .with_context(|| format!("failed to spawn MCP server: {command}"))?;
+    if let Some(stderr) = stderr {
+        let server = server.to_string();
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                debug!(server = %server, "{line}");
+            }
+        });
+    }
     Ok(process)
 }
 

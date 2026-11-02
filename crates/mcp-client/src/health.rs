@@ -19,7 +19,9 @@ pub enum ServerStatus {
     /// Disabled by the user (config `enabled: false`).
     Disabled,
     /// Disconnected, will attempt reconnection.
-    Reconnecting { attempts: u32 },
+    /// Failed `attempts` times in a row and tries again; `error` is why the
+    /// last attempt failed.
+    Reconnecting { attempts: u32, error: String },
     /// Failed to connect; no further reconnection attempts.
     Failed { error: String },
     /// Requires OAuth authentication before connecting.
@@ -93,6 +95,7 @@ impl HealthState {
         let delay = backoff_duration(self.consecutive_failures);
         self.status = ServerStatus::Reconnecting {
             attempts: self.consecutive_failures,
+            error,
         };
         Some(delay)
     }

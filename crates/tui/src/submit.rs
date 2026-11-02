@@ -290,11 +290,10 @@ impl App {
                                         anyhow::Ok((file, config))
                                     })();
                                     match added {
-                                        Ok((file, config)) => {
+                                        Ok((_file, config)) => {
                                             let _ = toast_tx
                                                 .send(Toast::success(format!(
-                                                    "Added MCP server '{server}' to {}",
-                                                    file.display()
+                                                    "Added MCP server '{server}'"
                                                 )))
                                                 .await;
                                             // Its connection (or sign-in) reports itself.

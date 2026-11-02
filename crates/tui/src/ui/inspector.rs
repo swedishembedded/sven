@@ -317,8 +317,11 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
             sven_mcp_client::ServerStatus::Failed { error } => {
                 format!(" - _{}_", truncate_to_width_exact(error, 50))
             }
-            sven_mcp_client::ServerStatus::Reconnecting { attempts } => {
-                format!(" (attempt {attempts})")
+            sven_mcp_client::ServerStatus::Reconnecting { attempts, error } => {
+                format!(
+                    " (attempt {attempts}) - _{}_",
+                    truncate_to_width_exact(error, 50)
+                )
             }
             sven_mcp_client::ServerStatus::NeedsAuth { auth_url } if auth_url.is_empty() => {
                 format!(" - run `/mcp auth {}`", s.name)

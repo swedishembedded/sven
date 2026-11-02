@@ -6,7 +6,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph, Widget},
 };
@@ -52,7 +52,16 @@ impl Widget for ToastStack<'_> {
                 break;
             }
             let fg = toast.color;
-            let check = if self.ascii { "* " } else { "\u{2713} " }; // ✓
+            // What kind of notice it is, not only its colour.
+            let check = match (fg, self.ascii) {
+                (Color::Red, false) => "\u{2717} ", // ✗
+                (Color::Red, true) => "x ",
+                (Color::Yellow, _) => "! ",
+                (Color::Green, false) => "\u{2713} ", // ✓
+                (Color::Green, true) => "* ",
+                (_, false) => "\u{2022} ", // •
+                (_, true) => "- ",
+            };
             let msg = truncate_to_width_exact(&toast.message, (width as usize).saturating_sub(3));
             let text = format!("{check}{msg}");
 
