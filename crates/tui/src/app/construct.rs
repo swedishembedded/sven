@@ -176,6 +176,7 @@ impl App {
             question_tx: None,
             question_withdrawn_tx: None,
             toast_tx: None,
+            notice_tx: None,
             voice: crate::voice::VoiceState::default(),
         };
 

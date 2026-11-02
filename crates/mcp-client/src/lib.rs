@@ -41,6 +41,6 @@ pub use config::{
     mcp_servers_schema, McpOAuthConfig, McpServerConfig, McpServers, McpToolPolicy, McpTransport,
 };
 pub use events::{McpEvent, NoticeLevel};
-pub use exchange::TokenExchange;
+pub use exchange::{connect_account, AccountConnection, TokenExchange};
 pub use health::{ServerStatus, ServerStatusSummary};
 pub use manager::McpManager;

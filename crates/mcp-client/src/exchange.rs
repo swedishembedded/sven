@@ -72,29 +72,90 @@ impl Source {
                 }
             }
         }
-        let refused = |why: String| StreamableHttpError::UnexpectedServerResponse(why.into());
-        let response = self
-            .http
-            .post(&self.exchange.url)
-            .bearer_auth(&self.exchange.key)
-            .timeout(Duration::from_secs(30))
-            .send()
+        let traded = trade(&self.http, &self.exchange)
             .await
-            .map_err(|e| refused(format!("trading the key for a token: {e}")))?;
-        if !response.status().is_success() {
-            return Err(refused(format!(
-                "the server refused to trade this machine's key for a token ({}); sign in again",
-                response.status()
-            )));
-        }
-        let traded: Traded = response
-            .json()
-            .await
-            .map_err(|e| refused(format!("the token the server gave back: {e}")))?;
+            .map_err(|why| StreamableHttpError::UnexpectedServerResponse(why.into()))?;
         let until = Instant::now() + Duration::from_secs(traded.expires_in.min(24 * 3600));
         *held = Some((traded.access_token.clone(), until));
         Ok(traded.access_token)
     }
+}
+
+/// Trade `exchange`'s key for a token at its token endpoint; the error says
+/// why not, for the person to read.
+async fn trade(http: &reqwest::Client, exchange: &TokenExchange) -> Result<Traded, String> {
+    let response = http
+        .post(&exchange.url)
+        .bearer_auth(&exchange.key)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("trading the key for a token: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "the server refused to trade this machine's key for a token ({}); sign in again",
+            response.status()
+        ));
+    }
+    response
+        .json()
+        .await
+        .map_err(|e| format!("the token the server gave back: {e}"))
+}
+
+/// A connector added to the signed-in person's account, and the service's
+/// sign-in page that connects their account of it.
+#[derive(Debug, Deserialize)]
+pub struct AccountConnection {
+    pub connector: AccountConnector,
+    #[serde(rename = "signInUrl")]
+    pub sign_in_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountConnector {
+    pub id: String,
+    pub name: String,
+}
+
+/// Add the MCP server at `url`, called `name`, to the account behind
+/// `exchange` as a connector of the person's own, through the account's MCP
+/// endpoint at `mcp_url` (its `/connect` beside it). The service's sign-in
+/// happens in the person's browser, signed in to the account; its tokens
+/// stay with the account, never on this machine.
+///
+/// # Errors
+///
+/// The key is refused, the account refuses the server (with its reason),
+/// or the account cannot be reached.
+pub async fn connect_account(
+    exchange: &TokenExchange,
+    mcp_url: &str,
+    name: &str,
+    url: &str,
+) -> anyhow::Result<AccountConnection> {
+    let http = reqwest::Client::new();
+    let traded = trade(&http, exchange).await.map_err(anyhow::Error::msg)?;
+    let response = http
+        .post(format!("{}/connect", mcp_url.trim_end_matches('/')))
+        .bearer_auth(&traded.access_token)
+        .json(&serde_json::json!({ "name": name, "url": url }))
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        #[derive(Deserialize)]
+        struct Refusal {
+            error: String,
+        }
+        let status = response.status();
+        let why = response
+            .json::<Refusal>()
+            .await
+            .map_or_else(|_| status.to_string(), |r| r.error);
+        anyhow::bail!("your account did not add it: {why}");
+    }
+    Ok(response.json().await?)
 }
 
 /// An HTTP client of the MCP endpoint that presents a traded token on every

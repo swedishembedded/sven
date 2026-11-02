@@ -173,6 +173,10 @@ pub struct App {
     /// Sender for toast notifications from background tasks (e.g. OAuth auth).
     /// `None` before `run()` is called.
     pub(crate) toast_tx: Option<mpsc::Sender<ui_state::Toast>>,
+    /// Sender for a notice from a background task, shown in the pager as an
+    /// immediate notice is: for text a toast's one line cannot hold (an
+    /// address to open). `None` before `run()` is called.
+    pub(crate) notice_tx: Option<mpsc::Sender<String>>,
     /// The voice dictation in progress, if any (Ctrl+G).
     pub(crate) voice: crate::voice::VoiceState,
 }

@@ -51,9 +51,62 @@ pub fn add_signed_in(config: &mut Config) {
     }
 }
 
+/// The address `/mcp add` names, when it is a server to add to the signed-in
+/// person's account rather than to a file here: one `http(s)` address.
+#[must_use]
+pub fn account_target(target: &[String]) -> Option<&str> {
+    match target {
+        [url] if url.starts_with("https://") || url.starts_with("http://") => Some(url),
+        _ => None,
+    }
+}
+
+/// Add the server at `url`, called `name`, to the account this user signed
+/// in to, as a connector of their own; its sign-in then happens in their
+/// browser and its tokens stay with the account. None when not signed in to
+/// a server that offers connectors.
+pub async fn connect_through_account(
+    name: &str,
+    url: &str,
+) -> Option<anyhow::Result<sven_mcp_client::AccountConnection>> {
+    let signed_in = sven_model_drivers::sven_service::signed_in()?;
+    let (mcp_url, token_url) = (signed_in.mcp_url?, signed_in.mcp_token_url?);
+    let exchange = sven_mcp_client::TokenExchange {
+        url: token_url,
+        key: signed_in.key,
+    };
+    Some(sven_mcp_client::connect_account(&exchange, &mcp_url, name, url).await)
+}
+
+/// What to tell the person once a connector is added to their account: the
+/// page that connects their account of it, and where its tools then appear.
+#[must_use]
+pub fn sign_in_notice(connection: &sven_mcp_client::AccountConnection) -> String {
+    format!(
+        "Added {} to your account. Connect your account of it on this page, signed in \
+         to sven as yourself:\n\n  {}\n\nIts tools reach sven through the '{SERVER}' \
+         server once you finish; your sign-in stays with your account.",
+        connection.connector.name, connection.sign_in_url
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_one_web_address_goes_to_the_account() {
+        let one = |s: &str| vec![s.to_string()];
+        assert_eq!(
+            account_target(&one("https://api.githubcopilot.com/mcp/")),
+            Some("https://api.githubcopilot.com/mcp/")
+        );
+        assert_eq!(account_target(&one("npx")), None);
+        assert_eq!(
+            account_target(&["https://a.example/mcp".into(), "extra".into()]),
+            None
+        );
+    }
 
     #[test]
     fn the_server_is_added_unless_configured() {

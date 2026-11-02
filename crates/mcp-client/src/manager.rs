@@ -339,6 +339,37 @@ impl McpManager {
         let _ = self.event_tx.send(McpEvent::ToolsChanged).await;
     }
 
+    /// How many tools server `name` offers now (none while not connected).
+    pub async fn tool_count(&self, name: &str) -> usize {
+        self.servers
+            .read()
+            .await
+            .get(name)
+            .filter(|state| state.health.status.is_connected())
+            .map_or(0, |state| state.tools.len())
+    }
+
+    /// Connect server `name` again every `every` until it offers more than
+    /// `before` tools or `within` has passed: for an account the person is
+    /// connecting in their browser, whose tools the server offers once they
+    /// finish. Whether it came to offer more.
+    pub async fn reconnect_until_more_tools(
+        self: &Arc<Self>,
+        name: &str,
+        before: usize,
+        every: Duration,
+        within: Duration,
+    ) -> bool {
+        let deadline = tokio::time::Instant::now() + within;
+        while tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(every).await;
+            if self.connect(name).await.is_ok() && self.tool_count(name).await > before {
+                return true;
+            }
+        }
+        false
+    }
+
     // ── Tool access ───────────────────────────────────────────────────────────
 
     /// Every tool of every connected server the configuration does not

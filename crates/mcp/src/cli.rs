@@ -48,14 +48,20 @@ pub enum McpCommands {
         brave_api_key: Option<String>,
     },
 
-    /// Add an MCP server to a configuration file and check it.
+    /// Add an MCP server to your account, or to a configuration file.
     ///
-    ///   `sven mcp add docs https://mcp.example.com/mcp --oauth`
+    ///   `sven mcp add github https://api.githubcopilot.com/mcp/`
+    ///   `sven mcp add docs https://mcp.example.com/mcp --local --oauth`
     ///   `sven mcp add github --env GITHUB_TOKEN='${GITHUB_TOKEN}' -- npx -y @modelcontextprotocol/server-github`
     ///
-    /// A URL is a Streamable HTTP server; anything else is the command (and
-    /// arguments) of a stdio server. Write a secret as `${VAR}`, so the file
-    /// holds the variable's name rather than the secret.
+    /// Signed in to sven (`sven auth login`), a URL alone is added to your
+    /// account: sven prints the service's sign-in page, which you open in
+    /// any browser signed in to sven, and your sign-in stays with your
+    /// account, never on this machine. Otherwise, or with `--local`, a URL is
+    /// a Streamable HTTP server and anything else the command (and
+    /// arguments) of a stdio server, written to a configuration file. Write
+    /// a secret as `${VAR}`, so the file holds the variable's name rather
+    /// than the secret.
     Add {
         /// The server's name, which prefixes its tools: letters, digits,
         /// `_` and `-`.
@@ -87,6 +93,10 @@ pub enum McpCommands {
         /// `project` (this directory's) or `workspace` (the nearest above).
         #[arg(long, default_value = "user")]
         scope: sven_config::scope::Scope,
+        /// Write it to a configuration file and sign in from this machine,
+        /// even when signed in to an account.
+        #[arg(long)]
+        local: bool,
     },
 
     /// Remove an MCP server from a configuration file.
@@ -150,7 +160,27 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             client_id,
             client_secret,
             scope,
+            local,
         } => {
+            // A plain address goes to the account, when signed in to one.
+            let plain = headers.is_empty() && env.is_empty() && client_id.is_none();
+            if let (false, true, Some(url)) = (
+                *local,
+                plain,
+                sven_bootstrap::connectors::account_target(target),
+            ) {
+                if let Some(connected) =
+                    sven_bootstrap::connectors::connect_through_account(name, url).await
+                {
+                    let connection = connected?;
+                    println!(
+                        "{}",
+                        sven_bootstrap::connectors::sign_in_notice(&connection)
+                    );
+                    sven_mcp_client::open_browser(&connection.sign_in_url);
+                    return Ok(());
+                }
+            }
             let client = client_id
                 .as_deref()
                 .map(|id| sven_mcp_client::config_edit::OAuthClient {

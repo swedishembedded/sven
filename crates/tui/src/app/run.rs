@@ -33,11 +33,13 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(512);
         let (question_tx, mut question_rx) = mpsc::channel::<sven_tools_agent::QuestionRequest>(4);
         let (toast_tx, mut toast_rx) = mpsc::channel::<ui_state::Toast>(32);
+        let (notice_tx, mut notice_rx) = mpsc::channel::<String>(8);
         let (withdrawn_tx, mut withdrawn_rx) = mpsc::channel::<String>(8);
         let (voice_tx, mut voice_rx) = mpsc::channel::<crate::voice::VoiceEvent>(64);
         self.voice.tx = Some(voice_tx);
         self.question_withdrawn_tx = Some(withdrawn_tx);
         self.toast_tx = Some(toast_tx);
+        self.notice_tx = Some(notice_tx);
 
         // Store the sender so that agents spawned for new/switched-to sessions
         // all route their questions through the same handler in the run loop.
@@ -272,6 +274,9 @@ impl App {
                 }
                 Some(toast) = toast_rx.recv() => {
                     self.ui.push_toast(toast);
+                }
+                Some(text) = notice_rx.recv() => {
+                    self.show_notice(&text);
                 }
                 Some(event) = voice_rx.recv() => {
                     self.handle_voice_event(event);

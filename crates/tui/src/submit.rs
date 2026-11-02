@@ -54,6 +54,19 @@ use crate::{
 };
 
 impl App {
+    /// Show `text` in the pager, a line per line: a notice for the person to
+    /// read (and copy from) rather than a message to the agent.
+    pub(crate) fn show_notice(&mut self, text: &str) {
+        use crate::markdown::StyledLines;
+        use crate::pager::PagerOverlay;
+        let lines = StyledLines::from(
+            text.lines()
+                .map(|l| ratatui::text::Line::from(l.to_string()))
+                .collect::<Vec<_>>(),
+        );
+        self.ui.pager = Some(PagerOverlay::new(lines));
+    }
+
     // ── Submit path ───────────────────────────────────────────────────────────
 
     /// Process user input text: dispatch slash commands or send as a message.
@@ -178,14 +191,7 @@ impl App {
                     }
 
                     if let Some(ImmediateAction::Notice { ref text }) = result.immediate_action {
-                        use crate::markdown::StyledLines;
-                        use crate::pager::PagerOverlay;
-                        let lines = StyledLines::from(
-                            text.lines()
-                                .map(|l| ratatui::text::Line::from(l.to_string()))
-                                .collect::<Vec<_>>(),
-                        );
-                        self.ui.pager = Some(PagerOverlay::new(lines));
+                        self.show_notice(text);
                         return false;
                     }
 
@@ -267,12 +273,63 @@ impl App {
                         ref target,
                     }) = result.immediate_action
                     {
-                        match (&self.mcp_manager, &self.toast_tx) {
-                            (Some(mgr), Some(toast_tx)) => {
-                                let (mgr, toast_tx) = (Arc::clone(mgr), toast_tx.clone());
+                        match (&self.mcp_manager, &self.toast_tx, &self.notice_tx) {
+                            (Some(mgr), Some(toast_tx), Some(notice_tx)) => {
+                                let (mgr, toast_tx, notice_tx) =
+                                    (Arc::clone(mgr), toast_tx.clone(), notice_tx.clone());
                                 let (server, target) = (server.clone(), target.clone());
                                 tokio::spawn(async move {
                                     use crate::app::ui_state::Toast;
+                                    use sven_bootstrap::connectors;
+                                    // A plain address goes to the account,
+                                    // when signed in to one.
+                                    if let Some(url) = connectors::account_target(&target) {
+                                        if let Some(connected) =
+                                            connectors::connect_through_account(&server, url).await
+                                        {
+                                            match connected {
+                                                Ok(connection) => {
+                                                    let _ = notice_tx
+                                                        .send(connectors::sign_in_notice(
+                                                            &connection,
+                                                        ))
+                                                        .await;
+                                                    sven_mcp_client::open_browser(
+                                                        &connection.sign_in_url,
+                                                    );
+                                                    // Its tools arrive once the
+                                                    // person finishes signing in
+                                                    // (a sign-in lasts 10 minutes).
+                                                    let before =
+                                                        mgr.tool_count(connectors::SERVER).await;
+                                                    if mgr
+                                                        .reconnect_until_more_tools(
+                                                            connectors::SERVER,
+                                                            before,
+                                                            std::time::Duration::from_secs(5),
+                                                            std::time::Duration::from_secs(600),
+                                                        )
+                                                        .await
+                                                    {
+                                                        let _ = toast_tx
+                                                            .send(Toast::success(format!(
+                                                                "{} is connected",
+                                                                connection.connector.name
+                                                            )))
+                                                            .await;
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    let _ = toast_tx
+                                                        .send(Toast::error(format!(
+                                                            "'{server}' not added: {e:#}"
+                                                        )))
+                                                        .await;
+                                                }
+                                            }
+                                            return;
+                                        }
+                                    }
                                     let added = (|| {
                                         let entry = sven_mcp_client::config_edit::server_entry(
                                             &target,
