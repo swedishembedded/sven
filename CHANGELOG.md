@@ -7,11 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **mcp**: signed in to a sven account, `sven mcp add NAME URL` and `/mcp add` add the server to your account: you finish its sign-in in any browser signed in to sven, the sign-in stays with your account, and its tools reach every session of yours through the `connectors` server. `--local` (or a header, env or client of your own) keeps it on this machine.
+- **mcp**: `sven mcp add NAME URL --client-id ID --client-secret SECRET` signs in with an OAuth app of your own, for a server that lets nobody register (GitHub's).
+- **tui**: `/context` opens a panel showing everything a request carries against the context window: a grid of one-percent cells by category (system prompt, tools, skills, memory, messages, thinking, free space, reserves), and, with a model that names no window, each category's share of the request.
+
 ### Changed
+- **tui**: a toast wraps onto up to four lines instead of cutting its text at one.
 - **mcp**: `sven mcp add` and `/mcp add` say first where the server goes (your sven account, or a named file on this machine) and see it through to a connection. A server that needs an OAuth sign-in is signed in to at once, also when it goes to a local file; before, the shell only said to run `sven mcp auth`. The sign-in link is always printed on a line of its own (in the TUI shown in the pager, where `y` copies it) as well as the browser being opened, and `open_browser` no longer prints to stderr. The shell waits until an account server connects. `/mcp add --local` keeps a server on this machine from the TUI too.
 - **mcp**: a server configured on this machine hides the same service connected through your account (matched by the connector name or URL that account tools carry in `_meta`), so the model never sees its tools twice; the project, user and system configuration, then the account, are the tiers, highest first. `sven mcp list` shows the servers on this machine and your account's `connectors` apart.
 
 ### Fixed
+- **tui**: every turn sent from the interactive session carries the system prompt again; a turn sent from an idle TUI went out without it (no identity, guidelines, project context or skills). Headless runs were not affected.
+- **mcp**: adding a server that lets nobody register (GitHub's) no longer opens the browser on an error page with a made-up client id; it stops before the browser and says what works.
 - **mcp**: a sign-in record from an older release (no token endpoint) no longer makes `sven mcp add NAME URL` silently write a local file; it says to run `sven auth login` again or use `--local`.
 - **mcp**: a stored MCP sign-in that cannot be read for want of the network no longer starts a new sign-in; the server shows as failed and is retried. A refused access token is still refreshed before a sign-in is forgotten (pinned by tests).
 
