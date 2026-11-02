@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-11-02
+
 ### Added
 - **mcp**: signed in to a sven account, `sven mcp add NAME URL` and `/mcp add` add the server to your account: you finish its sign-in in any browser signed in to sven, the sign-in stays with your account, and its tools reach every session of yours through the `connectors` server. `--local` (or a header, env or client of your own) keeps it on this machine.
 - **mcp**: `sven mcp add NAME URL --client-id ID --client-secret SECRET` signs in with an OAuth app of your own, for a server that lets nobody register (GitHub's).
@@ -18,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **mcp**: a server configured on this machine hides the same service connected through your account (matched by the connector name or URL that account tools carry in `_meta`), so the model never sees its tools twice; the project, user and system configuration, then the account, are the tiers, highest first. `sven mcp list` shows the servers on this machine and your account's `connectors` apart.
 
 ### Fixed
+- **cli**: adding an MCP server that needs a sign-in no longer prints the MCP SDK's internal "worker quit with fatal" error before the sign-in starts; with `-v` it is still shown.
 - **tui**: every turn sent from the interactive session carries the system prompt again; a turn sent from an idle TUI went out without it (no identity, guidelines, project context or skills). Headless runs were not affected.
 - **mcp**: adding a server that lets nobody register (GitHub's) no longer opens the browser on an error page with a made-up client id; it stops before the browser and says what works.
 - **mcp**: a sign-in record from an older release (no token endpoint) no longer makes `sven mcp add NAME URL` silently write a local file; it says to run `sven auth login` again or use `--local`.
