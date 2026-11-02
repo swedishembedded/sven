@@ -164,24 +164,7 @@ pub async fn exchange_start_credential_with(
     let found = crate::client::discover(&server).await?;
     // The credential goes where this names, and the token minted for it
     // after.
-    for (what, url) in [
-        ("control_url", &found.control_url),
-        ("openai_base_url", &found.openai_base_url),
-    ]
-    .into_iter()
-    .chain(found.mcp_url.as_ref().map(|url| ("mcp_url", url)))
-    .chain(
-        found
-            .mcp_token_url
-            .as_ref()
-            .map(|url| ("mcp_token_url", url)),
-    ) {
-        anyhow::ensure!(
-            crate::client::same_origin(&server, url),
-            "{server} names {url} as its {what}, which is not on the same origin as the \
-             server; sven will not send the start credential there"
-        );
-    }
+    crate::client::ensure_on_server(&server, &found, &[], "the start credential")?;
     let http = crate::client::http()?;
     let url = format!("{}/start", found.control_url.trim_end_matches('/'));
     let started = tokio::select! {

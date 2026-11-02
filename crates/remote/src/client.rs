@@ -160,6 +160,38 @@ fn is_loopback(url: &reqwest::Url) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
+/// Refuses unless every URL `found` names, and each of `also`, is on
+/// `server`'s own origin: what is sent to them (`sent`, as the refusal says
+/// it) must not reach a third party.
+pub(crate) fn ensure_on_server(
+    server: &str,
+    found: &RemoteDiscovery,
+    also: &[(&str, &str)],
+    sent: &str,
+) -> anyhow::Result<()> {
+    let named = [
+        ("control_url", found.control_url.as_str()),
+        ("openai_base_url", found.openai_base_url.as_str()),
+    ]
+    .into_iter()
+    .chain(found.mcp_url.as_deref().map(|url| ("mcp_url", url)))
+    .chain(
+        found
+            .mcp_token_url
+            .as_deref()
+            .map(|url| ("mcp_token_url", url)),
+    )
+    .chain(also.iter().copied());
+    for (what, url) in named {
+        anyhow::ensure!(
+            same_origin(server, url),
+            "{server} names {url} as its {what}, which is not on the same origin as the \
+             server; sven will not send {sent} there"
+        );
+    }
+    Ok(())
+}
+
 /// Whether `url` is on the same origin (scheme, host and port) as `server`.
 /// What a server's discovery document names for the token and the model key
 /// to be sent to must be, or a document that was altered on the way (or a
@@ -588,6 +620,37 @@ impl RemoteClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Nothing a sign-in sends goes off the server's origin: the control and
+    /// model APIs, the MCP endpoint and where its tokens are traded.
+    #[test]
+    fn every_url_a_sign_in_sends_to_is_on_the_servers_origin() {
+        let found = |mcp_token_url: &str| -> RemoteDiscovery {
+            serde_json::from_value(serde_json::json!({
+                "protocol_version": 1,
+                "authorize_url": "https://s/connect",
+                "control_url": "https://s/api/workspace",
+                "openai_base_url": "https://s/v1",
+                "mcp_url": "https://s/api/mcp",
+                "mcp_token_url": mcp_token_url,
+            }))
+            .unwrap()
+        };
+        assert!(
+            ensure_on_server("https://s", &found("https://s/api/mcp/token"), &[], "it").is_ok()
+        );
+        let refused =
+            ensure_on_server("https://s", &found("https://evil.example/token"), &[], "it")
+                .unwrap_err();
+        assert!(refused.to_string().contains("mcp_token_url"), "{refused}");
+        assert!(ensure_on_server(
+            "https://s",
+            &found("https://s/t"),
+            &[("device_token_url", "https://x/t")],
+            "it"
+        )
+        .is_err());
+    }
 
     #[test]
     fn a_bare_address_gets_the_scheme_its_host_needs() {

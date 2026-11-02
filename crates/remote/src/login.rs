@@ -211,26 +211,15 @@ pub async fn sign_in_with(
         );
     };
     // The token, the device code and the model key go where this names.
-    for (what, url) in [
-        ("control_url", &found.control_url),
-        ("openai_base_url", &found.openai_base_url),
-        ("device_authorization_url", &request_url.to_string()),
-        ("device_token_url", &token_url.to_string()),
-    ]
-    .into_iter()
-    .chain(found.mcp_url.as_ref().map(|url| ("mcp_url", url)))
-    .chain(
-        found
-            .mcp_token_url
-            .as_ref()
-            .map(|url| ("mcp_token_url", url)),
-    ) {
-        anyhow::ensure!(
-            crate::client::same_origin(&server, url),
-            "{server} names {url} as its {what}, which is not on the same origin as the \
-             server; sven will not send your sign-in there"
-        );
-    }
+    crate::client::ensure_on_server(
+        &server,
+        &found,
+        &[
+            ("device_authorization_url", request_url),
+            ("device_token_url", token_url),
+        ],
+        "your sign-in",
+    )?;
     let http = crate::client::http()?;
     let grant = device::request(&http, request_url, name).await?;
     say(&format!(
