@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.6] - 2026-11-02
+
 ### Added
 - **mcp**: `mcp_servers.<name>.tools` says what sven may do with each of a server's tools without asking: `allow`, `ask` (the default) or `deny`, by tool name or `"*"`. A tool the server marks destructive still asks under `"*": allow`.
 - **mcp**: signed in to a server that offers connected accounts (`sven auth login`, `sven rc`), every session gets the ones allowed on that computer as the MCP server `connectors`, reached with short-lived tokens traded for the machine's key (the key never goes to the endpoint); hosted hosts too. `tools.only` takes an entry ending in `*` to admit one server's tools.
