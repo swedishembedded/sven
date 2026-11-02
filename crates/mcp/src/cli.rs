@@ -50,8 +50,8 @@ pub enum McpCommands {
 
     /// Add an MCP server to a configuration file and check it.
     ///
-    ///   sven mcp add docs https://mcp.example.com/mcp --oauth
-    ///   sven mcp add github --env GITHUB_TOKEN='${GITHUB_TOKEN}' -- npx -y @modelcontextprotocol/server-github
+    ///   `sven mcp add docs https://mcp.example.com/mcp --oauth`
+    ///   `sven mcp add github --env GITHUB_TOKEN='${GITHUB_TOKEN}' -- npx -y @modelcontextprotocol/server-github`
     ///
     /// A URL is a Streamable HTTP server; anything else is the command (and
     /// arguments) of a stdio server. Write a secret as `${VAR}`, so the file
