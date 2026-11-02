@@ -34,10 +34,6 @@ use url::Url;
 use crate::callback;
 use crate::config::McpOAuthConfig;
 
-/// The client id used when the authorization server offers no registration
-/// and none is configured; some servers accept any public client.
-const FALLBACK_CLIENT_ID: &str = "sven-mcp-client";
-
 /// The files of the token store sven used before it signed in through
 /// `rmcp`. Their tokens are not carried over (each server is signed in to
 /// again); the files are removed so no stale secret stays on disk.
@@ -275,6 +271,21 @@ pub async fn sign_in(store: &Arc<TokenStore>, params: SignIn<'_>) -> Result<()> 
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
             && oauth.client_metadata_url.is_some();
+    // A server that lets nobody register needs a client of one's own. A
+    // made-up client id only sends the browser to an error page, so the
+    // sign-in stops here, before any browser opens, and says what works.
+    if oauth.client_id.is_none() && !can_register {
+        anyhow::bail!(
+            "{key} does not let sven register itself, so signing in needs an OAuth app of your own. \
+             Register one with the service, with the callback address {callback}, and add it: \
+             `sven mcp add {key} {url} --client-id ID --client-secret SECRET`. \
+             Or, if the service takes a token: `sven mcp add {key} {url} --header 'Authorization=Bearer TOKEN'`. \
+             Signed in to a sven account? Add it under Settings > Connectors there instead.",
+            key = params.key,
+            url = params.url,
+            callback = redirect.redirect_uri,
+        );
+    }
     manager.set_metadata(resolution.metadata);
 
     let mut request = AuthorizationRequest::new(redirect.redirect_uri.clone())
@@ -283,15 +294,13 @@ pub async fn sign_in(store: &Arc<TokenStore>, params: SignIn<'_>) -> Result<()> 
     if let Some(url) = &oauth.client_metadata_url {
         request = request.with_client_metadata_url(url.clone());
     }
-    match (&oauth.client_id, can_register) {
-        (Some(id), _) => {
-            request = request.with_preregistered_client(id.clone());
-            if let Some(secret) = &oauth.client_secret {
-                request = request.with_client_secret(secret.clone());
-            }
+    // A client of one's own when configured; otherwise the server registers
+    // one (checked above that it can).
+    if let Some(id) = &oauth.client_id {
+        request = request.with_preregistered_client(id.clone());
+        if let Some(secret) = &oauth.client_secret {
+            request = request.with_client_secret(secret.clone());
         }
-        (None, false) => request = request.with_preregistered_client(FALLBACK_CLIENT_ID),
-        (None, true) => {}
     }
     let session = AuthorizationSession::new(manager, request)
         .await

@@ -20,12 +20,22 @@ use sven_config::scope::{self, Scope};
 /// # Errors
 ///
 /// The options do not fit the transport, or the entry is no valid server.
+/// An OAuth client of one's own, registered with the service, for a server
+/// that does not let sven register itself.
+pub struct OAuthClient<'a> {
+    pub id: &'a str,
+    pub secret: Option<&'a str>,
+}
+
 pub fn server_entry(
     target: &[String],
     headers: &[String],
     env: &[String],
     oauth: bool,
+    client: Option<OAuthClient<'_>>,
 ) -> anyhow::Result<serde_yaml::Value> {
+    // A client of one's own signs in with OAuth.
+    let oauth = oauth || client.is_some();
     let pairs = |items: &[String], what: &str| -> anyhow::Result<serde_yaml::Mapping> {
         items
             .iter()
@@ -76,7 +86,14 @@ pub fn server_entry(
         entry.insert("env".into(), pairs(env, "--env")?.into());
     }
     if oauth {
-        entry.insert("oauth".into(), serde_yaml::Mapping::new().into());
+        let mut settings = serde_yaml::Mapping::new();
+        if let Some(client) = &client {
+            settings.insert("client_id".into(), client.id.into());
+            if let Some(secret) = client.secret {
+                settings.insert("client_secret".into(), secret.into());
+            }
+        }
+        entry.insert("oauth".into(), settings.into());
     }
     let entry = serde_yaml::Value::Mapping(entry);
     // The entry must read back as a server, as the configuration loader
@@ -141,4 +158,29 @@ pub fn remove(scope: Scope, name: &str) -> anyhow::Result<PathBuf> {
     anyhow::ensure!(removed, "{} has no MCP server '{name}'", file.display());
     scope::write_file(&file, &document)?;
     Ok(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_client_of_ones_own_signs_in_with_oauth() {
+        let target = vec!["https://api.githubcopilot.com/mcp/".to_string()];
+        let entry = server_entry(
+            &target,
+            &[],
+            &[],
+            false,
+            Some(OAuthClient {
+                id: "Iv1.abc",
+                secret: Some("s3cret"),
+            }),
+        )
+        .unwrap();
+        let server: crate::McpServerConfig = serde_yaml::from_value(entry).unwrap();
+        let oauth = server.oauth.expect("signs in with OAuth");
+        assert_eq!(oauth.client_id.as_deref(), Some("Iv1.abc"));
+        assert_eq!(oauth.client_secret.as_deref(), Some("s3cret"));
+    }
 }

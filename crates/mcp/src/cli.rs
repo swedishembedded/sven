@@ -75,6 +75,14 @@ pub enum McpCommands {
         /// discovered from the server.
         #[arg(long)]
         oauth: bool,
+        /// The client id of an OAuth app of your own, for a server that does
+        /// not let sven register itself (GitHub's); implies --oauth.
+        #[arg(long, value_name = "ID")]
+        client_id: Option<String>,
+        /// That app's client secret, kept in the configuration file (which is
+        /// readable by its owner alone).
+        #[arg(long, value_name = "SECRET", requires = "client_id")]
+        client_secret: Option<String>,
         /// Which configuration file: `user` (yours, every project),
         /// `project` (this directory's) or `workspace` (the nearest above).
         #[arg(long, default_value = "user")]
@@ -139,9 +147,18 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             headers,
             env,
             oauth,
+            client_id,
+            client_secret,
             scope,
         } => {
-            let entry = sven_mcp_client::config_edit::server_entry(target, headers, env, *oauth)?;
+            let client = client_id
+                .as_deref()
+                .map(|id| sven_mcp_client::config_edit::OAuthClient {
+                    id,
+                    secret: client_secret.as_deref(),
+                });
+            let entry =
+                sven_mcp_client::config_edit::server_entry(target, headers, env, *oauth, client)?;
             add(name, entry, *scope).await
         }
         McpCommands::Remove { name, scope } => remove(name, *scope),

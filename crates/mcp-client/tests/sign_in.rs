@@ -27,7 +27,10 @@ struct Seen {
 /// One server playing the MCP server's metadata and its authorization
 /// server. Its authorize endpoint sends the browser back with `iss` set to
 /// `iss_in_response` (its own issuer when `None`).
-async fn authorization_server(iss_in_response: Option<String>) -> (String, Arc<Mutex<Seen>>) {
+async fn authorization_server(
+    iss_in_response: Option<String>,
+    registration: bool,
+) -> (String, Arc<Mutex<Seen>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let seen = Arc::new(Mutex::new(Seen::default()));
@@ -49,15 +52,18 @@ async fn authorization_server(iss_in_response: Option<String>) -> (String, Arc<M
                         }))
                     }
                     ("GET", p) if p.starts_with("/.well-known/oauth-authorization-server") => {
-                        json(serde_json::json!({
+                        let mut metadata = serde_json::json!({
                             "issuer": base,
                             "authorization_endpoint": format!("{base}/authorize"),
                             "token_endpoint": format!("{base}/token"),
-                            "registration_endpoint": format!("{base}/register"),
                             "code_challenge_methods_supported": ["S256"],
                             "response_types_supported": ["code"],
                             "authorization_response_iss_parameter_supported": true,
-                        }))
+                        });
+                        if registration {
+                            metadata["registration_endpoint"] = format!("{base}/register").into();
+                        }
+                        json(metadata)
                     }
                     ("POST", "/register") => (
                         201,
@@ -182,7 +188,20 @@ fn free_port() -> u16 {
 async fn run(
     iss_in_response: Option<String>,
 ) -> (anyhow::Result<()>, TokenStore, String, Arc<Mutex<Seen>>) {
-    let (origin, seen) = authorization_server(iss_in_response).await;
+    run_with(iss_in_response, true, None).await.0
+}
+
+/// A sign-in against a server that does or does not let clients register,
+/// with `client_id` configured or not; and whether a browser was opened.
+async fn run_with(
+    iss_in_response: Option<String>,
+    registration: bool,
+    client_id: Option<&str>,
+) -> (
+    (anyhow::Result<()>, TokenStore, String, Arc<Mutex<Seen>>),
+    bool,
+) {
+    let (origin, seen) = authorization_server(iss_in_response, registration).await;
     let mcp = format!("{origin}/mcp");
     let dir = tempfile::tempdir().unwrap().keep();
     let store = Arc::new(TokenStore::new(dir.join("mcp-oauth.json")));
@@ -190,10 +209,18 @@ async fn run(
     let oauth = McpOAuthConfig {
         redirect_uri: Some(format!("http://127.0.0.1:{port}/callback")),
         callback_port: Some(port),
+        client_id: client_id.map(str::to_string),
+        client_secret: client_id.map(|_| "the-secret".to_string()),
         ..McpOAuthConfig::default()
     };
     let key = TokenStore::key("srv", &mcp);
-    let present = browser();
+    let opened = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let follow = browser();
+    let flag = Arc::clone(&opened);
+    let present = move |url: &str| {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        follow(url);
+    };
     let result = sign_in(
         &store,
         SignIn {
@@ -207,7 +234,8 @@ async fn run(
     )
     .await;
     let store = Arc::try_unwrap(store).ok().unwrap();
-    (result, store, key, seen)
+    let opened = opened.load(std::sync::atomic::Ordering::SeqCst);
+    ((result, store, key, seen), opened)
 }
 
 #[tokio::test]
@@ -262,7 +290,7 @@ async fn a_response_from_another_issuer_signs_in_nothing() {
 #[tokio::test]
 async fn a_refused_sign_in_is_forgotten_and_a_new_one_asked_for() {
     use sven_mcp_client::{McpEvent, McpManager, McpServerConfig, McpTransport, ServerStatus};
-    let (origin, _) = authorization_server(None).await;
+    let (origin, _) = authorization_server(None, true).await;
     let mcp = format!("{origin}/mcp");
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mcp-oauth.json");
@@ -311,4 +339,31 @@ async fn a_refused_sign_in_is_forgotten_and_a_new_one_asked_for() {
         manager.server_statuses().await[0].status,
         ServerStatus::NeedsAuth { .. }
     ));
+}
+
+/// A server that lets nobody register (GitHub's does not) cannot be signed
+/// in to without a client of one's own: refused before any browser opens,
+/// saying what works instead.
+#[tokio::test]
+async fn a_server_that_lets_nobody_register_is_refused_with_what_to_do() {
+    let ((result, _, _, seen), opened) = run_with(None, false, None).await;
+    let message = format!("{:#}", result.unwrap_err());
+    assert!(
+        !opened,
+        "a browser was opened for a sign-in that cannot work"
+    );
+    assert!(seen.lock().unwrap().authorize_query.is_none());
+    for hint in ["--client-id", "--header", "Connectors"] {
+        assert!(message.contains(hint), "{hint} missing from: {message}");
+    }
+}
+
+/// With a client of one's own configured, that client signs in.
+#[tokio::test]
+async fn a_configured_client_signs_in_where_nobody_may_register() {
+    let ((result, _, _, seen), opened) = run_with(None, false, Some("own-app")).await;
+    result.unwrap();
+    assert!(opened);
+    let query = seen.lock().unwrap().authorize_query.clone().unwrap();
+    assert!(query.contains("client_id=own-app"), "{query}");
 }

@@ -279,6 +279,7 @@ impl App {
                                             &[],
                                             &[],
                                             false,
+                                            None,
                                         )?;
                                         let config: sven_mcp_client::McpServerConfig =
                                             serde_yaml::from_value(entry.clone())?;
