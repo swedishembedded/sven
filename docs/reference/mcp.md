@@ -51,6 +51,7 @@ mcp_servers:
 | `env` | `{}` | environment variables for a stdio server |
 | `oauth` | none | OAuth 2.0 settings for an http server (below) |
 | `timeout_secs` | `30` | longest a single call may take |
+| `tools` | `{}` | what sven may do with each tool without asking: `allow`, `ask` or `deny`, by tool name, `"*"` for every tool not named (below) |
 
 `${VAR}` and `${VAR:-default}` in any value of the configuration file are
 replaced from the environment when the file is read, so secrets need not be
@@ -81,7 +82,22 @@ and lists them again when the server says they changed.
   characters. For the permission model an MCP tool is a network call
   (`NetworkAccess`): the session mode's policy decides whether it may run at
   all, and its default policy is to ask, so under manual approval, or through
-  an ACP client, each call is put to a person.
+  an ACP client, each call is put to a person. A server's `tools` setting
+  changes that per tool: `allow` runs it without asking, `deny` never offers
+  or runs it. A tool named there takes its own setting, any other the `"*"`
+  one, and a tool in neither asks. A tool the server marks destructive asks
+  under `"*": allow` unless it is named itself; the server's hints never
+  loosen a setting:
+
+  ```yaml
+  mcp_servers:
+    github:
+      transport: {type: http, url: "https://mcp.example.com/mcp"}
+      tools:
+        "*": allow          # read and change issues without asking
+        delete_repository: deny
+  ```
+
 - A tool's result reaches the agent whole: text, images and audio as
   themselves, an embedded resource as its text, a resource link as its URI,
   and a structured result as JSON when the server sent nothing else.

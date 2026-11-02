@@ -36,7 +36,9 @@ pub mod manager;
 pub use auth::TokenStore;
 pub use bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
 pub use callback::open_browser;
-pub use config::{mcp_servers_schema, McpOAuthConfig, McpServerConfig, McpServers, McpTransport};
+pub use config::{
+    mcp_servers_schema, McpOAuthConfig, McpServerConfig, McpServers, McpToolPolicy, McpTransport,
+};
 pub use events::{McpEvent, NoticeLevel};
 pub use health::{ServerStatus, ServerStatusSummary};
 pub use manager::McpManager;

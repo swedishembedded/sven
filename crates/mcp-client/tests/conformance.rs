@@ -363,6 +363,31 @@ async fn a_streamable_http_server_of_the_current_revision_lists_and_calls() {
     assert_eq!(out.parts.len(), 5);
 }
 
+async fn a_servers_tool_policy_decides_what_is_offered_and_what_asks() {
+    use sven_mcp_client::McpToolPolicy;
+    use sven_tool_api::{ApprovalPolicy, Tool};
+    let mut config = stdio("current", 10);
+    config.tools = HashMap::from([
+        ("*".to_string(), McpToolPolicy::Deny),
+        ("kinds".to_string(), McpToolPolicy::Allow),
+        ("structured".to_string(), McpToolPolicy::Ask),
+    ]);
+    let c = client(vec![("new", config)]);
+    c.manager.connect("new").await.unwrap();
+    let tools = c.manager.tools().await;
+    let offered: Vec<(&str, ApprovalPolicy)> = tools
+        .iter()
+        .map(|t| (t.name(), t.default_policy()))
+        .collect();
+    assert_eq!(
+        offered,
+        vec![
+            ("new-kinds", ApprovalPolicy::Auto),
+            ("new-structured", ApprovalPolicy::Ask)
+        ]
+    );
+}
+
 async fn a_401_in_a_headless_run_asks_for_a_sign_in_and_never_waits() {
     let url = serve_unauthorized().await;
     let mut c = client(vec![("locked", http(&url, 10))]);
@@ -421,6 +446,7 @@ fn main() {
             a_call_the_server_never_answers_ends_at_the_timeout,
             a_server_that_dies_mid_call_fails_the_call_at_once,
             a_streamable_http_server_of_the_current_revision_lists_and_calls,
+            a_servers_tool_policy_decides_what_is_offered_and_what_asks,
             a_401_in_a_headless_run_asks_for_a_sign_in_and_never_waits,
         ]
     });

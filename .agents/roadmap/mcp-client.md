@@ -79,9 +79,11 @@ and by hand against a TypeScript SDK v2 server (negotiated 2026-07-28).
 Tasks extension (`io.modelcontextprotocol/tasks`) follows once a gateway or
 server needs it.
 
-**M4 Tool policy by action** stays open: per-server and per-tool policy in
-config, annotations tightening the default. A gateway's own policy covers
-the connected accounts.
+**M4 Tool policy by action: done 2026-11-02.** `mcp_servers.<name>.tools`
+(`allow`, `ask`, `deny`, by name or `*`; a destructive hint only tightens),
+applied in `McpManager::tools` and in manual approval's preapproval for the
+session's own registry. Child sessions still ask for an allowed MCP tool
+(their preapproval has no registry): conservative, left as is.
 
 ## Not planned
 

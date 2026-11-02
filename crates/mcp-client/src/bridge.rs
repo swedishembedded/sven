@@ -38,6 +38,8 @@ pub struct McpTool {
     schema: Value,
     /// Reference to the multi-server manager for execution.
     manager: Arc<McpManager>,
+    /// Runs without asking (`tools: {<tool>: allow}`); otherwise asks.
+    allowed: bool,
 }
 
 impl McpTool {
@@ -47,6 +49,7 @@ impl McpTool {
         description: Option<String>,
         schema: Value,
         manager: Arc<McpManager>,
+        allowed: bool,
     ) -> Self {
         let server = server_name.into();
         let original = original_name.into();
@@ -74,6 +77,7 @@ impl McpTool {
             summary,
             schema,
             manager,
+            allowed,
         }
     }
 
@@ -105,7 +109,11 @@ impl Tool for McpTool {
     }
 
     fn default_policy(&self) -> ApprovalPolicy {
-        ApprovalPolicy::Ask
+        if self.allowed {
+            ApprovalPolicy::Auto
+        } else {
+            ApprovalPolicy::Ask
+        }
     }
 
     fn output_category(&self) -> OutputCategory {

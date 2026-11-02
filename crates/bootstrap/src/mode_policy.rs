@@ -109,18 +109,29 @@ fn host_narrowing(policy: PermissionPolicy, agent_mode: AgentMode) -> Permission
 }
 
 /// The calls manual approval approves without asking: a `shell` command
-/// matching `tools.auto_approve_patterns` (and no deny pattern).
-pub(crate) fn preapproval(tools: &crate::config::ToolsConfig) -> sven_executors::Preapproval {
+/// matching `tools.auto_approve_patterns` (and no deny pattern), and, given
+/// the session's `registry`, a call of an MCP tool its server's
+/// configuration allows (`mcp_servers.<name>.tools: {<tool>: allow}`).
+pub(crate) fn preapproval(
+    tools: &crate::config::ToolsConfig,
+    registry: Option<std::sync::Arc<sven_tool_registry::ToolRegistry>>,
+) -> sven_executors::Preapproval {
     let policy = tools.policy();
     std::sync::Arc::new(move |call: &sven_hsm::GatedCall| {
-        call.name == "shell"
+        let allowed_shell = call.name == "shell"
             && call
                 .args
                 .get("shell_command")
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|command| {
                     policy.decide(command) == sven_tool_api::ApprovalPolicy::Auto
+                });
+        allowed_shell
+            || registry.as_ref().is_some_and(|registry| {
+                registry.get(&call.name).is_some_and(|tool| {
+                    tool.is_mcp() && tool.default_policy() == sven_tool_api::ApprovalPolicy::Auto
                 })
+            })
     })
 }
 
@@ -215,6 +226,70 @@ pub(crate) fn exceeds(
 mod tests {
     use super::*;
     use sven_machines::{ModeRegistry, ReactiveAgentMachine, SdlcMachine};
+
+    /// A tool of the given name, MCP or not, running without asking or not.
+    struct Policied {
+        name: &'static str,
+        mcp: bool,
+        auto: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl sven_tool_api::Tool for Policied {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn is_mcp(&self) -> bool {
+            self.mcp
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::NetworkAccess
+        }
+        fn description(&self) -> &str {
+            "t"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn default_policy(&self) -> sven_tool_api::ApprovalPolicy {
+            if self.auto {
+                sven_tool_api::ApprovalPolicy::Auto
+            } else {
+                sven_tool_api::ApprovalPolicy::Ask
+            }
+        }
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
+            sven_tool_api::ToolOutput::ok(&call.id, "")
+        }
+    }
+
+    /// Manual approval approves without asking a call of an MCP tool its
+    /// server's configuration allows, and nothing else that merely says so.
+    #[test]
+    fn an_allowed_mcp_tool_is_preapproved_and_nothing_else_is() {
+        let mut registry = sven_tool_registry::ToolRegistry::new();
+        for (name, mcp, auto) in [
+            ("srv-read", true, true),
+            ("srv-write", true, false),
+            ("local", false, true),
+        ] {
+            registry.register(Policied { name, mcp, auto });
+        }
+        let preapproved = super::preapproval(
+            &crate::config::ToolsConfig::default(),
+            Some(std::sync::Arc::new(registry)),
+        );
+        let call = |name: &str| sven_hsm::GatedCall {
+            name: name.into(),
+            args: serde_json::json!({}),
+        };
+        assert!(preapproved(&call("srv-read")));
+        assert!(!preapproved(&call("srv-write")));
+        assert!(!preapproved(&call("local")));
+        assert!(!preapproved(&call("unknown")));
+        let without_registry = super::preapproval(&crate::config::ToolsConfig::default(), None);
+        assert!(!without_registry(&call("srv-read")));
+    }
 
     /// A session may switch only to a mode that can do nothing, in any of
     /// its states, that the starting mode cannot do in one of its own.

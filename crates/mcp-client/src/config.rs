@@ -119,6 +119,39 @@ fn default_mcp_timeout() -> u64 {
     30
 }
 
+/// What sven may do with one of a server's tools without asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpToolPolicy {
+    /// Runs without asking, in every approval mode.
+    Allow,
+    /// Asks a person first, unless the session's approval mode runs tools
+    /// without asking.
+    Ask,
+    /// Never offered, never run.
+    Deny,
+}
+
+/// The policy of each of a server's tools: by its name, `*` for every tool
+/// not named; a tool in neither asks. A server's own hints only ever
+/// tighten it: a tool the server marks destructive asks under a `*: allow`
+/// unless it is named itself.
+#[must_use]
+pub fn tool_policy(
+    policies: &HashMap<String, McpToolPolicy>,
+    tool: &str,
+    destructive: bool,
+) -> McpToolPolicy {
+    if let Some(named) = policies.get(tool) {
+        return *named;
+    }
+    match policies.get("*") {
+        Some(McpToolPolicy::Allow) if destructive => McpToolPolicy::Ask,
+        Some(policy) => *policy,
+        None => McpToolPolicy::Ask,
+    }
+}
+
 /// Configuration for a single external MCP server.
 ///
 /// MCP servers extend sven with additional tools, prompts, and resources.
@@ -164,6 +197,9 @@ pub struct McpServerConfig {
     /// Request timeout in seconds.
     #[serde(default = "default_mcp_timeout")]
     pub timeout_secs: u64,
+    /// What sven may do with each tool without asking ([`tool_policy`]).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub tools: HashMap<String, McpToolPolicy>,
 }
 
 impl McpServerConfig {
@@ -203,6 +239,7 @@ impl McpServerConfig {
                 ]),
             ),
             ("timeout_secs", Schema::value()),
+            ("tools", Schema::value()),
         ])
     }
 }
@@ -215,6 +252,7 @@ impl Default for McpServerConfig {
             env: HashMap::new(),
             oauth: None,
             timeout_secs: default_mcp_timeout(),
+            tools: HashMap::new(),
         }
     }
 }
@@ -230,6 +268,23 @@ mod tests {
         assert!(server.enabled);
         assert_eq!(server.timeout_secs, 30);
         assert!(server.env.is_empty() && server.oauth.is_none());
+    }
+
+    #[test]
+    fn a_tool_policy_is_by_name_then_star_and_a_destructive_hint_only_tightens() {
+        let server: McpServerConfig = serde_yaml::from_str(
+            "transport: {type: http, url: 'https://x'}\ntools: {'*': allow, delete_repo: allow, push: deny}\n",
+        )
+        .unwrap();
+        let p = |tool, destructive| tool_policy(&server.tools, tool, destructive);
+        assert_eq!(p("list_issues", false), McpToolPolicy::Allow);
+        assert_eq!(p("close_issue", true), McpToolPolicy::Ask);
+        assert_eq!(p("delete_repo", true), McpToolPolicy::Allow);
+        assert_eq!(p("push", false), McpToolPolicy::Deny);
+        assert_eq!(
+            tool_policy(&HashMap::new(), "anything", false),
+            McpToolPolicy::Ask
+        );
     }
 
     #[test]

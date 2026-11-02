@@ -280,7 +280,7 @@ impl SdlcChildSpawner {
             Some(gates) => builder.with_user_slot(Box::new(
                 UserExecutor::new(gates.questions.clone(), gates.approvals.clone())
                     .with_approval_mode(gates.approval_mode)
-                    .with_preapproval(crate::mode_policy::preapproval(&self.config.tools)),
+                    .with_preapproval(crate::mode_policy::preapproval(&self.config.tools, None)),
             )),
             None => builder,
         }

@@ -427,6 +427,7 @@ fn build_mcp_config_from_args(args: &Value) -> McpServerConfig {
         env,
         oauth,
         timeout_secs: 30,
+        ..McpServerConfig::default()
     }
 }
 

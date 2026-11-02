@@ -21,7 +21,7 @@ use tracing::{debug, info, warn};
 
 use crate::auth::{self, SignIn, TokenStore};
 use crate::bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
-use crate::config::{McpServerConfig, McpTransport};
+use crate::config::{McpServerConfig, McpToolPolicy, McpTransport};
 use crate::connection::{AuthRequired, Connection, Endpoint, ListChanged};
 use crate::events::McpEvent;
 use crate::health::{HealthState, ServerStatus, ServerStatusSummary};
@@ -404,20 +404,37 @@ impl McpManager {
 
     // ── Tool access ───────────────────────────────────────────────────────────
 
+    /// Every tool of every connected server the configuration does not
+    /// deny, each asking or not as its policy says
+    /// ([`crate::config::tool_policy`]).
     pub async fn tools(self: &Arc<Self>) -> Vec<McpTool> {
+        let config = self.config.read().await;
         let servers = self.servers.read().await;
         let mut tools = Vec::new();
         for (name, state) in servers.iter() {
             if !state.health.status.is_connected() {
                 continue;
             }
+            let policies = config.get(name).map(|c| &c.tools);
             for t in &state.tools {
+                let destructive = t
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.destructive_hint)
+                    .unwrap_or(false);
+                let policy = policies.map_or(McpToolPolicy::Ask, |p| {
+                    crate::config::tool_policy(p, &t.name, destructive)
+                });
+                if policy == McpToolPolicy::Deny {
+                    continue;
+                }
                 tools.push(McpTool::new(
                     name.clone(),
                     t.name.to_string(),
                     t.description.as_deref().map(str::to_string),
                     Value::Object((*t.input_schema).clone()),
                     Arc::clone(self),
+                    policy == McpToolPolicy::Allow,
                 ));
             }
         }
@@ -766,7 +783,7 @@ fn config_changed(old: &McpServerConfig, new: &McpServerConfig) -> bool {
     if old.timeout_secs != new.timeout_secs {
         return true;
     }
-    if old.env != new.env {
+    if old.env != new.env || old.tools != new.tools {
         return true;
     }
     let old_t = serde_json::to_string(&old.transport).unwrap_or_default();

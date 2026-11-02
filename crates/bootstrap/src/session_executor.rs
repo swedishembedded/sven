@@ -201,7 +201,10 @@ pub(crate) fn compose(
             Arc::clone(&parts.call_id_to_thread),
         ))
         .with_approval_mode(parts.gates.approval_mode)
-        .with_preapproval(crate::mode_policy::preapproval(&parts.config.tools));
+        .with_preapproval(crate::mode_policy::preapproval(
+            &parts.config.tools,
+            Some(Arc::clone(&parts.tool_registry)),
+        ));
     let user_executor = if parts.gates.park_approvals {
         user_executor.with_parked_approvals()
     } else {

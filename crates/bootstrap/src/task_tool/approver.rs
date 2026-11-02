@@ -40,7 +40,7 @@ impl ChildApprover {
             (Some(host), _) => Some(Self::Host(host)),
             (None, ApprovalMode::Manual) => Some(Self::Gate(Arc::new(
                 crate::session_handles::GateApprover::new(approvals.clone())
-                    .with_preapproval(crate::mode_policy::preapproval(tools)),
+                    .with_preapproval(crate::mode_policy::preapproval(tools, None)),
             ))),
             (None, ApprovalMode::Auto) => None,
         }

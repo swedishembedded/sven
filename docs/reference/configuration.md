@@ -1331,6 +1331,7 @@ and resources. Each server is identified by its key in the map (e.g. `atlassian`
 | `env` | Environment variables for stdio servers; values accept `${VAR}` and `${VAR:-default}` |
 | `oauth` | OAuth 2.0 config for HTTP servers that require authentication |
 | `timeout_secs` | Longest a single call to the server may take, in seconds (default: `30`, also for `0`). It bounds the whole call - connecting, the response and, for HTTP, the response body - so a tool that needs longer needs a larger value. A call that exceeds it fails with an error naming the method |
+| `tools` | What sven may do with each of the server's tools without asking: `allow`, `ask` or `deny`, by tool name, `"*"` for every tool not named; a tool in neither asks, and one the server marks destructive asks under `"*": allow` unless named ([MCP](mcp.md#tools-and-prompts)) |
 
 A server's tools are named `<server>-<tool>` (server `github`, tool
 `list_repos`: `github-list_repos`).
