@@ -21,7 +21,16 @@ export RUSTC_WRAPPER = sccache
 endif
 
 NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-CARGO_FLAGS ?= --jobs $(NPROC)
+# Builds and tests take at most 80% of the CPUs (at least one), so a full
+# lane leaves the machine usable. Override with `make JOBS=<n>`.
+ifndef JOBS
+JOBS := $(shell n=$$(( $(NPROC) * 4 / 5 )); [ $$n -ge 1 ] && echo $$n || echo 1)
+endif
+CARGO_FLAGS ?= --jobs $(JOBS)
+# Every cargo call, and every script run from here, builds with JOBS jobs,
+# and test binaries run as many tests at once.
+export CARGO_BUILD_JOBS ?= $(JOBS)
+export RUST_TEST_THREADS ?= $(JOBS)
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 TAG     := v$(VERSION)
 DIST    ?= dist
