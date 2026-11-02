@@ -116,14 +116,25 @@ there, reached with this machine's key. See
 | Where | Command | Effect |
 |-------|---------|--------|
 | TUI | `/mcp` | the servers, their status and tools |
-| TUI | `/mcp add <name> <url>`, `/mcp add <name> <command> [args...]` | add a server to your configuration file and connect it; an http server that asks for a sign-in gets one |
+| TUI | `/mcp add <name> <url>`, `/mcp add <name> <command> [args...]` | signed in to sven, an address is added to your account (see below); otherwise add a server to your configuration file and connect it; an http server that asks for a sign-in gets one |
 | TUI | `/mcp remove <name>` | remove it from your configuration file and disconnect it |
 | TUI | `/mcp auth <name>`, `/mcp logout <name>` | sign in, forget the sign-in |
 | TUI | `/mcp enable <name>`, `/mcp disable <name>` | connect it and offer its tools, or withdraw them, for this session (the configuration file is unchanged) |
-| shell | `sven mcp add <name> <url>` (`--header`, `--oauth`), `sven mcp add <name> [--env NAME=VALUE] -- <command> [args...]` | add a server to a configuration file (`--scope user`, the default, `project` or `workspace`), then say whether it connects and what it needs |
+| shell | `sven mcp add <name> <url>` (`--header`, `--oauth`, `--local`), `sven mcp add <name> [--env NAME=VALUE] -- <command> [args...]` | signed in to sven, an address alone is added to your account (see below); otherwise, or with `--local`, add a server to a configuration file (`--scope user`, the default, `project` or `workspace`), then say whether it connects and what it needs |
 | shell | `sven mcp remove <name>` | remove it from that file |
 | shell | `sven mcp list` | each configured server, whether it connects, its tool count, or what it needs |
 | shell | `sven mcp auth <name>`, `sven mcp logout <name>` | sign in, forget the sign-in |
+
+Signed in to sven (`sven auth login`), `sven mcp add github
+https://api.githubcopilot.com/mcp/` adds the server to your account as a
+connector of your own instead of to a file. sven prints the service's sign-in
+page (and opens it when this machine has a browser); open it in any browser
+where you are signed in to sven. Your sign-in to the service stays with your
+account, never on this machine, and works for a service that lets nobody
+register (GitHub) once your sven administrator set up a sign-in app for it.
+Its tools then reach sven through the `connectors` server on this computer;
+the TUI waits for them and says when they are there. A header, `--env`, a
+client of your own or `--local` keep the server in a file here.
 
 A server's tool list that changes while a TUI session runs reaches the agent at
 once, held to `tools.only` and `tools.disabled`.
