@@ -42,6 +42,24 @@ const FEATURES: Feature[] = [
       'Write multi-step automation in plain Markdown. H2 headings become steps, YAML frontmatter controls behavior, and template variables make workflows reusable. Version-control your process.',
   },
   {
+    icon: <WorkflowIcon />,
+    title: 'Verified Harnesses',
+    description:
+      'Write an agent workflow as YAML with the checks that decide success: tests, builds, any command you trust. A task passes when its gates pass, failures are repaired or reported, and every run can be resumed and replayed.',
+  },
+  {
+    icon: <NetworkIcon />,
+    title: 'Work From the Browser',
+    description:
+      'Run sven rc in your project and drive it from your sven account in any browser. The session runs on your machine with your tools; the machine only connects out, nothing listens.',
+  },
+  {
+    icon: <PipeIcon />,
+    title: 'MCP and Your Editor',
+    description:
+      'Connect external MCP servers, sign in to them with OAuth, or serve sven\'s own tools to another MCP host. Use it inside editors that speak the Agent Client Protocol.',
+  },
+  {
     icon: <ProvidersIcon />,
     title: '30+ Model Providers',
     description:

@@ -1,0 +1,25 @@
+# sven
+
+> sven is an open-source AI coding agent for the terminal, by Swedish Embedded AB. It reads code, runs commands, writes files and debugs real hardware over GDB, runs headless in CI, and checks its own work against the tests and commands you define. Sign in once with a sven account to use its models and credit, or bring your own provider key or a local model.
+
+## Get started
+- Install: `curl -fsSL https://sven.swedishembedded.com/install.sh | sh` (Linux x86_64 and aarch64, macOS)
+- Sign in: `sven auth login`
+- Run: `sven`
+- Create an account: https://sven.swedishembedded.com/sign-up
+
+## What it does
+- A full-screen, keyboard-driven terminal interface, and a headless mode for scripts and CI.
+- Native GDB integration: start debug servers, set breakpoints, read memory and registers on real hardware.
+- Harnesses: agent workflows in YAML whose trusted gates (tests, builds, commands) decide whether each task succeeded, with repair, resume and replay.
+- Teams of agents and delegation to sub-agents.
+- MCP: connect external MCP servers (with OAuth sign-in) or serve sven's tools to another MCP host.
+- Editor integration over the Agent Client Protocol.
+- Remote control: `sven rc` runs sessions on your machine that you drive from your sven account in a browser; the machine only connects out.
+- More than 30 model providers, local models included.
+
+## Links
+- Documentation: https://swedishembedded.com/docs/sven
+- Source (Apache-2.0): https://github.com/swedishembedded/sven
+- sven in the browser and the API: https://sven.swedishembedded.com
+- Private deployments and custom agents: https://swedishembedded.com/contact
