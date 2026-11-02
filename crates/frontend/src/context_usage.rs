@@ -289,21 +289,27 @@ impl ContextUsage {
 
     /// The category of each of `cells` equal cells of the window, in legend
     /// order, so that a category with `t` tokens covers about
-    /// `t / window * cells` cells. Cumulative rounding keeps the total exact;
-    /// a category too small for one cell shares a boundary and gets none.
-    /// Cells beyond the categories (an unknown window) are free space.
+    /// `t / window * cells` cells. With the window unknown, the cells stand
+    /// for the request instead: each category's share of what was sent.
+    /// Cumulative rounding keeps the total exact; a category too small for one
+    /// cell shares a boundary and gets none. Cells beyond the categories are
+    /// free space (all of them before anything was sent to an unknown window).
     #[must_use]
     pub fn cells(&self, cells: usize) -> Vec<ContextCategory> {
         let mut out = Vec::with_capacity(cells);
-        if self.window == 0 {
+        let whole = u64::from(if self.window == 0 {
+            self.used()
+        } else {
+            self.window
+        });
+        if whole == 0 {
             out.resize(cells, ContextCategory::FreeSpace);
             return out;
         }
         let mut cumulative: u64 = 0;
         for category in ContextCategory::ALL {
             cumulative += u64::from(self.of(category));
-            let end = ((cumulative * cells as u64 + u64::from(self.window) / 2)
-                / u64::from(self.window)) as usize;
+            let end = ((cumulative * cells as u64 + whole / 2) / whole) as usize;
             while out.len() < end.min(cells) {
                 out.push(category);
             }
@@ -472,8 +478,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_window_is_all_free_space() {
-        let u = ContextUsage::compute(&ContextInputs {
+    fn an_unknown_window_shows_each_categorys_share_of_the_request() {
+        let nothing = ContextUsage::compute(&ContextInputs {
             model: "m",
             window: 0,
             budget: None,
@@ -481,6 +487,34 @@ mod tests {
             registered_tools: &[],
             skill_count: 0,
         });
-        assert!(u.cells(10).iter().all(|c| *c == ContextCategory::FreeSpace));
+        assert!(nothing
+            .cells(10)
+            .iter()
+            .all(|c| *c == ContextCategory::FreeSpace));
+
+        let b = breakdown();
+        let sent = ContextUsage::compute(&ContextInputs {
+            model: "m",
+            window: 0,
+            budget: None,
+            breakdown: Some(&b),
+            registered_tools: &[],
+            skill_count: 0,
+        });
+        let cells = sent.cells(100);
+        assert!(
+            !cells.contains(&ContextCategory::FreeSpace),
+            "nothing is known to be free"
+        );
+        let system = cells
+            .iter()
+            .filter(|c| **c == ContextCategory::SystemPrompt)
+            .count();
+        let expected =
+            u64::from(sent.of(ContextCategory::SystemPrompt)) * 100 / u64::from(sent.used());
+        assert!(
+            system.abs_diff(expected as usize) <= 1,
+            "{system} cells for {expected}%"
+        );
     }
 }

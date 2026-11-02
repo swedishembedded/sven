@@ -231,7 +231,11 @@ pub(crate) fn context_panel_lines(usage: &ContextUsage, ascii: bool) -> StyledLi
         None => lines.push(framed(
             fact(
                 "Budget",
-                "not announced yet (it is sent with the first request)".into(),
+                if usage.measured {
+                    "none: this model names no context window".into()
+                } else {
+                    "not announced yet (it is sent with the first request)".into()
+                },
             ),
             ascii,
         )),
