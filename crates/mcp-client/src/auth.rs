@@ -240,6 +240,9 @@ pub async fn signed_in_client(
 
 /// What a sign-in needs.
 pub struct SignIn<'a> {
+    /// The server's name in `mcp_servers:`, as the person knows it.
+    pub name: &'a str,
+    /// Where its sign-in is kept in the token store.
     pub key: &'a str,
     pub url: &'a str,
     pub oauth: Option<&'a McpOAuthConfig>,
@@ -276,12 +279,13 @@ pub async fn sign_in(store: &Arc<TokenStore>, params: SignIn<'_>) -> Result<()> 
     // sign-in stops here, before any browser opens, and says what works.
     if oauth.client_id.is_none() && !can_register {
         anyhow::bail!(
-            "{key} does not let sven register itself, so signing in needs an OAuth app of your own. \
-             Register one with the service, with the callback address {callback}, and add it: \
-             `sven mcp add {key} {url} --client-id ID --client-secret SECRET`. \
-             Or, if the service takes a token: `sven mcp add {key} {url} --header 'Authorization=Bearer TOKEN'`. \
-             Signed in to a sven account? Add it under Settings > Connectors there instead.",
-            key = params.key,
+            "{name} does not let sven register itself, so signing in from this machine needs an \
+             OAuth app of your own. Register one with the service, with the callback address \
+             {callback}, and add it: `sven mcp add --local {name} {url} --client-id ID --client-secret SECRET`. \
+             Or, if the service takes a token: `sven mcp add --local {name} {url} --header 'Authorization=Bearer TOKEN'`. \
+             Signed in to a sven account (`sven auth login`), `sven mcp add {name} {url}` adds it to \
+             your account instead, signing in with the app your sven administrator set up.",
+            name = params.name,
             url = params.url,
             callback = redirect.redirect_uri,
         );

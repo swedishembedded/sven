@@ -221,6 +221,7 @@ impl McpManager {
         auth::sign_in(
             &self.store,
             SignIn {
+                name: server,
                 key: &TokenStore::key(server, url),
                 url,
                 oauth: cfg.oauth.as_ref(),

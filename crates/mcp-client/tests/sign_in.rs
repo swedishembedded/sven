@@ -224,6 +224,7 @@ async fn run_with(
     let result = sign_in(
         &store,
         SignIn {
+            name: "fixture",
             key: &key,
             url: &mcp,
             oauth: Some(&oauth),
@@ -353,9 +354,18 @@ async fn a_server_that_lets_nobody_register_is_refused_with_what_to_do() {
         "a browser was opened for a sign-in that cannot work"
     );
     assert!(seen.lock().unwrap().authorize_query.is_none());
-    for hint in ["--client-id", "--header", "Connectors"] {
+    for hint in [
+        "--client-id",
+        "--header",
+        "sven auth login",
+        "sven mcp add fixture ",
+    ] {
         assert!(message.contains(hint), "{hint} missing from: {message}");
     }
+    assert!(
+        message.starts_with("fixture does not let"),
+        "the server is named as the person named it: {message}"
+    );
 }
 
 /// With a client of one's own configured, that client signs in.
