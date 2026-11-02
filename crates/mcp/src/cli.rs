@@ -224,7 +224,8 @@ fn remove(name: &str, scope: sven_config::scope::Scope) -> anyhow::Result<()> {
 /// A manager over the configured servers. The events it emits are not
 /// needed here: each command reports what it did.
 fn manager(interactive: bool) -> anyhow::Result<std::sync::Arc<sven_mcp_client::McpManager>> {
-    let config = sven_bootstrap::Config::load(None)?;
+    let mut config = sven_bootstrap::Config::load(None)?;
+    sven_bootstrap::connectors::add_signed_in(&mut config);
     let (events, _) = tokio::sync::mpsc::channel(64);
     Ok(sven_mcp_client::McpManager::new(
         config.mcp_servers,

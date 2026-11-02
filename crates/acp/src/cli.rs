@@ -149,6 +149,7 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             evidence_store,
         } => {
             let mut config = sven_bootstrap::Config::load(None)?;
+            sven_bootstrap::connectors::add_signed_in(&mut config);
             if let Some(ref name) = model {
                 config.model = config.resolve_model(name);
             }

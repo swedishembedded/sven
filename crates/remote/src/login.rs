@@ -25,6 +25,10 @@ pub struct RemoteLogin {
     /// From the server's discovery document at sign-in.
     pub control_url: String,
     pub openai_base_url: String,
+    /// The MCP endpoint of the person's connected accounts, when the server
+    /// offers one; sessions reach it as the `connectors` MCP server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_url: Option<String>,
     /// The key the server minted when the person approved this host. A secret.
     pub token: String,
     /// What the server calls this host.
@@ -43,7 +47,10 @@ impl RemoteLogin {
     /// A URL that does not parse or names no port.
     pub fn server_ports(&self) -> anyhow::Result<Vec<u16>> {
         let mut ports = Vec::new();
-        for url in [&self.server, &self.control_url, &self.openai_base_url] {
+        for url in [&self.server, &self.control_url, &self.openai_base_url]
+            .into_iter()
+            .chain(self.mcp_url.as_ref())
+        {
             let parsed = reqwest::Url::parse(url)
                 .map_err(|e| anyhow::anyhow!("the sign-in's URL {url}: {e}"))?;
             let port = parsed
@@ -204,7 +211,10 @@ pub async fn sign_in_with(
         ("openai_base_url", &found.openai_base_url),
         ("device_authorization_url", &request_url.to_string()),
         ("device_token_url", &token_url.to_string()),
-    ] {
+    ]
+    .into_iter()
+    .chain(found.mcp_url.as_ref().map(|url| ("mcp_url", url)))
+    {
         anyhow::ensure!(
             crate::client::same_origin(&server, url),
             "{server} names {url} as its {what}, which is not on the same origin as the \
@@ -232,6 +242,7 @@ pub async fn sign_in_with(
         server,
         control_url: found.control_url,
         openai_base_url: found.openai_base_url,
+        mcp_url: found.mcp_url,
         token: granted.token,
         workspace_id: who.workspace_id,
         workspace_name: who.workspace_name,

@@ -68,17 +68,20 @@ and the callback tests; `sven mcp add|remove` and `/mcp add|remove` (one
 `config_edit` module), checked end to end by `tests/mcp_cli.rs` (sven adds
 itself as a stdio server). Left: an inspector you act from.
 
-**M4 Tool policy by action.** Per-server and per-tool policy in config
-(`allow`, `ask`, `deny`) with annotations tightening the default. Number:
-policy tests across modes, including `--hosted` and auto-approve modes.
+**M5 Gateway as a server: done 2026-11-02.** A server's discovery document
+may name `mcp_url`; the sign-in keeps it (same-origin checked), and every
+session-starting mode adds it as the `connectors` server with the machine's
+key (`sven_bootstrap::connectors`; `sven rc` and hosted hosts in
+`use_server_services`, whose allow list admits `connectors-*`). A configured
+`mcp_servers.connectors` replaces it. Checked: the hosted host test in
+`remote/src/host.rs`, the prefix test in the registry, the bootstrap test,
+and by hand against a TypeScript SDK v2 server (negotiated 2026-07-28).
+Tasks extension (`io.modelcontextprotocol/tasks`) follows once a gateway or
+server needs it.
 
-**M5 Gateway as a server.** A remote-control sign-in also configures that
-service's MCP endpoint as a server, authenticated with the same credential,
-listed apart in `/mcp` as connectors; its `authentication_required` results
-render as an "open this link" action; its tool list refreshes on
-`list_changed` (which is why M0's policy fix comes first). Nothing here names
-or special-cases a particular service. Tasks extension
-(`io.modelcontextprotocol/tasks`) follows once a gateway or server needs it.
+**M4 Tool policy by action** stays open: per-server and per-tool policy in
+config, annotations tightening the default. A gateway's own policy covers
+the connected accounts.
 
 ## Not planned
 

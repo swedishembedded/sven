@@ -23,6 +23,7 @@
 pub mod child_records;
 pub mod child_spawner;
 pub mod config;
+pub mod connectors;
 pub mod context;
 pub mod context_query;
 pub mod context_tool;

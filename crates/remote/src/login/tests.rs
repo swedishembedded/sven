@@ -359,6 +359,7 @@ fn signed_in_to(openai_base_url: &str) -> RemoteLogin {
         server: "https://server".into(),
         control_url: "https://server/api/control".into(),
         openai_base_url: openai_base_url.into(),
+        mcp_url: Some("https://server/api/mcp".into()),
         token: "minted".into(),
         workspace_id: Uuid::nil(),
         workspace_name: "w".into(),
@@ -380,6 +381,7 @@ fn a_saved_sign_in_is_the_sven_providers_server_and_key() {
         Some(sven_model_drivers::sven_service::SignedIn {
             base_url: login.openai_base_url,
             key: login.token,
+            mcp_url: login.mcp_url,
         })
     );
 }

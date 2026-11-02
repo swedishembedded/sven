@@ -31,14 +31,18 @@ pub struct SignedIn {
     pub base_url: String,
     /// The key the server minted at sign-in. A secret.
     pub key: String,
+    /// The server's MCP endpoint of connected accounts, when it offers one.
+    pub mcp_url: Option<String>,
 }
 
-/// The fields of the sign-in record a model provider needs; the rest of the
-/// record is the remote-control client's.
+/// The fields of the sign-in record a model provider and the `connectors`
+/// MCP server need; the rest of the record is the remote-control client's.
 #[derive(Deserialize)]
 struct Record {
     openai_base_url: String,
     token: String,
+    #[serde(default)]
+    mcp_url: Option<String>,
 }
 
 /// The sign-in record of this user.
@@ -70,6 +74,7 @@ pub fn signed_in_from(file: &Path) -> Option<SignedIn> {
         Ok(record) => Some(SignedIn {
             base_url: record.openai_base_url,
             key: record.token,
+            mcp_url: record.mcp_url,
         }),
         Err(e) => {
             tracing::warn!("{}: {e}; ignoring the sign-in", file.display());
@@ -115,6 +120,7 @@ mod tests {
             Some(SignedIn {
                 base_url: "http://localhost:3000/v1".into(),
                 key: "sk-minted".into(),
+                mcp_url: None,
             })
         );
     }

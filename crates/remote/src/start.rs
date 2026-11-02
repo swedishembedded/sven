@@ -167,7 +167,10 @@ pub async fn exchange_start_credential_with(
     for (what, url) in [
         ("control_url", &found.control_url),
         ("openai_base_url", &found.openai_base_url),
-    ] {
+    ]
+    .into_iter()
+    .chain(found.mcp_url.as_ref().map(|url| ("mcp_url", url)))
+    {
         anyhow::ensure!(
             crate::client::same_origin(&server, url),
             "{server} names {url} as its {what}, which is not on the same origin as the \
@@ -184,6 +187,7 @@ pub async fn exchange_start_credential_with(
         server,
         control_url: found.control_url,
         openai_base_url: found.openai_base_url,
+        mcp_url: found.mcp_url,
         token: started.token,
         workspace_id: started.workspace_id,
         workspace_name: started.workspace_name,

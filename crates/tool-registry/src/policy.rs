@@ -260,9 +260,19 @@ impl NamePolicy {
         }
     }
 
-    /// Whether a tool named `name` may be registered and run.
+    /// Whether a tool named `name` may be registered and run. A `tools.only`
+    /// entry ending in `*` admits every name that begins with what precedes
+    /// it (`connectors-*`: one MCP server's tools).
     #[must_use]
     pub fn permits(&self, name: &str) -> bool {
-        !self.disabled.contains(name) && self.only.as_ref().is_none_or(|only| only.contains(name))
+        !self.disabled.contains(name)
+            && self.only.as_ref().is_none_or(|only| {
+                only.contains(name)
+                    || only.iter().any(|entry| {
+                        entry.strip_suffix('*').is_some_and(|prefix| {
+                            name.len() > prefix.len() && name.starts_with(prefix)
+                        })
+                    })
+            })
     }
 }

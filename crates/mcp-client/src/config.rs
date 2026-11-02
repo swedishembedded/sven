@@ -167,6 +167,19 @@ pub struct McpServerConfig {
 }
 
 impl McpServerConfig {
+    /// A Streamable HTTP server at `url` that takes `token` as a bearer
+    /// token.
+    #[must_use]
+    pub fn bearer_http(url: &str, token: &str) -> Self {
+        Self {
+            transport: McpTransport::Http {
+                url: url.to_string(),
+                headers: HashMap::from([("Authorization".to_string(), format!("Bearer {token}"))]),
+            },
+            ..Self::default()
+        }
+    }
+
     /// The keys of an `mcp_servers.<name>` entry.
     #[must_use]
     pub fn schema() -> Schema {

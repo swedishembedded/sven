@@ -112,6 +112,10 @@ pub struct RemoteDiscovery {
     /// The OpenAI-compatible API (ending in `/v1`) the host's sessions call
     /// models through, with the same token.
     pub openai_base_url: String,
+    /// The MCP endpoint of the person's connected accounts, reached with the
+    /// same token. Absent on a server that offers none.
+    #[serde(default)]
+    pub mcp_url: Option<String>,
 }
 
 /// Who a token belongs to.

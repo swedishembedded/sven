@@ -86,7 +86,9 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     #[cfg(feature = "network")]
     let is_server = matches!(
         &cli.command,
-        Some(Commands::Mcp { .. }) | Some(Commands::Acp { .. })
+        Some(Commands::Mcp {
+            command: cli::McpCommands::Serve { .. }
+        }) | Some(Commands::Acp { .. })
     );
     #[cfg(not(feature = "network"))]
     let is_server = false;
@@ -335,6 +337,8 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     }
     let mut settings = Settings::load(cli.config.as_deref())?;
     cli.disclosure.apply(&mut settings.runtime);
+    #[cfg(feature = "network")]
+    sven_bootstrap::connectors::add_signed_in(&mut settings.runtime);
     if let Some(mode) = cli.context_assembly {
         settings.runtime.context.assembly.mode = mode.into();
     }

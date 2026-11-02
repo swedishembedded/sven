@@ -36,14 +36,27 @@ the server calls this machine; the host name by default.
 Plain `http://` is accepted only for this machine (`localhost`, `127.x.x.x`,
 `::1`); any other server must be `https://`, since the token and every
 conversation would otherwise cross the network in the clear. The server's
-discovery document must also name its control API, model API and device
-sign-in endpoints on the server's own origin (scheme, host and port); sven
-refuses to sign in when one points elsewhere, so the token and model key
+discovery document must also name its control API, model API, device
+sign-in and MCP endpoints on the server's own origin (scheme, host and port);
+sven refuses to sign in when one points elsewhere, so the token and model key
 cannot be sent to a third party.
 
 The sign-in is stored in `~/.config/sven/remote.yaml` (mode 0600).
 `sven auth list` shows it; `sven auth logout` forgets it. Removing the
 connection on the server revokes the token.
+
+### Connected accounts
+
+When the server offers connected accounts (accounts such as GitHub that you
+connect once on the server, under Settings > Connectors), every sven session
+on this machine gets them as the MCP server `connectors`: the TUI, headless
+runs, `sven acp` and `sven rc`, hosted hosts included. Their tools are named
+`connectors-<service>_<account>__<tool>`. sven reaches them with this
+machine's key; the accounts' own sign-ins stay on the server. A call that
+needs your approval says where to give it; approve it on the server and ask
+again. `sven mcp list` shows whether `connectors` connects.
+`mcp_servers.connectors` in your configuration replaces it, and
+`connectors: {enabled: false}` turns it off.
 
 ## Take sessions
 

@@ -482,6 +482,24 @@ mod tests {
         Arc::new(McpEchoTool { name })
     }
 
+    /// A `tools.only` entry ending in `*` admits every name it begins: the
+    /// tools of one MCP server, whatever that server offers.
+    #[tokio::test]
+    async fn an_only_entry_ending_in_a_star_admits_one_servers_tools() {
+        let mut reg = ToolRegistry::new();
+        reg.set_name_policy(crate::NamePolicy::new(
+            &["connectors-delete".to_string()],
+            Some(&["web_fetch".to_string(), "connectors-*".to_string()]),
+        ));
+        reg.replace_mcp_tools(vec![
+            mcp("connectors-read"),
+            mcp("connectors-delete"),
+            mcp("other-read"),
+            mcp("connectors"),
+        ]);
+        assert_eq!(reg.names(), vec!["connectors-read".to_string()]);
+    }
+
     /// The operator's `tools.only` / `tools.disabled` hold for the life of the
     /// registry: a tool an MCP server adds later, by a refresh, is neither
     /// offered nor run when the policy excludes it.

@@ -88,6 +88,13 @@ and lists them again when the server says they changed.
 - A prompt is a slash command named `/<server>/<prompt>` in the TUI, with the
   prompt's arguments completed as `<name>`.
 
+### Connected accounts
+
+Signed in to a server that offers connected accounts (`sven auth login`),
+every session also gets the server `connectors`: the accounts you connected
+there, reached with this machine's key. See
+[remote control](../guides/remote-control.md#connected-accounts).
+
 ### Managing servers
 
 | Where | Command | Effect |

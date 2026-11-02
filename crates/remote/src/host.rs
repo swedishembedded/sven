@@ -127,7 +127,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
     if !options.hosted && !options.wide_access {
         restrict_to_working_dir(&mut config);
     }
-    config.tools.web.search.sven = Some(options.login.search_endpoint());
+    use_server_services(&mut config, &options.login);
     let context = Arc::new(SessionContext {
         config: Arc::new(config),
         working_dir: options.working_dir,
@@ -781,6 +781,21 @@ fn first_line(text: &str) -> &str {
     }
 }
 
+/// What the server a host signed in to provides its sessions, with the
+/// host's key: web searches (run and billed there), and the person's
+/// connected accounts as the `connectors` MCP server when the server offers
+/// them. A hosted host's allow list admits that one server's tools; it
+/// starts no other MCP server (`restrict_to_hosted`).
+fn use_server_services(config: &mut Config, login: &RemoteLogin) {
+    config.tools.web.search.sven = Some(login.search_endpoint());
+    if let Some(url) = &login.mcp_url {
+        sven_bootstrap::connectors::add(config, url, &login.token);
+        if let Some(only) = config.tools.only.as_mut() {
+            only.push(format!("{}-*", sven_bootstrap::connectors::SERVER));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[tokio::test]
@@ -867,6 +882,36 @@ mod tests {
         looping.abort();
     }
 
+    /// A hosted host reaches the person's connected accounts at its server
+    /// and nothing else: the `connectors` server is added to an emptied
+    /// server list, and its tools alone join the allow list.
+    #[test]
+    fn a_hosted_host_reaches_connected_accounts_at_its_server_alone() {
+        let mut config: Config = serde_yaml::from_str(
+            "mcp_servers:\n  local: {transport: {type: stdio, command: /bin/true}}\n",
+        )
+        .unwrap();
+        crate::restrict_to_hosted(&mut config);
+        let login = RemoteLogin {
+            server: "https://sven.example".into(),
+            control_url: "https://sven.example/api/workspace".into(),
+            openai_base_url: "https://sven.example/v1".into(),
+            mcp_url: Some("https://sven.example/api/mcp".into()),
+            token: "host_key".into(),
+            workspace_id: Uuid::nil(),
+            workspace_name: "Hosted".into(),
+            account: "a@example.com".into(),
+        };
+        use_server_services(&mut config, &login);
+        assert_eq!(
+            config.mcp_servers.keys().collect::<Vec<_>>(),
+            vec![sven_bootstrap::connectors::SERVER]
+        );
+        let only = config.tools.only.as_ref().unwrap();
+        assert!(only.iter().any(|t| t == "connectors-*"));
+        assert!(only.iter().any(|t| t == "web_search"));
+    }
+
     /// A host searches through the server it signed in to, with its key:
     /// the server runs the search and bills that account.
     #[test]
@@ -877,6 +922,7 @@ mod tests {
             server: "https://sven.example".into(),
             control_url: "https://sven.example/api/control".into(),
             openai_base_url: "https://sven.example/v1".into(),
+            mcp_url: None,
             token: "server_minted_key".into(),
             workspace_id: Uuid::nil(),
             workspace_name: "Workspace".into(),

@@ -60,7 +60,10 @@ fn a_server_is_added_checked_listed_and_removed() {
     let sven = env!("CARGO_BIN_EXE_sven");
 
     let (ok, text) = home.sven(&["mcp", "list"]);
-    assert!(ok && text.contains("No MCP servers are configured"), "{text}");
+    assert!(
+        ok && text.contains("No MCP servers are configured"),
+        "{text}"
+    );
 
     let (ok, text) = home.sven(&["mcp", "add", "self", "--", sven, "mcp", "serve"]);
     assert!(ok, "{text}");
@@ -69,7 +72,10 @@ fn a_server_is_added_checked_listed_and_removed() {
 
     let file = home.0.join("config/sven/config.yaml");
     let written = std::fs::read_to_string(&file).unwrap();
-    assert!(written.contains("mcp_servers") && written.contains("serve"), "{written}");
+    assert!(
+        written.contains("mcp_servers") && written.contains("serve"),
+        "{written}"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -78,24 +84,46 @@ fn a_server_is_added_checked_listed_and_removed() {
     }
 
     let (ok, text) = home.sven(&["mcp", "add", "self", "--", sven, "mcp", "serve"]);
-    assert!(!ok && text.contains("already has an MCP server 'self'"), "{text}");
+    assert!(
+        !ok && text.contains("already has an MCP server 'self'"),
+        "{text}"
+    );
 
     let (ok, text) = home.sven(&["mcp", "list"]);
     assert!(ok, "{text}");
-    let line = text.lines().find(|l| l.starts_with("self")).expect("listed");
-    assert!(line.contains("connected") && line.contains("tools"), "{line}");
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("self"))
+        .expect("listed");
+    assert!(
+        line.contains("connected") && line.contains("tools"),
+        "{line}"
+    );
 
     let (ok, text) = home.sven(&["mcp", "remove", "self"]);
     assert!(ok && text.contains("Removed MCP server 'self'"), "{text}");
     let (ok, text) = home.sven(&["mcp", "list"]);
-    assert!(ok && text.contains("No MCP servers are configured"), "{text}");
+    assert!(
+        ok && text.contains("No MCP servers are configured"),
+        "{text}"
+    );
 }
 
 #[test]
 fn an_entry_that_is_not_a_server_is_refused_before_anything_is_written() {
     let home = Home::new("refuse");
-    let (ok, text) = home.sven(&["mcp", "add", "web", "https://mcp.example.com/mcp", "--env", "A=b"]);
-    assert!(!ok && text.contains("--env is for a stdio server"), "{text}");
+    let (ok, text) = home.sven(&[
+        "mcp",
+        "add",
+        "web",
+        "https://mcp.example.com/mcp",
+        "--env",
+        "A=b",
+    ]);
+    assert!(
+        !ok && text.contains("--env is for a stdio server"),
+        "{text}"
+    );
     let (ok, text) = home.sven(&["mcp", "add", "bad name", "https://mcp.example.com/mcp"]);
     assert!(!ok && text.contains("letters, digits"), "{text}");
     assert!(!home.0.join("config/sven/config.yaml").exists());
