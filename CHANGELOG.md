@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.1] - 2026-11-02
+
 ### Added
 - **remote**: a tool's returned images (a PNG from `read_file`) now reach clients of `sven rc` with its result, as base64 on the `ToolCallFinished` event (at most 4 per result, 4 MiB each; a larger one is left out and the result says so).
 
