@@ -658,10 +658,13 @@ mod gdb_integration {
         .unwrap();
         std::fs::set_permissions(&fake_gdb, std::fs::Permissions::from_mode(0o755)).unwrap();
 
+        // Long enough for the client to start and record itself on a loaded
+        // machine (a shorter one could kill it before its first line, and
+        // there would be nothing to check), short enough to stay a quick test.
         let t = GdbConnectTool::new(
             make_state(),
             GdbConfig {
-                connect_timeout_secs: 1,
+                connect_timeout_secs: 5,
                 ..fast_cfg()
             },
         );
