@@ -49,7 +49,7 @@ impl McpManager {
                 if let Some(state) = this.servers.write().await.get_mut(&name) {
                     state.auth_in_progress = false;
                     state.health.status = ServerStatus::NeedsAuth {
-                        auth_url: url.clone(),
+                        auth_url: String::new(),
                     };
                 }
                 let _ = this
@@ -71,7 +71,7 @@ impl McpManager {
                 }
                 state.auth_in_progress = this.allow_interactive_oauth;
                 state.health.status = ServerStatus::NeedsAuth {
-                    auth_url: url.clone(),
+                    auth_url: String::new(),
                 };
             }
 
@@ -182,11 +182,20 @@ impl McpManager {
     async fn sign_in(self: &Arc<Self>, server: &str, challenge: Option<&str>) -> Result<()> {
         let events = self.event_tx.clone();
         let name = server.to_string();
+        let this = Arc::clone(self);
         let present = move |url: &str| {
             crate::callback::open_browser(url);
             let _ = events.try_send(McpEvent::SignInLink {
                 server: name.clone(),
                 url: url.to_string(),
+            });
+            // Kept on the server's status too, so `/mcp` shows the whole
+            // link for as long as the sign-in waits for it.
+            let (this, name, url) = (Arc::clone(&this), name.clone(), url.to_string());
+            tokio::spawn(async move {
+                if let Some(state) = this.servers.write().await.get_mut(&name) {
+                    state.health.status = ServerStatus::NeedsAuth { auth_url: url };
+                }
             });
         };
         self.sign_in_with(server, challenge, &present, None).await

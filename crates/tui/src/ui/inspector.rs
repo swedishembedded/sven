@@ -298,41 +298,11 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
 
     if statuses.is_empty() {
         out.push_str(
-            "_No MCP servers configured._\n\n\
-             Add servers to your `sven.yaml` config under `mcp_servers:`.\n\n\
-             **Example (stdio server):**\n\
-             ```yaml\n\
-             mcp_servers:\n\
-               github:\n\
-                 transport:\n\
-                   type: stdio\n\
-                   command: npx\n\
-                   args: [\"-y\", \"@modelcontextprotocol/server-github\"]\n\
-                 env:\n\
-                   GITHUB_TOKEN: \"${GITHUB_TOKEN}\"\n\
-             ```\n\n\
-             **Example (HTTP server with OAuth):**\n\
-             ```yaml\n\
-             mcp_servers:\n\
-               atlassian:\n\
-                 transport:\n\
-                   type: http\n\
-                   url: \"https://mcp.atlassian.com/v1/mcp\"\n\
-                 oauth: {}\n\
-             ```\n\n\
-             **Default:** sven://sven.mcp/callback (installed by .deb). In containers,\n\
-             sven falls back to localhost; forward port 5598.\n\
-             **Example (Atlassian with cursor:// - pre-allowlisted):**\n\
-             ```yaml\n\
-             mcp_servers:\n\
-               atlassian:\n\
-                 transport:\n\
-                   type: http\n\
-                   url: \"https://mcp.atlassian.com/v1/mcp\"\n\
-                 oauth:\n\
-                   redirect_uri: \"cursor://cursor.mcp/callback\"\n\
-                   callback_port: 5598\n\
-             ```\n",
+            "_No MCP servers yet._\n\n\
+             Add one, and its tools are offered at once:\n\n\
+             - `/mcp add <name> <url>` - a server on the web (it asks you to sign in when it needs to)\n\
+             - `/mcp add <name> <command> [args...]` - a server run on this machine\n\n\
+             Both are written to your configuration file; `sven mcp add` does the same from a shell.\n",
         );
         return out;
     }
@@ -350,8 +320,11 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
             sven_mcp_client::ServerStatus::Reconnecting { attempts } => {
                 format!(" (attempt {attempts})")
             }
-            sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
+            sven_mcp_client::ServerStatus::NeedsAuth { auth_url } if auth_url.is_empty() => {
                 format!(" - run `/mcp auth {}`", s.name)
+            }
+            sven_mcp_client::ServerStatus::NeedsAuth { .. } => {
+                " - signing in (link below)".to_string()
             }
             _ => String::new(),
         };
@@ -361,26 +334,30 @@ fn format_mcp_markdown(statuses: &[ServerStatusSummary]) -> String {
         ));
     }
 
-    out.push_str("\n**Commands:**\n");
-    out.push_str("- `/mcp` - open this inspector\n");
-    out.push_str("- `/mcp auth <name>` - authenticate with OAuth (browser will open)\n");
-    out.push_str("- `/mcp enable <name>` - enable a server\n");
-    out.push_str("- `/mcp disable <name>` - disable a server\n");
-
-    // Show a help hint if any server needs auth.
-    let needs_auth: Vec<&str> = statuses
+    // A sign-in waiting for the person: its whole link, to open or copy
+    // (on a remote shell the browser sven tried to open is not there).
+    let waiting: Vec<(&str, &str)> = statuses
         .iter()
-        .filter(|s| matches!(s.status, sven_mcp_client::ServerStatus::NeedsAuth { .. }))
-        .map(|s| s.name.as_str())
+        .filter_map(|s| match &s.status {
+            sven_mcp_client::ServerStatus::NeedsAuth { auth_url } if !auth_url.is_empty() => {
+                Some((s.name.as_str(), auth_url.as_str()))
+            }
+            _ => None,
+        })
         .collect();
-    if !needs_auth.is_empty() {
-        out.push_str("\n**Authentication required:**\n");
-        for name in &needs_auth {
-            out.push_str(&format!(
-                "- `/mcp auth {name}` - opens browser for OAuth login\n"
-            ));
+    if !waiting.is_empty() {
+        out.push_str("\n**Sign in:**\n");
+        for (name, url) in waiting {
+            out.push_str(&format!("- `{name}`: <{url}>\n"));
         }
     }
+
+    out.push_str("\n**Commands:**\n");
+    out.push_str("- `/mcp add <name> <url | command args...>` - add a server\n");
+    out.push_str("- `/mcp remove <name>` - remove it\n");
+    out.push_str("- `/mcp auth <name>` - sign in (the browser opens)\n");
+    out.push_str("- `/mcp logout <name>` - forget the sign-in\n");
+    out.push_str("- `/mcp enable <name>`, `/mcp disable <name>` - offer its tools, or not, for this session\n");
 
     out
 }
@@ -397,5 +374,84 @@ fn format_elapsed(secs: f32) -> String {
             (secs / 3600.0).floor(),
             (secs % 3600.0) / 60.0
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+    use sven_mcp_client::ServerStatus;
+
+    /// The `/mcp` page as the pager draws it, `width` x `height`.
+    fn drawn(statuses: &[ServerStatusSummary], width: u16, height: u16) -> String {
+        let lines = render_markdown(
+            &format_mcp_markdown(statuses),
+            width.saturating_sub(2),
+            false,
+        );
+        let mut pager = crate::pager::PagerOverlay::with_title(lines, InspectorKind::Mcp.title());
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|f| pager.render(f, &[], 0, "", None, false))
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A sign-in waiting for the person shows its whole link, however long,
+    /// and every command is listed.
+    #[test]
+    fn a_waiting_sign_in_shows_its_whole_link() {
+        let link = "https://auth.example.com/authorize?response_type=code&client_id=sven-abc&state=Zm9vYmFy&code_challenge=YWJj&resource=https%3A%2F%2Fmcp.example.com%2Fmcp";
+        let statuses = [
+            ServerStatusSummary {
+                name: "docs".into(),
+                status: ServerStatus::NeedsAuth {
+                    auth_url: link.into(),
+                },
+                tool_count: 0,
+                prompt_count: 0,
+            },
+            ServerStatusSummary {
+                name: "github".into(),
+                status: ServerStatus::Connected,
+                tool_count: 24,
+                prompt_count: 2,
+            },
+        ];
+        let screen = drawn(&statuses, 100, 30);
+        println!("{screen}");
+        let joined: String = screen.lines().map(str::trim).collect();
+        assert!(joined.contains(link), "the link is cut:\n{screen}");
+        for command in [
+            "/mcp add",
+            "/mcp remove",
+            "/mcp auth",
+            "/mcp logout",
+            "/mcp enable",
+        ] {
+            assert!(screen.contains(command), "{command} missing:\n{screen}");
+        }
+    }
+
+    #[test]
+    fn with_no_server_it_says_how_to_add_one() {
+        let screen = drawn(&[], 100, 20);
+        println!("{screen}");
+        assert!(screen.contains("/mcp add <name> <url>"), "{screen}");
+        assert!(
+            !screen.contains("mcp_servers:"),
+            "no YAML to hand-edit:\n{screen}"
+        );
     }
 }

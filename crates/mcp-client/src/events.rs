@@ -44,9 +44,10 @@ impl McpEvent {
                 NoticeLevel::Info,
                 format!("Signing in to MCP server '{server}' in the browser..."),
             )),
-            Self::SignInLink { server, url } => {
-                Some((NoticeLevel::Info, format!("Sign in to '{server}': {url}")))
-            }
+            Self::SignInLink { server, url } => Some((
+                NoticeLevel::Info,
+                format!("Sign in to '{server}' in the browser; /mcp shows the link: {url}"),
+            )),
             Self::AuthRequired { server, .. } => Some((
                 NoticeLevel::Warning,
                 format!(

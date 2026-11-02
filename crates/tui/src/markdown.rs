@@ -266,36 +266,37 @@ fn word_wrap_spans_to_lines_with_prefix(
     let mut col = 0usize;
     let mut is_first_line = true;
 
+    let mut flush = |current_line: &mut Vec<Span<'static>>, is_first_line: &mut bool| {
+        let mut line_spans = Vec::new();
+        if *is_first_line && !prefix.is_empty() {
+            line_spans.push(Span::styled(prefix.to_string(), prefix_style));
+            *is_first_line = false;
+        } else if !prefix.is_empty() {
+            line_spans.push(Span::raw(" ".repeat(prefix_w)));
+        }
+        line_spans.extend(std::mem::take(current_line));
+        lines.push(Line::from(line_spans));
+    };
+
     for (text, style) in spans {
         let effective_style = style.patch(base_style);
         for word in text.split_inclusive(' ') {
-            let word_w = unicode_width::UnicodeWidthStr::width(word);
-            if col + word_w > content_width && !current_line.is_empty() {
-                let mut line_spans = Vec::new();
-                if is_first_line && !prefix.is_empty() {
-                    line_spans.push(Span::styled(prefix.to_string(), prefix_style));
-                    is_first_line = false;
-                } else if !prefix.is_empty() {
-                    line_spans.push(Span::raw(" ".repeat(prefix_w)));
+            // A word wider than a whole line (a link) is broken across lines
+            // rather than drawn past the edge, where it would be cut.
+            for piece in split_to_width(word, content_width.max(1)) {
+                let piece_w = unicode_width::UnicodeWidthStr::width(piece);
+                if col + piece_w > content_width && !current_line.is_empty() {
+                    flush(&mut current_line, &mut is_first_line);
+                    col = 0;
                 }
-                line_spans.extend(std::mem::take(&mut current_line));
-                lines.push(Line::from(line_spans));
-                col = 0;
+                current_line.push(Span::styled(piece.to_string(), effective_style));
+                col += piece_w;
             }
-            current_line.push(Span::styled(word.to_string(), effective_style));
-            col += word_w;
         }
     }
 
     if !current_line.is_empty() {
-        let mut line_spans = Vec::new();
-        if is_first_line && !prefix.is_empty() {
-            line_spans.push(Span::styled(prefix.to_string(), prefix_style));
-        } else if !prefix.is_empty() {
-            line_spans.push(Span::raw(" ".repeat(prefix_w)));
-        }
-        line_spans.extend(current_line);
-        lines.push(Line::from(line_spans));
+        flush(&mut current_line, &mut is_first_line);
     }
 
     if lines.is_empty() && !spans.is_empty() {
@@ -310,6 +311,27 @@ fn word_wrap_spans_to_lines_with_prefix(
     }
 
     lines
+}
+
+/// `word` in pieces no wider than `width` (whole when it fits), split at
+/// character boundaries.
+fn split_to_width(word: &str, width: usize) -> Vec<&str> {
+    if unicode_width::UnicodeWidthStr::width(word) <= width {
+        return vec![word];
+    }
+    let mut pieces = Vec::new();
+    let (mut start, mut used) = (0, 0);
+    for (at, ch) in word.char_indices() {
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + w > width && at > start {
+            pieces.push(&word[start..at]);
+            start = at;
+            used = 0;
+        }
+        used += w;
+    }
+    pieces.push(&word[start..]);
+    pieces
 }
 
 fn heading_style_from_level(level: u8) -> Style {
@@ -520,6 +542,26 @@ fn render_table(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A word longer than the line (a link) is broken across lines, every
+    /// character kept, rather than cut at the edge.
+    #[test]
+    fn a_word_longer_than_the_line_is_broken_not_cut() {
+        let link = "https://auth.example.com/authorize?response_type=code&state=Zm9vYmFy&resource=https%3A%2F%2Fmcp.example.com";
+        let lines = render_markdown(&format!("- open {link} now"), 40, false);
+        let text: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        for line in &text {
+            assert!(
+                unicode_width::UnicodeWidthStr::width(line.as_str()) <= 40,
+                "{line:?} is wider than 40"
+            );
+        }
+        let joined: String = text.iter().map(|l| l.trim()).collect();
+        assert!(joined.replace(' ', "").contains(link), "{text:#?}");
+    }
 
     #[test]
     fn render_empty_returns_some_lines() {

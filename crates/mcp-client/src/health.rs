@@ -23,6 +23,8 @@ pub enum ServerStatus {
     /// Failed to connect; no further reconnection attempts.
     Failed { error: String },
     /// Requires OAuth authentication before connecting.
+    /// Needs a sign-in; `auth_url` is the page to sign in on while a
+    /// sign-in waits for the person, empty otherwise.
     NeedsAuth { auth_url: String },
 }
 
