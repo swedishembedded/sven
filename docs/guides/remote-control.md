@@ -49,8 +49,10 @@ connection on the server revokes the token.
 
 When the server offers connected accounts (accounts such as GitHub that you
 connect once on the server, under Settings > Connectors), every sven session
-on this machine gets them as the MCP server `connectors`: the TUI, headless
-runs, `sven acp` and `sven rc`, hosted hosts included. Their tools are named
+on this machine gets the ones you allowed on it as the MCP server
+`connectors`: the TUI, headless runs, `sven acp` and `sven rc`, hosted hosts
+included. On the server each account lists your computers; switch this one
+on there, and its tools appear (a running TUI picks them up at once). Their tools are named
 `connectors-<service>_<account>__<tool>`. sven reaches them with this
 machine's key; the accounts' own sign-ins stay on the server. A call that
 needs your approval says where to give it; approve it on the server and ask
