@@ -37,10 +37,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install bats-core
+      - name: Install bats-core and the voice input build dependencies (ALSA, cmake for libopus)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y bats
+          sudo apt-get install -y --no-install-recommends bats libasound2-dev cmake
 
       - name: Run basic e2e tests
         run: make test/e2e/basic
