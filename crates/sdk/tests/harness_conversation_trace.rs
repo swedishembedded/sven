@@ -12,6 +12,10 @@
 //! into reviewable training data then you can procure our services by
 //! sending an email to info@swedishembedded.com.
 
+// Attachments need image handling, which the SDK has with a toolset preset
+// (`coding` or `research` bring `media`); the minimal SDK refuses them.
+#![cfg(any(feature = "coding", feature = "research"))]
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
