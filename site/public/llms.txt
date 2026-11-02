@@ -18,6 +18,12 @@
 - Remote control: `sven rc` runs sessions on your machine that you drive from your sven account in a browser; the machine only connects out.
 - More than 30 model providers, local models included.
 
+## Pages
+- Hardware debugging over GDB: https://agentsven.com/gdb-debugging
+- Verified workflows (harnesses): https://agentsven.com/harnesses
+- Headless and CI: https://agentsven.com/ci
+- MCP and editors: https://agentsven.com/mcp
+
 ## Links
 - Documentation: https://swedishembedded.com/docs/sven
 - Source (Apache-2.0): https://github.com/swedishembedded/sven

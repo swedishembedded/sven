@@ -8,6 +8,8 @@ interface Feature {
   description: string
   tag?: string
   tagColor?: string
+  /// The page that says more (src/pages.ts).
+  href?: string
 }
 
 const FEATURES: Feature[] = [
@@ -20,12 +22,14 @@ const FEATURES: Feature[] = [
   {
     icon: <PipeIcon />,
     title: 'Headless & CI-Ready',
+    href: '/ci',
     description:
       'The same session you run locally runs identically in CI. Reads from stdin, writes to stdout, exits with meaningful codes. No changes required when you move from laptop to pipeline.',
   },
   {
     icon: <ChipIcon />,
     title: 'Native GDB Integration',
+    href: '/gdb-debugging',
     description:
       'An agent that connects to real hardware. Start debug servers, set breakpoints, inspect memory and registers - all from the same session where you wrote the code.',
   },
@@ -44,6 +48,7 @@ const FEATURES: Feature[] = [
   {
     icon: <WorkflowIcon />,
     title: 'Verified Harnesses',
+    href: '/harnesses',
     description:
       'Write an agent workflow as YAML with the checks that decide success: tests, builds, any command you trust. A task passes when its gates pass, failures are repaired or reported, and every run can be resumed and replayed.',
   },
@@ -56,6 +61,7 @@ const FEATURES: Feature[] = [
   {
     icon: <PipeIcon />,
     title: 'MCP and Your Editor',
+    href: '/mcp',
     description:
       'Connect external MCP servers, sign in to them with OAuth, or serve sven\'s own tools to another MCP host. Use it inside editors that speak the Agent Client Protocol.',
   },
@@ -126,6 +132,11 @@ export default function FeatureGrid() {
                 </div>
               </div>
               <p className="text-sm text-text-secondary leading-relaxed">{feature.description}</p>
+              {feature.href && (
+                <a href={feature.href} className="mt-4 inline-block text-sm text-accent-blue hover:underline">
+                  Learn more
+                </a>
+              )}
             </motion.div>
           ))}
         </div>

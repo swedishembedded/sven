@@ -1,13 +1,15 @@
 import Logo from './Logo'
 import { SERVICE_URL, SIGN_UP_URL } from '../links'
+import { PAGES } from '../pages'
 
 const PRODUCT_LINKS = [
   { label: 'Create your account', href: SIGN_UP_URL, external: true },
   { label: 'sven in the browser', href: SERVICE_URL, external: true },
   { label: 'Pricing', href: `${SERVICE_URL}/pricing`, external: true },
   { label: 'API', href: `${SERVICE_URL}/docs/api`, external: true },
-  { label: 'Features', href: '#features' },
-  { label: 'Install', href: '#install' },
+  { label: 'Features', href: '/#features' },
+  ...PAGES.map((page) => ({ label: page.eyebrow, href: page.path })),
+  { label: 'Install', href: '/#install' },
   { label: 'Documentation', href: 'https://swedishembedded.com/docs/sven', external: true },
   { label: 'Configuration', href: 'https://swedishembedded.com/docs/sven/reference/configuration', external: true },
   { label: 'CI Pipelines', href: 'https://swedishembedded.com/docs/sven/guides/headless', external: true },

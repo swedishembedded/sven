@@ -15,7 +15,7 @@ import App from './App'
 const root = document.getElementById('root')!
 const app = (
   <StrictMode>
-    <App />
+    <App path={window.location.pathname.replace(/\/$/, '') || '/'} />
   </StrictMode>
 )
 // The built page arrives already rendered (scripts/prerender.mjs); the dev

@@ -3,8 +3,8 @@ import Logo from './Logo'
 import { SIGN_UP_URL } from '../links'
 
 const NAV_LINKS = [
-  { label: 'Features', href: '#features' },
-  { label: 'Install', href: '#install' },
+  { label: 'Features', href: '/#features' },
+  { label: 'Install', href: '/#install' },
   { label: 'Docs', href: 'https://swedishembedded.com/docs/sven', external: true },
   { label: 'GitHub', href: 'https://github.com/swedishembedded/sven', external: true },
 ]
