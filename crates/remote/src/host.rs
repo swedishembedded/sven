@@ -789,7 +789,7 @@ fn first_line(text: &str) -> &str {
 fn use_server_services(config: &mut Config, login: &RemoteLogin) {
     config.tools.web.search.sven = Some(login.search_endpoint());
     if let Some(url) = &login.mcp_url {
-        sven_bootstrap::connectors::add(config, url, &login.token);
+        sven_bootstrap::connectors::add(config, url, login.mcp_token_url.as_deref(), &login.token);
         if let Some(only) = config.tools.only.as_mut() {
             only.push(format!("{}-*", sven_bootstrap::connectors::SERVER));
         }
@@ -897,6 +897,7 @@ mod tests {
             control_url: "https://sven.example/api/workspace".into(),
             openai_base_url: "https://sven.example/v1".into(),
             mcp_url: Some("https://sven.example/api/mcp".into()),
+            mcp_token_url: Some("https://sven.example/api/mcp/token".into()),
             token: "host_key".into(),
             workspace_id: Uuid::nil(),
             workspace_name: "Hosted".into(),
@@ -923,6 +924,7 @@ mod tests {
             control_url: "https://sven.example/api/control".into(),
             openai_base_url: "https://sven.example/v1".into(),
             mcp_url: None,
+            mcp_token_url: None,
             token: "server_minted_key".into(),
             workspace_id: Uuid::nil(),
             workspace_name: "Workspace".into(),

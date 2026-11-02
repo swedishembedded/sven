@@ -20,13 +20,20 @@ use crate::Config;
 /// The server's name, which prefixes its tools (`connectors-<tool>`).
 pub const SERVER: &str = "connectors";
 
-/// Add the `connectors` server at `mcp_url` with `token`, unless the
-/// configuration names one of its own.
-pub fn add(config: &mut Config, mcp_url: &str, token: &str) {
+/// Add the `connectors` server at `mcp_url`, unless the configuration names
+/// one of its own. With `token_url`, every request carries a short-lived
+/// token traded there for `key`, and `key` never travels to `mcp_url`;
+/// without, `key` itself is the bearer token.
+pub fn add(config: &mut Config, mcp_url: &str, token_url: Option<&str>, key: &str) {
     config
         .mcp_servers
         .entry(SERVER.to_string())
-        .or_insert_with(|| sven_mcp_client::McpServerConfig::bearer_http(mcp_url, token));
+        .or_insert_with(|| match token_url {
+            Some(token_url) => {
+                sven_mcp_client::McpServerConfig::exchanged_http(mcp_url, token_url, key)
+            }
+            None => sven_mcp_client::McpServerConfig::bearer_http(mcp_url, key),
+        });
 }
 
 /// [`add`] for the server this user signed in to, when it advertised an MCP
@@ -34,7 +41,12 @@ pub fn add(config: &mut Config, mcp_url: &str, token: &str) {
 pub fn add_signed_in(config: &mut Config) {
     if let Some(signed_in) = sven_model_drivers::sven_service::signed_in() {
         if let Some(url) = &signed_in.mcp_url {
-            add(config, url, &signed_in.key);
+            add(
+                config,
+                url,
+                signed_in.mcp_token_url.as_deref(),
+                &signed_in.key,
+            );
         }
     }
 }
@@ -46,7 +58,7 @@ mod tests {
     #[test]
     fn the_server_is_added_unless_configured() {
         let mut config = Config::default();
-        add(&mut config, "https://sven.example/api/mcp", "key");
+        add(&mut config, "https://sven.example/api/mcp", None, "key");
         let server = &config.mcp_servers[SERVER];
         assert!(matches!(
             &server.transport,
@@ -56,7 +68,28 @@ mod tests {
 
         let mut config: Config =
             serde_yaml::from_str("mcp_servers:\n  connectors: {enabled: false}\n").unwrap();
-        add(&mut config, "https://sven.example/api/mcp", "key");
+        add(&mut config, "https://sven.example/api/mcp", None, "key");
         assert!(!config.mcp_servers[SERVER].enabled);
+
+        // With a token endpoint the key goes there alone: no header carries it.
+        let mut config = Config::default();
+        add(
+            &mut config,
+            "https://sven.example/api/mcp",
+            Some("https://sven.example/api/mcp/token"),
+            "key",
+        );
+        let server = &config.mcp_servers[SERVER];
+        assert!(
+            matches!(&server.transport, sven_mcp_client::McpTransport::Http { headers, .. } if headers.is_empty())
+        );
+        assert_eq!(
+            server.token_exchange.as_ref().unwrap().url,
+            "https://sven.example/api/mcp/token"
+        );
+        assert!(
+            !format!("{server:?}").contains("key\""),
+            "the key is never printed"
+        );
     }
 }

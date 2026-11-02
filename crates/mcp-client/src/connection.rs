@@ -115,6 +115,8 @@ pub enum Endpoint<'a> {
         /// Signs requests and refreshes the token; `None` for a server
         /// without OAuth (a static bearer token travels in `headers`).
         auth: Option<AuthClient<reqwest::Client>>,
+        /// Short-lived tokens traded for a key, for every request.
+        exchange: Option<crate::TokenExchange>,
     },
 }
 
@@ -163,10 +165,26 @@ impl Connection {
                     }
                 }
             }
-            Endpoint::Http { url, headers, auth } => {
+            Endpoint::Http {
+                url,
+                headers,
+                auth,
+                exchange,
+            } => {
                 let config = http_config(url, headers)?;
-                let result = match auth {
-                    Some(client) => {
+                let result = match (auth, exchange) {
+                    (_, Some(exchange)) => {
+                        let transport = StreamableHttpClientTransport::with_client(
+                            crate::exchange::ExchangingClient::new(exchange),
+                            config,
+                        );
+                        within(
+                            timeout,
+                            handler.serve_with_lifecycle(transport, lifecycle()),
+                        )
+                        .await
+                    }
+                    (Some(client), None) => {
                         let transport = StreamableHttpClientTransport::with_client(client, config);
                         within(
                             timeout,
@@ -174,7 +192,7 @@ impl Connection {
                         )
                         .await
                     }
-                    None => {
+                    (None, None) => {
                         let transport = StreamableHttpClientTransport::with_client(
                             reqwest::Client::new(),
                             config,

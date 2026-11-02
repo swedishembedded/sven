@@ -29,6 +29,10 @@ pub struct RemoteLogin {
     /// offers one; sessions reach it as the `connectors` MCP server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_url: Option<String>,
+    /// Where this host's key is traded for short-lived tokens of that
+    /// endpoint, when the server asks for them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_token_url: Option<String>,
     /// The key the server minted when the person approved this host. A secret.
     pub token: String,
     /// What the server calls this host.
@@ -50,6 +54,7 @@ impl RemoteLogin {
         for url in [&self.server, &self.control_url, &self.openai_base_url]
             .into_iter()
             .chain(self.mcp_url.as_ref())
+            .chain(self.mcp_token_url.as_ref())
         {
             let parsed = reqwest::Url::parse(url)
                 .map_err(|e| anyhow::anyhow!("the sign-in's URL {url}: {e}"))?;
@@ -214,7 +219,12 @@ pub async fn sign_in_with(
     ]
     .into_iter()
     .chain(found.mcp_url.as_ref().map(|url| ("mcp_url", url)))
-    {
+    .chain(
+        found
+            .mcp_token_url
+            .as_ref()
+            .map(|url| ("mcp_token_url", url)),
+    ) {
         anyhow::ensure!(
             crate::client::same_origin(&server, url),
             "{server} names {url} as its {what}, which is not on the same origin as the \
@@ -243,6 +253,7 @@ pub async fn sign_in_with(
         control_url: found.control_url,
         openai_base_url: found.openai_base_url,
         mcp_url: found.mcp_url,
+        mcp_token_url: found.mcp_token_url,
         token: granted.token,
         workspace_id: who.workspace_id,
         workspace_name: who.workspace_name,

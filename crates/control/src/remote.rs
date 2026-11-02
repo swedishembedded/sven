@@ -116,6 +116,10 @@ pub struct RemoteDiscovery {
     /// same token. Absent on a server that offers none.
     #[serde(default)]
     pub mcp_url: Option<String>,
+    /// Where the host trades its token for a short-lived one of the MCP
+    /// endpoint. Absent on a server whose MCP endpoint takes the host's own.
+    #[serde(default)]
+    pub mcp_token_url: Option<String>,
 }
 
 /// Who a token belongs to.

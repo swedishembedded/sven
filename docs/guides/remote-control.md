@@ -53,8 +53,10 @@ on this machine gets the ones you allowed on it as the MCP server
 `connectors`: the TUI, headless runs, `sven acp` and `sven rc`, hosted hosts
 included. On the server each account lists your computers; switch this one
 on there, and its tools appear (a running TUI picks them up at once). Their tools are named
-`connectors-<service>_<account>__<tool>`. sven reaches them with this
-machine's key; the accounts' own sign-ins stay on the server. A call that
+`connectors-<service>_<account>__<tool>`. sven trades this machine's key at
+the server for a token that lasts minutes and reaches them with that, so the
+key itself never goes to the endpoint; the accounts' own sign-ins stay on the
+server. A call that
 needs your approval says where to give it; approve it on the server and ask
 again. `sven mcp list` shows whether `connectors` connects.
 `mcp_servers.connectors` in your configuration replaces it, and

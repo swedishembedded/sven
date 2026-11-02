@@ -200,6 +200,11 @@ pub struct McpServerConfig {
     /// What sven may do with each tool without asking ([`tool_policy`]).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub tools: HashMap<String, McpToolPolicy>,
+    /// For an HTTP server reached with short-lived tokens traded for a key
+    /// ([`crate::exchange`]). Set by sven itself, never read from or written
+    /// to a configuration file: it carries the key.
+    #[serde(skip)]
+    pub token_exchange: Option<crate::TokenExchange>,
 }
 
 impl McpServerConfig {
@@ -212,6 +217,23 @@ impl McpServerConfig {
                 url: url.to_string(),
                 headers: HashMap::from([("Authorization".to_string(), format!("Bearer {token}"))]),
             },
+            ..Self::default()
+        }
+    }
+
+    /// A Streamable HTTP server at `url` reached with tokens traded for
+    /// `key` at `token_url` ([`crate::exchange`]).
+    #[must_use]
+    pub fn exchanged_http(url: &str, token_url: &str, key: &str) -> Self {
+        Self {
+            transport: McpTransport::Http {
+                url: url.to_string(),
+                headers: HashMap::new(),
+            },
+            token_exchange: Some(crate::TokenExchange {
+                url: token_url.to_string(),
+                key: key.to_string(),
+            }),
             ..Self::default()
         }
     }
@@ -253,6 +275,7 @@ impl Default for McpServerConfig {
             oauth: None,
             timeout_secs: default_mcp_timeout(),
             tools: HashMap::new(),
+            token_exchange: None,
         }
     }
 }

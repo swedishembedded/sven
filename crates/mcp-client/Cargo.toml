@@ -22,6 +22,8 @@ url          = "2.5"
 webbrowser   = "1"
 rmcp         = { workspace = true, features = ["client", "auth", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 fs4          = { workspace = true }
+futures      = { workspace = true }
+sse-stream   = "0.2"
 serde_yaml   = { workspace = true }
 
 [dev-dependencies]
@@ -30,6 +32,10 @@ rmcp       = { workspace = true, features = ["server", "transport-io", "transpor
 # A server of the previous protocol era, for the conformance suite only.
 legacy     = { package = "rmcp", version = "=0.15.0", default-features = false, features = ["server", "transport-io"] }
 hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
+hyper      = { version = "1", features = ["server", "http1"] }
+http-body-util = "0.1"
+bytes      = "1"
+tower-service = "0.3"
 
 # Its own main: the binary is also the stdio servers it tests against.
 [[test]]

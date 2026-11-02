@@ -76,6 +76,8 @@ key (`sven_bootstrap::connectors`; `sven rc` and hosted hosts in
 `mcp_servers.connectors` replaces it. Checked: the hosted host test in
 `remote/src/host.rs`, the prefix test in the registry, the bootstrap test,
 and by hand against a TypeScript SDK v2 server (negotiated 2026-07-28).
+When the server names `mcp_token_url`, the server is reached with short-lived
+tokens traded for the key (`exchange.rs`; conformance case), never the key.
 Tasks extension (`io.modelcontextprotocol/tasks`) follows once a gateway or
 server needs it.
 

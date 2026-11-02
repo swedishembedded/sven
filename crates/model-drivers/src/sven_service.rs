@@ -33,6 +33,8 @@ pub struct SignedIn {
     pub key: String,
     /// The server's MCP endpoint of connected accounts, when it offers one.
     pub mcp_url: Option<String>,
+    /// Where `key` is traded for that endpoint's short-lived tokens.
+    pub mcp_token_url: Option<String>,
 }
 
 /// The fields of the sign-in record a model provider and the `connectors`
@@ -43,6 +45,8 @@ struct Record {
     token: String,
     #[serde(default)]
     mcp_url: Option<String>,
+    #[serde(default)]
+    mcp_token_url: Option<String>,
 }
 
 /// The sign-in record of this user.
@@ -75,6 +79,7 @@ pub fn signed_in_from(file: &Path) -> Option<SignedIn> {
             base_url: record.openai_base_url,
             key: record.token,
             mcp_url: record.mcp_url,
+            mcp_token_url: record.mcp_token_url,
         }),
         Err(e) => {
             tracing::warn!("{}: {e}; ignoring the sign-in", file.display());
@@ -121,6 +126,7 @@ mod tests {
                 base_url: "http://localhost:3000/v1".into(),
                 key: "sk-minted".into(),
                 mcp_url: None,
+                mcp_token_url: None,
             })
         );
     }

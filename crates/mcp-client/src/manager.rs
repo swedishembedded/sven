@@ -202,6 +202,15 @@ impl McpManager {
                 },
                 false,
             ),
+            McpTransport::Http { url, headers } if cfg.token_exchange.is_some() => (
+                Endpoint::Http {
+                    url,
+                    headers,
+                    auth: None,
+                    exchange: cfg.token_exchange.clone(),
+                },
+                false,
+            ),
             McpTransport::Http { url, headers } => {
                 let key = TokenStore::key(name, url);
                 let client = match auth::signed_in_client(&self.store, &key, url).await {
@@ -224,6 +233,7 @@ impl McpManager {
                         url,
                         headers,
                         auth: client,
+                        exchange: None,
                     },
                     signed_in,
                 )
@@ -265,7 +275,28 @@ impl McpManager {
                 Ok(())
             }
             Err(e) => {
-                if let Some(challenge) = e.downcast_ref::<AuthRequired>() {
+                if cfg.token_exchange.is_some() {
+                    // Tokens are traded for this machine's own sign-in: a
+                    // refusal means that sign-in is gone, which a browser
+                    // sign-in to this server cannot fix.
+                    let error = format!(
+                        "{e:#}; if this machine's sign-in was revoked, run `sven auth login` again"
+                    );
+                    self.servers
+                        .write()
+                        .await
+                        .entry(name.to_string())
+                        .or_default()
+                        .health
+                        .report_error(error.clone());
+                    let _ = self
+                        .event_tx
+                        .send(McpEvent::ServerFailed {
+                            name: name.to_string(),
+                            error,
+                        })
+                        .await;
+                } else if let Some(challenge) = e.downcast_ref::<AuthRequired>() {
                     self.needs_sign_in(name, &cfg, challenge.www_authenticate.clone(), signed_in);
                 } else if is_auth_required_error(&e) {
                     self.needs_sign_in(name, &cfg, None, signed_in);

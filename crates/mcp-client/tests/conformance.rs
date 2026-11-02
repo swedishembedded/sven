@@ -196,6 +196,95 @@ async fn serve_http() -> String {
     url
 }
 
+/// What the token-protected server saw.
+#[derive(Default)]
+struct Trades {
+    traded: std::sync::atomic::AtomicUsize,
+    key_seen_at_mcp: std::sync::atomic::AtomicBool,
+}
+
+/// The current server behind short-lived tokens: `/token` trades the key
+/// `k` for a token, `/mcp` takes only the latest token, and refuses the
+/// first one it is shown once, so a client must trade again.
+async fn serve_with_tokens(trades: Arc<Trades>) -> (String, String) {
+    use bytes::Bytes;
+    use http_body_util::{combinators::BoxBody, BodyExt, Full};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+    use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+    use std::sync::atomic::Ordering::SeqCst;
+    use tower_service::Service as _;
+
+    let service = StreamableHttpService::new(
+        || Ok(current_server::Server),
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let refused_once = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let (service, trades, refused_once) = (
+                service.clone(),
+                Arc::clone(&trades),
+                Arc::clone(&refused_once),
+            );
+            let handle =
+                hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                    let (mut service, trades, refused_once) = (
+                        service.clone(),
+                        Arc::clone(&trades),
+                        Arc::clone(&refused_once),
+                    );
+                    async move {
+                        type Body = BoxBody<Bytes, std::convert::Infallible>;
+                        let reply = |status: u16, text: String| -> hyper::Response<Body> {
+                            hyper::Response::builder()
+                                .status(status)
+                                .header("content-type", "application/json")
+                                .header("www-authenticate", "Bearer")
+                                .body(Full::new(Bytes::from(text)).boxed())
+                                .unwrap()
+                        };
+                        let auth = req
+                            .headers()
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("")
+                            .to_string();
+                        if req.uri().path() == "/token" {
+                            if auth != "Bearer k" {
+                                return Ok::<_, std::convert::Infallible>(reply(401, "{}".into()));
+                            }
+                            let n = trades.traded.fetch_add(1, SeqCst) + 1;
+                            return Ok(reply(
+                                200,
+                                format!(r#"{{"access_token":"t{n}","expires_in":600}}"#),
+                            ));
+                        }
+                        if auth == "Bearer k" {
+                            trades.key_seen_at_mcp.store(true, SeqCst);
+                        }
+                        let latest = format!("Bearer t{}", trades.traded.load(SeqCst));
+                        if auth != latest
+                            || (auth == "Bearer t1" && !refused_once.swap(true, SeqCst))
+                        {
+                            return Ok(reply(401, "{}".into()));
+                        }
+                        Ok(service.call(req).await.unwrap())
+                    }
+                });
+            tokio::spawn(async move {
+                let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(stream), handle)
+                    .await;
+            });
+        }
+    });
+    (format!("{base}/mcp"), format!("{base}/token"))
+}
+
 /// A server that refuses everything with a 401 and its challenge.
 async fn serve_unauthorized() -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -363,6 +452,28 @@ async fn a_streamable_http_server_of_the_current_revision_lists_and_calls() {
     assert_eq!(out.parts.len(), 5);
 }
 
+async fn a_server_behind_short_lived_tokens_never_sees_the_key_and_is_traded_again_when_refused() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let trades = Arc::new(Trades::default());
+    let (url, token_url) = serve_with_tokens(Arc::clone(&trades)).await;
+    let c = client(vec![(
+        "gate",
+        McpServerConfig::exchanged_http(&url, &token_url, "k"),
+    )]);
+    c.manager.connect("gate").await.unwrap();
+    assert_eq!(c.manager.tools().await.len(), 4);
+    let out = call(&c, "gate", "kinds").await.unwrap();
+    assert_eq!(out.parts.len(), 5);
+    assert!(
+        trades.traded.load(SeqCst) >= 2,
+        "the refused token was traded again"
+    );
+    assert!(
+        !trades.key_seen_at_mcp.load(SeqCst),
+        "the key went to the MCP endpoint"
+    );
+}
+
 async fn a_servers_tool_policy_decides_what_is_offered_and_what_asks() {
     use sven_mcp_client::McpToolPolicy;
     use sven_tool_api::{ApprovalPolicy, Tool};
@@ -447,6 +558,7 @@ fn main() {
             a_server_that_dies_mid_call_fails_the_call_at_once,
             a_streamable_http_server_of_the_current_revision_lists_and_calls,
             a_servers_tool_policy_decides_what_is_offered_and_what_asks,
+            a_server_behind_short_lived_tokens_never_sees_the_key_and_is_traded_again_when_refused,
             a_401_in_a_headless_run_asks_for_a_sign_in_and_never_waits,
         ]
     });
