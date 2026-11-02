@@ -70,6 +70,11 @@ pub async fn bind(redirect_uri: Option<&str>, port: Option<u16>) -> Result<Redir
 /// the listener). Returns the callback's query string, e.g.
 /// `code=...&state=...&iss=...`. The authorization server's own error (the
 /// person declined) fails the sign-in with its description.
+///
+/// Any page the person visits can send their browser to the listener, so
+/// when `auth_url` carries a `state`, a callback without that state (an
+/// answer or an error alike) is refused and the wait goes on: it can
+/// neither end nor fail this sign-in.
 pub async fn wait(
     listener: TcpListener,
     auth_url: &str,
@@ -77,6 +82,13 @@ pub async fn wait(
     pasted: Option<tokio::sync::mpsc::Receiver<String>>,
     timeout: Duration,
 ) -> Result<String> {
+    let expected_state = auth_url
+        .split_once('?')
+        .and_then(|(_, query)| parse_query_param(query, "state"));
+    let ours = |query: &str| match &expected_state {
+        Some(state) => parse_query_param(query, "state").as_deref() == Some(state.as_str()),
+        None => true,
+    };
     present(auth_url);
     info!(
         port = listener.local_addr().map(|a| a.port()).unwrap_or(0),
@@ -108,6 +120,15 @@ pub async fn wait(
                 let _ = write_html_response(&mut stream, 404, not_found_html()).await;
                 continue;
             };
+            if !ours(&query) {
+                let _ = write_html_response(
+                    &mut stream,
+                    400,
+                    callback_error_html("This is not the sign-in sven is waiting for."),
+                )
+                .await;
+                continue;
+            }
             if let Some(error) = parse_query_param(&query, "error") {
                 let desc = parse_query_param(&query, "error_description").unwrap_or_default();
                 let message = if desc.is_empty() {
@@ -145,7 +166,8 @@ pub async fn wait(
                 return std::future::pending().await;
             };
             match query_of_pasted(&address) {
-                Ok(query) => return Ok(query),
+                Ok(query) if ours(&query) => return Ok(query),
+                Ok(_) => warn!("that address is of another sign-in; paste this one's"),
                 Err(e) => warn!(error = %e, "not the sign-in's return address; paste it again"),
             }
         }
@@ -207,6 +229,13 @@ pub fn running_in_container() -> bool {
 /// the URL so the user can open it manually - the OAuth callback server keeps
 /// waiting.
 pub fn open_browser(url: &str) {
+    // The address comes from the server's metadata: open only a web page,
+    // never a local file or another program's handler.
+    if !openable(url) {
+        warn!(url = %url, "not opening a sign-in address that is not a web page");
+        eprintln!("\nOAuth: the sign-in address is not a web page; open it yourself only if you trust it:\n  {url}\n");
+        return;
+    }
     match webbrowser::open(url) {
         Ok(()) => {}
         Err(e) => {
@@ -300,6 +329,28 @@ fn url_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Whether `url` is a web page a browser may be sent to.
+fn openable(url: &str) -> bool {
+    let lower = url.trim_start().to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
+}
+
+/// `text` safe to place in an HTML page as text.
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Write an HTTP response with styled HTML and security headers.
 async fn write_html_response(
     stream: &mut tokio::net::TcpStream,
@@ -319,6 +370,7 @@ async fn write_html_response(
          Content-Length: {len}\r\n\
          X-Frame-Options: DENY\r\n\
          X-Content-Type-Options: nosniff\r\n\
+         Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'\r\n\
          Cache-Control: no-store, no-cache\r\n\
          Connection: close\r\n\
          \r\n",
@@ -374,6 +426,7 @@ fn callback_success_html() -> String {
 }
 
 fn callback_error_html(message: &str) -> String {
+    let message = escape_html(message);
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -495,5 +548,63 @@ mod tests {
             parse_query_param("code=a&state=b%20c", "state").as_deref(),
             Some("b c")
         );
+    }
+
+    async fn get(port: u16, path: &str) -> String {
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        stream
+            .write_all(format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut answer = String::new();
+        let _ = stream.read_to_string(&mut answer).await;
+        answer
+    }
+
+    /// Any page the person visits can send their browser to the listener:
+    /// what does not carry this sign-in's state neither ends nor fails it,
+    /// and nothing it says is run as a page's script.
+    #[tokio::test]
+    async fn only_this_sign_ins_callback_ends_the_wait() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let waiting = tokio::spawn(async move {
+            wait(
+                listener,
+                "https://auth.example/authorize?client_id=c&state=the-state&code_challenge=x",
+                &|_| {},
+                None,
+                CALLBACK_TIMEOUT,
+            )
+            .await
+        });
+        let forged = get(
+            port,
+            "/callback?error=x&error_description=%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+        )
+        .await;
+        assert!(forged.starts_with("HTTP/1.1 400"), "{forged}");
+        assert!(!forged.contains("<script>"), "{forged}");
+        assert!(
+            forged.contains("Content-Security-Policy: default-src 'none'"),
+            "{forged}"
+        );
+        let other = get(port, "/callback?code=c&state=another").await;
+        assert!(other.starts_with("HTTP/1.1 400"), "{other}");
+        assert!(!waiting.is_finished());
+        let ours = get(port, "/callback?code=c&state=the-state").await;
+        assert!(ours.starts_with("HTTP/1.1 200"), "{ours}");
+        assert_eq!(waiting.await.unwrap().unwrap(), "code=c&state=the-state");
+    }
+
+    #[test]
+    fn only_a_web_address_is_opened_in_a_browser() {
+        assert!(openable("https://auth.example/authorize?x=1"));
+        assert!(openable("http://127.0.0.1:5598/x"));
+        assert!(!openable("file:///etc/passwd"));
+        assert!(!openable("javascript:alert(1)"));
+        assert!(!openable("smb://host/share"));
     }
 }
