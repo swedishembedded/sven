@@ -143,17 +143,27 @@ pub async fn connect_account(
         .timeout(Duration::from_secs(60))
         .send()
         .await?;
-    if !response.status().is_success() {
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        let server = reqwest::Url::parse(mcp_url).map_or_else(
+            |_| mcp_url.to_string(),
+            |u| u.origin().ascii_serialization(),
+        );
+        anyhow::bail!(
+            "{server} does not offer adding servers to your account yet (it needs a newer \
+             release). Add {name} to this machine instead: sven mcp add --local {name} {url}"
+        );
+    }
+    if !status.is_success() {
         #[derive(Deserialize)]
         struct Refusal {
             error: String,
         }
-        let status = response.status();
         let why = response
             .json::<Refusal>()
             .await
-            .map_or_else(|_| status.to_string(), |r| r.error);
-        anyhow::bail!("your account did not add it: {why}");
+            .map_or_else(|_| format!("the server answered {status}"), |r| r.error);
+        anyhow::bail!("{name} was not added to your account: {why}");
     }
     Ok(response.json().await?)
 }

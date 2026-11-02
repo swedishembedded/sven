@@ -160,3 +160,22 @@ async fn a_refusal_says_the_accounts_reason() {
         "{refused:#}"
     );
 }
+
+#[tokio::test]
+async fn a_server_without_the_connect_endpoint_says_what_to_do_instead() {
+    let (origin, _) = account((404, "<html>Not found</html>")).await;
+    let refused = sven_mcp_client::connect_account(
+        &exchange(&origin),
+        &format!("{origin}/api/mcp"),
+        "github",
+        "https://api.githubcopilot.com/mcp/",
+    )
+    .await
+    .unwrap_err();
+    let text = format!("{refused:#}");
+    assert!(
+        text.contains("does not offer adding servers to your account yet"),
+        "{text}"
+    );
+    assert!(text.contains("--local"), "{text}");
+}

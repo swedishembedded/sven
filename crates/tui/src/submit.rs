@@ -320,11 +320,9 @@ impl App {
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    let _ = toast_tx
-                                                        .send(Toast::error(format!(
-                                                            "'{server}' not added: {e:#}"
-                                                        )))
-                                                        .await;
+                                                    // The reason, in full: a
+                                                    // toast's one line cuts it.
+                                                    let _ = notice_tx.send(format!("{e:#}")).await;
                                                 }
                                             }
                                             return;
