@@ -29,6 +29,7 @@ pub mod ledger;
 pub mod provenance;
 pub mod request;
 pub mod served;
+mod tool_image;
 pub mod turn;
 pub mod verify;
 pub mod wait;
@@ -40,6 +41,7 @@ pub use ledger::{
     LedgerSummary, ReportedUsage, RequestBreakdown, ToolActivity, STEP_DECISIONS_EXTRA_KEY,
     STEP_METRICS_EXTRA_KEY,
 };
+pub use tool_image::{ShownImages, ToolImage, MAX_IMAGES, MAX_IMAGE_BASE64_BYTES};
 
 pub use conclusion::announces_unfinished_work;
 pub use request::{RequestFold, RequestRecord, Sampled};
@@ -661,6 +663,11 @@ pub enum SessionEvent {
         tool_name: String,
         output: String,
         is_error: bool,
+        /// Raster images the tool returned (bounded, see [`ShownImages`]),
+        /// for a client that shows them. Omitted from the wire when empty, so
+        /// an old client ignores it and an old host never sends it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ToolImage>,
     },
     /// A long-running tool is reporting incremental progress. Consumers
     /// should update the spinner/status bar without adding a chat segment.

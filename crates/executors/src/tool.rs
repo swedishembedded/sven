@@ -556,11 +556,18 @@ impl EffectExecutor for ToolExecutor {
             // `Event::ToolFailed` below. Emitted after the result is in the
             // conversation, so an observer that keeps the conversation when a
             // call finishes (a host checkpointing mid-answer) keeps its result.
+            let shown = sven_vocab::ShownImages::from_parts(&output.parts);
+            let shown_output = if shown.note.is_empty() {
+                output.content.clone()
+            } else {
+                format!("{}\n{}", output.content, shown.note)
+            };
             obs.emit(UiEvent::ToolCallFinished {
                 call_id: display_id,
                 tool_name: name.clone(),
-                output: output.content.clone(),
+                output: shown_output,
                 is_error: output.is_error,
+                images: shown.images,
             });
 
             if output.is_error {
@@ -992,6 +999,59 @@ mod tests {
         );
         assert!(
             matches!(&parts[1], ToolContentPart::Image { image_url } if image_url == "data:image/png;base64,iVBO")
+        );
+    }
+
+    /// A client watching the session sees the image a tool returned, not
+    /// only the model: the finished event carries it, and says when one was
+    /// too large to carry.
+    #[tokio::test]
+    async fn an_image_a_tool_returns_reaches_the_event_stream() {
+        let mut registry = ToolRegistry::new();
+        registry.register(ImageTool);
+        let mut exec = ToolExecutor::unrestricted(Arc::new(registry));
+        let call_id = ToolCallId::new();
+        exec.call_id_to_thread
+            .lock()
+            .unwrap()
+            .insert(call_id, ("t1".into(), "orig".into()));
+        let rt = ErasedRuntime::spawn(
+            Box::new(Hsm::new(OneShotMachine::new())),
+            Context::new(),
+            PermissionPolicy::builder().build(),
+            NoOpExec,
+            16,
+        );
+        let obs = sven_hsm::ObservationSink::new(16);
+        let mut seen = obs.subscribe();
+        exec.execute(
+            Effect::CallTool {
+                call_id,
+                name: "picture".into(),
+                capability: ToolCapability::ReadFile,
+                args: serde_json::Value::Null,
+            },
+            &rt.sink(),
+            &obs,
+        )
+        .await;
+        rt.wait_done().await;
+        let _ = rt.join().await;
+
+        let mut finished = None;
+        while let Ok(event) = seen.try_recv() {
+            if let sven_hsm::UiEvent::ToolCallFinished { output, images, .. } = event {
+                finished = Some((output, images));
+            }
+        }
+        let (output, images) = finished.expect("a finished event");
+        assert_eq!(output, "Image file: sketch.png");
+        assert_eq!(
+            images,
+            vec![sven_vocab::ToolImage {
+                media_type: "image/png".into(),
+                data: "iVBO".into()
+            }]
         );
     }
 

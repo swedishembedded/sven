@@ -55,6 +55,7 @@ fn tool_finished(id: &str, output: &str) -> sven_machines::AgentEvent {
         tool_name: "read_file".into(),
         output: output.into(),
         is_error: false,
+        images: Vec::new(),
     }
 }
 

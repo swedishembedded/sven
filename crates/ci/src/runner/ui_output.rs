@@ -319,6 +319,7 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             tool_name: name,
             is_error,
             output,
+            ..
         } => {
             // The `output=` snippet is verbose-only signal for both success and
             // error outcomes: it appears solely at `-v` (trace >= 1) and is
@@ -806,6 +807,7 @@ mod tests {
                 tool_name: "read_file".into(),
                 output: "no such file".into(),
                 is_error: true,
+                images: Vec::new(),
             },
             &mut st,
         );
@@ -902,6 +904,7 @@ mod tests {
                 tool_name: "read_file".into(),
                 output: "contents".into(),
                 is_error: false,
+                images: Vec::new(),
             },
             &mut st,
         );

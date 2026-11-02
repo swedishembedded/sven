@@ -456,6 +456,7 @@ mod tests {
             tool_name: "shell".into(),
             output: "ok".into(),
             is_error: false,
+            images: Vec::new(),
         });
         sink.emit(UiEvent::TextComplete("done".into()));
         sink.emit(UiEvent::TurnComplete);

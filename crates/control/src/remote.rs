@@ -378,6 +378,7 @@ mod tests {
                             tool_name: "list_dir".into(),
                             output: "Cargo.toml".into(),
                             is_error: false,
+                            images: Vec::new(),
                         },
                     },
                 },
@@ -417,6 +418,32 @@ mod tests {
                 "working": [SESSION]
             })
         );
+    }
+
+    #[test]
+    fn a_finished_call_carries_its_images_on_the_wire_only_when_it_has_any() {
+        let finished = |images| SessionEvent::ToolCallFinished {
+            call_id: "call_1".into(),
+            tool_name: "read_file".into(),
+            output: "Image file: a.png".into(),
+            is_error: false,
+            images,
+        };
+        assert_eq!(
+            serde_json::to_value(finished(vec![sven_vocab::ToolImage {
+                media_type: "image/png".into(),
+                data: "iVBORw0KGgo=".into(),
+            }]))
+            .unwrap(),
+            serde_json::json!({"ToolCallFinished": {"call_id": "call_1", "tool_name": "read_file",
+                "output": "Image file: a.png", "is_error": false,
+                "images": [{"media_type": "image/png", "data": "iVBORw0KGgo="}]}})
+        );
+        let plain = serde_json::to_value(finished(Vec::new())).unwrap();
+        assert!(plain["ToolCallFinished"].get("images").is_none());
+        // A host from before the field sends no `images`.
+        let old: SessionEvent = serde_json::from_value(plain).unwrap();
+        assert_eq!(old, finished(Vec::new()));
     }
 
     #[test]

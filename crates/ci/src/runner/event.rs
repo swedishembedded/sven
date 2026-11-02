@@ -252,6 +252,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             tool_name,
             is_error,
             output,
+            ..
         } => {
             if is_error {
                 write_stderr(&format!(

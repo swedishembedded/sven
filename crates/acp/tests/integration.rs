@@ -139,6 +139,7 @@ fn tool_call_finished_becomes_tool_call() {
         tool_name: "write".into(),
         output: "ok".into(),
         is_error: false,
+        images: Vec::new(),
     };
     assert!(matches!(
         agent_event_to_session_update(&ev),

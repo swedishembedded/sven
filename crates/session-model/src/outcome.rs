@@ -286,6 +286,7 @@ mod tests {
             tool_name: "read_file".to_string(),
             output: "out".to_string(),
             is_error,
+            images: Vec::new(),
         }
     }
 

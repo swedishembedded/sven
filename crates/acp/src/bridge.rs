@@ -77,6 +77,7 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
             tool_name,
             output,
             is_error,
+            ..
         } => {
             let status = if *is_error {
                 ToolCallStatus::Failed

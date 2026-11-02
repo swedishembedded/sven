@@ -210,6 +210,8 @@ fn show_parts(shown: &mut Shown, parts: &[Value], streaming: bool, events: &mut 
                         .get("isError")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
+                    // The server's stored form of a tool result is text.
+                    images: Vec::new(),
                 });
             }
             "error" => events.push(AgentEvent::Error(field(part, "message").to_string())),
@@ -403,7 +405,8 @@ mod tests {
                     call_id: "c1".into(),
                     tool_name: "list_dir".into(),
                     output: "README.md".into(),
-                    is_error: false
+                    is_error: false,
+                    images: Vec::new(),
                 },
             ]
         );
