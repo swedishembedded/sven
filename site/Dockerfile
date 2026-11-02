@@ -8,7 +8,7 @@ COPY . .
 RUN npm run build
 
 FROM node:22-alpine
-RUN npm install -g serve
+RUN npm install -g serve@14.2.5
 WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist/serve.json ./serve.json

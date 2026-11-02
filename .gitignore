@@ -51,6 +51,7 @@ Thumbs.db
 # Local task notes (never part of repo history)
 /.todo/
 /site/dist/
+/site/dist-ssr/
 /site/package-lock.json
 
 # Local runtime/IDE artefacts
