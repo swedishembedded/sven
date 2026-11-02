@@ -155,15 +155,33 @@ pub fn tool_output(call_id: &str, result: CallToolResult) -> ToolOutput {
     output
 }
 
+/// The most base64 of one image or sound kept from a tool's result; text
+/// is bounded where all tool output is, a picture is not, so it is here.
+const MAX_MEDIA_BASE64: usize = 8 * 1024 * 1024;
+
+/// An image (or, with `audio`, a sound) as a part, or a note in its place
+/// when it is too large to pass on.
+fn media(audio: bool, mime: &str, data: String) -> ToolOutputPart {
+    if data.len() > MAX_MEDIA_BASE64 {
+        let kind = if audio { "sound" } else { "image" };
+        return ToolOutputPart::Text(format!(
+            "[{kind} ({mime}), {} bytes base64: too large to pass on]",
+            data.len()
+        ));
+    }
+    let url = format!("data:{mime};base64,{data}");
+    if audio {
+        ToolOutputPart::Audio(url)
+    } else {
+        ToolOutputPart::Image(url)
+    }
+}
+
 fn content_part(block: ContentBlock) -> ToolOutputPart {
     match block {
         ContentBlock::Text(t) => ToolOutputPart::Text(t.text),
-        ContentBlock::Image(i) => {
-            ToolOutputPart::Image(format!("data:{};base64,{}", i.mime_type, i.data))
-        }
-        ContentBlock::Audio(a) => {
-            ToolOutputPart::Audio(format!("data:{};base64,{}", a.mime_type, a.data))
-        }
+        ContentBlock::Image(i) => media(false, &i.mime_type, i.data),
+        ContentBlock::Audio(a) => media(true, &a.mime_type, a.data),
         ContentBlock::Resource(r) => match r.resource {
             ResourceContents::TextResourceContents { uri, text, .. } => {
                 ToolOutputPart::Text(format!("[resource {uri}]\n{text}"))
@@ -174,12 +192,8 @@ fn content_part(block: ContentBlock) -> ToolOutputPart {
                 blob,
                 ..
             } => match mime_type.as_deref() {
-                Some(mime) if mime.starts_with("image/") => {
-                    ToolOutputPart::Image(format!("data:{mime};base64,{blob}"))
-                }
-                Some(mime) if mime.starts_with("audio/") => {
-                    ToolOutputPart::Audio(format!("data:{mime};base64,{blob}"))
-                }
+                Some(mime) if mime.starts_with("image/") => media(false, mime, blob),
+                Some(mime) if mime.starts_with("audio/") => media(true, mime, blob),
                 mime => ToolOutputPart::Text(format!(
                     "[binary resource {uri} ({}), {} bytes base64]",
                     mime.unwrap_or("application/octet-stream"),
@@ -232,4 +246,17 @@ pub struct McpPromptArgInfo {
     pub name: String,
     pub description: String,
     pub required: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_image_too_large_to_pass_on_becomes_a_note() {
+        let small = media(false, "image/png", "aGk=".to_string());
+        assert!(matches!(small, ToolOutputPart::Image(url) if url == "data:image/png;base64,aGk="));
+        let huge = media(false, "image/png", "A".repeat(MAX_MEDIA_BASE64 + 1));
+        assert!(matches!(huge, ToolOutputPart::Text(note) if note.contains("too large")));
+    }
 }

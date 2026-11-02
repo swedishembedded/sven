@@ -31,7 +31,9 @@ pub fn mcp_servers_schema() -> Schema {
 /// Transport configuration for an MCP server.
 ///
 /// Supports stdio (subprocess) and HTTP (streamable HTTP / SSE) transports.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Its `Debug` names an HTTP server's headers but never their values: they
+/// carry keys.
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum McpTransport {
     /// Run an MCP server as a child process communicating over stdin/stdout.
@@ -46,6 +48,26 @@ pub enum McpTransport {
         #[serde(default)]
         headers: HashMap<String, String>,
     },
+}
+
+impl std::fmt::Debug for McpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            McpTransport::Stdio { command, args } => f
+                .debug_struct("Stdio")
+                .field("command", command)
+                .field("args", args)
+                .finish(),
+            McpTransport::Http { url, headers } => {
+                let mut names: Vec<&String> = headers.keys().collect();
+                names.sort();
+                f.debug_struct("Http")
+                    .field("url", url)
+                    .field("headers", &names)
+                    .finish_non_exhaustive()
+            }
+        }
+    }
 }
 
 impl Default for McpTransport {
@@ -283,6 +305,14 @@ impl Default for McpServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_servers_headers_are_named_but_never_shown() {
+        let server = McpServerConfig::bearer_http("https://mcp.example/mcp", "the-secret-key");
+        let shown = format!("{:?}", server.transport);
+        assert!(shown.contains("Authorization"), "{shown}");
+        assert!(!shown.contains("the-secret-key"), "{shown}");
+    }
 
     #[test]
     fn a_server_defaults_to_enabled_with_a_thirty_second_timeout() {
