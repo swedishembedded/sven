@@ -792,6 +792,8 @@ fn use_server_services(config: &mut Config, login: &RemoteLogin) {
         sven_bootstrap::connectors::add(config, url, login.mcp_token_url.as_deref(), &login.token);
         if let Some(only) = config.tools.only.as_mut() {
             only.push(format!("{}-*", sven_bootstrap::connectors::SERVER));
+            // Deferral of connector tools needs the discovery tool.
+            only.push(sven_bootstrap::DISCOVERY_TOOL.to_string());
         }
     }
 }
@@ -911,6 +913,24 @@ mod tests {
         let only = config.tools.only.as_ref().unwrap();
         assert!(only.iter().any(|t| t == "connectors-*"));
         assert!(only.iter().any(|t| t == "web_search"));
+        assert!(
+            only.iter().any(|t| t == sven_bootstrap::DISCOVERY_TOOL),
+            "without the discovery tool every connector tool is sent in full on every request"
+        );
+
+        let mut without: Config = Config::default();
+        crate::restrict_to_hosted(&mut without);
+        let hosted = without.tools.only.clone();
+        let login = RemoteLogin {
+            mcp_url: None,
+            mcp_token_url: None,
+            ..login
+        };
+        use_server_services(&mut without, &login);
+        assert_eq!(
+            without.tools.only, hosted,
+            "no connectors, no change to the hosted allow list"
+        );
     }
 
     /// A host searches through the server it signed in to, with its key:

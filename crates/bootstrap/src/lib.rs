@@ -73,7 +73,7 @@ pub use runtime_builder::{
 };
 pub use supervisor::{SessionId, SessionSupervisor};
 pub use sven_mcp_client::McpManager;
-pub use sven_tool_registry::Disclosure;
+pub use sven_tool_registry::{Disclosure, DISCOVERY_TOOL};
 /// What a session's `ask_question` tool sends a surface that answers it.
 pub use sven_tools_agent::{Question, QuestionRequest};
 pub use sven_turn::instructions::ListingDisclosure;
