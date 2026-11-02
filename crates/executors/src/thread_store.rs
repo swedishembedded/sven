@@ -233,6 +233,28 @@ impl ThreadStore {
         self.threads.insert(id.to_string(), messages);
     }
 
+    /// Replaces thread `id`'s turns with `history` (a frontend's edited or
+    /// carried-over conversation), keeping the system prompt the thread was
+    /// seeded with. A history carries turns: a system message at its head is
+    /// the prompt of the session it was taken from, and gives way to this
+    /// thread's own (or to none, for a thread seeded without one).
+    pub fn replace_history(&mut self, id: &str, history: Vec<Message>) {
+        let is_system = |m: &Message| m.role == Role::System;
+        let own = self
+            .threads
+            .get(id)
+            .and_then(|turns| turns.first())
+            .filter(|first| is_system(first))
+            .cloned();
+        let turns = history
+            .into_iter()
+            .enumerate()
+            .filter(|(i, m)| !(*i == 0 && is_system(m)))
+            .map(|(_, m)| m);
+        self.threads
+            .insert(id.to_string(), own.into_iter().chain(turns).collect());
+    }
+
     /// A read-only clone of a thread's current turns (empty if absent).
     #[must_use]
     pub fn snapshot(&self, id: &str) -> Vec<Message> {
@@ -702,6 +724,54 @@ mod tests {
     }
 
     use super::*;
+
+    /// A frontend's history replaces a thread's turns, never the system
+    /// prompt the thread was seeded with: without it every later request
+    /// would go out with no instructions at all. A system message heading the
+    /// history (the prompt of the session it was taken from) gives way to the
+    /// thread's own.
+    #[test]
+    fn a_replaced_history_keeps_the_threads_system_prompt() {
+        let mut store = ThreadStore::new();
+        store.append("t", Message::system("the prompt"));
+        store.append("t", Message::user("old question"));
+        store.replace_history(
+            "t",
+            vec![
+                Message::user("edited question"),
+                Message::assistant("answer"),
+            ],
+        );
+        let texts: Vec<_> = store
+            .snapshot("t")
+            .iter()
+            .map(|m| m.as_text().map(str::to_string))
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                Some("the prompt".into()),
+                Some("edited question".into()),
+                Some("answer".into())
+            ]
+        );
+
+        store.replace_history(
+            "t",
+            vec![
+                Message::system("another session's prompt"),
+                Message::user("q"),
+            ],
+        );
+        let messages = store.snapshot("t");
+        assert_eq!(messages[0].as_text(), Some("the prompt"));
+        assert_eq!(messages.len(), 2);
+
+        // A thread seeded with no system prompt (`--no-system`) takes none.
+        let mut bare = ThreadStore::new();
+        bare.replace_history("b", vec![Message::system("old prompt"), Message::user("q")]);
+        assert_eq!(bare.snapshot("b").len(), 1);
+    }
 
     /// A compaction rewrites a thread to what the model reads next; the
     /// transcript is what happened, including the answer the store itself gave

@@ -325,16 +325,19 @@ impl KernelAgentSession {
         self.handle.tool_registry()
     }
 
-    /// Replace the reactive-agent conversation thread with `messages`.
+    /// Replace the reactive-agent conversation thread's turns with `messages`,
+    /// keeping its system prompt.
     ///
     /// This is the history-seeding hook the interactive frontends call before
     /// posting a message on the edit-resubmit and resume flows: it installs the
     /// frontend's authoritative reconstructed history so the next turn streams
     /// against exactly those turns rather than the store's own accumulated
-    /// version. A no-op if the store mutex is poisoned.
+    /// version, under the session's own system prompt
+    /// ([`sven_executors::thread_store::ThreadStore::replace_history`]). A
+    /// no-op if the store mutex is poisoned.
     pub fn seed_history(&self, messages: Vec<sven_model::Message>) {
         if let Ok(mut store) = self.handle.conversation_store().lock() {
-            store.replace_thread(
+            store.replace_history(
                 sven_machines::machines::reactive_agent::CHAT_THREAD,
                 messages,
             );

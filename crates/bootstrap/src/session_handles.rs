@@ -384,13 +384,15 @@ impl RuntimeHandle {
             .unwrap_or_default()
     }
 
-    /// Replace the reactive-agent conversation thread with `messages`.
+    /// Replace the reactive-agent conversation thread's turns with
+    /// `messages`, keeping its system prompt.
     ///
     /// The history-seeding hook a rebuilt kernel uses so the next turn streams
-    /// against exactly those turns. A no-op if the store mutex is poisoned.
+    /// against exactly those turns, under this kernel's own system prompt. A
+    /// no-op if the store mutex is poisoned.
     pub fn seed_history(&self, messages: Vec<Message>) {
         if let Ok(mut store) = self.conv_store.lock() {
-            store.replace_thread(
+            store.replace_history(
                 sven_machines::machines::reactive_agent::CHAT_THREAD,
                 messages,
             );

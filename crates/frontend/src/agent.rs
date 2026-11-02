@@ -498,6 +498,13 @@ mod tests {
             "replaced history must be absent from the next turn: {:?}",
             req.messages
         );
+        // The edited history replaces the turns, never the system prompt.
+        assert_eq!(
+            req.messages.first().map(|m| m.role.clone()),
+            Some(sven_model::Role::System),
+            "the next turn must still carry the system prompt: {:?}",
+            req.messages
+        );
     }
 
     // ── Behaviour 2: mode override (Plan blocks writes) ────────────────────────
