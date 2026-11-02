@@ -10,23 +10,31 @@ home: docs/index.md
 navigation:
   - title: Getting started
     pages:
-      - docs/getting-started/installation.md
-      - docs/getting-started/quickstart.md
+      - source: docs/getting-started/installation.md
+        description: "Install sven on Linux or macOS with one command, sign in with your sven account or set up your own model provider."
+      - source: docs/getting-started/quickstart.md
+        description: "Your first session with sven: start it in a project, give it a task, and approve or interrupt what it does."
   - title: Guides
     pages:
       - docs/guides/interactive.md
-      - docs/guides/headless.md
+      - source: docs/guides/headless.md
+        description: "Run sven without a terminal interface, from scripts and CI pipelines, with exit codes and output a pipeline can act on."
       - docs/guides/workflows.md
       - docs/guides/pipe-composition.md
-      - docs/guides/teams.md
-      - docs/guides/debugging.md
+      - source: docs/guides/teams.md
+        description: "Start a team of sven agents that share a task board, each working in its own git worktree and reporting back."
+      - source: docs/guides/debugging.md
+        description: "Let sven debug embedded hardware over GDB: start a debug server, set breakpoints and read memory and registers on the target."
       - docs/guides/request-replay.md
       - docs/guides/skills.md
       - docs/guides/large-content.md
       - docs/guides/document-conversion.md
-      - docs/guides/harnesses.md
-      - docs/guides/ide-integration.md
-      - docs/guides/remote-control.md
+      - source: docs/guides/harnesses.md
+        description: "Write agent workflows as YAML with the checks that decide success, so a task is done when its tests and gates pass."
+      - source: docs/guides/ide-integration.md
+        description: "Use sven inside your editor through the Agent Client Protocol, in Zed, VS Code, JetBrains and other ACP-capable editors."
+      - source: docs/guides/remote-control.md
+        description: "Run sven sessions on your own machine and drive them from your sven account in a browser; the machine only connects out."
       - docs/guides/browser-sessions.md
       - docs/guides/troubleshooting.md
   - title: Concepts
@@ -41,12 +49,16 @@ navigation:
     pages:
       - docs/reference/cli.md
       - docs/reference/configuration.md
-      - docs/reference/providers.md
+      - source: docs/reference/providers.md
+        description: "The model providers sven supports, local models included, and how to configure each one."
       - docs/reference/tools.md
       - docs/reference/harnesses.md
-      - docs/reference/sdk.md
-      - docs/reference/mcp.md
-      - docs/reference/acp.md
+      - source: docs/reference/sdk.md
+        description: "Embed the sven agent engine in your own application with the sven SDK: sessions, tools, events and traces."
+      - source: docs/reference/mcp.md
+        description: "Connect sven to MCP servers, sign in to them with OAuth, or serve sven tools to another MCP host."
+      - source: docs/reference/acp.md
+        description: "The Agent Client Protocol server sven speaks to editors: capabilities, sessions and permissions."
   - title: Examples
     pages:
       - docs/examples/index.md
