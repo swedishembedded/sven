@@ -91,12 +91,12 @@ repos:
         always_run: true
         pass_filenames: false
 
-      # Replace common non-ASCII punctuation (em/en dashes, curly quotes,
-      # ellipsis, non-breaking spaces) with plain ASCII equivalents so the
-      # repository stays pure ASCII in all text and markdown files.
-      - id: normalize-ascii
-        name: normalize non-ASCII punctuation
-        entry: bash scripts/normalize-ascii.sh
+      # Replace em dashes with hyphens: the one character the repository
+      # does not carry. Every other character, icons included, is left as
+      # written.
+      - id: normalize-em-dash
+        name: replace em dashes
+        entry: bash scripts/normalize-em-dash.sh
         language: system
         types: [text]
         # The vendored docs publisher reproduces third-party license texts
