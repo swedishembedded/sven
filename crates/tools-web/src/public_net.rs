@@ -71,10 +71,15 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
         || (first & 0xffc0) == 0xfec0
         // Documentation, 2001:db8::/32.
         || (first == 0x2001 && ip.segments()[1] == 0x0db8)
-        // Addresses that carry an IPv4 address inside (NAT64, 6to4, the old
-        // IPv4-compatible form): refused rather than unwrapped.
+        // Addresses that carry an IPv4 address inside (NAT64, 6to4, Teredo,
+        // IPv4-translated, the old IPv4-compatible form): refused rather
+        // than unwrapped.
         || (first == 0x0064 && ip.segments()[1] == 0xff9b)
         || first == 0x2002
+        || (first == 0x2001 && ip.segments()[1] == 0)
+        || (ip.segments()[..4].iter().all(|s| *s == 0)
+            && ip.segments()[4] == 0xffff
+            && ip.segments()[5] == 0)
         || ip.segments()[..6].iter().all(|s| *s == 0))
 }
 
@@ -157,6 +162,9 @@ mod tests {
             "64:ff9b::a9fe:a9fe",
             "2002:a9fe:a9fe::1",
             "::127.0.0.1",
+            // IPv4-translated (RFC 2765) loopback, and Teredo.
+            "::ffff:0:7f00:1",
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
         ] {
             assert!(
                 !is_public(refused.parse().unwrap()),
