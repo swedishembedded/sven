@@ -218,8 +218,30 @@ impl McpManager {
                 let client = match auth::signed_in_client(&self.store, &key, url).await {
                     Ok(client) => client,
                     Err(e) => {
-                        warn!(server = %name, error = %format!("{e:#}"), "stored MCP sign-in unusable; signing in again");
-                        None
+                        // Not signed out: the sign-in could not be read (the
+                        // server's authorization server is unreachable, or
+                        // the store is damaged). Say so and try again later
+                        // rather than starting a sign-in nobody asked for.
+                        let error = format!(
+                            "cannot use the stored sign-in: {e:#} \
+                             (`sven mcp logout {name}` forgets it)"
+                        );
+                        warn!(server = %name, error = %error, "stored MCP sign-in unusable");
+                        self.servers
+                            .write()
+                            .await
+                            .entry(name.to_string())
+                            .or_default()
+                            .health
+                            .report_error(error.clone());
+                        let _ = self
+                            .event_tx
+                            .send(McpEvent::ServerFailed {
+                                name: name.to_string(),
+                                error,
+                            })
+                            .await;
+                        return Err(e);
                     }
                 };
                 // A server configured for OAuth and never signed in to is
@@ -385,6 +407,11 @@ impl McpManager {
             }
             let policies = config.get(name).map(|c| &c.tools);
             for t in &state.tools {
+                // The account's copy of a service configured here is
+                // dropped: the local server is the higher tier.
+                if crate::dedupe::duplicates_local(t.meta.as_ref(), name, &config) {
+                    continue;
+                }
                 let destructive = t
                     .annotations
                     .as_ref()

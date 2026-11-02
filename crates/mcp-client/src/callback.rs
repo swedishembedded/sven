@@ -222,33 +222,44 @@ pub fn running_in_container() -> bool {
     }
 }
 
-/// Attempt to open a URL in the user's default browser.
+/// Try to open `url` in the user's default browser; whether one was started.
 ///
-/// Uses the `webbrowser` crate which respects the system default and `$BROWSER`
-/// on Linux. If opening fails (e.g. in Docker, headless, or no display), we log
-/// the URL so the user can open it manually - the OAuth callback server keeps
-/// waiting.
-pub fn open_browser(url: &str) {
-    // The address comes from the server's metadata: open only a web page,
-    // never a local file or another program's handler.
+/// It prints nothing: a caller always shows the address itself
+/// ([`sign_in_link`]), because opening can "succeed" with nothing appearing
+/// (a headless box, a container, a remote shell) and a terminal frontend
+/// cannot show stderr. Only a web page is opened: the address comes from the
+/// server's metadata, so a local file or another program's handler is
+/// refused.
+pub fn open_browser(url: &str) -> bool {
     if !openable(url) {
         warn!(url = %url, "not opening a sign-in address that is not a web page");
-        eprintln!("\nOAuth: the sign-in address is not a web page; open it yourself only if you trust it:\n  {url}\n");
-        return;
+        return false;
     }
     match webbrowser::open(url) {
-        Ok(()) => {}
+        Ok(()) => true,
         Err(e) => {
-            warn!(
-                error = %e,
-                url = %url,
-                "Could not open default browser (e.g. running in Docker or headless). \
-                 Open the URL above manually to complete OAuth"
-            );
-            eprintln!(
-                "\nOAuth: Could not open browser. Open this URL manually to complete login:\n  {url}\n"
-            );
+            warn!(error = %e, url = %url, "could not open a browser (headless, or no display)");
+            false
         }
+    }
+}
+
+/// What to show a person who has to sign in to `server` on `url`: one line
+/// saying what to do, then the address alone on its own line, so it can be
+/// copied as one string. Every frontend shows it next to the attempt to open
+/// a browser, so nobody depends on the browser opening.
+///
+/// An address that is not a web page is still shown (the person decides
+/// whether to trust it), under a line saying sven does not open it.
+#[must_use]
+pub fn sign_in_link(server: &str, url: &str) -> String {
+    if openable(url) {
+        format!("Open this link in a browser to sign in to {server}:\n\n{url}")
+    } else {
+        format!(
+            "The sign-in address for {server} is not a web page, so sven does not open it. \
+             Open it yourself only if you trust it:\n\n{url}"
+        )
     }
 }
 
@@ -495,6 +506,24 @@ fn not_found_html() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sign_in_address_is_alone_on_its_own_line() {
+        let url = "https://auth.example/authorize?client_id=a&state=b";
+        let text = sign_in_link("docs", url);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "Open this link in a browser to sign in to docs:");
+        assert_eq!(lines.last(), Some(&url), "{text}");
+        assert_eq!(lines.iter().filter(|l| l.contains(url)).count(), 1);
+    }
+
+    #[test]
+    fn an_address_that_is_not_a_web_page_is_shown_but_not_offered_for_opening() {
+        let text = sign_in_link("docs", "file:///etc/passwd");
+        assert!(text.contains("does not open it"), "{text}");
+        assert!(text.ends_with("file:///etc/passwd"));
+        assert!(!open_browser("file:///etc/passwd"));
+    }
 
     #[test]
     fn a_query_value_decodes_as_utf8() {

@@ -303,6 +303,210 @@ async fn serve_unauthorized() -> String {
     url
 }
 
+/// How the OAuth server of [`serve_oauth`] answers a refresh.
+#[derive(Clone, Copy)]
+enum Refresh {
+    /// Trades `good-refresh` for the access token `fresh`.
+    Grants,
+    /// Answers `invalid_grant`: the refresh token is revoked.
+    Rejects,
+    /// Answers 503: the server is down, the token may still be good.
+    Down,
+}
+
+/// An OAuth-protected MCP server (its own authorization server too) that
+/// takes only the access token `fresh`, which `/token` grants for the
+/// refresh token `good-refresh` as `refresh` says. Returns its MCP URL.
+async fn serve_oauth(refresh: Refresh) -> String {
+    use bytes::Bytes;
+    use http_body_util::{combinators::BoxBody, BodyExt, Full};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+    use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+    use tower_service::Service as _;
+
+    let service = StreamableHttpService::new(
+        || Ok(current_server::Server),
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let origin = base.clone();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let (service, base) = (service.clone(), origin.clone());
+            let handle =
+                hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                    let (mut service, base) = (service.clone(), base.clone());
+                    async move {
+                        type Body = BoxBody<Bytes, std::convert::Infallible>;
+                        let reply = |status: u16, json: serde_json::Value| -> hyper::Response<Body> {
+                            hyper::Response::builder()
+                                .status(status)
+                                .header("content-type", "application/json")
+                                .header("www-authenticate", "Bearer")
+                                .body(Full::new(Bytes::from(json.to_string())).boxed())
+                                .unwrap()
+                        };
+                        let path = req.uri().path().to_string();
+                        let auth = req
+                            .headers()
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("")
+                            .to_string();
+                        let answer = if path.starts_with("/.well-known/oauth-protected-resource") {
+                            reply(
+                                200,
+                                json!({"resource": format!("{base}/mcp"), "authorization_servers": [base]}),
+                            )
+                        } else if path.starts_with("/.well-known/oauth-authorization-server") {
+                            reply(
+                                200,
+                                json!({
+                                    "issuer": base,
+                                    "authorization_endpoint": format!("{base}/authorize"),
+                                    "token_endpoint": format!("{base}/token"),
+                                    "code_challenge_methods_supported": ["S256"],
+                                    "response_types_supported": ["code"],
+                                }),
+                            )
+                        } else if path == "/token" {
+                            match refresh {
+                                Refresh::Grants => reply(
+                                    200,
+                                    json!({"access_token": "fresh", "token_type": "Bearer",
+                                           "expires_in": 3600, "refresh_token": "good-refresh"}),
+                                ),
+                                Refresh::Rejects => reply(400, json!({"error": "invalid_grant"})),
+                                Refresh::Down => reply(503, json!({})),
+                            }
+                        } else if auth == "Bearer fresh" {
+                            return Ok::<_, std::convert::Infallible>(
+                                service.call(req).await.unwrap(),
+                            );
+                        } else {
+                            reply(401, json!({}))
+                        };
+                        Ok(answer)
+                    }
+                });
+            tokio::spawn(async move {
+                let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(stream), handle)
+                    .await;
+            });
+        }
+    });
+    format!("{base}/mcp")
+}
+
+/// A manager whose token store already holds a sign-in to the server at
+/// `url`: the access token `stale` (with no recorded lifetime, so the
+/// client cannot know it expired) and the refresh token `good-refresh`.
+fn signed_in_client(url: &str) -> (Client, std::path::PathBuf, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp-oauth.json");
+    let key = TokenStore::key("gate", url);
+    let origin = url.trim_end_matches("/mcp");
+    std::fs::write(
+        &path,
+        json!({ key.clone(): {
+            "client_id": "registered",
+            "token_response": {"access_token": "stale", "token_type": "bearer",
+                               "refresh_token": "good-refresh"},
+            "issuer": origin,
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let (tx, events) = mpsc::channel(64);
+    let manager = McpManager::with_token_store(
+        [("gate".to_string(), http(url, 10))].into(),
+        tx,
+        false,
+        TokenStore::new(path.clone()),
+    );
+    let client = Client {
+        manager,
+        events,
+        _store: dir,
+    };
+    (client, path, key)
+}
+
+async fn an_access_token_the_server_refuses_is_refreshed_before_the_sign_in_is_forgotten() {
+    let url = serve_oauth(Refresh::Grants).await;
+    let (c, path, key) = signed_in_client(&url);
+    c.manager.connect("gate").await.unwrap();
+    assert_eq!(c.manager.tools().await.len(), 4);
+    let kept = TokenStore::new(path).load(&key).unwrap().expect("kept");
+    let token = serde_json::to_value(kept.token_response.unwrap()).unwrap();
+    assert_eq!(token["access_token"], "fresh");
+}
+
+async fn a_revoked_refresh_token_forgets_the_sign_in_and_asks_for_a_new_one() {
+    let url = serve_oauth(Refresh::Rejects).await;
+    let (mut c, path, key) = signed_in_client(&url);
+    assert!(c.manager.connect("gate").await.is_err());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !matches!(c.events.recv().await, Some(McpEvent::AuthRequired { .. })) {}
+    })
+    .await
+    .expect("AuthRequired in time");
+    assert!(TokenStore::new(path).load(&key).unwrap().is_none());
+}
+
+async fn a_refresh_that_cannot_reach_the_server_keeps_the_sign_in() {
+    let url = serve_oauth(Refresh::Down).await;
+    let (mut c, path, key) = signed_in_client(&url);
+    assert!(c.manager.connect("gate").await.is_err());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match c.events.recv().await {
+                Some(McpEvent::ServerFailed { .. }) => break,
+                Some(McpEvent::AuthRequired { .. }) => panic!("a server outage asked for a sign-in"),
+                Some(_) => {}
+                None => panic!("no ServerFailed"),
+            }
+        }
+    })
+    .await
+    .expect("ServerFailed in time");
+    assert!(
+        TokenStore::new(path).load(&key).unwrap().is_some(),
+        "an outage forgot the sign-in"
+    );
+}
+
+async fn a_sign_in_that_cannot_be_read_for_want_of_the_network_does_not_open_a_browser() {
+    // The server is unreachable, so its authorization server cannot be
+    // discovered to read the stored sign-in: the server fails (and is tried
+    // again later); it must not be treated as signed out.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/mcp", closed.local_addr().unwrap());
+    drop(closed);
+    let (mut c, path, key) = signed_in_client(&url);
+    let events = &mut c.events;
+    assert!(c.manager.connect("gate").await.is_err());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match events.recv().await {
+                Some(McpEvent::ServerFailed { .. }) => break,
+                Some(McpEvent::AuthStarted { .. } | McpEvent::AuthRequired { .. }) => {
+                    panic!("an unreachable server asked for a sign-in")
+                }
+                Some(_) => {}
+                None => panic!("no ServerFailed"),
+            }
+        }
+    })
+    .await
+    .expect("ServerFailed in time");
+    assert!(TokenStore::new(path).load(&key).unwrap().is_some());
+}
+
 // ── The client side ─────────────────────────────────────────────────────────
 
 struct Client {
@@ -560,6 +764,10 @@ fn main() {
             a_servers_tool_policy_decides_what_is_offered_and_what_asks,
             a_server_behind_short_lived_tokens_never_sees_the_key_and_is_traded_again_when_refused,
             a_401_in_a_headless_run_asks_for_a_sign_in_and_never_waits,
+            an_access_token_the_server_refuses_is_refreshed_before_the_sign_in_is_forgotten,
+            a_revoked_refresh_token_forgets_the_sign_in_and_asks_for_a_new_one,
+            a_refresh_that_cannot_reach_the_server_keeps_the_sign_in,
+            a_sign_in_that_cannot_be_read_for_want_of_the_network_does_not_open_a_browser,
         ]
     });
     for (name, case) in all {

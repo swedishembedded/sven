@@ -27,6 +27,7 @@ mod callback;
 pub mod config;
 pub mod config_edit;
 mod connection;
+mod dedupe;
 mod events;
 pub mod exchange;
 pub mod health;
@@ -36,11 +37,11 @@ pub mod manager;
 
 pub use auth::TokenStore;
 pub use bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
-pub use callback::open_browser;
+pub use callback::{open_browser, sign_in_link};
 pub use config::{
     mcp_servers_schema, McpOAuthConfig, McpServerConfig, McpServers, McpToolPolicy, McpTransport,
 };
 pub use events::{McpEvent, NoticeLevel};
-pub use exchange::{connect_account, AccountConnection, TokenExchange};
+pub use exchange::{connect_account, AccountConnection, AccountConnector, TokenExchange};
 pub use health::{ServerStatus, ServerStatusSummary};
 pub use manager::McpManager;

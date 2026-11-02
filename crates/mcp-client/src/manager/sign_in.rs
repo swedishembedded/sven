@@ -6,6 +6,7 @@
 //! and add or remove it.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
@@ -131,6 +132,40 @@ impl McpManager {
         pasted: Option<mpsc::Receiver<String>>,
     ) -> Result<()> {
         self.sign_in_with(server, None, present, pasted).await
+    }
+
+    /// Wait for `server` to be connected, which a sign-in in progress
+    /// brings about once the person finishes it; its tool count. Fails with
+    /// the reason when the server fails, or needs a sign-in nobody is
+    /// doing, or when `within` passes.
+    pub async fn wait_connected(&self, server: &str, within: Duration) -> Result<usize> {
+        // A finished sign-in reconnects from a task of its own, so for a
+        // moment the server still reads as needing a sign-in nobody is
+        // doing: that state has to hold for a few polls to be believed.
+        const POLL: Duration = Duration::from_millis(500);
+        const SETTLE_POLLS: u32 = 6;
+        let deadline = tokio::time::Instant::now() + within;
+        let mut idle = 0;
+        loop {
+            {
+                let servers = self.servers.read().await;
+                if let Some(state) = servers.get(server) {
+                    match &state.health.status {
+                        ServerStatus::Connected => return Ok(state.tools.len()),
+                        ServerStatus::Failed { error } => anyhow::bail!("{error}"),
+                        ServerStatus::NeedsAuth { .. } if !state.auth_in_progress => idle += 1,
+                        _ => idle = 0,
+                    }
+                }
+            }
+            if idle >= SETTLE_POLLS {
+                anyhow::bail!("{server} needs a sign-in that is not in progress");
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("timed out waiting for {server} to connect");
+            }
+            tokio::time::sleep(POLL).await;
+        }
     }
 
     /// Connect `server` and offer its tools (`true`), or disconnect it and
