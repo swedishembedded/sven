@@ -591,8 +591,8 @@ impl SessionActor {
         options.wait_for_mcp_tools_ms = Some(self.context.mcp_tools_wait_ms);
         let spec = SessionSpec::for_mode(self.mode, model);
         let history = std::mem::take(&mut self.history);
-        let (controller, mcp_events) = SessionController::open(options, spec, history).await?;
-        controller.follow_mcp_tools(mcp_events);
+        let (controller, _notices) = SessionController::open(options, spec, history).await?;
+        controller.follow_mcp_tools();
         Ok(controller)
     }
 

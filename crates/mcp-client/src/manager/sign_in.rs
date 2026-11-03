@@ -53,13 +53,10 @@ impl McpManager {
                         auth_url: String::new(),
                     };
                 }
-                let _ = this
-                    .event_tx
-                    .send(McpEvent::AuthRequired {
-                        server: name,
-                        auth_url: url,
-                    })
-                    .await;
+                this.emit(McpEvent::AuthRequired {
+                    server: name,
+                    auth_url: url,
+                });
                 return;
             }
 
@@ -77,22 +74,16 @@ impl McpManager {
             }
 
             if !this.allow_interactive_oauth {
-                let _ = this
-                    .event_tx
-                    .send(McpEvent::AuthRequired {
-                        server: name,
-                        auth_url: url,
-                    })
-                    .await;
+                this.emit(McpEvent::AuthRequired {
+                    server: name,
+                    auth_url: url,
+                });
                 return;
             }
 
-            let _ = this
-                .event_tx
-                .send(McpEvent::AuthStarted {
-                    server: name.clone(),
-                })
-                .await;
+            this.emit(McpEvent::AuthStarted {
+                server: name.clone(),
+            });
             let signed = this.sign_in(&name, challenge.as_deref()).await;
             if let Some(state) = this.servers.write().await.get_mut(&name) {
                 state.auth_in_progress = false;
@@ -107,10 +98,7 @@ impl McpManager {
                         error: error.clone(),
                     };
                 }
-                let _ = this
-                    .event_tx
-                    .send(McpEvent::ServerFailed { name, error })
-                    .await;
+                this.emit(McpEvent::ServerFailed { name, error });
             }
         });
     }

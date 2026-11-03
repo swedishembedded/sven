@@ -16,7 +16,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use rmcp::model::{CallToolResult, Prompt, Tool};
 use serde_json::Value;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, watch, Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::auth::{self, TokenStore};
@@ -58,7 +58,12 @@ pub struct McpManager {
     config: RwLock<HashMap<String, McpServerConfig>>,
     servers: RwLock<HashMap<String, ServerState>>,
     store: Arc<TokenStore>,
+    /// Notices for whoever shows them; sent without waiting ([`Self::emit`]).
     event_tx: mpsc::Sender<McpEvent>,
+    /// How many times the tools changed: what a session follows to keep its
+    /// tools current ([`Self::tool_changes`]), which no slow watcher can
+    /// hold up or make it miss.
+    tool_generation: watch::Sender<u64>,
     /// When false (headless/CI mode), never trigger interactive OAuth flows.
     /// Batch runs must complete without user interaction.
     allow_interactive_oauth: bool,
@@ -98,10 +103,34 @@ impl McpManager {
             servers: RwLock::new(HashMap::new()),
             store: Arc::new(store),
             event_tx,
+            tool_generation: watch::Sender::new(0),
             allow_interactive_oauth,
             changed_tx,
             changed_rx: Mutex::new(Some(changed_rx)),
         })
+    }
+
+    /// Tells whoever watches about `event` without ever waiting on them: a
+    /// watcher that does not keep up misses notices, and never holds up a
+    /// connection. That the tools changed is also counted where
+    /// [`Self::tool_changes`] sees it, which no full queue can lose.
+    fn emit(&self, event: McpEvent) {
+        if matches!(event, McpEvent::ToolsChanged) {
+            self.tool_generation
+                .send_modify(|generation| *generation = generation.wrapping_add(1));
+        }
+        if let Err(mpsc::error::TrySendError::Full(_)) = self.event_tx.try_send(event) {
+            debug!("an MCP notice was dropped: its watcher is not keeping up");
+        }
+    }
+
+    /// A count of the times the servers' tools changed, to follow: it moves
+    /// whenever a server connects, refreshes its list or goes away, and the
+    /// latest count is never lost, however late it is read. Ends with the
+    /// manager.
+    #[must_use]
+    pub fn tool_changes(&self) -> watch::Receiver<u64> {
+        self.tool_generation.subscribe()
     }
 
     // ── Background tasks ──────────────────────────────────────────────────────
@@ -234,13 +263,10 @@ impl McpManager {
                             .or_default()
                             .health
                             .report_error(error.clone());
-                        let _ = self
-                            .event_tx
-                            .send(McpEvent::ServerFailed {
-                                name: name.to_string(),
-                                error,
-                            })
-                            .await;
+                        self.emit(McpEvent::ServerFailed {
+                            name: name.to_string(),
+                            error,
+                        });
                         return Err(e);
                     }
                 };
@@ -291,11 +317,8 @@ impl McpManager {
                     state.health.report_ok(tc, pc);
                 }
                 info!(server = %name, tools = tc, prompts = pc, "MCP server connected");
-                let _ = self
-                    .event_tx
-                    .send(McpEvent::ServerConnected(name.to_string()))
-                    .await;
-                let _ = self.event_tx.send(McpEvent::ToolsChanged).await;
+                self.emit(McpEvent::ServerConnected(name.to_string()));
+                self.emit(McpEvent::ToolsChanged);
                 Ok(())
             }
             Err(e) => {
@@ -313,13 +336,10 @@ impl McpManager {
                         .or_default()
                         .health
                         .report_error(error.clone());
-                    let _ = self
-                        .event_tx
-                        .send(McpEvent::ServerFailed {
-                            name: name.to_string(),
-                            error,
-                        })
-                        .await;
+                    self.emit(McpEvent::ServerFailed {
+                        name: name.to_string(),
+                        error,
+                    });
                 } else if let Some(challenge) = e.downcast_ref::<AuthRequired>() {
                     self.needs_sign_in(name, &cfg, challenge.www_authenticate.clone(), signed_in);
                 } else if is_auth_required_error(&e) {
@@ -333,13 +353,10 @@ impl McpManager {
                         .or_default()
                         .health
                         .report_error(error.clone());
-                    let _ = self
-                        .event_tx
-                        .send(McpEvent::ServerFailed {
-                            name: name.to_string(),
-                            error,
-                        })
-                        .await;
+                    self.emit(McpEvent::ServerFailed {
+                        name: name.to_string(),
+                        error,
+                    });
                 }
                 Err(e)
             }
@@ -354,11 +371,8 @@ impl McpManager {
             state.prompts.clear();
             state.health.status = ServerStatus::Disabled;
         }
-        let _ = self
-            .event_tx
-            .send(McpEvent::ServerDisconnected(name.to_string()))
-            .await;
-        let _ = self.event_tx.send(McpEvent::ToolsChanged).await;
+        self.emit(McpEvent::ServerDisconnected(name.to_string()));
+        self.emit(McpEvent::ToolsChanged);
     }
 
     /// How many tools server `name` offers now (none while not connected).
@@ -616,7 +630,7 @@ impl McpManager {
             (state.tools.len(), state.prompts.len())
         };
         info!(server = %server, tools = tc, prompts = pc, "refreshed after list_changed");
-        let _ = self.event_tx.send(McpEvent::ToolsChanged).await;
+        self.emit(McpEvent::ToolsChanged);
         Ok(())
     }
 }

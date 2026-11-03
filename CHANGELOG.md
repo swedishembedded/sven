@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **mcp**: the MCP manager never waits on whoever watches its events. A surface holding the event receiver without reading it stalled every connection and disconnection once its queue was full; notices are now dropped for a watcher that does not keep up, and `McpManager::tool_changes` counts tool changes in a way no slow watcher can hold up or lose. `SessionController::follow_mcp_tools` follows that count and takes no receiver.
+
 ## [4.4.2] - 2026-11-03
 
 ### Fixed

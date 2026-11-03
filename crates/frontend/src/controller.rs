@@ -274,22 +274,24 @@ impl SessionController {
         ))
     }
 
-    /// Keeps the session's MCP tools current from `events` (what
-    /// [`Self::open`] returned): whenever a server connects, lists changed
-    /// tools or goes away, the session's registry - the rebuilt one's, after
-    /// a change of mode or model - takes the manager's tools, held to the
-    /// configuration's `tools.only` / `tools.disabled`. For a surface that
-    /// shows no MCP events of its own; one that does refreshes on
-    /// [`McpEvent::ToolsChanged`] itself. Ends when the session's MCP
-    /// manager is gone.
-    pub fn follow_mcp_tools(&self, mut events: mpsc::Receiver<McpEvent>) {
+    /// Keeps the session's MCP tools current: whenever a server connects,
+    /// lists changed tools or goes away, the session's registry - the
+    /// rebuilt one's, after a change of mode or model - takes the manager's
+    /// tools, held to the configuration's `tools.only` / `tools.disabled`.
+    /// It follows the manager's count of changes, which it reads without
+    /// ever holding the manager up and which no slow notice queue can make
+    /// it miss. For a surface that shows no MCP events of its own. Ends with
+    /// the manager; holds the manager and the registry only weakly, so it
+    /// never keeps a closed session alive.
+    pub fn follow_mcp_tools(&self) {
+        let mut changes = self.mcp.tool_changes();
+        // A change between the session's build and this subscription is
+        // seen too: the first pass always refreshes.
+        changes.mark_changed();
         let mcp = Arc::downgrade(&self.mcp);
         let live_registry = Arc::clone(&self.live_registry);
         tokio::spawn(async move {
-            while let Some(event) = events.recv().await {
-                if !matches!(event, McpEvent::ToolsChanged) {
-                    continue;
-                }
+            while changes.changed().await.is_ok() {
                 let Some(mcp) = mcp.upgrade() else { return };
                 let tools = mcp.tools().await;
                 drop(mcp);
@@ -297,14 +299,13 @@ impl SessionController {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .upgrade();
-                if let Some(registry) = registry {
-                    registry.replace_mcp_tools(
-                        tools
-                            .into_iter()
-                            .map(|tool| Arc::new(tool) as Arc<dyn sven_tool_api::Tool>)
-                            .collect(),
-                    );
-                }
+                let Some(registry) = registry else { return };
+                registry.replace_mcp_tools(
+                    tools
+                        .into_iter()
+                        .map(|tool| Arc::new(tool) as Arc<dyn sven_tool_api::Tool>)
+                        .collect(),
+                );
             }
         });
     }
