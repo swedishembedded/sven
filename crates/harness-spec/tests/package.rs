@@ -231,10 +231,13 @@ fn a_package_directory_loads_with_its_imports_and_refuses_a_symlink_out() {
     bundle.compile().expect("compiles");
 
     // A symlink inside the package that leads outside it is refused.
-    let outside = root.path().join("secret.yaml");
-    std::fs::write(&outside, REVIEW).unwrap();
-    std::fs::remove_file(pkg.join("lib/review.yaml")).unwrap();
-    std::os::unix::fs::symlink(&outside, pkg.join("lib/review.yaml")).unwrap();
-    let error = load_package(&pkg).expect_err("refused").to_string();
-    assert!(error.contains("outside the package"), "{error}");
+    #[cfg(unix)]
+    {
+        let outside = root.path().join("secret.yaml");
+        std::fs::write(&outside, REVIEW).unwrap();
+        std::fs::remove_file(pkg.join("lib/review.yaml")).unwrap();
+        std::os::unix::fs::symlink(&outside, pkg.join("lib/review.yaml")).unwrap();
+        let error = load_package(&pkg).expect_err("refused").to_string();
+        assert!(error.contains("outside the package"), "{error}");
+    }
 }

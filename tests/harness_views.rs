@@ -302,11 +302,13 @@ fn explain_names_the_workflow_and_refuses_an_unknown_step() {
 /// Runs the verified-task sample against a model that never answers, so that
 /// the deadline suspends it in its first model turn, and returns the
 /// checkpoint file it left.
+#[cfg(unix)]
 fn suspended_checkpoint(setup: &harness_support::Setup) -> PathBuf {
     harness_support::suspended_checkpoint(setup, &verified_task(), r#"{"feature": "x"}"#)
 }
 
 #[test]
+#[cfg(unix)]
 fn status_says_where_a_suspended_run_rests() {
     let setup = harness_support::setup();
     let tmp = setup.scratch.path();
@@ -344,6 +346,7 @@ fn status_says_where_a_suspended_run_rests() {
 }
 
 #[test]
+#[cfg(unix)]
 fn status_says_a_checkpoint_no_longer_fits_an_edited_document() {
     let setup = harness_support::setup();
     let tmp = setup.scratch.path();

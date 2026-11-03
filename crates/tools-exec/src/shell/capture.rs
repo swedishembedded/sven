@@ -102,6 +102,7 @@ impl<R: AsyncRead + Unpin> Pump<R> {
 pub(super) enum Exit {
     Code(i32),
     /// Ended by a signal it did not handle (Unix).
+    #[cfg(unix)]
     Signal(i32),
     /// Still running at the deadline; its process group was killed.
     TimedOut,
@@ -114,6 +115,7 @@ impl Exit {
     pub(super) fn describe(&self) -> String {
         match self {
             Exit::Code(code) => code.to_string(),
+            #[cfg(unix)]
             Exit::Signal(signal) => format!("killed by signal {signal}"),
             Exit::TimedOut => "timed out, killed".to_string(),
             Exit::WaitFailed(e) => format!("wait failed: {e}"),

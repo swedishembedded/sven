@@ -19,6 +19,10 @@
 //! then you can procure our services by sending an email to
 //! info@swedishembedded.com.
 
+// Unix only: detection reads a brain server's records under
+// XDG_RUNTIME_DIR, and they are owner-only files.
+#![cfg(unix)]
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
@@ -80,6 +84,18 @@ impl Machine {
         let _ = std::fs::remove_dir_all(&dir);
         for sub in ["home", "config", "run/brain", "work"] {
             std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        // On macOS the platform's configuration directory is
+        // ~/Library/Application Support, whatever XDG_CONFIG_HOME says: it is
+        // made the same directory as config/ here.
+        #[cfg(target_os = "macos")]
+        {
+            std::fs::create_dir_all(dir.join("home/Library")).unwrap();
+            std::os::unix::fs::symlink(
+                dir.join("config"),
+                dir.join("home/Library/Application Support"),
+            )
+            .unwrap();
         }
         std::fs::set_permissions(
             dir.join("run/brain"),

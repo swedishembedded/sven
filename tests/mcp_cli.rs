@@ -25,6 +25,18 @@ impl Home {
         for sub in ["home", "config", "run", "proj"] {
             std::fs::create_dir_all(dir.join(sub)).unwrap();
         }
+        // On macOS the platform's configuration directory is
+        // ~/Library/Application Support, whatever XDG_CONFIG_HOME says: it is
+        // made the same directory as config/ here.
+        #[cfg(target_os = "macos")]
+        {
+            std::fs::create_dir_all(dir.join("home/Library")).unwrap();
+            std::os::unix::fs::symlink(
+                dir.join("config"),
+                dir.join("home/Library/Application Support"),
+            )
+            .unwrap();
+        }
         Self(dir)
     }
 

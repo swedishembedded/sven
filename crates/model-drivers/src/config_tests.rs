@@ -5,6 +5,7 @@ use super::*;
 
 /// What the machine offers in a detection test.
 #[derive(Default)]
+#[cfg(unix)]
 struct Machine<'a> {
     /// Providers with a stored key (`sven auth set`).
     stored: &'a [&'a str],
@@ -17,6 +18,9 @@ struct Machine<'a> {
 }
 
 /// The model `settle` chooses with no `model:` section on `machine` alone.
+/// Unix only: the machine is made of XDG directories, a brain server's
+/// runtime records and owner-only files.
+#[cfg(unix)]
 fn detected_on(machine: &Machine) -> ModelConfig {
     use std::os::unix::fs::PermissionsExt;
     let _guard = crate::TEST_ENV
@@ -285,6 +289,7 @@ fn an_explicit_model_section_is_never_replaced_by_detection() {
 }
 
 #[test]
+#[cfg(unix)]
 fn openrouter_then_anthropic_then_openai_are_detected_in_that_order() {
     let m = detected_on(&Machine {
         stored: &["openrouter", "anthropic"],
@@ -316,6 +321,7 @@ fn openrouter_then_anthropic_then_openai_are_detected_in_that_order() {
 
 /// A key in the environment chooses nothing: keys are stored, not exported.
 #[test]
+#[cfg(unix)]
 fn a_key_in_the_environment_chooses_no_provider() {
     let m = detected_on(&Machine {
         environment: &[("ANTHROPIC_API_KEY", "sk-ant")],
@@ -328,6 +334,7 @@ fn a_key_in_the_environment_chooses_no_provider() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_running_brain_wins_over_stored_keys() {
     let m = detected_on(&Machine {
         stored: &["openrouter"],
@@ -346,6 +353,7 @@ fn a_running_brain_wins_over_stored_keys() {
 /// (`from_config_probed`), ahead of a running brain and stored keys, which
 /// stay in reserve for a server that does not answer.
 #[test]
+#[cfg(unix)]
 fn a_sign_in_wins_and_keeps_the_cloud_choice_in_reserve() {
     let m = detected_on(&Machine {
         stored: &["anthropic"],
@@ -398,6 +406,7 @@ fn each_schema_names_exactly_its_types_fields() {
 }
 
 #[test]
+#[cfg(unix)]
 fn detected_brain_keeps_the_cloud_choice_in_reserve() {
     let m = detected_on(&Machine {
         stored: &["anthropic"],
@@ -413,6 +422,7 @@ fn detected_brain_keeps_the_cloud_choice_in_reserve() {
 }
 
 #[test]
+#[cfg(unix)]
 fn detected_brain_without_a_stored_key_has_no_fallback() {
     let m = detected_on(&Machine {
         brain: true,

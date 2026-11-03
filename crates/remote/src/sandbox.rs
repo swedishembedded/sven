@@ -29,6 +29,7 @@ use std::path::Path;
 /// What a confined host may read, besides its sandbox: no one's data, only
 /// what a program needs to run and reach the network. Missing ones are
 /// skipped.
+#[cfg(target_os = "linux")]
 const SYSTEM_READ_ONLY: &[&str] = &[
     "/etc/ssl",
     "/etc/pki",
@@ -52,6 +53,7 @@ const SYSTEM_READ_ONLY: &[&str] = &[
 
 /// The TCP ports a host always may connect to: HTTPS and HTTP for the web
 /// tools, and DNS (a resolver falls back to TCP for large answers).
+#[cfg(target_os = "linux")]
 const WEB_PORTS: &[u16] = &[443, 80, 53];
 
 /// The Landlock ABI the rule set needs: 6 adds TCP bind/connect control
