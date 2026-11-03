@@ -83,17 +83,19 @@ pub struct Granted {
     pub account: String,
 }
 
+/// An OAuth error answer (`400 {"error", "error_description"?}`).
 #[derive(Deserialize)]
-struct ErrorBody {
-    error: String,
+pub(crate) struct ErrorBody {
+    pub(crate) error: String,
     #[serde(default)]
-    error_description: Option<String>,
+    pub(crate) error_description: Option<String>,
 }
 
+/// The `200` answer of a token endpoint.
 #[derive(Deserialize)]
-struct TokenBody {
-    token: String,
-    account: String,
+pub(crate) struct TokenBody {
+    pub(crate) token: String,
+    pub(crate) account: String,
 }
 
 /// Seconds the server asked to wait, from a `Retry-After` header.

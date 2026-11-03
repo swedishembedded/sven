@@ -823,6 +823,23 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "network")]
+    #[test]
+    fn auth_login_no_browser_is_opt_in() {
+        for (args, expected) in [
+            (&["auth", "login"][..], false),
+            (&["auth", "login", "--no-browser"], true),
+        ] {
+            let Some(Commands::Auth {
+                command: AuthCommands::Login { no_browser, .. },
+            }) = cli(args).command
+            else {
+                panic!("{args:?} is not `auth login`");
+            };
+            assert_eq!(no_browser, expected);
+        }
+    }
+
     /// A start-credential host is an ordinary `sven rc`, never a hosted one.
     #[cfg(feature = "network")]
     #[test]

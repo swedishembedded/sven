@@ -62,12 +62,17 @@ pub(crate) async fn run_auth_command(command: &AuthCommands) -> anyhow::Result<(
             }
         }
         #[cfg(feature = "network")]
-        AuthCommands::Login { server, name } => {
+        AuthCommands::Login {
+            server,
+            name,
+            no_browser,
+        } => {
             let name = name
                 .clone()
                 .unwrap_or_else(sven_remote::login::machine_name);
             let login =
-                sven_remote::login::sign_in(server, &name, |line| println!("{line}")).await?;
+                sven_remote::login::sign_in(server, &name, *no_browser, |line| println!("{line}"))
+                    .await?;
             println!(
                 "Authentication successful. Signed in to {} as \"{}\" for {}. \
                  Run `sven rc` to take sessions.",

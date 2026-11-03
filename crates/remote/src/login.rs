@@ -13,8 +13,15 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::device::{self, Pacing};
+use sven_control::remote::RemoteDiscovery;
 use uuid::Uuid;
+
+use crate::device::{self, Pacing};
+
+mod browser;
+mod pkce;
+
+pub use browser::{StdTerminal, Terminal};
 
 /// A signed-in host: where its server is and the token that proves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,20 +166,28 @@ pub fn machine_name() -> String {
     }
 }
 
-/// Signs this host in to `server` with the device grant: shows the person
-/// the page and the code to type there, waits for the approval, checks the
-/// token the server then hands over and stores it.
+/// Signs this host in to `server` and stores the key the server mints.
+///
+/// A server that offers the authorization code grant signs the person in
+/// through the browser: a one-time code bound to this
+/// terminal returns by a loopback redirect, or is pasted when the browser
+/// is on another machine. A server that predates it gets the device grant:
+/// the person is shown a page and a short code to type there and approves,
+/// while this host polls.
 ///
 /// `say` receives the lines to show the person. Ctrl-C ends the wait.
+/// `no_browser` shows a link and asks for the code pasted instead of opening
+/// a browser here.
 ///
 /// # Errors
 ///
-/// The server cannot be reached, is not a remote-control server or predates
-/// the device grant; the person denied the connection or let the code
-/// expire; or the server does not accept the token.
+/// The server cannot be reached or is not a remote-control server; the
+/// person denied the connection or let the code expire; or the server does
+/// not accept the token.
 pub async fn sign_in(
     server: &str,
     name: &str,
+    no_browser: bool,
     say: impl FnMut(&str),
 ) -> anyhow::Result<RemoteLogin> {
     let cancel = async {
@@ -181,13 +196,19 @@ pub async fn sign_in(
             std::future::pending::<()>().await;
         }
     };
-    sign_in_with(server, name, say, Pacing::default(), cancel, |login| {
-        save(login).map(drop)
-    })
+    sign_in_with(
+        server,
+        name,
+        say,
+        &mut StdTerminal::new(no_browser),
+        Pacing::default(),
+        cancel,
+        |login| save(login).map(drop),
+    )
     .await
 }
 
-/// [`sign_in`] with its clock, interruption and storage supplied.
+/// [`sign_in`] with its terminal, clock, interruption and storage supplied.
 ///
 /// # Errors
 ///
@@ -196,44 +217,57 @@ pub async fn sign_in_with(
     server: &str,
     name: &str,
     mut say: impl FnMut(&str),
+    terminal: &mut dyn Terminal,
     pacing: Pacing,
     cancel: impl std::future::Future<Output = ()>,
     store: impl FnOnce(&RemoteLogin) -> anyhow::Result<()>,
 ) -> anyhow::Result<RemoteLogin> {
     let server = crate::client::normalize_server(server)?;
     let found = crate::client::discover(&server).await?;
-    let (Some(request_url), Some(token_url)) = (
-        found.device_authorization_url.as_deref(),
-        found.device_token_url.as_deref(),
-    ) else {
-        anyhow::bail!(
-            "{server} does not offer device sign-in; the server must be updated before `sven auth login` can connect to it"
-        );
-    };
-    // The token, the device code and the model key go where this names.
-    crate::client::ensure_on_server(
-        &server,
-        &found,
-        &[
-            ("device_authorization_url", request_url),
-            ("device_token_url", token_url),
-        ],
-        "your sign-in",
-    )?;
     let http = crate::client::http()?;
-    let grant = device::request(&http, request_url, name).await?;
-    say(&format!(
-        "Open {} and enter the code",
-        grant.verification_uri
-    ));
-    say("");
-    say(&format!("    {}", grant.user_code));
-    say("");
-    say(&format!(
-        "Waiting for approval (the code works for {} minutes; Ctrl-C cancels)...",
-        grant.expires_in.div_ceil(60)
-    ));
-    let granted = device::await_token(&http, token_url, &grant, pacing, cancel).await?;
+    let granted = match Grant::of(&found) {
+        Grant::AuthorizationCode(endpoints) => {
+            // The code, the verifier and the model key go where this names.
+            crate::client::ensure_on_server(
+                &server,
+                &found,
+                &endpoints.named(),
+                "your sign-in",
+            )?;
+            browser::authorize(
+                &http,
+                &browser::CodeGrant {
+                    server: &server,
+                    authorization_endpoint: endpoints.authorization_endpoint,
+                    token_endpoint: endpoints.token_endpoint,
+                    code_display_uri: endpoints.code_display_uri,
+                },
+                name,
+                &mut say,
+                terminal,
+                cancel,
+            )
+            .await?
+        }
+        Grant::Device {
+            request_url,
+            token_url,
+        } => {
+            crate::client::ensure_on_server(
+                &server,
+                &found,
+                &[
+                    ("device_authorization_url", request_url),
+                    ("device_token_url", token_url),
+                ],
+                "your sign-in",
+            )?;
+            device_sign_in(&http, request_url, token_url, name, &mut say, pacing, cancel).await?
+        }
+        Grant::None => anyhow::bail!(
+            "{server} offers no sign-in this sven can use; the server must be updated before `sven auth login` can connect to it"
+        ),
+    };
     let who = crate::client::RemoteClient::new(&found.control_url, &granted.token)?
         .whoami()
         .await?;
@@ -250,6 +284,91 @@ pub async fn sign_in_with(
     };
     store(&login)?;
     Ok(login)
+}
+
+/// How a server lets a host sign in, newest first.
+#[derive(Debug, PartialEq, Eq)]
+enum Grant<'a> {
+    AuthorizationCode(CodeEndpoints<'a>),
+    Device {
+        request_url: &'a str,
+        token_url: &'a str,
+    },
+    None,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CodeEndpoints<'a> {
+    authorization_endpoint: &'a str,
+    token_endpoint: &'a str,
+    code_display_uri: Option<&'a str>,
+}
+
+impl<'a> CodeEndpoints<'a> {
+    /// Every URL of the grant, by the name discovery gives it.
+    fn named(&self) -> Vec<(&'static str, &'a str)> {
+        [
+            ("authorization_endpoint", Some(self.authorization_endpoint)),
+            ("token_endpoint", Some(self.token_endpoint)),
+            ("code_display_uri", self.code_display_uri),
+        ]
+        .into_iter()
+        .filter_map(|(what, url)| url.map(|url| (what, url)))
+        .collect()
+    }
+}
+
+impl<'a> Grant<'a> {
+    /// The code grant when the server advertises both its endpoints; the
+    /// device grant only for a server that predates it.
+    fn of(found: &'a RemoteDiscovery) -> Self {
+        if let (Some(authorization_endpoint), Some(token_endpoint)) = (
+            found.authorization_endpoint.as_deref(),
+            found.token_endpoint.as_deref(),
+        ) {
+            return Self::AuthorizationCode(CodeEndpoints {
+                authorization_endpoint,
+                token_endpoint,
+                code_display_uri: found.code_display_uri.as_deref(),
+            });
+        }
+        match (
+            found.device_authorization_url.as_deref(),
+            found.device_token_url.as_deref(),
+        ) {
+            (Some(request_url), Some(token_url)) => Self::Device {
+                request_url,
+                token_url,
+            },
+            _ => Self::None,
+        }
+    }
+}
+
+/// The device grant: shows the page and the code to type there, waits for
+/// the approval.
+async fn device_sign_in(
+    http: &reqwest::Client,
+    request_url: &str,
+    token_url: &str,
+    name: &str,
+    say: &mut impl FnMut(&str),
+    pacing: Pacing,
+    cancel: impl std::future::Future<Output = ()>,
+) -> anyhow::Result<device::Granted> {
+    let grant = device::request(http, request_url, name).await?;
+    say(&format!(
+        "Open {} and enter the code",
+        grant.verification_uri
+    ));
+    say("");
+    say(&format!("    {}", grant.user_code));
+    say("");
+    say(&format!(
+        "Waiting for approval (the code works for {} minutes; Ctrl-C cancels)...",
+        grant.expires_in.div_ceil(60)
+    ));
+    device::await_token(http, token_url, &grant, pacing, cancel).await
 }
 
 #[cfg(test)]

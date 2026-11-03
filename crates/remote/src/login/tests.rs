@@ -11,12 +11,28 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-use super::{sign_in_with, RemoteLogin};
+use super::{sign_in_with, Grant, RemoteLogin, Terminal};
 use crate::device::Pacing;
 use uuid::Uuid;
 
 const DEVICE_CODE: &str = "DEVICE-CODE-MUST-STAY-SECRET";
 const TOKEN: &str = "sk-minted-token";
+
+/// A terminal for the device grant, which never touches it.
+struct NoTerminal;
+
+#[async_trait::async_trait(?Send)]
+impl Terminal for NoTerminal {
+    fn prefers_paste(&self) -> bool {
+        false
+    }
+    fn open_browser(&self, _: &str) -> bool {
+        false
+    }
+    async fn read_code(&mut self) -> anyhow::Result<String> {
+        anyhow::bail!("the device grant reads no code")
+    }
+}
 
 /// A canned response: status line, extra headers, JSON body.
 pub(crate) type Canned = (u16, &'static str, String);
@@ -40,7 +56,7 @@ pub(crate) async fn mock(routes: HashMap<&'static str, VecDeque<Canned>>) -> Moc
     mock_on(listener, routes).await
 }
 
-async fn mock_on(
+pub(crate) async fn mock_on(
     listener: TcpListener,
     mut routes: HashMap<&'static str, VecDeque<Canned>>,
 ) -> Mock {
@@ -178,6 +194,7 @@ async fn login(mock: &Mock, expires_in_cancel: Option<Duration>) -> Outcome {
         &mock.base,
         "box",
         |line| said.push(line.to_string()),
+        &mut NoTerminal,
         FAST,
         cancel,
         |login| {
@@ -347,6 +364,7 @@ async fn login_at(base: &str) -> anyhow::Result<RemoteLogin> {
         base,
         "box",
         |_| {},
+        &mut NoTerminal,
         FAST,
         std::future::pending(),
         |_| Ok(()),
@@ -431,4 +449,36 @@ async fn discovery_naming_another_origin_for_the_token_is_refused() {
             "{field}: no device request was made"
         );
     }
+}
+
+fn discovery(extra: serde_json::Value) -> sven_control::remote::RemoteDiscovery {
+    let mut document = serde_json::json!({
+        "protocol_version": 1, "authorize_url": "https://s/connect",
+        "device_authorization_url": "https://s/device", "device_token_url": "https://s/device/token",
+        "control_url": "https://s/api", "openai_base_url": "https://s/v1",
+    });
+    document
+        .as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    serde_json::from_value(document).unwrap()
+}
+
+#[test]
+fn the_code_grant_is_chosen_only_when_both_its_endpoints_are_advertised() {
+    let both = discovery(serde_json::json!({
+        "authorization_endpoint": "https://s/authorize", "token_endpoint": "https://s/token",
+    }));
+    assert!(matches!(Grant::of(&both), Grant::AuthorizationCode(_)));
+    for lone in ["authorization_endpoint", "token_endpoint"] {
+        let found = discovery(serde_json::json!({ lone: "https://s/x" }));
+        assert!(matches!(Grant::of(&found), Grant::Device { .. }), "{lone}");
+    }
+    assert!(matches!(
+        Grant::of(&discovery(serde_json::json!({}))),
+        Grant::Device { .. }
+    ));
+    let mut neither = discovery(serde_json::json!({}));
+    neither.device_authorization_url = None;
+    assert_eq!(Grant::of(&neither), Grant::None);
 }

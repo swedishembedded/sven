@@ -13,8 +13,9 @@ Sign this machine in to your [sven account](https://sven.swedishembedded.com/sig
 sven auth login
 ```
 
-It prints an address and a one-time code; approve the connection in the
-browser and the account's models are sven's, starting with its default model.
+It opens your browser (and prints the link); approve the connection there and
+the account's models are sven's, starting with its default model. Over SSH, add `--no-browser`: sven prints a
+link to open anywhere and asks for the code the page shows.
 To use a key of your own or a local model server instead, see
 [Providers](../reference/providers.md).
 

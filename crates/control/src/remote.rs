@@ -19,7 +19,18 @@
 //!    grant (`device_authorization_url`, `device_token_url`), where the host
 //!    talks to the server (`control_url`), and the OpenAI-compatible endpoint
 //!    its sessions call models through.
-//!    **Signing in** is RFC 8628: the host `POST`s `{"name"}` to
+//!    **Signing in** with `authorization_endpoint` and `token_endpoint` is the
+//!    authorization code grant with PKCE (RFC 7636) over a loopback redirect
+//!    (RFC 8252): the host opens `authorization_endpoint?response_type=code&
+//!    client_id=sven&redirect_uri&state&code_challenge&code_challenge_method=
+//!    S256&name`, the browser returns to `http://127.0.0.1:<port>/callback`
+//!    with `code` and `state`, and the host `POST`s `{"grant_type":
+//!    "authorization_code","code","code_verifier","redirect_uri","client_id"}`
+//!    to `token_endpoint`, which answers `{"token","account"}` once or `400`
+//!    `{"error","error_description"?}`. Without a reachable loopback port the
+//!    redirect is `code_display_uri`, which shows the code to paste into the
+//!    terminal. A server that offers neither endpoint is signed in to with
+//!    the older device grant, **RFC 8628**: the host `POST`s `{"name"}` to
 //!    `device_authorization_url` and gets `{device_code, user_code,
 //!    verification_uri, expires_in, interval}`; the person types `user_code`
 //!    at `verification_uri` and approves; meanwhile the host `POST`s
@@ -107,6 +118,21 @@ pub struct RemoteDiscovery {
     /// Where a host polls for the token once the person approved.
     #[serde(default)]
     pub device_token_url: Option<String>,
+    /// Where a person approves a host in the browser: the authorization
+    /// endpoint of the authorization code grant with PKCE (RFC 7636). Present
+    /// together with [`Self::token_endpoint`] on a server that offers it;
+    /// `sven auth login` then prefers it to the device grant.
+    #[serde(default)]
+    pub authorization_endpoint: Option<String>,
+    /// Where a host redeems the one-time code, with its PKCE verifier, for
+    /// the token.
+    #[serde(default)]
+    pub token_endpoint: Option<String>,
+    /// The page that shows the one-time code for the person to paste into a
+    /// terminal, used as the redirect when the browser cannot reach the
+    /// host's loopback port (a remote or headless machine).
+    #[serde(default)]
+    pub code_display_uri: Option<String>,
     /// The base of `whoami`, `commands` and `events`.
     pub control_url: String,
     /// The OpenAI-compatible API (ending in `/v1`) the host's sessions call
@@ -469,6 +495,30 @@ mod tests {
         )
         .unwrap();
         assert!(without.device_authorization_url.is_none() && without.device_token_url.is_none());
+    }
+
+    #[test]
+    fn discovery_code_grant_fields_are_optional() {
+        let with: RemoteDiscovery = serde_json::from_str(
+            r#"{"protocol_version":1,"authorize_url":"https://s/connect/sven",
+                "authorization_endpoint":"https://s/connect/sven/authorize",
+                "token_endpoint":"https://s/api/workspace/token",
+                "code_display_uri":"https://s/connect/sven/code",
+                "control_url":"https://s/api/w","openai_base_url":"https://s/v1"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            with.authorization_endpoint.as_deref(),
+            Some("https://s/connect/sven/authorize")
+        );
+        assert_eq!(
+            with.token_endpoint.as_deref(),
+            Some("https://s/api/workspace/token")
+        );
+        assert_eq!(
+            with.code_display_uri.as_deref(),
+            Some("https://s/connect/sven/code")
+        );
     }
 
     #[test]

@@ -33,10 +33,14 @@ pub enum AuthCommands {
         provider: String,
     },
     /// Sign this machine in to a remote-control server, so `sven rc` can run
-    /// sessions for it. Prints an address and a code: open the address, sign in
-    /// and enter the code to approve this machine; sven waits for it.
+    /// sessions for it. Opens your browser to sign in and approve this
+    /// machine (the link is printed too); sven takes the one-time code back
+    /// by itself. Over SSH, or with `--no-browser`, open the printed link on
+    /// any machine and paste the code it shows. A server that predates this
+    /// shows a short code to type into its page instead.
     ///
     ///   sven auth login
+    ///   sven auth login --no-browser
     ///   sven auth login --server localhost:3000
     ///   sven auth login --server example.com --name build-box
     #[cfg(feature = "network")]
@@ -49,6 +53,10 @@ pub enum AuthCommands {
         /// What the server calls this machine; its host name by default.
         #[arg(long)]
         name: Option<String>,
+        /// Do not open a browser here: print the link and read the code the
+        /// page shows from the terminal. The default over SSH.
+        #[arg(long)]
+        no_browser: bool,
     },
     /// Forget the remote-control sign-in. The server keeps the connection
     /// until it is removed there.

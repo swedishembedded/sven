@@ -19,15 +19,36 @@ sven auth login
 ```
 
 That signs in to the hosted sven service, `https://sven.swedishembedded.com`;
-`--server https://example.com` signs in to another server instead. sven
-prints an address and a code, for example `Open
-https://sven.swedishembedded.com/connect/sven and enter the code WDJB-MJHT`. Open the address, sign in to the server if
-asked, type the code and approve the connection; sven waits for it, then
-checks the key the server issued and says `Authentication successful`. The
-key never passes through the browser or your clipboard, and only the terminal
-that asked for the code can collect it. A code works for ten minutes; if it
-expires or the connection is denied, run `sven auth login` again. Ctrl-C
-cancels the wait. A server that predates this sign-in must be updated first.
+`--server https://example.com` signs in to another server instead. sven opens
+your browser at the server's sign-in page (and always prints the link too);
+sign in if asked and approve the connection. The browser then returns to a
+port sven listens on for this one sign-in on this machine (`127.0.0.1`, a
+port the system picks, closed afterwards), sven redeems the one-time code it
+brought, checks the key the server issued and says `Authentication
+successful`. This is the OAuth authorization code grant with PKCE over a
+loopback redirect (RFC 7636, RFC 8252): the key never passes through the
+browser or your clipboard, and the code is worthless to anyone but this
+terminal, which alone knows the secret it was bound to. sven waits five
+minutes; Ctrl-C cancels. If the connection is denied or the code is refused,
+run `sven auth login` again.
+
+On a remote or headless machine (over SSH, with `--no-browser`, or when no
+browser opens) sven prints a link instead:
+
+```text
+Open this link in a browser signed in to https://sven.swedishembedded.com:
+
+https://sven.swedishembedded.com/connect/sven/authorize?response_type=code&...
+
+Then paste the code it shows here and press Enter:
+```
+
+Open the link on any machine, approve, and paste the code the page shows.
+
+A server that predates this sign-in (its discovery document names no
+`authorization_endpoint` and `token_endpoint`) gets the older device grant
+(RFC 8628): sven prints an address and a short code to type there, and waits
+while you approve. A server that offers neither must be updated first.
 
 `--server` without a scheme means `http://` for this machine
 (`--server localhost:3000`) and `https://` for any other. `--name` sets what
@@ -36,8 +57,8 @@ the server calls this machine; the host name by default.
 Plain `http://` is accepted only for this machine (`localhost`, `127.x.x.x`,
 `::1`); any other server must be `https://`, since the token and every
 conversation would otherwise cross the network in the clear. The server's
-discovery document must also name its control API, model API, device
-sign-in and MCP endpoints on the server's own origin (scheme, host and port);
+discovery document must also name its control API, model API,
+sign-in (authorization, token and code-page, or device) and MCP endpoints on the server's own origin (scheme, host and port);
 sven refuses to sign in when one points elsewhere, so the token and model key
 cannot be sent to a third party.
 

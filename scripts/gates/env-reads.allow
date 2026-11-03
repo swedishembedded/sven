@@ -18,6 +18,7 @@ crates/model-drivers/src/brain_local.rs	XDG_RUNTIME_DIR
 crates/model-drivers/src/config_tests.rs	<k>
 crates/model-drivers/src/lib.rs	SVEN_MOCK_RESPONSES
 crates/model-drivers/src/lib.rs	XDG_CONFIG_HOME
+crates/remote/src/login/browser.rs	<name>
 crates/team/src/cli.rs	HOME
 crates/tools-android/src/tool.rs	SVEN_ANDROID_SERIAL
 crates/tools-fs/src/file/read_file.rs	SVEN_NO_PATH_ASCENT

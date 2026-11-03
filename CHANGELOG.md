@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **sven**: `harness run` and `harness resume` take `--progress auto|json|text`: `text` is a readable log of each task, its tools, gates, repairs and retries; `auto`, the default, picks it on a terminal and keeps the JSON lines otherwise.
 
+### Changed
+- **remote**: `sven auth login` signs in with the browser and a one-time code bound to this terminal (OAuth authorization code with PKCE over a loopback redirect, RFC 8252), or with a link and a pasted code on a remote or headless machine (`--no-browser`, SSH, or no browser to open). The short typed code of the device flow is used only with a server that predates it. `sven_remote::login::sign_in` takes a `no_browser` flag, `sign_in_with` a `Terminal`, and `RemoteDiscovery` gains optional `authorization_endpoint`, `token_endpoint` and `code_display_uri`.
+
 ## [4.3.1] - 2026-11-02
 
 ### Added

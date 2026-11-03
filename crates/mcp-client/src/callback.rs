@@ -64,6 +64,21 @@ pub async fn bind(redirect_uri: Option<&str>, port: Option<u16>) -> Result<Redir
     })
 }
 
+/// Bind a listener on an ephemeral loopback port for a sign-in whose redirect
+/// is `http://127.0.0.1:<port>/callback` (RFC 8252 section 7.3: the IP
+/// literal, a port the operating system picks, nothing else can listen on it
+/// meanwhile).
+pub async fn bind_loopback() -> Result<Redirect> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .context("bind the sign-in callback on a loopback port")?;
+    let port = listener.local_addr().context("loopback port")?.port();
+    Ok(Redirect {
+        listener,
+        redirect_uri: format!("http://127.0.0.1:{port}/callback"),
+    })
+}
+
 /// Show the person `auth_url` with `present`, then wait for the browser to
 /// come back: to the listener, or as the address it ended on, pasted by the
 /// person into `pasted` (a browser on another machine than sven cannot reach
@@ -81,6 +96,27 @@ pub async fn wait(
     present: &(dyn Fn(&str) + Send + Sync),
     pasted: Option<tokio::sync::mpsc::Receiver<String>>,
     timeout: Duration,
+) -> Result<String> {
+    wait_showing(
+        listener,
+        auth_url,
+        present,
+        pasted,
+        timeout,
+        &callback_success_html(),
+    )
+    .await
+}
+
+/// `wait`, answering the returning browser with `success_page` (a complete
+/// HTML document) for callers whose sign-in is not an MCP server's.
+pub async fn wait_showing(
+    listener: TcpListener,
+    auth_url: &str,
+    present: &(dyn Fn(&str) + Send + Sync),
+    pasted: Option<tokio::sync::mpsc::Receiver<String>>,
+    timeout: Duration,
+    success_page: &str,
 ) -> Result<String> {
     let expected_state = auth_url
         .split_once('?')
@@ -153,7 +189,7 @@ pub async fn wait(
                 ));
             }
             done.store(true, Ordering::SeqCst);
-            let _ = write_html_response(&mut stream, 200, callback_success_html()).await;
+            let _ = write_html_response(&mut stream, 200, success_page.to_string()).await;
             return Ok(query);
         }
     };
