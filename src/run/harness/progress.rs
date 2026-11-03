@@ -23,7 +23,15 @@ use serde_json::Value;
 const ARG_SHOWN: usize = 60;
 
 /// Arguments that say what a tool call is about, most telling first.
-const KEY_ARGS: [&str; 6] = ["path", "command", "pattern", "query", "name", "action"];
+const KEY_ARGS: [&str; 7] = [
+    "path",
+    "shell_command",
+    "command",
+    "pattern",
+    "query",
+    "name",
+    "action",
+];
 
 /// How text lines are decorated.
 #[derive(Clone, Copy, PartialEq, Eq)]

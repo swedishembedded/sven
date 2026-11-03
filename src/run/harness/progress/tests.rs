@@ -114,3 +114,19 @@ fn an_unknown_event_is_named_not_hidden_and_garbage_is_ignored() {
     assert_eq!(r.render(r#"{"event":"brand_new"}"#), ["  · brand_new"]);
     assert!(r.render("not json").is_empty());
 }
+
+#[test]
+fn a_shell_call_shows_its_command() {
+    let lines = [
+        json!({"event":"step_started","primitive":"agent","source":src("design","work",None,None)}).to_string(),
+        json!({"event":"tool_started","tool":"shell","args":"{\"shell_command\":\"sven-cad build model.py --out build\"}"}).to_string(),
+    ];
+    assert_eq!(
+        plain(&lines),
+        [
+            "▸ design",
+            "  ▸ work",
+            "    shell sven-cad build model.py --out build"
+        ]
+    );
+}
