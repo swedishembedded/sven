@@ -25,7 +25,8 @@ mod pkce;
 pub use browser::{StdTerminal, Terminal};
 
 /// A signed-in host: where its server is and the token that proves it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `Debug` shows everything but the token.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteLogin {
     /// The server's origin, as the user named it (normalized).
@@ -48,6 +49,22 @@ pub struct RemoteLogin {
     pub workspace_name: String,
     /// The account the host acts for.
     pub account: String,
+}
+
+impl std::fmt::Debug for RemoteLogin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteLogin")
+            .field("server", &self.server)
+            .field("control_url", &self.control_url)
+            .field("openai_base_url", &self.openai_base_url)
+            .field("mcp_url", &self.mcp_url)
+            .field("mcp_token_url", &self.mcp_token_url)
+            .field("token", &"<redacted>")
+            .field("workspace_id", &self.workspace_id)
+            .field("workspace_name", &self.workspace_name)
+            .field("account", &self.account)
+            .finish()
+    }
 }
 
 impl RemoteLogin {

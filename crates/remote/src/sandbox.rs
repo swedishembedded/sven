@@ -14,9 +14,12 @@
 //!
 //! The kernel also refuses every TCP bind and every TCP connect except to the
 //! ports the host needs (name resolution, the web tools, the server it
-//! serves), so a tool that is subverted cannot reach a service on the
-//! machine's loopback or private network, and refuses signals to, and
-//! abstract unix sockets of, processes outside the host (its siblings).
+//! serves), and refuses signals to, and abstract unix sockets of, processes
+//! outside the host (its siblings). Landlock judges TCP by port, not by
+//! address: a subverted tool can still connect to those ports on loopback
+//! or a private address, send UDP, and connect to a unix socket by path it
+//! can read. Keeping those out is `web_fetch`'s public-only resolver and the
+//! host's own firewall around the runner's network, not this module.
 //!
 //! Linux Landlock does the confining, for the calling thread and everything
 //! it starts afterwards, so [`confine`] must run while the process has one
@@ -25,6 +28,27 @@
 //! is not offered. On other systems a hosted host does not start.
 
 use std::path::Path;
+
+/// Keeps this process's memory, which holds its sign-in key, from other
+/// processes of the same user: its tool children (a shell, gdb, an MCP
+/// server) and anything they start. Without it, where the kernel lets a
+/// process trace its parent (`kernel.yama.ptrace_scope` 0), a child can
+/// read the key from `/proc/<parent>/mem`. Children start dumpable again
+/// (execve resets it), so they are unaffected. No-op off Linux.
+///
+/// # Errors
+///
+/// The kernel refused the setting.
+pub fn keep_memory_private() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: prctl(PR_SET_DUMPABLE, 0) takes no pointers.
+        if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    Ok(())
+}
 
 /// What a confined host may read, besides its sandbox: no one's data, only
 /// what a program needs to run and reach the network. Missing ones are
@@ -272,5 +296,13 @@ mod tests {
         sibling.kill().unwrap();
         sibling.wait().unwrap();
         confined.expect("the confined side holds");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_host_keeps_its_memory_from_its_own_children() {
+        super::keep_memory_private().unwrap();
+        // SAFETY: prctl(PR_GET_DUMPABLE) takes no pointers.
+        assert_eq!(unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) }, 0);
     }
 }

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **remote**: what `sven rc` prints from the server or a model (a message, a tool name, an error, an attached transcript) shows escape sequences instead of passing them to the terminal; `sven rc` keeps its memory, which holds its key, from its own tool children (`PR_SET_DUMPABLE`); a sign-in printed with `{:?}` no longer shows its key.
 - **web**: `web_fetch` reads at most 4 MiB of a response body (after decompression) and returns at most 100000 characters whatever `max_chars` the model asks for; the public-only resolver also refuses Azure's wire server, Alibaba's metadata address and the 6to4 relay range.
 - **remote**: `sven rc`'s file tools no longer write what a program run later in the working directory executes outside the confinement: `.git` (hooks, configuration) and sven's own configuration files are refused at any depth.
 - **gdb**: with `tools.gdb.allow_host_commands: false` (`sven rc` without `--wide-access`) the `gdb` tool runs only an allow list of target-debugging commands; `target remote | PROG`, `file` + `run`, `set logging file`, `dump` and host-file `monitor` commands, which the old deny list let through, are refused.

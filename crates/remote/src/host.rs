@@ -16,6 +16,7 @@
 //! A session actor that fails reports the failure as a session event and
 //! keeps serving; nothing one session does can stop another.
 
+use crate::printable::printable;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -82,6 +83,9 @@ pub struct HostOptions {
 ///
 /// The token is refused, at start or later.
 pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
+    // The sign-in key is in this process's memory; its tool children are not
+    // to read it from there.
+    crate::sandbox::keep_memory_private()?;
     // One host serves one directory: its sessions' commands start there and
     // their relative paths resolve there, wherever this process started.
     std::env::set_current_dir(&options.working_dir)
@@ -411,7 +415,7 @@ impl SessionActor {
     }
 
     async fn answer(&mut self, text: String) {
-        println!("[{}] > {}", self.short(), first_line(&text));
+        println!("[{}] > {}", self.short(), printable(first_line(&text)));
         // The server asking again for the answer this host was stopped in
         // the middle of: continue it, rather than start it over.
         let text = if self.unfinished.take().as_deref() == Some(text.as_str()) {
@@ -561,7 +565,7 @@ impl SessionActor {
 
     /// Answers a command the host carried out itself, ending the answer.
     async fn reply(&mut self, text: &str) {
-        println!("[{}]   {text}", self.short());
+        println!("[{}]   {}", self.short(), printable(text));
         self.upload(AgentEvent::TextDelta(text.to_string())).await;
         self.upload(AgentEvent::TurnComplete).await;
         self.state(SessionState::Idle).await;
@@ -569,7 +573,7 @@ impl SessionActor {
 
     /// Reports a failure the session itself never saw, ending the answer.
     async fn fail(&mut self, message: &str) {
-        println!("[{}] ! {message}", self.short());
+        println!("[{}] ! {}", self.short(), printable(message));
         self.upload(AgentEvent::Error(message.to_string())).await;
         self.upload(AgentEvent::TurnComplete).await;
         self.state(SessionState::Idle).await;
@@ -579,15 +583,17 @@ impl SessionActor {
         match &event {
             // The kernel's per-dispatch trace: for a debugger, not a reader.
             AgentEvent::Transition { .. } => return,
-            AgentEvent::ToolCallStarted(call) => println!("[{}]   {} ...", self.short(), call.name),
+            AgentEvent::ToolCallStarted(call) => {
+                println!("[{}]   {} ...", self.short(), printable(&call.name));
+            }
             AgentEvent::ToolCallFinished {
                 tool_name,
                 is_error: true,
                 ..
             } => {
-                println!("[{}]   {tool_name} failed", self.short());
+                println!("[{}]   {} failed", self.short(), printable(tool_name));
             }
-            AgentEvent::Error(message) => println!("[{}] ! {message}", self.short()),
+            AgentEvent::Error(message) => println!("[{}] ! {}", self.short(), printable(message)),
             _ => {}
         }
         let finished = matches!(event, AgentEvent::TurnComplete | AgentEvent::Aborted { .. });

@@ -38,8 +38,15 @@ impl std::fmt::Display for Line {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Message { role, failed, text } => {
+                // Both come from the server and a model: shown, never obeyed
+                // by the terminal (`printable`).
                 let failed = if *failed { " (failed)" } else { "" };
-                write!(f, "{role}{failed}: {text}")
+                write!(
+                    f,
+                    "{}{failed}: {}",
+                    crate::printable::printable(role),
+                    crate::printable::printable(text)
+                )
             }
             Self::Answering => write!(f, "(the agent is answering...)"),
         }
@@ -386,5 +393,22 @@ pub(crate) mod over_http {
             error.downcast_ref::<ConversationNotFound>().is_some(),
             "{error}"
         );
+    }
+
+    /// `sven rc attach` prints what the server sends: an escape sequence in
+    /// a message is shown, never obeyed by the terminal.
+    #[test]
+    fn a_message_line_cannot_drive_the_terminal() {
+        let line = Line::Message {
+            role: "assistant".into(),
+            failed: false,
+            text: "done\u{1b}]52;c;ZXZpbA==\u{7}\nnext".into(),
+        };
+        let shown = line.to_string();
+        assert!(
+            !shown.contains('\u{1b}') && !shown.contains('\u{7}'),
+            "{shown:?}"
+        );
+        assert!(shown.contains("done") && shown.contains("\nnext"));
     }
 }

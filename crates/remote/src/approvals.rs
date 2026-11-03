@@ -78,7 +78,7 @@ impl PermissionRequester for RemoteApprovals {
         println!(
             "[{}]   {} waits for approval in the conversation",
             &self.session_id.to_string()[..8],
-            call.name
+            crate::printable::printable(&call.name)
         );
         if self.ask.send(request).await.is_err() {
             self.pending.forget(&call.id);

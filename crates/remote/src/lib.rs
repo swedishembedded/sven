@@ -33,6 +33,7 @@ pub mod container;
 pub mod device;
 pub mod host;
 pub mod login;
+pub mod printable;
 pub mod sandbox;
 pub mod sessions;
 mod sse;

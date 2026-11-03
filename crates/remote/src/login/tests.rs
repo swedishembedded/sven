@@ -482,3 +482,14 @@ fn the_code_grant_is_chosen_only_when_both_its_endpoints_are_advertised() {
     neither.device_authorization_url = None;
     assert_eq!(Grant::of(&neither), Grant::None);
 }
+
+/// The key is a secret: a sign-in logged or shown with `{:?}` names
+/// everything about it but the key.
+#[test]
+fn a_sign_in_never_shows_its_key_when_debug_printed() {
+    let mut login = signed_in_to("https://server/v1");
+    login.token = "whale_5601eaSECRETfabb".into();
+    let shown = format!("{login:?} {login:#?}");
+    assert!(!shown.contains("SECRET"), "{shown}");
+    assert!(shown.contains("https://server") && shown.contains("a@example.com"));
+}
