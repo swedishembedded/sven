@@ -79,13 +79,7 @@ impl Terminal for StdTerminal {
     }
 
     async fn read_code(&mut self) -> anyhow::Result<String> {
-        tokio::task::spawn_blocking(|| {
-            let mut line = String::new();
-            let read = std::io::stdin().read_line(&mut line)?;
-            anyhow::ensure!(read > 0, "no code was entered (end of input)");
-            Ok(line.trim().to_string())
-        })
-        .await?
+        tokio::task::spawn_blocking(super::masked_input::read_code).await?
     }
 }
 

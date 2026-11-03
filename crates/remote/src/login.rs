@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::device::{self, Pacing};
 
 mod browser;
+mod masked_input;
 mod pkce;
 
 pub use browser::{StdTerminal, Terminal};
