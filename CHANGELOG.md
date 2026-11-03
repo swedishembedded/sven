@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.1] - 2026-11-03
+
 ### Fixed
 - **remote**: a session of `sven rc` (and so every hosted conversation) offers the tools of its MCP servers, the connected accounts' among them. It opened before a server had listed its tools and never took them afterwards, so the discovery tool found none: a session now waits up to 20 seconds for them as it opens, and takes a server's tools whenever it lists them later. `SessionController::follow_mcp_tools` keeps a session's MCP tools current for a surface that shows no MCP events of its own.
 
