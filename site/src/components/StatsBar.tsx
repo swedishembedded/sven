@@ -2,8 +2,10 @@ import { motion } from 'framer-motion'
 import { useInView } from 'framer-motion'
 import { useRef } from 'react'
 
+import { PLATFORMS } from '../links'
+
 const STATS = [
-  { value: '1', label: 'Command to install', sub: 'Linux x86_64 and aarch64, macOS' },
+  { value: '1', label: 'Command to install', sub: 'macOS and Linux; Windows coming soon' },
   { value: '1', label: 'Binary', sub: 'TUI, headless, and CI in one' },
   { value: '3', label: 'Ways to a model', sub: 'Your sven account, your own key, or a local model' },
   { value: '0', label: 'Runtimes to install', sub: 'No Node.js, no Python' },
@@ -51,7 +53,7 @@ export default function StatsBar() {
           {BADGES.map((b) => (
             <span
               key={b.label}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono border border-bg-border text-text-secondary bg-bg-card"
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono border border-bg-border text-text-secondary bg-bg-card ${'soon' in b && b.soon ? 'border-dashed opacity-70' : ''}`}
             >
               <span style={{ color: b.color }}>{b.icon}</span>
               {b.label}
@@ -64,9 +66,7 @@ export default function StatsBar() {
 }
 
 const BADGES = [
-  { label: 'Linux x86_64', icon: '🐧', color: '#e6b428' },
-  { label: 'Linux aarch64', icon: '🐧', color: '#e6b428' },
-  { label: 'macOS Universal', icon: '🍎', color: '#888' },
+  ...PLATFORMS,
   { label: 'Written in Rust', icon: '⚙', color: '#f59e0b' },
   { label: 'MCP Compatible', icon: '◈', color: '#4ade80' },
 ]

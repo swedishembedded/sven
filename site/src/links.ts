@@ -15,5 +15,13 @@
 export const SERVICE_URL = 'https://sven.swedishembedded.com'
 export const SIGN_UP_URL = `${SERVICE_URL}/sign-up`
 export const INSTALL_COMMAND = `curl -fsSL ${SERVICE_URL}/install.sh | sh`
+// Where the installer puts sven today. Windows is being added: shown as
+// coming, never as supported, until the installer has it.
+export const PLATFORMS: { label: string; icon: string; color: string; soon?: true }[] = [
+  { label: 'macOS Universal', icon: '🍎', color: '#888' },
+  { label: 'Linux x86_64', icon: '🐧', color: '#e6b428' },
+  { label: 'Linux aarch64', icon: '🐧', color: '#e6b428' },
+  { label: 'Windows (coming soon)', icon: '⧖', color: '#888', soon: true },
+]
 export const SIGN_IN_COMMAND = 'sven auth login'
 export const PROVIDERS_DOCS_URL = 'https://swedishembedded.com/docs/sven/reference/providers'

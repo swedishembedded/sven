@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { motion, useInView } from 'framer-motion'
-import { INSTALL_COMMAND, PROVIDERS_DOCS_URL, SIGN_IN_COMMAND, SIGN_UP_URL } from '../links'
+import { INSTALL_COMMAND, PLATFORMS, PROVIDERS_DOCS_URL, SIGN_IN_COMMAND, SIGN_UP_URL } from '../links'
 
 type TabId = 'oneliner' | 'deb' | 'source' | 'macos'
 
@@ -34,7 +34,7 @@ const TAB_CONTENT: Record<TabId, TabContent> = {
   oneliner: {
     steps: [
       {
-        label: 'Install (Linux x86_64 or aarch64)',
+        label: 'Install (macOS or Linux; Windows coming soon)',
         code: INSTALL_COMMAND,
         comment: '# Installs to ~/.local/bin, no sudo',
       },
@@ -199,10 +199,10 @@ export default function InstallSection() {
           className="flex flex-col sm:flex-row items-center justify-between gap-6 mt-8"
         >
           <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
-            {PLATFORM_BADGES.map((b) => (
+            {PLATFORMS.map((b) => (
               <span
                 key={b.label}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono border border-bg-border text-text-secondary bg-bg-elevated"
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono border border-bg-border text-text-secondary bg-bg-elevated ${b.soon ? 'border-dashed opacity-70' : ''}`}
               >
                 {b.icon}
                 {b.label}
@@ -288,12 +288,6 @@ function CodeBlock({ code, comment }: { code: string; comment?: string }) {
     </div>
   )
 }
-
-const PLATFORM_BADGES = [
-  { label: 'Linux x86_64', icon: '🐧' },
-  { label: 'Linux aarch64', icon: '🐧' },
-  { label: 'macOS Universal', icon: '🍎' },
-]
 
 function BoltIcon() {
   return (
