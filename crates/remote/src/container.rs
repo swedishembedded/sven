@@ -27,7 +27,7 @@
 use std::path::Path;
 
 use sven_bootstrap::Config;
-use tokio::net::{TcpListener, UnixStream};
+use tokio::net::TcpListener;
 
 use crate::HOSTED_TOOLS;
 
@@ -79,12 +79,13 @@ pub fn proxy_url() -> String {
 /// # Errors
 ///
 /// The listener fails.
+#[cfg(unix)]
 pub async fn relay(listener: TcpListener, socket: &Path) -> anyhow::Result<()> {
     loop {
         let (mut inbound, _) = listener.accept().await?;
         let socket = socket.to_path_buf();
         tokio::spawn(async move {
-            match UnixStream::connect(&socket).await {
+            match tokio::net::UnixStream::connect(&socket).await {
                 Ok(mut outbound) => {
                     let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
                 }
@@ -92,6 +93,17 @@ pub async fn relay(listener: TcpListener, socket: &Path) -> anyhow::Result<()> {
             }
         });
     }
+}
+
+/// A sandbox container reaches out only through a Unix socket, which only a
+/// Unix host has.
+///
+/// # Errors
+///
+/// Always: there is no egress socket to relay to here.
+#[cfg(not(unix))]
+pub async fn relay(_listener: TcpListener, socket: &Path) -> anyhow::Result<()> {
+    anyhow::bail!("the egress socket {} needs a Unix host", socket.display())
 }
 
 #[cfg(test)]

@@ -154,6 +154,7 @@ pub fn forget() -> anyhow::Result<bool> {
 
 /// This machine's host name, as a default name for the host.
 #[must_use]
+#[cfg(unix)]
 pub fn machine_name() -> String {
     let mut buffer = [0u8; 256];
     // SAFETY: the buffer is valid for its whole length, and gethostname
@@ -164,6 +165,14 @@ pub fn machine_name() -> String {
         Ok(name) if status == 0 && !name.is_empty() => name.to_string(),
         _ => "sven".to_string(),
     }
+}
+
+/// The default name for the host where the host name is not read: `sven`
+/// (`sven auth login --name` names it).
+#[must_use]
+#[cfg(not(unix))]
+pub fn machine_name() -> String {
+    "sven".to_string()
 }
 
 /// Signs this host in to `server` and stores the key the server mints.
