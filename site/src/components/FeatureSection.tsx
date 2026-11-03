@@ -96,8 +96,10 @@ export default function FeatureSection({
     </motion.div>
   )
 
+  // overflow-x-clip: the columns slide in from the side, and while they
+  // wait off to one side they must not widen the page on a phone.
   return (
-    <section ref={ref} className="py-20 lg:py-28">
+    <section ref={ref} className="py-20 lg:py-28 overflow-x-clip">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className={`grid lg:grid-cols-2 gap-12 lg:gap-20 items-center ${reverse ? 'lg:[&>*:first-child]:order-last' : ''}`}>
           {reverse ? imageCol : textCol}

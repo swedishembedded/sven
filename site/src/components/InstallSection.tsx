@@ -152,7 +152,8 @@ export default function InstallSection() {
           style={{ background: '#0d0d14' }}
         >
           {/* Tab bar */}
-          <div className="flex overflow-x-auto border-b border-bg-border" style={{ background: '#0a0a0f' }}>
+          {/* Wrapped on a phone, so every tab shows; one scrolling row from sm up. */}
+          <div className="flex flex-wrap sm:flex-nowrap sm:overflow-x-auto border-b border-bg-border" style={{ background: '#0a0a0f' }}>
             {TABS.map((tab) => (
               <button
                 key={tab.id}
@@ -256,11 +257,14 @@ function CodeBlock({ code, comment }: { code: string; comment?: string }) {
         <span className="w-2 h-2 rounded-full" style={{ background: '#1e1e2e' }} />
       </div>
       <div className="relative px-4 py-4">
-        <pre className="font-mono text-sm leading-6 overflow-x-auto pr-10">
+        {/* Wrapped on a phone, so all of a command is seen; from sm up each
+            line stays one line and scrolls. */}
+        <pre className="font-mono text-sm leading-6 overflow-x-auto pr-10 whitespace-pre-wrap sm:whitespace-pre">
           {code.split('\n').map((line, i) => (
             <div key={i}>
               <span style={{ color: '#5b8dee' }}>$ </span>
-              <span style={{ color: '#e8e8e8' }}>{line}</span>
+              {/* A URL has nowhere to break: it may break anywhere. */}
+              <span className="break-all sm:break-normal" style={{ color: '#e8e8e8' }}>{line}</span>
             </div>
           ))}
           {comment && (
@@ -271,7 +275,7 @@ function CodeBlock({ code, comment }: { code: string; comment?: string }) {
         </pre>
         <button
           onClick={handleCopy}
-          className="absolute top-3 right-3 p-1.5 rounded text-text-dim hover:text-text-secondary transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none"
+          className="absolute top-3 right-3 p-1.5 rounded text-text-secondary hover:text-text-primary transition-colors [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus:opacity-100 focus:outline-none"
           title="Copy"
         >
           {copied ? (

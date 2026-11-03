@@ -24,8 +24,9 @@ export default function Hero() {
 
       <div className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-20 lg:py-28">
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-          {/* Left: copy */}
-          <div>
+          {/* Left: copy. min-w-0: a grid column must not grow to its widest
+              unbreakable line (the install command) past a phone's width. */}
+          <div className="min-w-0">
             {/* Badge */}
             <motion.div
               initial={{ opacity: 0, y: 12 }}
@@ -90,9 +91,9 @@ export default function Hero() {
               transition={{ duration: 0.5, delay: 0.2 }}
             >
               <p className="text-xs text-text-dim mb-2 font-mono uppercase tracking-wider">Quick install</p>
-              <div className="inline-flex items-center gap-3 px-4 py-3 rounded-lg bg-bg-elevated border border-bg-border font-mono text-sm">
+              <div className="flex sm:inline-flex max-w-full items-center gap-3 px-4 py-3 rounded-lg bg-bg-elevated border border-bg-border font-mono text-sm">
                 <span style={{ color: '#5b8dee' }}>$</span>
-                <span className="text-text-primary">{INSTALL_COMMAND}</span>
+                <span className="text-text-primary min-w-0 break-all">{INSTALL_COMMAND}</span>
                 <CopyButton text={INSTALL_COMMAND} />
               </div>
             </motion.div>
@@ -100,6 +101,7 @@ export default function Hero() {
 
           {/* Right: terminal mockup */}
           <motion.div
+            className="min-w-0"
             initial={{ opacity: 0, scale: 0.96, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
