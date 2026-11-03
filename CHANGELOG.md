@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.3] - 2026-11-03
+
 ### Fixed
 - **remote**: one conversation of `sven rc` can no longer hold up another. The host handed each command to its session and waited when that session was not taking them, so a session stuck in a long step stalled every other conversation on the host. Commands are now handed over without waiting: a session that stops taking them is stopped, its conversation is told to send its message again, and its next command starts it afresh; one that died is started again.
 - **mcp**: the MCP manager never waits on whoever watches its events. A surface holding the event receiver without reading it stalled every connection and disconnection once its queue was full; notices are now dropped for a watcher that does not keep up, and `McpManager::tool_changes` counts tool changes in a way no slow watcher can hold up or lose. `SessionController::follow_mcp_tools` follows that count and takes no receiver.
