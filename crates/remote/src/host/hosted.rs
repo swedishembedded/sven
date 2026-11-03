@@ -66,12 +66,15 @@ pub(super) fn session_runtime(
 /// What no tool of a remotely driven session may read or write, even when it
 /// lies inside the working directory (a session started in the home
 /// directory): the sign-in, the stored provider keys and sven's own
-/// configuration (all in `<config dir>/sven`), and the sessions this host
-/// keeps for other conversations.
+/// configuration (`<config dir>/sven`, and `~/.config/sven`, read on every
+/// platform), and everything sven keeps in `<data dir>/sven`: the sessions
+/// this host keeps for other conversations, and the person's own chats and
+/// traces, which hold whatever they ever pasted into sven.
 fn protected_locations() -> Vec<PathBuf> {
     let mut locations = Vec::new();
     locations.extend(dirs::config_dir().map(|dir| dir.join("sven")));
-    locations.extend(crate::sessions::default_dir());
+    locations.extend(dirs::home_dir().map(|home| home.join(".config").join("sven")));
+    locations.extend(dirs::data_dir().map(|dir| dir.join("sven")));
     locations
 }
 
@@ -165,6 +168,25 @@ mod tests {
             assert!(runtime.path_scope.resolve(path).is_err(), "{path}");
         }
         assert!(runtime.path_scope.resolve("src/main.rs").is_ok());
+    }
+
+    /// The person's own chats and traces, and this host's kept sessions, are
+    /// all under sven's data directory, which is protected as a whole.
+    #[test]
+    fn what_sven_keeps_about_the_person_is_protected() {
+        let protected = protected_locations();
+        let kept = [
+            crate::sessions::default_dir().unwrap(),
+            dirs::data_dir().unwrap().join("sven").join("chats"),
+            dirs::home_dir().unwrap().join(".config/sven/remote.yaml"),
+        ];
+        for path in kept {
+            assert!(
+                protected.iter().any(|p| path.starts_with(p)),
+                "{}",
+                path.display()
+            );
+        }
     }
 
     #[test]

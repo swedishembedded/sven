@@ -658,7 +658,8 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
             let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
             reg.register(
                 GdbTool::new(gdb_state, cfg.tools.gdb.clone())
-                    .with_command_policy(Arc::new(cfg.tools.policy())),
+                    .with_command_policy(Arc::new(cfg.tools.policy()))
+                    .with_scope(paths.clone()),
             );
         }
     } else {

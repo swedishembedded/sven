@@ -43,6 +43,8 @@ pub struct GdbTool {
     policy: Arc<sven_tool_registry::ToolPolicy>,
     /// `tools.gdb.allow_host_commands`.
     allow_host_commands: bool,
+    /// Where the ELF `connect` loads may be (the session's file scope).
+    paths: sven_tool_api::PathScope,
 }
 
 impl GdbTool {
@@ -57,7 +59,16 @@ impl GdbTool {
             stop: GdbStopTool::new(state),
             policy: Arc::default(),
             allow_host_commands: cfg.allow_host_commands,
+            paths: sven_tool_api::PathScope::unconfined(),
         }
+    }
+
+    /// Resolves the ELF `connect` loads through `paths`, as the file tools
+    /// resolve theirs: in a confined session it stays inside the root.
+    #[must_use]
+    pub fn with_scope(mut self, paths: sven_tool_api::PathScope) -> Self {
+        self.paths = paths;
+        self
     }
 
     /// Refuses a host command - a debug server to start, or a GDB command's
@@ -332,6 +343,19 @@ impl Tool for GdbTool {
             Some(a) => a.to_string(),
             None => return ToolOutput::err(&call.id, "missing required parameter 'action'"),
         };
+
+        let mut call = call.clone();
+        if action == "connect" {
+            if let Some(executable) = call.args.get("executable").and_then(Value::as_str) {
+                match self.paths.resolve_for(&call, executable) {
+                    Ok(resolved) => {
+                        call.args["executable"] = Value::String(resolved.display().to_string());
+                    }
+                    Err(refused) => return refused,
+                }
+            }
+        }
+        let call = &call;
 
         if !self.allow_host_commands {
             if let Some(what) = Self::host_reaching(&action, &call.args) {
@@ -620,6 +644,29 @@ mod tests {
                 out.content
             );
         }
+    }
+
+    /// The ELF `connect` loads is a path like any other tool's: in a confined
+    /// session it resolves inside the working directory, so gdb is never
+    /// handed a file from elsewhere on the machine to read.
+    #[tokio::test]
+    async fn the_elf_to_load_stays_inside_a_confined_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(tmp.path().join("outside.elf"), b"\x7fELF").unwrap();
+        let scope = sven_tool_api::PathScope::confined(&root).unwrap();
+        let t = make_tool().with_scope(scope);
+        let out = t
+            .execute(&call(
+                json!({"action": "connect", "executable": "../outside.elf"}),
+            ))
+            .await;
+        assert!(
+            out.is_error && out.content.contains("outside"),
+            "{}",
+            out.content
+        );
     }
 
     #[test]
