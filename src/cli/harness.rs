@@ -22,6 +22,20 @@ pub enum GraphArg {
     Mermaid,
 }
 
+/// How `run` and `resume` report progress on stderr.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum ProgressArg {
+    /// `text` when stderr is a terminal, `json` otherwise.
+    #[default]
+    Auto,
+    /// One `[sven:harness] {...}` JSON line per event: the stable, machine
+    /// readable form.
+    Json,
+    /// One indented line per meaningful event, grouped under its task, for a
+    /// person watching; coloured when stderr is a terminal.
+    Text,
+}
+
 /// How `compile` writes the plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum PlanFormatArg {
@@ -143,8 +157,9 @@ pub enum HarnessCommands {
     /// `--approvals auto|deny|ask`. sven reads no configuration or
     /// environment here.
     ///
-    /// Progress lines `[sven:harness] {...}` go to stderr as the run goes,
-    /// unless --quiet. --json prints one JSON document on stdout and nothing
+    /// Progress goes to stderr as the run goes, unless --quiet: JSON lines
+    /// `[sven:harness] {...}`, or with `--progress text` (the default on a
+    /// terminal) a compact readable log. --json prints one JSON document on stdout and nothing
     /// else.
     Run {
         /// A harness file or directory.
@@ -271,7 +286,25 @@ pub struct HarnessRunArgs {
     /// Print the result as one JSON document on stdout.
     #[arg(long)]
     pub json: bool,
-    /// No `[sven:harness]` progress lines on stderr.
+    /// No progress on stderr.
     #[arg(long)]
     pub quiet: bool,
+    /// How progress is written on stderr: `json` (`[sven:harness] {...}`
+    /// lines), `text` (readable lines under each task) or `auto` (`text` on
+    /// a terminal, `json` otherwise, so logs and scripts keep the JSON).
+    #[arg(long, value_enum, value_name = "FORMAT", default_value = "auto")]
+    pub progress: ProgressArg,
+}
+
+impl HarnessRunArgs {
+    /// Whether progress is written as text, given whether stderr is a
+    /// terminal (what `--progress auto` follows).
+    #[must_use]
+    pub fn text_progress(&self, stderr_is_terminal: bool) -> bool {
+        match self.progress {
+            ProgressArg::Auto => stderr_is_terminal,
+            ProgressArg::Json => false,
+            ProgressArg::Text => true,
+        }
+    }
 }

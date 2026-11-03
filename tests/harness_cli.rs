@@ -418,3 +418,43 @@ fn a_trace_of_a_workflow_names_the_task_gate_item_and_result() {
     assert_eq!(gate["source"]["result"], "passed");
     assert_eq!(gate["passed"], true, "the record's own fields are kept");
 }
+
+#[test]
+fn progress_text_is_readable_and_json_is_the_unchanged_default_off_a_terminal() {
+    let setup = setup();
+    let server = serve(vec![]);
+    let go = |extra: &[&str]| {
+        run(setup
+            .subcommand("run", &fixtures().join("decide"), &server)
+            .args(["--approvals", "auto", "--input", r#"{"plan": "pro"}"#])
+            .args(extra))
+    };
+    // Timestamps differ between runs; everything else is the contract.
+    let json_lines = |out: &std::process::Output| -> Vec<serde_json::Value> {
+        stderr(out)
+            .lines()
+            .filter_map(|l| l.strip_prefix("[sven:harness] "))
+            .map(|l| {
+                let mut v: serde_json::Value = serde_json::from_str(l).expect("a JSON line");
+                v.as_object_mut().unwrap().remove("ts_ms");
+                v
+            })
+            .collect()
+    };
+
+    let default = go(&[]);
+    let json = go(&["--progress", "json"]);
+    assert!(!json_lines(&json).is_empty());
+    assert_eq!(json_lines(&default), json_lines(&json), "off a terminal, auto is json");
+
+    let text = go(&["--progress", "text"]);
+    assert_eq!(code(&text), 0, "{}", stderr(&text));
+    let err = stderr(&text);
+    assert!(!err.contains("[sven:harness]"), "{err}");
+    assert!(!err.contains('\x1b'), "no colour off a terminal: {err}");
+    assert!(err.lines().any(|l| l.starts_with("▸ ")), "a task heading: {err}");
+    assert!(err.contains("✓ "), "a passing check: {err}");
+
+    let quiet = go(&["--progress", "text", "--quiet"]);
+    assert!(!stderr(&quiet).contains('▸'));
+}

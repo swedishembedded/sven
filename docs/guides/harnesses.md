@@ -297,9 +297,23 @@ compiler and its test succeed) passes.
 ### Output
 
 `run` prints `status:`, then `output:` or `failure: <code> - <message>`, then
-`steps:` on stdout. Unless `--quiet`, a `[sven:harness] {...}` line per trace
-record goes to stderr (the same token the headless runner uses) as the run
-goes. `--json` replaces the stdout text with one JSON document:
+`steps:` on stdout. Unless `--quiet`, progress goes to stderr as the run goes. With
+`--progress json` (the default when stderr is not a terminal) it is a
+`[sven:harness] {...}` line per trace record, the same token the headless runner
+uses. With `--progress text` (the default on a terminal) it is one indented line
+per meaningful event under its task, for a person to follow:
+
+```text
+▸ interpret
+  ▸ work
+    read_file input/request.md
+  ✓ verify file_exists specification.json
+  ✗ gate spec_valid (exit 1)
+  ↻ repair 1
+  ✓ gate spec_valid (after repair 1)
+```
+
+The text is derived from the same events and says nothing more than they do. `--json` replaces the stdout text with one JSON document:
 
 ```text
 harness, plan_digest, bundle_digest, run_id, status, conclusion, output,

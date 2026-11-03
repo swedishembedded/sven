@@ -30,6 +30,7 @@ use super::engine_run::{
     ProgressFn, RunResult,
 };
 use super::live_files::{write_conversations, TraceAppender};
+use super::progress::{Progress, Style};
 use super::stamps::{stamped_line, Stamps};
 use super::{kit, usage, Failure};
 use crate::cli::{ApprovalsArg, HarnessRunArgs};
@@ -67,6 +68,9 @@ pub(super) struct Assembly {
     /// goes; removed when the run ends with a verdict.
     progress_checkpoint: Option<PathBuf>,
     quiet: bool,
+    /// Where the progress lines go; also used for the ones printed after
+    /// the run when it did not stream them.
+    sink: Arc<Progress>,
     run: EngineRun,
 }
 
@@ -153,9 +157,10 @@ impl Assembly {
             .map(|file| TraceAppender::open(file, resumed))
             .transpose()
             .map_err(|e| usage(format!("cannot write the trace file: {e}")))?;
+        let sink = Arc::new(progress_sink(args));
         let progress: Option<ProgressFn> = {
             let tracker = std::sync::Mutex::new(sven_sdk::SourceTracker::new(plan));
-            let (stamps, quiet) = (stamps.clone(), args.quiet);
+            let (stamps, quiet, sink) = (stamps.clone(), args.quiet, sink.clone());
             Some(Arc::new(move |record: &sven_sdk::TraceRecord| {
                 let ts_ms = stamps.note();
                 let sourced = tracker
@@ -167,7 +172,7 @@ impl Assembly {
                         trace.append(&line);
                     }
                     if !quiet {
-                        eprintln!("[sven:harness] {line}");
+                        sink.emit(&line);
                     }
                 }
             }) as ProgressFn)
@@ -178,9 +183,10 @@ impl Assembly {
             }) as ConversationsFn
         });
         let activity: Option<ActivityFn> = (!args.quiet).then(|| {
-            Arc::new(|event: &sven_sdk::SessionEvent| {
+            let sink = sink.clone();
+            Arc::new(move |event: &sven_sdk::SessionEvent| {
                 if let Some(line) = activity_line(event) {
-                    eprintln!("[sven:harness] {line}");
+                    sink.emit(&line);
                 }
             }) as ActivityFn
         });
@@ -206,6 +212,7 @@ impl Assembly {
             capabilities,
             progress_checkpoint: args.checkpoint_out.clone(),
             quiet: args.quiet,
+            sink,
             run: EngineRun {
                 input: args::input(args)?,
                 deadline_ms: args::deadline_ms(args)?,
@@ -220,6 +227,11 @@ impl Assembly {
                 item_conversations,
             },
         })
+    }
+
+    /// The progress sink of the run.
+    pub(super) fn sink(&self) -> Arc<Progress> {
+        self.sink.clone()
     }
 
     /// Whether the run reported its progress itself, as it went.
@@ -566,4 +578,17 @@ fn suspend_on_signal() -> sven_sdk::CancelToken {
 #[cfg(not(unix))]
 fn suspend_on_signal() -> sven_sdk::CancelToken {
     sven_sdk::CancelToken::new()
+}
+
+/// The progress form the flags and stderr ask for. Text is coloured only on
+/// a terminal; `--progress text` into a file stays plain.
+fn progress_sink(args: &HarnessRunArgs) -> Progress {
+    use std::io::IsTerminal;
+
+    let terminal = std::io::stderr().is_terminal();
+    match (args.text_progress(terminal), terminal) {
+        (false, _) => Progress::json(),
+        (true, true) => Progress::text(Style::Colour),
+        (true, false) => Progress::text(Style::Plain),
+    }
 }

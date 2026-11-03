@@ -18,16 +18,18 @@ use sven_sdk::{sourced_trace, HarnessCheckpoint, SourcedRecord};
 use super::engine::{self, Assembly};
 use super::engine_run::{RunResult, RunStatus, RunSummary};
 use super::live_files::conversation_file;
+use super::progress::Progress;
 use super::source::Source;
 use super::stamps::{stamped_line, Stamps};
 use super::{kit, print_json, usage, Failure, Outcome};
 use crate::cli::HarnessRunArgs;
 
 /// What the run's observer saw: when each trace record arrived, and whether
-/// the progress lines were printed as they did.
+/// the progress lines were printed as they did (through `sink`).
 struct Seen<'a> {
     stamps: &'a Stamps,
     printed: bool,
+    sink: Arc<Progress>,
 }
 
 /// Starts the harness at `path` and reports how it ended.
@@ -36,6 +38,7 @@ pub(super) async fn run(path: &Path, args: &HarnessRunArgs) -> Outcome {
     let stamps = Stamps::begin();
     let assembly = Assembly::from_args(args, plan, &stamps, false)?;
     let printed = assembly.streams_progress();
+    let sink = assembly.sink();
     let result = engine::run(path, assembly).await?;
     finish(
         args,
@@ -43,6 +46,7 @@ pub(super) async fn run(path: &Path, args: &HarnessRunArgs) -> Outcome {
         Seen {
             stamps: &stamps,
             printed,
+            sink,
         },
     )
 }
@@ -57,6 +61,7 @@ pub(super) async fn resume(path: &Path, checkpoint: &Path, args: &HarnessRunArgs
     let stamps = Stamps::begin();
     let assembly = Assembly::from_args(args, plan, &stamps, true)?;
     let printed = assembly.streams_progress();
+    let sink = assembly.sink();
     let result = engine::resume(path, checkpoint, assembly).await?;
     finish(
         args,
@@ -64,6 +69,7 @@ pub(super) async fn resume(path: &Path, checkpoint: &Path, args: &HarnessRunArgs
         Seen {
             stamps: &stamps,
             printed,
+            sink,
         },
     )
 }
@@ -83,7 +89,7 @@ fn finish(args: &HarnessRunArgs, result: &RunResult, seen: Seen<'_>) -> Outcome 
             .zip(&times)
         {
             if let Ok(line) = stamped_line(&record, *ts_ms) {
-                eprintln!("[sven:harness] {line}");
+                seen.sink.emit(&line);
             }
         }
     }

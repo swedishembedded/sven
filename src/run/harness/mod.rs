@@ -26,6 +26,7 @@ mod exec;
 mod inspect;
 mod live_files;
 mod plan_view;
+mod progress;
 mod render;
 mod replay;
 mod source;
