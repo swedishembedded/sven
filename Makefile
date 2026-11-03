@@ -81,6 +81,10 @@ build/debug:
 build/release:
 	$(CARGO) build --release $(CARGO_FLAGS)
 
+## build/profiling - the release build with symbols and line tables, for profilers (target/profiling/sven)
+build/profiling:
+	$(CARGO) build --profile profiling $(CARGO_FLAGS)
+
 ## build/wasm - the browser build of a sven session (sven-wasm), as a versioned
 ##   package in target/wasm-pkg: web/ for a page or Web Worker, node/ for
 ##   Node, each with a package.json naming the sven version, commit and
@@ -722,7 +726,7 @@ generate/roadmap/index:
 	python3 scripts/gen-roadmap-index.py
 
 # Declared last so every generated list above is already defined.
-.PHONY: all build build/debug build/release $(BUILD_CRATE_TARGETS) build/crate \
+.PHONY: all build build/debug build/release build/profiling $(BUILD_CRATE_TARGETS) build/crate \
         test test/features test/gates test/package test/e2e test/e2e/basic/deferred test/e2e/basic/instructions-deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
         test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness $(HARNESS_TARGETS) \
         generate \

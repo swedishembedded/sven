@@ -307,6 +307,13 @@ strip          = true
 opt-level     = 0
 codegen-units = 256       # max parallelism for debug builds (cargo default, made explicit)
 
+# The release build as profilers need it: the same code, with symbols and
+# line tables kept (`make build/profiling`).
+[profile.profiling]
+inherits = "release"
+strip    = false
+debug    = "line-tables-only"
+
 # Fast CI/check profile: same as dev but skip debug info for faster linking
 [profile.ci]
 inherits      = "dev"
