@@ -99,50 +99,108 @@ impl GdbTool {
     }
 }
 
-/// GDB commands that run host programs or arbitrary code, or can be made
-/// to: a command line naming one of them as any word is refused when
-/// `tools.gdb.allow_host_commands` is false. Words are matched as GDB
-/// matches commands, by unique prefix, so every prefix of a listed word
-/// counts (`so` is `source`, `pyt` is `python`). Conservative on purpose:
-/// a debugging command with a false match can be spelled another way, an
-/// escape that is missed hands the host to whoever drives the session.
-const HOST_REACHING_COMMANDS: &[&str] = &[
-    "shell",
-    "python",
-    "python-interactive",
-    "pipe",
-    "guile",
-    "guile-repl",
-    "source",
-    "compile",
-    "eval",
-    "define",
-    "document",
-    "commands",
-    "with",
-    "exec-wrapper",
-    "startup-with-shell",
+/// The GDB commands a session that may not reach the host runs
+/// (`tools.gdb.allow_host_commands` false): stepping, breaking on and
+/// inspecting the target, nothing that names a program or file on the host.
+/// An allow list, so a command nobody thought of (`target remote | PROG`,
+/// `file` + `run`, `set logging file`, `dump`) is refused until named here.
+/// Matched by the exact spelling given, never by GDB's unique prefix (`du`
+/// is `dump`); a `/FMT` suffix (`p/x`, `x/4x`) is part of the command.
+const TARGET_COMMANDS: &[&str] = &[
+    "advance",
+    "awatch",
+    "b",
+    "backtrace",
+    "break",
+    "bt",
+    "c",
+    "call",
+    "clear",
+    "condition",
+    "continue",
+    "d",
+    "delete",
+    "detach",
+    "disable",
+    "disassemble",
+    "display",
+    "down",
+    "enable",
+    "f",
+    "fin",
+    "finish",
+    "frame",
+    "hbreak",
+    "i",
+    "ignore",
+    "info",
+    "interrupt",
+    "jump",
+    "kill",
+    "l",
+    "list",
+    "n",
+    "next",
+    "nexti",
+    "ni",
+    "output",
+    "p",
+    "print",
+    "ptype",
+    "rwatch",
+    "s",
+    "si",
+    "step",
+    "stepi",
+    "tbreak",
+    "thbreak",
+    "u",
+    "undisplay",
+    "until",
+    "up",
+    "watch",
+    "whatis",
+    "where",
+    "x",
 ];
 
-/// The word of `command` that reaches the host, if one does.
+/// The `monitor` commands of a debug server (OpenOCD, J-Link, pyOCD) such a
+/// session sends: reset, run control, registers and target memory. Not the
+/// ones that read or write host files (`dump_image`, `flash write_image`) or
+/// hand the host's files to the target (`arm semihosting`).
+const TARGET_MONITOR_COMMANDS: &[&str] = &[
+    "go", "halt", "mdb", "mdd", "mdh", "mdw", "mwb", "mwd", "mwh", "mww", "reg", "reset", "resume",
+    "step", "targets", "version",
+];
+
+/// What in a GDB command line would reach the host, if anything: a command
+/// outside [`TARGET_COMMANDS`] (with `load` only bare, `set` only `set var`,
+/// `monitor` only [`TARGET_MONITOR_COMMANDS`]), `$_shell(...)` in an
+/// expression, or a second line.
 fn host_reaching_word(command: &str) -> Option<String> {
-    let command = command.trim_start();
-    if command.starts_with('!') || command.starts_with('|') {
-        return Some(command[..1].to_string());
+    if command.chars().any(char::is_control) {
+        return Some("a second command line".to_string());
     }
-    command
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '$'))
-        .filter(|word| !word.is_empty())
-        .map(str::to_ascii_lowercase)
-        .find(|word| {
-            let word = word.trim_start_matches('$');
-            // `$_shell(...)` runs a program from inside an expression.
-            word.contains("shell")
-                || (word.len() >= 2
-                    && HOST_REACHING_COMMANDS
-                        .iter()
-                        .any(|reaching| reaching.starts_with(word)))
-        })
+    // `$_shell(...)` runs a program from inside any expression.
+    if let Some(word) = command
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .find(|word| word.to_ascii_lowercase().contains("shell"))
+    {
+        return Some(word.to_string());
+    }
+    let mut words = command.split_whitespace();
+    let first = words.next()?;
+    let name = first.split('/').next().unwrap_or(first);
+    let second = words.next().map(str::to_ascii_lowercase);
+    let allowed = match name {
+        "load" => second.is_none(),
+        "set" => matches!(second.as_deref(), Some("var" | "variable")),
+        "monitor" | "mon" => second
+            .as_deref()
+            .is_some_and(|sub| TARGET_MONITOR_COMMANDS.contains(&sub)),
+        _ => TARGET_COMMANDS.contains(&name),
+    };
+    (!allowed).then(|| first.to_string())
 }
 
 /// The shell command a GDB command line hands to the host shell, if any.
@@ -480,6 +538,34 @@ mod tests {
             "set exec-wrapper env",
             "set startup-with-shell on",
             "-interpreter-exec console \"shell id\"",
+            // A program run as a remote target, or as the inferior.
+            "target remote | bash -c id",
+            "target extended-remote |id",
+            "tar rem |id",
+            "file /bin/sh",
+            "set args -c id",
+            "run",
+            "r",
+            "start",
+            "attach 1",
+            // Files written outside the working directory.
+            "set logging file ~/.bashrc",
+            "set logging enabled on",
+            "dump binary memory ~/x 0 1",
+            "du bin mem ~/x 0 1",
+            "save breakpoints ~/.gdbinit",
+            "generate-core-file ~/core",
+            "gcore ~/core",
+            "load ~/.ssh/id_ed25519",
+            // Host files read, or the host debugged instead of the target.
+            "add-symbol-file /etc/shadow 0",
+            "directory /",
+            // Another command smuggled in on a second line.
+            "info registers\nshell id",
+            // OpenOCD: host files read or written, or the target given the host.
+            "monitor dump_image ~/.bashrc 0 4",
+            "monitor arm semihosting enable",
+            "monitor flash write_image /etc/passwd",
         ] {
             let out = t
                 .execute(&call(json!({"action": "command", "command": command})))
@@ -509,6 +595,17 @@ mod tests {
             "break main",
             "continue",
             "monitor reset halt",
+            "monitor halt",
+            "mon mdw 0x20000000 4",
+            "set var counter = 0",
+            "set variable x = 1",
+            "p/x $pc",
+            "info breakpoints",
+            "tbreak main.c:42",
+            "delete",
+            "finish",
+            "frame 1",
+            "disassemble",
             "print a != b",
             "step",
             "backtrace",

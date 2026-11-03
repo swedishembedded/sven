@@ -153,10 +153,14 @@ enforced here, by default, whatever the server approves:
   expose them.
 - **Web.** `web_fetch` reaches only the public internet, never this
   machine, your LAN or a cloud metadata service (`tools.web.public_only`).
-- **GDB.** The `gdb` tool refuses GDB commands that reach the host
-  (`shell`, `!`, `pipe`, `python`, `source`, ...), a debug server command or
-  gdb path the model spells out (`tools.gdb.allow_host_commands: false`);
-  a server it discovers and the configured `gdb_path` still work.
+- **GDB.** The `gdb` tool runs only commands that debug the target:
+  breakpoints, stepping, `info`, `print`, `x`, `set var`, a bare `load` and
+  `monitor` reset, run-control, register and memory commands. Everything
+  else is refused, including commands that run a program (`shell`, `run`,
+  `target remote | ...`) or name a file on this machine (`file`, `dump`,
+  `set logging`), as are a debug server command or gdb path the model
+  spells out (`tools.gdb.allow_host_commands: false`). A server it discovers
+  and the configured `gdb_path` still work.
 - **Shell.** The `shell` tool is allowed and starts in the working
   directory, but nothing confines what a command touches. If the server must
   not have that, remove the tool (below), or run `sven rc` in a container

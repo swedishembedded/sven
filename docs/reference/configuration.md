@@ -1144,7 +1144,7 @@ Configures the integrated GDB debugging support.
 | `command_timeout_secs` | `10` | Seconds to wait for a GDB command response |
 | `connect_timeout_secs` | `30` | Seconds allowed for the initial connect handshake, which includes loading symbols; keep it at least `command_timeout_secs` |
 | `server_startup_wait_ms` | `500` | Milliseconds to wait after spawning the GDB server |
-| `allow_host_commands` | `true` | When `false`, the `gdb` tool refuses GDB commands that reach the host (`shell`, `!`, `pipe`, `python`, `source`, ...), a debug server command and a gdb executable path the model spells out. `sven rc` sets it `false` unless started with `--wide-access` |
+| `allow_host_commands` | `true` | When `false`, the `gdb` tool runs only GDB commands that debug the target (breakpoints, stepping, `info`, `print`, `x`, `set var`, a bare `load`, `monitor` run-control and memory commands) and refuses every other, along with a debug server command and a gdb executable path the model spells out. `sven rc` sets it `false` unless started with `--wide-access` |
 
 **Example:**
 
