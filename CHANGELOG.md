@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **ci**: release and CI workflows are read-only except the job that publishes a release, and every third-party action and `cross` is pinned to a commit.
 - **remote**: a server can open at most 32 sessions at once on one `sven rc` host; the command stream no longer drops when TCP splits a character or a line end.
 - **remote**: a confined `sven rc` session's file tools are also kept out of sven's data directory (the person's chats and traces) and `~/.config/sven` on every platform; the gdb tool's `connect` resolves its ELF through the session's scope.
 - **remote**: what `sven rc` prints from the server or a model (a message, a tool name, an error, an attached transcript) shows escape sequences instead of passing them to the terminal; `sven rc` keeps its memory, which holds its key, from its own tool children (`PR_SET_DUMPABLE`); a sign-in printed with `{:?}` no longer shows its key.

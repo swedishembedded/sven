@@ -18,8 +18,11 @@ on:
         type: boolean
         default: true
 
+# Read-only for every job: only `publish`, which creates the release, may
+# write. Third-party actions and `cross` are pinned to commits, so a moved
+# tag cannot change what builds the binaries customers and hosted agents run.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,11 +34,13 @@ jobs:
     name: E2E basic tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install bats-core and the voice input build dependencies (ALSA, cmake for libopus)
         run: |
@@ -50,10 +55,12 @@ jobs:
     name: Linux x86_64
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install the voice input build dependencies (ALSA, cmake for libopus)
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libasound2-dev cmake
@@ -82,7 +89,7 @@ jobs:
           # Keep completions as a shared artifact for the arm64 deb build
           cp -r target/completions       dist/completions
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-x86_64
           path: dist/
@@ -104,22 +111,23 @@ jobs:
             target: aarch64-unknown-linux-musl
             platform: linux/arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+        run: cargo install cross --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff --locked
 
       - name: Build static release binary (cross)
         # Static: everything but voice input, whose ALSA cannot be linked
         # statically. The packaged and macOS builds have it.
         run: cross build --release --target ${{ matrix.target }} -p sven --no-default-features --features tui,network,gdb,memory,coding,research,dbus,android
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         if: matrix.arch != 'x86_64'
 
       - name: Check it is static and runs without glibc
@@ -133,7 +141,7 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/sven dist/sven-linux-${{ matrix.arch }}-musl
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-${{ matrix.arch }}-musl
           path: dist/
@@ -149,21 +157,22 @@ jobs:
     needs: build-linux-x86_64
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: aarch64-unknown-linux-gnu
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+        run: cargo install cross --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff --locked
 
       - name: Build release binary (cross)
         run: cross build --release --target aarch64-unknown-linux-gnu
 
       - name: Download x86_64 completions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: linux-x86_64
           path: x86-artifacts
@@ -183,7 +192,7 @@ jobs:
           cp target/aarch64-unknown-linux-gnu/release/sven dist/sven-linux-aarch64
           cp target/debian/sven_*_arm64.deb                dist/sven-linux-aarch64.deb
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-aarch64
           path: dist/
@@ -200,12 +209,13 @@ jobs:
     name: macOS (universal)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: x86_64-apple-darwin,aarch64-apple-darwin
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Build x86_64
         run: cargo build --release --target x86_64-apple-darwin
@@ -221,7 +231,7 @@ jobs:
             target/aarch64-apple-darwin/release/sven \
             -output dist/sven-darwin-universal
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos
           path: dist/
@@ -233,9 +243,11 @@ jobs:
     runs-on: windows-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Release build
         run: cargo build --release
@@ -245,7 +257,7 @@ jobs:
           mkdir dist
           copy target\release\sven.exe dist\sven-windows-x86_64.exe
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows
           path: dist/
@@ -259,37 +271,39 @@ jobs:
     # fails the release is aborted - and both static Linux binaries must
     # build, since install.sh and hosted agents install them.
     needs: [e2e-basic, build-linux-x86_64, build-linux-musl, build-macos]
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Download x86_64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: linux-x86_64
           path: dist
 
       - name: Download the static (musl) artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: linux-*-musl
           merge-multiple: true
           path: dist
 
       - name: Download aarch64 artifact (if available)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true
         with:
           name: linux-aarch64
           path: dist
 
       - name: Download macOS artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: macos
           path: dist
 
       - name: Download Windows artifact (if available)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true
         with:
           name: windows
@@ -318,7 +332,7 @@ jobs:
         if: >-
           ${{ !(github.event_name == 'workflow_dispatch' &&
               github.event.inputs.dry_run == 'true') }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/*
           generate_release_notes: true
