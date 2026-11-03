@@ -53,7 +53,14 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
         // Benchmarking, 198.18.0.0/15.
         || (a == 198 && (b & 0xfe) == 18)
         // Reserved, 240.0.0.0/4.
-        || a >= 240)
+        || a >= 240
+        // The deprecated 6to4 relay anycast, 192.88.99.0/24.
+        || (a == 192 && b == 88 && c == 99)
+        // Cloud instance services at public-looking addresses: Azure's wire
+        // server (instance credentials and extensions) and Alibaba's
+        // metadata service.
+        || ip == Ipv4Addr::new(168, 63, 129, 16)
+        || ip == Ipv4Addr::new(100, 100, 100, 200))
 }
 
 fn is_public_v6(ip: Ipv6Addr) -> bool {
@@ -165,6 +172,13 @@ mod tests {
             // IPv4-translated (RFC 2765) loopback, and Teredo.
             "::ffff:0:7f00:1",
             "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+            // Cloud instance services at public-looking addresses: Azure's
+            // wire server and Alibaba's metadata service.
+            "168.63.129.16",
+            "100.100.100.200",
+            // AWS's IPv6 metadata service and the 6to4 relay anycast.
+            "fd00:ec2::254",
+            "192.88.99.1",
         ] {
             assert!(
                 !is_public(refused.parse().unwrap()),

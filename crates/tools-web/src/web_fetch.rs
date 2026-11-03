@@ -95,11 +95,10 @@ impl Tool for WebFetchTool {
             Some(u) => u.to_string(),
             None => return ToolOutput::err(&call.id, "missing 'url'"),
         };
-        let max_chars = call
-            .args
-            .get("max_chars")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(self.default_max_chars as u64) as usize;
+        let max_chars = output_chars(
+            call.args.get("max_chars").and_then(|v| v.as_u64()),
+            self.default_max_chars,
+        );
 
         debug!(url = %url, "web_fetch tool");
 
@@ -118,7 +117,41 @@ impl Tool for WebFetchTool {
 /// Redirects followed before giving up.
 const MAX_REDIRECTS: usize = 3;
 
+/// The most of a response body read, after decompression: the rest is never
+/// downloaded. Many hosted agents share one memory budget, so one page (or a
+/// small body that decompresses to gigabytes) must not take it.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// The most characters returned, whatever `max_chars` the model asks for.
+const MAX_OUTPUT_CHARS: usize = 100_000;
+
+/// The characters to return: what the model asked for, else the configured
+/// default, never more than [`MAX_OUTPUT_CHARS`].
+fn output_chars(requested: Option<u64>, default: usize) -> usize {
+    requested
+        .map_or(default, |n| usize::try_from(n).unwrap_or(usize::MAX))
+        .min(MAX_OUTPUT_CHARS)
+}
+
+/// The body of `response`, read up to [`MAX_BODY_BYTES`] as it arrives, and
+/// whether it went on past that.
+async fn capped_body(mut response: reqwest::Response) -> anyhow::Result<(String, bool)> {
+    let mut body = Vec::new();
+    let mut cut = false;
+    while let Some(chunk) = response.chunk().await? {
+        let room = MAX_BODY_BYTES - body.len();
+        if chunk.len() > room {
+            body.extend_from_slice(&chunk[..room]);
+            cut = true;
+            break;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok((String::from_utf8_lossy(&body).into_owned(), cut))
+}
+
 async fn fetch_url(url: &str, max_chars: usize, public_only: bool) -> anyhow::Result<String> {
+    let max_chars = max_chars.min(MAX_OUTPUT_CHARS);
     let builder = sven_http::client_builder()
         .timeout(std::time::Duration::from_secs(30))
         .user_agent("sven-agent/0.1");
@@ -152,7 +185,7 @@ async fn fetch_url(url: &str, max_chars: usize, public_only: bool) -> anyhow::Re
         .unwrap_or("")
         .to_lowercase();
 
-    let body = response.text().await?;
+    let (body, body_cut) = capped_body(response).await?;
 
     let content = if content_type.contains("html") {
         html_to_text(&body)
@@ -165,6 +198,11 @@ async fn fetch_url(url: &str, max_chars: usize, public_only: bool) -> anyhow::Re
         body
     };
 
+    if body_cut && content.len() <= max_chars {
+        return Ok(format!(
+            "{content}...[truncated: the page is larger than {MAX_BODY_BYTES} bytes]"
+        ));
+    }
     if content.len() > max_chars {
         // The model picks both the URL and `max_chars`, so this offset is
         // attacker- and model-influenced and lands mid-character on any
@@ -238,5 +276,49 @@ mod tests {
         let out = t.execute(&call).await;
         assert!(out.is_error, "a malformed URL must fail: {}", out.content);
         assert!(out.provenance.is_none());
+    }
+
+    /// A page that never ends (or a body decompressing to gigabytes) is read
+    /// only up to [`MAX_BODY_BYTES`]: the hosted runner holds many agents in
+    /// one memory budget, and one page must not take it.
+    #[tokio::test]
+    async fn an_endless_page_is_read_only_up_to_the_cap() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await;
+            let _ = socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\n",
+                )
+                .await;
+            let chunk = vec![b'a'; 64 * 1024];
+            // Far past the cap; the reader must stop and hang up first.
+            for _ in 0..(4 * MAX_BODY_BYTES / chunk.len()) {
+                if socket.write_all(&chunk).await.is_err() {
+                    return;
+                }
+            }
+        });
+        let text = fetch_url(&format!("http://{address}/"), usize::MAX, false)
+            .await
+            .unwrap();
+        assert!(
+            text.contains("truncated"),
+            "{}",
+            &text[text.len().saturating_sub(200)..]
+        );
+        assert!(text.len() <= MAX_OUTPUT_CHARS + 200, "{}", text.len());
+    }
+
+    /// The model chooses `max_chars`; an absurd value is clamped.
+    #[test]
+    fn a_model_cannot_raise_the_output_past_the_ceiling() {
+        assert_eq!(output_chars(Some(u64::MAX), 20_000), MAX_OUTPUT_CHARS);
+        assert_eq!(output_chars(Some(500), 20_000), 500);
+        assert_eq!(output_chars(None, 20_000), 20_000);
     }
 }
