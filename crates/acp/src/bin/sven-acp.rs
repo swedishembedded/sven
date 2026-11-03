@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(filter)
         .init();
 
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    sven_http::ensure_crypto_provider();
 
     run_acp_command(&cli.command).await
 }

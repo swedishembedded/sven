@@ -94,9 +94,9 @@ impl BrainProvider {
         // No proxy: where decisions go is the configured URL, never the
         // process environment. (A browser's fetch has no proxy setting.)
         #[cfg(not(target_arch = "wasm32"))]
-        let builder = reqwest::Client::builder().no_proxy();
+        let builder = sven_http::client_builder().no_proxy();
         #[cfg(target_arch = "wasm32")]
-        let builder = reqwest::Client::builder();
+        let builder = sven_http::client_builder();
         let http = builder
             .build()
             .map_err(|e| format!("cannot build the HTTP client: {e}"))?;

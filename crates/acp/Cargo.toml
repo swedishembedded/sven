@@ -10,6 +10,7 @@ name = "sven-acp"
 path = "src/bin/sven-acp.rs"
 
 [dependencies]
+sven-http = { path = "../http" }
 sven-machines        = { path = "../machines" }
 sven-tool-api    = { path = "../tool-api" }
 sven-hsm         = { path = "../hsm" }
@@ -31,7 +32,6 @@ futures          = { workspace = true }
 agent-client-protocol = { version = "0.10", features = ["unstable_session_usage"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tokio-util       = { version = "0.7", features = ["compat"] }
-rustls           = { workspace = true }
 futures-util     = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [dev-dependencies]

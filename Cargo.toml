@@ -10,6 +10,7 @@ members = [
     "crates/kernel",
     "crates/chain",
     "crates/vocab",
+    "crates/http",
     "crates/config",
     "crates/model",
     "crates/model-catalog",
@@ -109,8 +110,8 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # 0.1.92: older expansions add a #[must_use] clippy rejects (double_must_use).
 async-trait  = "0.1.92"
 futures      = "0.3"
-reqwest      = { version = "0.13", features = ["json", "stream", "multipart", "rustls", "gzip", "query", "form"], default-features = false }
-rustls       = { version = "0.23", features = ["ring"] }
+reqwest      = { version = "0.13", features = ["json", "stream", "rustls-no-provider", "gzip", "query", "form"], default-features = false }
+rustls       = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 html2text    = "0.12"
 async-recursion = "1"
 clap         = { version = "4", features = ["derive", "env", "string"] }
@@ -182,6 +183,7 @@ base64           = { workspace = true }
 # freshly-loaded `.task.toml` is posted as. Zero-dependency foundation crate,
 # so this is unconditional (not gated behind `memory`).
 sven-vocab       = { path = "crates/vocab" }
+sven-http        = { path = "crates/http" }
 toml             = { workspace = true }
 sha2             = { workspace = true }
 hex              = { workspace = true }
@@ -198,7 +200,6 @@ humantime   = { workspace = true }
 tokio       = { workspace = true }
 futures     = { workspace = true }
 clap        = { workspace = true }
-rustls      = { workspace = true }
 clap_complete = { workspace = true }
 tracing     = { workspace = true }
 tracing-subscriber = { workspace = true }

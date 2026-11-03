@@ -49,6 +49,7 @@ sven-image       = "foundation"
 sven-tui-nvim    = "foundation"
 sven-workspace   = "foundation"
 sven-vocab       = "foundation"
+sven-http        = "foundation"
 sven-memory-api  = "foundation"
 atif             = "foundation"
 

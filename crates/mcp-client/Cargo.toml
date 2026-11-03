@@ -6,6 +6,7 @@ description = "MCP client for sven - connects to external MCP servers as a tool/
 license     = "Apache-2.0"
 
 [dependencies]
+sven-http = { path = "../http" }
 sven-config   = { path = "../config" }
 sven-tool-api = { path = "../tool-api" }
 
@@ -20,7 +21,7 @@ dirs         = { workspace = true }
 sha2         = { workspace = true }
 url          = "2.5"
 webbrowser   = "1"
-rmcp         = { workspace = true, features = ["client", "auth", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp         = { workspace = true, features = ["client", "auth", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest-tls-no-provider"] }
 fs4          = { workspace = true }
 futures      = { workspace = true }
 sse-stream   = "0.2"

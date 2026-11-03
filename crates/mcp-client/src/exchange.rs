@@ -134,7 +134,7 @@ pub async fn connect_account(
     name: &str,
     url: &str,
 ) -> anyhow::Result<AccountConnection> {
-    let http = reqwest::Client::new();
+    let http = sven_http::client();
     let traded = trade(&http, exchange).await.map_err(anyhow::Error::msg)?;
     let response = http
         .post(format!("{}/connect", mcp_url.trim_end_matches('/')))
@@ -178,7 +178,7 @@ pub struct ExchangingClient {
 
 impl ExchangingClient {
     pub fn new(exchange: TokenExchange) -> Self {
-        let http = reqwest::Client::new();
+        let http = sven_http::client();
         Self {
             source: Arc::new(Source {
                 exchange,

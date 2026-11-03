@@ -157,7 +157,7 @@ async fn sven_search(
     count: usize,
     api_key: &str,
 ) -> anyhow::Result<String> {
-    let client = reqwest::Client::builder()
+    let client = sven_http::client_builder()
         .timeout(std::time::Duration::from_secs(30))
         .user_agent("sven-agent/0.1")
         .build()?;
@@ -199,7 +199,7 @@ fn search_url(query: &str, count: usize) -> String {
 }
 
 async fn brave_search(url: &str, count: usize, api_key: &str) -> anyhow::Result<String> {
-    let client = reqwest::Client::builder()
+    let client = sven_http::client_builder()
         .timeout(std::time::Duration::from_secs(15))
         .user_agent("sven-agent/0.1")
         .build()?;

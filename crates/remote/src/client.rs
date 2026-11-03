@@ -204,7 +204,7 @@ pub(crate) fn same_origin(server: &str, url: &str) -> bool {
 }
 
 pub(crate) fn http() -> anyhow::Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+    Ok(sven_http::client_builder()
         .user_agent(concat!("sven/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))
         .build()?)

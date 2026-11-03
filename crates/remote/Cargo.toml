@@ -9,6 +9,7 @@ description = "Remote control: sign a host in to a remote-control server and run
 license     = "Apache-2.0"
 
 [dependencies]
+sven-http = { path = "../http" }
 sven-bootstrap     = { path = "../bootstrap", default-features = false }
 sven-control       = { path = "../control" }
 sven-executors     = { path = "../executors" }

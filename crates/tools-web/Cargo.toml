@@ -6,6 +6,7 @@ description = "Information-gathering tools: internet fetch/search (web_fetch, we
 license     = "Apache-2.0"
 
 [dependencies]
+sven-http = { path = "../http" }
 sven-tool-api = { path = "../tool-api" }
 sven-hsm      = { path = "../hsm" }
 sven-vocab    = { path = "../vocab" }

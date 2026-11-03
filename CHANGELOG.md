@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **sven**: a smaller process. One crypto library is linked rather than two (TLS is rustls with ring only; aws-lc is gone), the voice upload builds its own form rather than linking a table that guesses a type for every file extension, and a process runs at most four async workers rather than one per core. An idle hosted host goes from 23 threads to 5 and its start-up relocations from 129k to 125k.
+- **sdk**: `sven-http` is the one way sven builds HTTP clients (`client_builder`, `client`); it installs the TLS provider once per process, so a program using sven's crates as a library needs no setup of its own. `ensure_crypto_provider` is for code that has a library build clients itself.
+
 ## [4.4.3] - 2026-11-03
 
 ### Fixed

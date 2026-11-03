@@ -119,7 +119,7 @@ impl Tool for WebFetchTool {
 const MAX_REDIRECTS: usize = 3;
 
 async fn fetch_url(url: &str, max_chars: usize, public_only: bool) -> anyhow::Result<String> {
-    let builder = reqwest::Client::builder()
+    let builder = sven_http::client_builder()
         .timeout(std::time::Duration::from_secs(30))
         .user_agent("sven-agent/0.1");
     let client = if public_only {

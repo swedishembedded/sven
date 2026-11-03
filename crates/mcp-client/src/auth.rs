@@ -205,6 +205,8 @@ impl CredentialStore for ServerCredentials {
 /// An authorization manager for the server at `url`, its credentials in
 /// `store` under `key`.
 async fn manager(store: &Arc<TokenStore>, key: &str, url: &str) -> Result<AuthorizationManager> {
+    // rmcp builds its own HTTP clients for the sign-in.
+    sven_http::ensure_crypto_provider();
     let mut manager = AuthorizationManager::new(url)
         .await
         .with_context(|| format!("OAuth for {url}"))?;
@@ -235,7 +237,7 @@ pub async fn signed_in_client(
     {
         return Ok(None);
     }
-    Ok(Some(AuthClient::new(reqwest::Client::new(), manager)))
+    Ok(Some(AuthClient::new(sven_http::client(), manager)))
 }
 
 /// What a sign-in needs.

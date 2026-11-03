@@ -47,10 +47,9 @@ use sven_frontend::Settings;
 use sven_mcp::cli::run_mcp_command;
 
 fn main() -> anyhow::Result<()> {
-    // Install the ring crypto provider for rustls before any TLS code runs.
-    // Several crates (reqwest and friends) all pull in rustls 0.23 and
-    // without an explicit process-level provider rustls panics.
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    // The TLS provider before any TLS code runs: every HTTP client and
+    // library that builds one finds it in place.
+    sven_http::ensure_crypto_provider();
 
     let cli = Cli::parse();
     // A hosted host is confined to its sandbox here, while this process has
@@ -60,11 +59,24 @@ fn main() -> anyhow::Result<()> {
     let hosted = run::remote::confine_hosted(&cli)?;
     #[cfg(not(feature = "network"))]
     let hosted = ();
+    // An agent's async work is mostly waiting on the network, and heavy tool
+    // work runs on the blocking pool, so a few workers serve any session: one
+    // per core would give every process tens of idle threads (and their
+    // stacks) on a large machine.
     tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads())
         .enable_all()
         .build()?
         .block_on(run_cli(cli, hosted))
 }
+
+/// The runtime's async workers: the cores there are, at most four.
+fn worker_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |cores| cores.get().min(MAX_WORKER_THREADS))
+}
+
+/// The most async workers a sven process runs (see `main`).
+const MAX_WORKER_THREADS: usize = 4;
 
 #[cfg(feature = "network")]
 type Hosted = Option<run::remote::HostedStart>;

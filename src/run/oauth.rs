@@ -18,7 +18,7 @@ pub(crate) async fn run_oauth_callback(url: &str) -> anyhow::Result<()> {
     } else {
         format!("http://127.0.0.1:{port}/callback?{query}")
     };
-    let client = reqwest::Client::builder()
+    let client = sven_http::client_builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .context("build HTTP client for OAuth callback")?;

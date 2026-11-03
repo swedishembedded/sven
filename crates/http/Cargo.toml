@@ -1,0 +1,12 @@
+[package]
+name        = "sven-http"
+version.workspace = true
+edition     = "2021"
+description = "The one way sven builds HTTP clients: TLS through rustls with its ring provider, installed once per process before any client exists, so one crypto library is linked rather than two."
+license     = "Apache-2.0"
+
+[dependencies]
+reqwest = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rustls = { workspace = true }

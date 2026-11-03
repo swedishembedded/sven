@@ -303,8 +303,7 @@ async fn serve_http(
             within(timeout, handler.serve_with_lifecycle(transport, mode)).await
         }
         (None, None) => {
-            let transport =
-                StreamableHttpClientTransport::with_client(reqwest::Client::new(), config);
+            let transport = StreamableHttpClientTransport::with_client(sven_http::client(), config);
             within(timeout, handler.serve_with_lifecycle(transport, mode)).await
         }
     }

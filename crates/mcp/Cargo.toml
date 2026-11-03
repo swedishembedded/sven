@@ -10,6 +10,7 @@ name = "sven-mcp"
 path = "src/bin/sven-mcp.rs"
 
 [dependencies]
+sven-http = { path = "../http" }
 sven-bootstrap       = { path = "../bootstrap", default-features = false }
 sven-tool-api        = { path = "../tool-api" }
 sven-tool-registry   = { path = "../tool-registry" }
@@ -27,7 +28,6 @@ tracing              = { workspace = true }
 tracing-subscriber   = { workspace = true }
 uuid                 = { workspace = true }
 tokio-tungstenite    = { version = "0.24", features = ["rustls-tls-native-roots"] }
-rustls               = { workspace = true }
 futures-util         = { version = "0.3", default-features = false, features = ["sink", "std"] }
 rmcp = { workspace = true, features = ["server", "transport-io"] }
 

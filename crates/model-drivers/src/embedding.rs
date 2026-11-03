@@ -49,7 +49,7 @@ impl OpenAiEmbedder {
             max_tokens: 8192,
         };
         let mut embedder = Self {
-            client: reqwest::Client::new(),
+            client: sven_http::client(),
             base_url,
             api_key,
             model,
