@@ -445,14 +445,21 @@ fn progress_text_is_readable_and_json_is_the_unchanged_default_off_a_terminal() 
     let default = go(&[]);
     let json = go(&["--progress", "json"]);
     assert!(!json_lines(&json).is_empty());
-    assert_eq!(json_lines(&default), json_lines(&json), "off a terminal, auto is json");
+    assert_eq!(
+        json_lines(&default),
+        json_lines(&json),
+        "off a terminal, auto is json"
+    );
 
     let text = go(&["--progress", "text"]);
     assert_eq!(code(&text), 0, "{}", stderr(&text));
     let err = stderr(&text);
     assert!(!err.contains("[sven:harness]"), "{err}");
     assert!(!err.contains('\x1b'), "no colour off a terminal: {err}");
-    assert!(err.lines().any(|l| l.starts_with("▸ ")), "a task heading: {err}");
+    assert!(
+        err.lines().any(|l| l.starts_with("▸ ")),
+        "a task heading: {err}"
+    );
     assert!(err.contains("✓ "), "a passing check: {err}");
 
     let quiet = go(&["--progress", "text", "--quiet"]);
