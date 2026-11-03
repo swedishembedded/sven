@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **sven**: `harness run` and `harness resume` take `--progress auto|json|text`: `text` is a readable log of each task, its tools, gates, repairs and retries; `auto`, the default, picks it on a terminal and keeps the JSON lines otherwise.
+
 ## [4.3.1] - 2026-11-02
 
 ### Added
