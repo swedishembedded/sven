@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **remote**: `sven rc`'s file tools no longer write what a program run later in the working directory executes outside the confinement: `.git` (hooks, configuration) and sven's own configuration files are refused at any depth.
 - **gdb**: with `tools.gdb.allow_host_commands: false` (`sven rc` without `--wide-access`) the `gdb` tool runs only an allow list of target-debugging commands; `target remote | PROG`, `file` + `run`, `set logging file`, `dump` and host-file `monitor` commands, which the old deny list let through, are refused.
 
 ### Changed

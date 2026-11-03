@@ -45,6 +45,9 @@ pub struct PathScope {
     /// Canonical locations inside the root that are refused all the same
     /// (see [`PathScope::denying`]).
     denied: Arc<Vec<PathBuf>>,
+    /// Names refused as any component beneath the root (see
+    /// [`PathScope::denying_names`]).
+    denied_names: Arc<Vec<std::ffi::OsString>>,
 }
 
 /// A path a [`PathScope`] refuses.
@@ -134,6 +137,7 @@ impl PathScope {
         Ok(Self {
             root: Some(Arc::new(canonical)),
             denied: Arc::default(),
+            denied_names: Arc::default(),
         })
     }
 
@@ -152,6 +156,17 @@ impl PathScope {
         if let Ok(resolved) = follow_existing_prefix(&normalise(&absolute)) {
             Arc::make_mut(&mut self.denied).push(resolved);
         }
+        self
+    }
+
+    /// This scope, also refusing every path beneath the root that has one of
+    /// `names` as a component, at any depth: what another program runs on its
+    /// own when it later works in some directory of the root (its
+    /// configuration, git's hooks). Judged on the resolved path, so a link to
+    /// such a location is refused too. Meaningful only on a confined scope.
+    #[must_use]
+    pub fn denying_names<'a>(mut self, names: impl IntoIterator<Item = &'a str>) -> Self {
+        Arc::make_mut(&mut self.denied_names).extend(names.into_iter().map(Into::into));
         self
     }
 
@@ -183,7 +198,14 @@ impl PathScope {
 
         let resolved =
             follow_existing_prefix(&normalise(&root.join(requested))).map_err(unresolvable)?;
-        if self.denied.iter().any(|d| resolved.starts_with(d)) {
+        let named = resolved.strip_prefix(root).is_ok_and(|inside| {
+            inside.components().any(|part| {
+                self.denied_names
+                    .iter()
+                    .any(|name| part.as_os_str() == name)
+            })
+        });
+        if named || self.denied.iter().any(|d| resolved.starts_with(d)) {
             Err(PathScopeError::Denied {
                 requested: requested.to_path_buf(),
             })
@@ -350,6 +372,36 @@ mod tests {
             );
         }
         assert_eq!(s.resolve("other").unwrap(), canonical.join("other"));
+    }
+
+    /// A name denied anywhere under the root: what a later program runs from
+    /// a directory (its configuration, git's hooks) is refused at any depth
+    /// and through any link, while a file that only resembles it is not.
+    #[cfg(unix)]
+    #[test]
+    fn a_denied_name_is_refused_at_any_depth_however_it_is_reached() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("sub/.git/hooks")).unwrap();
+        std::os::unix::fs::symlink(root.join("sub/.git"), root.join("g")).unwrap();
+        let s = scope(&root).denying_names([".git", ".sven.yaml"]);
+        let canonical = s.root().unwrap().to_path_buf();
+
+        for path in [
+            ".git/hooks/pre-commit",
+            "sub/.git/config",
+            "g/hooks/pre-commit",
+            ".sven.yaml",
+            "a/b/.sven.yaml",
+        ] {
+            assert!(
+                matches!(s.resolve(path), Err(PathScopeError::Denied { .. })),
+                "{path}"
+            );
+        }
+        for path in [".gitignore", "sven.yaml.md", "notes/.git-tips"] {
+            assert_eq!(s.resolve(path).unwrap(), canonical.join(path), "{path}");
+        }
     }
 
     #[test]

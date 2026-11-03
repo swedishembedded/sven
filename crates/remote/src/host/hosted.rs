@@ -75,8 +75,20 @@ fn protected_locations() -> Vec<PathBuf> {
     locations
 }
 
+/// What no tool of a remotely driven session may write at any depth of the
+/// working directory, because a program the person runs there later executes
+/// it with their own rights, outside every confinement: git's hooks and
+/// configuration (`core.hooksPath`, `core.fsmonitor`), and sven's own
+/// configuration of a directory, which can start MCP servers.
+fn protected_names() -> impl Iterator<Item = &'static str> {
+    let config = sven_config::scope::DIRECTORY_FILE_NAMES
+        .iter()
+        .filter_map(|name| name.split('/').next());
+    std::iter::once(".git").chain(config)
+}
+
 fn confined_scope(working_dir: &Path, protected: &[PathBuf]) -> anyhow::Result<PathScope> {
-    let scope = PathScope::confined(working_dir)?;
+    let scope = PathScope::confined(working_dir)?.denying_names(protected_names());
     Ok(protected
         .iter()
         .fold(scope, |scope, location| scope.denying(location)))
@@ -88,6 +100,8 @@ fn confined_scope(working_dir: &Path, protected: &[PathBuf]) -> anyhow::Result<P
 /// file tools stay in the working directory (`session_runtime`), `web_fetch`
 /// reaches only the public internet (never this machine's network or a cloud
 /// metadata service), and gdb runs no host program the model spells out.
+/// Nor can the file tools leave behind what runs later outside the directory
+/// (git hooks, a sven configuration: [`protected_names`]).
 /// The `shell` tool is not confined to the directory; `tools.only` and
 /// `tools.disabled` remove it.
 pub fn restrict_to_working_dir(config: &mut Config) {
@@ -128,6 +142,29 @@ mod tests {
         assert_eq!(config.mcp_servers.len(), 2);
         restrict_to_hosted(&mut config);
         assert!(config.mcp_servers.is_empty());
+    }
+
+    /// A file tool on a person's computer cannot leave behind what runs later
+    /// outside the confinement with the person's own rights: git's hooks and
+    /// configuration, or a sven configuration (which can start MCP servers)
+    /// that sven reads when it next runs in that directory or one below it.
+    #[test]
+    fn a_confined_session_cannot_write_what_runs_later_outside_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = session_runtime(&Config::default(), tmp.path(), false, false).unwrap();
+        for path in [
+            ".git/hooks/pre-commit",
+            ".git/config",
+            "vendor/lib/.git/hooks/post-checkout",
+            ".sven/config.yaml",
+            ".sven.yaml",
+            ".sven.yml",
+            "sub/sven.yaml",
+            "sven.yml",
+        ] {
+            assert!(runtime.path_scope.resolve(path).is_err(), "{path}");
+        }
+        assert!(runtime.path_scope.resolve("src/main.rs").is_ok());
     }
 
     #[test]

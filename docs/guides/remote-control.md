@@ -150,7 +150,10 @@ enforced here, by default, whatever the server approves:
   refused. Even inside it, sven's own directory (`<config dir>/sven`: the
   sign-in, stored provider keys, configuration) and the sessions `sven rc`
   keeps are refused, so starting `sven rc` in your home directory does not
-  expose them.
+  expose them. So is anything that a program you run there later would
+  execute with your rights: `.git` (its hooks and configuration) and sven's
+  own configuration files (`.sven/`, `.sven.yaml`, `sven.yaml`), in any
+  directory below the working directory.
 - **Web.** `web_fetch` reaches only the public internet, never this
   machine, your LAN or a cloud metadata service (`tools.web.public_only`).
 - **GDB.** The `gdb` tool runs only commands that debug the target:
