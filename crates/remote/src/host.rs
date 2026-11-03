@@ -40,11 +40,13 @@ use upload::{upload_loop, Upload};
 
 mod describe;
 mod hosted;
+mod services;
 mod slash;
 mod upload;
 
 use hosted::session_runtime;
 pub use hosted::{restrict_to_hosted, restrict_to_working_dir, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
+use services::use_server_services;
 
 /// Events waiting for the uploader. Full means the server has stopped
 /// taking them; sessions then wait rather than grow memory without bound.
@@ -138,6 +140,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
         uploads: uploads.clone(),
         sessions: options.sessions,
         asks,
+        mcp_tools_wait_ms: MCP_TOOLS_WAIT_MS,
     });
 
     // What a session here can run, so the server can offer it as it is typed.
@@ -337,7 +340,15 @@ struct SessionContext {
     sessions: SessionStore,
     /// Where a session's tool calls that need permission are asked about.
     asks: mpsc::Sender<ControlEvent>,
+    /// How long a session opening waits for its MCP servers' tools.
+    mcp_tools_wait_ms: u64,
 }
+
+/// How long a session opening waits for its MCP servers to list their tools
+/// (the connectors server reads each connected account's list from its
+/// service), so the first answer can already use them. A server slower than
+/// this still reaches the session once it lists them.
+const MCP_TOOLS_WAIT_MS: u64 = 20_000;
 
 enum SessionCommand {
     Open {
@@ -574,9 +585,14 @@ impl SessionActor {
             ask: self.context.asks.clone(),
             timeout: APPROVAL_TIMEOUT,
         }));
+        // The first answer can already use the servers' tools, and a server
+        // that lists them later (or changes them) still reaches the session:
+        // nothing here shows MCP events, so nothing else would pick them up.
+        options.wait_for_mcp_tools_ms = Some(self.context.mcp_tools_wait_ms);
         let spec = SessionSpec::for_mode(self.mode, model);
         let history = std::mem::take(&mut self.history);
-        let (controller, _mcp_events) = SessionController::open(options, spec, history).await?;
+        let (controller, mcp_events) = SessionController::open(options, spec, history).await?;
+        controller.follow_mcp_tools(mcp_events);
         Ok(controller)
     }
 
@@ -781,23 +797,6 @@ fn first_line(text: &str) -> &str {
     }
 }
 
-/// What the server a host signed in to provides its sessions, with the
-/// host's key: web searches (run and billed there), and the person's
-/// connected accounts as the `connectors` MCP server when the server offers
-/// them. A hosted host's allow list admits that one server's tools; it
-/// starts no other MCP server (`restrict_to_hosted`).
-fn use_server_services(config: &mut Config, login: &RemoteLogin) {
-    config.tools.web.search.sven = Some(login.search_endpoint());
-    if let Some(url) = &login.mcp_url {
-        sven_bootstrap::connectors::add(config, url, login.mcp_token_url.as_deref(), &login.token);
-        if let Some(only) = config.tools.only.as_mut() {
-            only.push(format!("{}-*", sven_bootstrap::connectors::SERVER));
-            // Deferral of connector tools needs the discovery tool.
-            only.push(sven_bootstrap::DISCOVERY_TOOL.to_string());
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[tokio::test]
@@ -884,55 +883,6 @@ mod tests {
         looping.abort();
     }
 
-    /// A hosted host reaches the person's connected accounts at its server
-    /// and nothing else: the `connectors` server is added to an emptied
-    /// server list, and its tools alone join the allow list.
-    #[test]
-    fn a_hosted_host_reaches_connected_accounts_at_its_server_alone() {
-        let mut config: Config = serde_yaml::from_str(
-            "mcp_servers:\n  local: {transport: {type: stdio, command: /bin/true}}\n",
-        )
-        .unwrap();
-        crate::restrict_to_hosted(&mut config);
-        let login = RemoteLogin {
-            server: "https://sven.example".into(),
-            control_url: "https://sven.example/api/workspace".into(),
-            openai_base_url: "https://sven.example/v1".into(),
-            mcp_url: Some("https://sven.example/api/mcp".into()),
-            mcp_token_url: Some("https://sven.example/api/mcp/token".into()),
-            token: "host_key".into(),
-            workspace_id: Uuid::nil(),
-            workspace_name: "Hosted".into(),
-            account: "a@example.com".into(),
-        };
-        use_server_services(&mut config, &login);
-        assert_eq!(
-            config.mcp_servers.keys().collect::<Vec<_>>(),
-            vec![sven_bootstrap::connectors::SERVER]
-        );
-        let only = config.tools.only.as_ref().unwrap();
-        assert!(only.iter().any(|t| t == "connectors-*"));
-        assert!(only.iter().any(|t| t == "web_search"));
-        assert!(
-            only.iter().any(|t| t == sven_bootstrap::DISCOVERY_TOOL),
-            "without the discovery tool every connector tool is sent in full on every request"
-        );
-
-        let mut without: Config = Config::default();
-        crate::restrict_to_hosted(&mut without);
-        let hosted = without.tools.only.clone();
-        let login = RemoteLogin {
-            mcp_url: None,
-            mcp_token_url: None,
-            ..login
-        };
-        use_server_services(&mut without, &login);
-        assert_eq!(
-            without.tools.only, hosted,
-            "no connectors, no change to the hosted allow list"
-        );
-    }
-
     /// A host searches through the server it signed in to, with its key:
     /// the server runs the search and bills that account.
     #[test]
@@ -1017,25 +967,7 @@ mod tests {
     /// A session with a live controller (mock model) holding the original
     /// turns, as after the server's first question and answer.
     async fn running_session(dir: &std::path::Path) -> SessionActor {
-        let (uploads, _kept_open) = mpsc::channel(64);
-        let (asks, _asks_open) = mpsc::channel(8);
-        std::mem::forget(_kept_open);
-        std::mem::forget(_asks_open);
-        let mut config = Config::default();
-        config.model.provider = "mock".into();
-        config.model.name = "mock-model".into();
-        let context = Arc::new(SessionContext {
-            config: Arc::new(config),
-            working_dir: dir.to_path_buf(),
-            hosted: false,
-            wide_access: true,
-            openai_base_url: String::new(),
-            token: String::new(),
-            uploads,
-            sessions: SessionStore::new(dir.join("kept")),
-            asks,
-        });
-        let mut actor = SessionActor::new(Uuid::new_v4(), context);
+        let mut actor = idle_session(dir, mock_config(), 0);
         let model = ModelConfig {
             provider: "mock".into(),
             name: "mock-model".into(),
@@ -1049,6 +981,188 @@ mod tests {
         ]);
         actor.controller = Some(actor.open_controller(model).await.expect("opens"));
         actor
+    }
+
+    fn mock_config() -> Config {
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+        config
+    }
+
+    /// A session of this host not opened yet, with `config`, whose opening
+    /// waits `mcp_tools_wait_ms` for its MCP servers' tools.
+    fn idle_session(dir: &std::path::Path, config: Config, mcp_tools_wait_ms: u64) -> SessionActor {
+        let (uploads, _kept_open) = mpsc::channel(64);
+        let (asks, _asks_open) = mpsc::channel(8);
+        std::mem::forget(_kept_open);
+        std::mem::forget(_asks_open);
+        let context = Arc::new(SessionContext {
+            config: Arc::new(config),
+            working_dir: dir.to_path_buf(),
+            hosted: false,
+            wide_access: true,
+            openai_base_url: String::new(),
+            token: String::new(),
+            uploads,
+            sessions: SessionStore::new(dir.join("kept")),
+            asks,
+            mcp_tools_wait_ms,
+        });
+        SessionActor::new(Uuid::new_v4(), context)
+    }
+
+    /// An MCP server over Streamable HTTP with one tool, `ping`, that lists
+    /// it only after `delay`, as the connectors server does while it reads
+    /// each connected account's tools from its service. Its address.
+    async fn slow_mcp_server(delay: std::time::Duration) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    let end = loop {
+                        let n = socket.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break i + 4;
+                        }
+                    };
+                    let head = String::from_utf8_lossy(&buf[..end]).to_lowercase();
+                    let length: usize = head
+                        .lines()
+                        .filter_map(|l| l.split_once(':'))
+                        .find(|(k, _)| k.trim() == "content-length")
+                        .and_then(|(_, v)| v.trim().parse().ok())
+                        .unwrap_or(0);
+                    while buf.len() < end + length {
+                        let n = socket.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                    }
+                    let request: serde_json::Value =
+                        serde_json::from_slice(&buf[end..]).unwrap_or_default();
+                    let id = request.get("id").cloned();
+                    let result = match request["method"].as_str() {
+                        Some("initialize") => Some(serde_json::json!({
+                            "protocolVersion": request["params"]["protocolVersion"],
+                            "capabilities": { "tools": {} },
+                            "serverInfo": { "name": "slow", "version": "1" },
+                        })),
+                        Some("tools/list") => {
+                            tokio::time::sleep(delay).await;
+                            Some(serde_json::json!({ "tools": [{
+                                "name": "ping",
+                                "description": "Answers pong.",
+                                "inputSchema": { "type": "object" },
+                            }] }))
+                        }
+                        _ => None,
+                    };
+                    // A request it does not serve (a newer protocol's
+                    // discovery, say) is answered as unknown, as a server of
+                    // the 2025-11-25 protocol does.
+                    let answer = |id, outcome: (&str, serde_json::Value)| {
+                        let mut body = serde_json::json!({ "jsonrpc": "2.0", "id": id });
+                        body[outcome.0] = outcome.1;
+                        body.to_string()
+                    };
+                    let reply = match (head.starts_with("post "), id, result) {
+                        (true, Some(id), result) => {
+                            let body = match result {
+                                Some(result) => answer(id, ("result", result)),
+                                None => answer(id, ("error", serde_json::json!({ "code": -32601, "message": "method not found" }))),
+                            };
+                            format!(
+                                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                        }
+                        (true, _, _) => "HTTP/1.1 202 Accepted\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into(),
+                        _ => "HTTP/1.1 405 Method Not Allowed\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into(),
+                    };
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        url
+    }
+
+    /// A hosted session's configuration, without the confinement, signed in
+    /// to a server whose connectors are at `url`: the connectors server is
+    /// its one MCP server, and tools are disclosed on demand.
+    fn connectors_config(url: &str) -> Config {
+        let mut config = mock_config();
+        config.tools.disclosure.mode = sven_bootstrap::Disclosure::Deferred;
+        crate::restrict_to_hosted(&mut config);
+        let login = RemoteLogin {
+            server: "http://127.0.0.1".into(),
+            control_url: "http://127.0.0.1/api/workspace".into(),
+            openai_base_url: "http://127.0.0.1/v1".into(),
+            mcp_url: Some(url.into()),
+            mcp_token_url: None,
+            token: "host_key".into(),
+            workspace_id: Uuid::nil(),
+            workspace_name: "Hosted".into(),
+            account: "a@example.com".into(),
+        };
+        use_server_services(&mut config, &login);
+        config
+    }
+
+    fn mock_model() -> ModelConfig {
+        ModelConfig {
+            provider: "mock".into(),
+            name: "mock-model".into(),
+            ..ModelConfig::default()
+        }
+    }
+
+    const PING: &str = "connectors-ping";
+
+    /// The person asks right away, while the connectors server still reads
+    /// their accounts' tools: the session that answers already has them.
+    #[tokio::test]
+    async fn a_session_opens_with_the_tools_of_a_server_still_listing_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = slow_mcp_server(std::time::Duration::from_secs(2)).await;
+        let mut actor = idle_session(dir.path(), connectors_config(&url), 15_000);
+        let controller = actor.open_controller(mock_model()).await.expect("opens");
+        let registry = controller.tool_registry();
+        assert!(
+            registry.get(PING).is_some(),
+            "the session opened without the server's tools: {:?}",
+            registry.names()
+        );
+        assert!(registry.get(sven_bootstrap::DISCOVERY_TOOL).is_some());
+    }
+
+    /// A server slower than the session's wait still reaches it, once it has
+    /// listed its tools.
+    #[tokio::test]
+    async fn a_server_that_lists_its_tools_after_the_session_opened_reaches_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = slow_mcp_server(std::time::Duration::from_secs(1)).await;
+        let mut actor = idle_session(dir.path(), connectors_config(&url), 0);
+        let controller = actor.open_controller(mock_model()).await.expect("opens");
+        let registry = controller.tool_registry();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while registry.get(PING).is_none() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(
+            registry.get(PING).is_some(),
+            "the server's tools never reached the session: {:?}",
+            registry.names()
+        );
     }
 
     /// The conversation's turns; the session's own system prompt is not one.

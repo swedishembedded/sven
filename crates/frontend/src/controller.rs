@@ -26,7 +26,7 @@
 //! services by sending an email to info@swedishembedded.com.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use anyhow::Context as _;
 use sven_bootstrap::session_handles::{HumanGateResponder, RuntimeHandle};
@@ -237,6 +237,10 @@ pub struct SessionController {
     /// The one MCP manager, kept across rebuilds so its connections - and
     /// the servers the agent added - survive a change of mode or model.
     mcp: Arc<McpManager>,
+    /// The current session's registry, which [`Self::follow_mcp_tools`]
+    /// keeps current: swapped on every rebuild, held weakly so following it
+    /// never keeps a closed session alive.
+    live_registry: Arc<std::sync::Mutex<Weak<sven_tool_registry::ToolRegistry>>>,
 }
 
 impl SessionController {
@@ -255,15 +259,54 @@ impl SessionController {
     ) -> anyhow::Result<(Self, mpsc::Receiver<McpEvent>)> {
         let (session, mcp_events) = assemble(&options, &spec, history, None).await?;
         let mcp = session.mcp_manager();
+        let live_registry = Arc::new(std::sync::Mutex::new(Arc::downgrade(
+            &session.tool_registry(),
+        )));
         Ok((
             Self {
                 options,
                 spec,
                 session,
                 mcp,
+                live_registry,
             },
             mcp_events,
         ))
+    }
+
+    /// Keeps the session's MCP tools current from `events` (what
+    /// [`Self::open`] returned): whenever a server connects, lists changed
+    /// tools or goes away, the session's registry - the rebuilt one's, after
+    /// a change of mode or model - takes the manager's tools, held to the
+    /// configuration's `tools.only` / `tools.disabled`. For a surface that
+    /// shows no MCP events of its own; one that does refreshes on
+    /// [`McpEvent::ToolsChanged`] itself. Ends when the session's MCP
+    /// manager is gone.
+    pub fn follow_mcp_tools(&self, mut events: mpsc::Receiver<McpEvent>) {
+        let mcp = Arc::downgrade(&self.mcp);
+        let live_registry = Arc::clone(&self.live_registry);
+        tokio::spawn(async move {
+            while let Some(event) = events.recv().await {
+                if !matches!(event, McpEvent::ToolsChanged) {
+                    continue;
+                }
+                let Some(mcp) = mcp.upgrade() else { return };
+                let tools = mcp.tools().await;
+                drop(mcp);
+                let registry = live_registry
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .upgrade();
+                if let Some(registry) = registry {
+                    registry.replace_mcp_tools(
+                        tools
+                            .into_iter()
+                            .map(|tool| Arc::new(tool) as Arc<dyn sven_tool_api::Tool>)
+                            .collect(),
+                    );
+                }
+            }
+        });
     }
 
     /// What the session runs now.
@@ -297,6 +340,11 @@ impl SessionController {
     ) -> anyhow::Result<()> {
         let (session, _mcp_events) =
             assemble(&self.options, &spec, history, Some(Arc::clone(&self.mcp))).await?;
+        *self
+            .live_registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Arc::downgrade(&session.tool_registry());
         self.session = session;
         self.spec = spec;
         Ok(())
