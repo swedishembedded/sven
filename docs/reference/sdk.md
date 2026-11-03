@@ -3,7 +3,6 @@
 `sven-sdk` (directory `crates/sdk`) is the framework's public surface: what an
 application depends on to run agents, of which the `sven` CLI is one consumer.
 
-Design rationale is in [ADR 0003](../adr/0003-agents-as-typed-objects.md).
 Suspend/resume mechanics at the kernel level are in
 [resumable-agents.md](../internals/resumable-agents.md).
 

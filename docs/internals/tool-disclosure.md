@@ -91,8 +91,7 @@ definitions. The model then calls the tool directly, and that call is an
 ordinary `Effect::CallTool` under the tool's own `kernel_capability` /
 `call_capability`, classified by the permission policy of the machine's current
 state, asked about under `--approval manual`, and audited in the tool audit
-trail. [ADR 0003](../adr/0003-agents-as-typed-objects.md) rejects designs that
-route around that gate; this is not one. The `tools` tool itself is read-only
+trail: nothing routes around that gate. The `tools` tool itself is read-only
 (`ToolCapability::ReadFile`), and loading grants nothing.
 
 A call to a deferred tool that was not loaded is **not** executed. It goes

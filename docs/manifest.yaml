@@ -99,12 +99,7 @@ navigation:
         title: Writing a sample
       - docs/contributing/ablation-benchmarks.md
       - docs/contributing/decision-experiments.md
-  - title: Design history
-    pages:
-      - docs/adr/index.md
-      - docs/adr/0001-delete-graph-dsl.md
-      - docs/adr/0002-delete-trajectory-exporter.md
-      - docs/adr/0003-agents-as-typed-objects.md
-      - docs/adr/0004-programmable-harnesses.md
-      - docs/adr/0005-declarative-harness-v2.md
-      - docs/adr/0006-v2-is-the-only-harness-language.md
+# Architecture decision records are kept in the repository for maintainers,
+# not published.
+exclude:
+  - docs/adr/**

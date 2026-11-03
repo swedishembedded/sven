@@ -4,9 +4,6 @@ An agent session can be suspended to durable storage and resumed later without
 replaying its event log. This is what lets a service handle one agent step per
 request: load the state, advance it once, persist, free the resources, wait.
 
-Design rationale, and the framework model this serves, are in
-[ADR 0003](../adr/0003-agents-as-typed-objects.md).
-
 ## What a snapshot is
 
 ```rust

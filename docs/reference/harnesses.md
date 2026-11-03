@@ -6,10 +6,7 @@
 A harness is an agent workflow in YAML that compiles through the HSM kernel.
 This page is the reference: the language, the runtime states, the
 authorization model, checkpoints, recordings, trajectories and the SDK API.
-For the commands see [Harnesses](../guides/harnesses.md); for the
-reasons behind the design see [ADR 0004](../adr/0004-programmable-harnesses.md)
-for the workflow language [ADR 0005](../adr/0005-declarative-harness-v2.md) and for
-the removal of the earlier step-map language [ADR 0006](../adr/0006-v2-is-the-only-harness-language.md).
+For the commands see [Harnesses](../guides/harnesses.md).
 
 | Crate | Tier | Role |
 |-------|------|------|
@@ -29,8 +26,7 @@ content-hashed plan, and the machine runs the plan. Every tool that reads a
 plan, a checkpoint, a recording or a trace therefore works on any document.
 The version is read from the raw document before anything is deserialized:
 `api_version` is required and `"2"` is the only value. `"1"` (the earlier
-step-map language) is refused with an error that says so
-([ADR 0006](../adr/0006-v2-is-the-only-harness-language.md)); a document is
+step-map language) is refused with an error that says so; a document is
 never retried as another version. The machine-readable form is `sven harness
 schema` (`crates/harness-spec/schema/harness-document.schema.json`,
 `DOCUMENT_SCHEMA`).

@@ -13,11 +13,8 @@ permission gate, approvals, cancellation and tracing all apply unchanged.
 replays harnesses. Reading a harness needs no model, network or configuration
 file; a run uses a model server you name and reads no configuration. This page is the
 user guide; the language, the runtime and the SDK are in
-[Programmable harnesses](../reference/harnesses.md), and the design
-decisions in [ADR 0004](../adr/0004-programmable-harnesses.md) and
-[ADR 0005](../adr/0005-declarative-harness-v2.md). The workflow language is
-the only harness language; the earlier step-map language was removed
-([ADR 0006](../adr/0006-v2-is-the-only-harness-language.md)).
+[Programmable harnesses](../reference/harnesses.md). The workflow language is
+the only harness language; the earlier step-map language was removed.
 
 ## A first harness
 
@@ -528,8 +525,8 @@ resumes where it stood.
 ## Moving from the step-map language
 
 The earlier language, a map of steps with a primitive each (`api_version:
-"1"`), is gone: a document that says so is refused with an error that points
-to [ADR 0006](../adr/0006-v2-is-the-only-harness-language.md). Rewrite by hand;
+"1"`), is gone: a document that says so is refused with an error that says
+so. Rewrite by hand;
 the jobs it was used for are tasks:
 
 | In the step-map language you wrote | Now you write |
