@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.4] - 2026-11-03
+
+### Fixed
+- **sven**: builds on Windows again: the sandbox container's egress relay is Unix-only, and without gethostname the default machine name is `sven` (`sven auth login --name` names it).
+- **tests**: the suite runs on macOS, where the user configuration lives under `~/Library/Application Support`, and builds on Windows, where the tests that need Unix are skipped.
+- **ci**: the lint job installs the wasm32 target that `make check` builds for.
+
 ### Changed
 - **sven**: a smaller process. One crypto library is linked rather than two (TLS is rustls with ring only; aws-lc is gone), the voice upload builds its own form rather than linking a table that guesses a type for every file extension, and a process runs at most four async workers rather than one per core. An idle hosted host goes from 23 threads to 5 and its start-up relocations from 129k to 125k.
 - **sdk**: `sven-http` is the one way sven builds HTTP clients (`client_builder`, `client`); it installs the TLS provider once per process, so a program using sven's crates as a library needs no setup of its own. `ensure_crypto_provider` is for code that has a library build clients itself.
