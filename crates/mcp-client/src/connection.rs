@@ -172,37 +172,33 @@ impl Connection {
                 exchange,
             } => {
                 let config = http_config(url, headers)?;
-                let result = match (auth, exchange) {
-                    (_, Some(exchange)) => {
-                        let transport = StreamableHttpClientTransport::with_client(
-                            crate::exchange::ExchangingClient::new(exchange),
-                            config,
-                        );
-                        within(
-                            timeout,
-                            handler.serve_with_lifecycle(transport, lifecycle()),
-                        )
-                        .await
+                let serve = |mode: ClientLifecycleMode| {
+                    serve_http(
+                        handler.clone(),
+                        config.clone(),
+                        auth.clone(),
+                        exchange.clone(),
+                        mode,
+                        timeout,
+                    )
+                };
+                // Discovery that is not answered in time falls back to
+                // `initialize` on the same transport, where the late answer
+                // to discovery is then taken for the answer to `initialize`
+                // and the startup fails. A server slow to answer its first
+                // requests is therefore started again with `initialize` on a
+                // transport of its own, as a stdio server that refused
+                // discovery is. Only a failed startup is: a sign-in it asks
+                // for is not retried, nor one that never answered at all.
+                let result = match serve(lifecycle()).await {
+                    Err(e)
+                        if e.downcast_ref::<ClientInitializeError>().is_some()
+                            && auth_required(&e).is_none() =>
+                    {
+                        debug!(server, error = %format!("{e:#}"), "server/discover failed over HTTP; connecting again with initialize");
+                        serve(ClientLifecycleMode::Initialize).await
                     }
-                    (Some(client), None) => {
-                        let transport = StreamableHttpClientTransport::with_client(client, config);
-                        within(
-                            timeout,
-                            handler.serve_with_lifecycle(transport, lifecycle()),
-                        )
-                        .await
-                    }
-                    (None, None) => {
-                        let transport = StreamableHttpClientTransport::with_client(
-                            reqwest::Client::new(),
-                            config,
-                        );
-                        within(
-                            timeout,
-                            handler.serve_with_lifecycle(transport, lifecycle()),
-                        )
-                        .await
-                    }
+                    first => first,
                 };
                 // A sign-in it asks for stays typed for the manager; anything
                 // else is said as what went wrong, not as the transport's
@@ -283,6 +279,37 @@ impl Connection {
 
 /// Run `future` within `timeout`, so a server that goes quiet fails the
 /// request instead of hanging the session.
+/// Connects `handler` over Streamable HTTP with `config`, signing requests
+/// with `auth` or trading `exchange` for short-lived tokens, and finishes the
+/// protocol startup `mode` within `timeout`.
+async fn serve_http(
+    handler: Handler,
+    config: StreamableHttpClientTransportConfig,
+    auth: Option<AuthClient<reqwest::Client>>,
+    exchange: Option<crate::TokenExchange>,
+    mode: ClientLifecycleMode,
+    timeout: Duration,
+) -> Result<RunningService<RoleClient, Handler>> {
+    match (auth, exchange) {
+        (_, Some(exchange)) => {
+            let transport = StreamableHttpClientTransport::with_client(
+                crate::exchange::ExchangingClient::new(exchange),
+                config,
+            );
+            within(timeout, handler.serve_with_lifecycle(transport, mode)).await
+        }
+        (Some(client), None) => {
+            let transport = StreamableHttpClientTransport::with_client(client, config);
+            within(timeout, handler.serve_with_lifecycle(transport, mode)).await
+        }
+        (None, None) => {
+            let transport =
+                StreamableHttpClientTransport::with_client(reqwest::Client::new(), config);
+            within(timeout, handler.serve_with_lifecycle(transport, mode)).await
+        }
+    }
+}
+
 async fn within<T, E>(
     timeout: Duration,
     future: impl std::future::Future<Output = std::result::Result<T, E>>,

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **mcp**: an MCP server over HTTP that is slow to answer its first requests (one still starting, or a route compiled on its first request) is reached. Discovery that went unanswered fell back to `initialize` on the same connection, where the late answer to discovery was taken for the answer to `initialize` and the server was reported unreachable for the whole session. Such a server is now connected again with `initialize`, as a stdio server that refuses discovery already was.
+
 ## [4.4.1] - 2026-11-03
 
 ### Fixed
