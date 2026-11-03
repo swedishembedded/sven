@@ -9,6 +9,9 @@
 #[derive(Default)]
 pub(crate) struct SseDecoder {
     buffer: String,
+    /// The start of a character the last chunk ended inside (at most 3
+    /// bytes): TCP splits where it likes.
+    partial: Vec<u8>,
 }
 
 /// The most one undelivered event may hold. A server that never ends an event
@@ -22,9 +25,22 @@ impl SseDecoder {
     ///
     /// The stream is not UTF-8, or one event outgrew [`MAX_EVENT_BYTES`].
     pub(crate) fn push(&mut self, chunk: &[u8]) -> anyhow::Result<Vec<String>> {
-        let text = std::str::from_utf8(chunk)
-            .map_err(|_| anyhow::anyhow!("the command stream is not UTF-8"))?;
-        self.buffer.push_str(&text.replace("\r\n", "\n"));
+        let mut bytes = std::mem::take(&mut self.partial);
+        bytes.extend_from_slice(chunk);
+        let complete = match std::str::from_utf8(&bytes) {
+            Ok(_) => bytes.len(),
+            // Only a character cut off at the very end is waited for.
+            Err(e) if e.error_len().is_none() => e.valid_up_to(),
+            Err(_) => anyhow::bail!("the command stream is not UTF-8"),
+        };
+        self.partial = bytes.split_off(complete);
+        let text = String::from_utf8(bytes).expect("checked above");
+        self.buffer.push_str(&text);
+        // A `\r\n` may also have been split, so the whole undelivered part is
+        // normalised, not only this chunk; a lone trailing `\r` waits.
+        if self.buffer.contains('\r') {
+            self.buffer = self.buffer.replace("\r\n", "\n");
+        }
         let mut events = Vec::new();
         while let Some(end) = self.buffer.find("\n\n") {
             let frame: String = self.buffer.drain(..end + 2).collect();
@@ -58,5 +74,25 @@ mod tests {
             decoder.push(b":1}\r\n\r\ndata: a\ndata: b\n\n").unwrap(),
             vec!["{\"seq\":1}".to_string(), "a\nb".to_string()]
         );
+    }
+
+    /// TCP splits where it likes: inside a character, or between the `\r`
+    /// and `\n` of a line end. Neither ends the stream or a frame.
+    #[test]
+    fn a_character_or_line_end_split_across_chunks_is_joined() {
+        let mut decoder = SseDecoder::default();
+        let bytes = "data: åäö\r\n\r\n".as_bytes();
+        let split = bytes.iter().position(|b| *b >= 0x80).unwrap() + 1;
+        assert!(decoder.push(&bytes[..split]).unwrap().is_empty());
+        let rest = &bytes[split..];
+        let cr = rest.len() - 3;
+        assert!(decoder.push(&rest[..cr]).unwrap().is_empty());
+        assert_eq!(decoder.push(&rest[cr..]).unwrap(), vec!["åäö".to_string()]);
+    }
+
+    #[test]
+    fn bytes_that_are_not_utf8_end_the_stream() {
+        let mut decoder = SseDecoder::default();
+        assert!(decoder.push(b"data: \xff\xfe\n\n").is_err());
     }
 }
