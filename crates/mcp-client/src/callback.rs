@@ -21,7 +21,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// How long a sign-in waits for the browser to come back.
 pub const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
@@ -274,7 +274,8 @@ pub fn open_browser(url: &str) -> bool {
     match webbrowser::open(url) {
         Ok(()) => true,
         Err(e) => {
-            warn!(error = %e, url = %url, "could not open a browser (headless, or no display)");
+            // Expected on a headless machine: the caller shows the address.
+            debug!(error = %e, "could not open a browser (headless, or no display)");
             false
         }
     }
