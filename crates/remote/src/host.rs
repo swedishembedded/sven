@@ -40,12 +40,14 @@ use upload::{upload_loop, Upload};
 
 mod describe;
 mod hosted;
+mod router;
 mod services;
 mod slash;
 mod upload;
 
 use hosted::session_runtime;
 pub use hosted::{restrict_to_hosted, restrict_to_working_dir, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
+use router::{list_slash_commands, router};
 use services::use_server_services;
 
 /// Events waiting for the uploader. Full means the server has stopped
@@ -144,7 +146,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
     });
 
     // What a session here can run, so the server can offer it as it is typed.
-    list_slash_commands(&context).await;
+    list_slash_commands(&context);
 
     let (routed, routed_rx) = mpsc::channel(SESSION_QUEUE);
     tokio::spawn(router(routed_rx, Arc::clone(&context)));
@@ -215,113 +217,6 @@ async fn command_loop(
         }
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
-    }
-}
-
-/// Owns the sessions: starts each one's actor on first sight and hands it its
-/// commands. The host takes no input of its own: a person writes to a
-/// conversation from wherever it is open (`sven rc attach`, the server).
-async fn router(mut rx: mpsc::Receiver<ControlCommand>, context: Arc<SessionContext>) {
-    let mut sessions: HashMap<Uuid, mpsc::Sender<SessionCommand>> = HashMap::new();
-    while let Some(command) = rx.recv().await {
-        route(command, &mut sessions, &context).await;
-    }
-}
-
-/// Hands `command` to its session, starting the session's actor when this is
-/// the first the host hears of it.
-async fn route(
-    command: ControlCommand,
-    sessions: &mut HashMap<Uuid, mpsc::Sender<SessionCommand>>,
-    context: &Arc<SessionContext>,
-) {
-    let (session_id, message) = match command {
-        ControlCommand::NewSession {
-            id,
-            mode,
-            history,
-            replace_history,
-            ..
-        } => (
-            id,
-            SessionCommand::Open {
-                mode,
-                history,
-                replace: replace_history,
-            },
-        ),
-        ControlCommand::SetModel { session_id, model } => {
-            (session_id, SessionCommand::Model(model))
-        }
-        ControlCommand::SendInput { session_id, text } => (session_id, SessionCommand::Input(text)),
-        ControlCommand::CancelSession { session_id } => (session_id, SessionCommand::Cancel),
-        ControlCommand::ApproveTool {
-            session_id,
-            call_id,
-        } => (
-            session_id,
-            SessionCommand::Decide {
-                call_id,
-                approved: true,
-            },
-        ),
-        ControlCommand::DenyTool {
-            session_id,
-            call_id,
-            ..
-        } => (
-            session_id,
-            SessionCommand::Decide {
-                call_id,
-                approved: false,
-            },
-        ),
-        ControlCommand::ListSlashCommands => {
-            list_slash_commands(context).await;
-            return;
-        }
-        ControlCommand::CloseSession { session_id } => {
-            // A session this run started ends itself; one it never started
-            // has only what an earlier run kept.
-            match sessions.remove(&session_id) {
-                Some(actor) => {
-                    let _ = actor.send(SessionCommand::Close).await;
-                }
-                None => {
-                    if let Err(e) = context.sessions.forget(session_id) {
-                        tracing::warn!("session {session_id}: could not forget it: {e:#}");
-                    }
-                }
-            }
-            return;
-        }
-        other => {
-            tracing::debug!("rc ignores {other:?}");
-            return;
-        }
-    };
-    let actor = sessions.entry(session_id).or_insert_with(|| {
-        let (tx, rx) = mpsc::channel(SESSION_QUEUE);
-        tokio::spawn(SessionActor::new(session_id, Arc::clone(context)).run(rx));
-        tx
-    });
-    if actor.send(message).await.is_err() {
-        tracing::warn!("session {session_id} has stopped; its command is dropped");
-    }
-}
-
-/// Tells the server which slash commands a session here can run. The list
-/// is read again each time: a command file added since shows up.
-async fn list_slash_commands(context: &SessionContext) {
-    let commands = slash::available(&context.working_dir);
-    let event = ControlEvent::SlashCommands { commands };
-    if context
-        .uploads
-        .send(Upload::Event(Box::new(event)))
-        .await
-        .is_err()
-    {
-        tracing::warn!("the uploader has stopped; the slash command list is dropped");
     }
 }
 
