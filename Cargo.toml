@@ -309,6 +309,15 @@ strip          = true
 [profile.dev]
 opt-level     = 0
 codegen-units = 256       # max parallelism for debug builds (cargo default, made explicit)
+# Line tables only: a panic or backtrace still names file and line, but no
+# variable or type information is kept. Full debug info made each of the
+# hundreds of test binaries several hundred MB and most of their link time.
+debug         = "line-tables-only"
+
+# No debug info at all for third-party crates: nobody steps through them,
+# and they are most of every binary. (Tests use this profile too.)
+[profile.dev.package."*"]
+debug = false
 
 # The release build as profilers need it: the same code, with symbols and
 # line tables kept (`make build/profiling`).
