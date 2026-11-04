@@ -42,3 +42,33 @@ pub(super) const MAX_ROUNDS_NUDGE: &str =
      Respond now with your final reply. Report faithfully what you actually \
      changed and what the checks showed; if the task is incomplete, say \
      precisely what remains - do not describe changes you have not made.";
+
+/// Budget-progress guidance for the continuation turn at `round` of `max`
+/// rounds, if one is due.
+///
+/// A model that spends its whole round budget on discovery never learns to
+/// switch to making changes until the terminal wrap-up fires, which is too
+/// late to act on. The loop tells it where it stands twice: at half the
+/// budget, and shortly before the end. Stateless by construction - the
+/// round counter crosses each threshold exactly once, so no extra persisted
+/// stage is needed. The loop gives it only when no stall redirect is armed:
+/// that redirect is the more urgent instruction.
+pub(super) fn progress_instruction(round: u32, max: u32) -> Option<String> {
+    let half = max.div_ceil(2);
+    let late = max.saturating_sub(max / 5);
+    if round == half && round < late {
+        Some(format!(
+            "You have used {round} of your {max} tool-call rounds - half the budget. \
+             Move from reading and exploring to making the required changes now; \
+             keep further tool calls economical."
+        ))
+    } else if round == late {
+        Some(format!(
+            "You have {} of {max} tool-call rounds left. Finish the required \
+             changes within them; do not start new exploration.",
+            max.saturating_sub(round)
+        ))
+    } else {
+        None
+    }
+}

@@ -42,7 +42,8 @@ use sven_hsm::{
 use sven_vocab::TurnRequest;
 
 use super::loop_nudges::{
-    EMPTY_TURN_NUDGE, EMPTY_TURN_WRAPUP_NUDGE, MAX_ROUNDS_NUDGE, TRUNCATED_TURN_NUDGE,
+    progress_instruction, EMPTY_TURN_NUDGE, EMPTY_TURN_WRAPUP_NUDGE, MAX_ROUNDS_NUDGE,
+    TRUNCATED_TURN_NUDGE,
 };
 
 /// The single context key under which [`LoopState`] is serialized.
@@ -167,7 +168,7 @@ impl LoopState {
         let instruction = self
             .stall_nudge
             .take()
-            .or_else(|| self.progress_instruction());
+            .or_else(|| progress_instruction(self.round, self.max_rounds));
         self.turn(instruction, None)
     }
 
@@ -179,7 +180,7 @@ impl LoopState {
         let instruction = self
             .stall_nudge
             .take()
-            .or_else(|| self.progress_instruction());
+            .or_else(|| progress_instruction(self.round, self.max_rounds));
         self.turn(instruction, Some((schema, schema_name)))
     }
 
@@ -232,39 +233,6 @@ pub const STALL_REDIRECT_THRESHOLD: u32 = 2;
 /// time - the nudge alone cannot fix a model that answers every nudge with
 /// another empty reply. A handful of nudges is generous; more never helped.
 pub const EMPTY_TURN_NUDGE_BUDGET: u32 = 3;
-
-impl LoopState {
-    /// Budget-progress guidance for the continuation turn, if one is due.
-    ///
-    /// A model that spends its whole round budget on discovery never learns to
-    /// switch to making changes until the terminal wrap-up fires, which is too
-    /// late to act on. The machine tells it where it stands twice: at half the
-    /// budget, and shortly before the end. Stateless by construction - the
-    /// round counter crosses each threshold exactly once, so no extra
-    /// persisted stage is needed. Never fires when the stall redirect is
-    /// armed: that redirect is the more urgent instruction.
-    fn progress_instruction(&self) -> Option<String> {
-        let max = self.max_rounds;
-        let round = self.round;
-        let half = max.div_ceil(2);
-        let late = max.saturating_sub(max / 5);
-        if round == half && round < late {
-            Some(format!(
-                "You have used {round} of your {max} tool-call rounds - half the budget. \
-                 Move from reading and exploring to making the required changes now; \
-                 keep further tool calls economical."
-            ))
-        } else if round == late {
-            Some(format!(
-                "You have {} of {max} tool-call rounds left. Finish the required \
-                 changes within them; do not start new exploration.",
-                max.saturating_sub(round)
-            ))
-        } else {
-            None
-        }
-    }
-}
 
 /// Bounds the error text embedded in the redirect so a huge tool error cannot
 /// inflate the persisted loop state.
