@@ -25,6 +25,7 @@
 //! bloating the interactive binaries.
 
 pub mod remote;
+pub mod work;
 
 use serde::{Deserialize, Serialize};
 use sven_vocab::AgentMode;

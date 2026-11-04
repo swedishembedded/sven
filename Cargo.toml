@@ -195,6 +195,7 @@ sven-team        = { path = "crates/team", optional = true }
 sven-mcp         = { path = "crates/mcp", optional = true }
 sven-acp         = { path = "crates/acp", optional = true }
 sven-remote      = { path = "crates/remote", optional = true }
+sven-control     = { path = "crates/control", optional = true }
 anyhow      = { workspace = true }
 humantime   = { workspace = true }
 tokio       = { workspace = true }
@@ -250,6 +251,7 @@ android = ["sven-bootstrap/android", "sven-sdk/android"]
 # `sven rc`).
 network = [
     "dep:sven-acp",
+    "dep:sven-control",
     "dep:sven-remote",
     "dep:sven-mcp",
     "dep:sven-team",

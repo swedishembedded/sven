@@ -33,6 +33,8 @@ mod source;
 mod stamps;
 mod status;
 mod views;
+#[cfg(feature = "network")]
+pub(crate) mod work;
 
 use error::HarnessError;
 
@@ -114,6 +116,12 @@ pub(crate) async fn run_harness_command(command: &HarnessCommands) -> i32 {
             expect_trace,
             json,
         } => replay::replay(path, recording, expect_trace.as_deref(), *json),
+        #[cfg(feature = "network")]
+        HarnessCommands::Work {
+            login_file,
+            workspace,
+            scratch,
+        } => work_command(login_file, workspace, scratch).await,
     };
     outcome.unwrap_or_else(|failure| {
         eprintln!("error: {}", failure.message);
@@ -129,4 +137,34 @@ pub(super) fn print_json(value: &impl serde::Serialize) -> Result<(), Failure> {
     })?;
     println!("{text}");
     Ok(())
+}
+
+/// `sven harness work`.
+#[cfg(feature = "network")]
+async fn work_command(
+    login_file: &std::path::Path,
+    workspace: &std::path::Path,
+    scratch: &std::path::Path,
+) -> Result<i32, Failure> {
+    let failed = |message: String| Failure { code: 1, message };
+    let text = std::fs::read_to_string(login_file)
+        .map_err(|e| failed(format!("{}: {e}", login_file.display())))?;
+    let login: sven_control::work::WorkLogin = serde_json::from_str(&text)
+        .map_err(|e| failed(format!("{}: {e}", login_file.display())))?;
+    std::fs::create_dir_all(scratch).map_err(|e| failed(format!("{}: {e}", scratch.display())))?;
+    let end = work::work(work::WorkOptions {
+        login,
+        workspace: workspace.to_path_buf(),
+        scratch: scratch.to_path_buf(),
+        heartbeat: std::time::Duration::from_secs(5),
+        provider: None,
+    })
+    .await
+    .map_err(|e| failed(format!("{e:#}")))?;
+    eprintln!("sven harness work: {end:?}");
+    Ok(if end == work::WorkEnd::Superseded {
+        3
+    } else {
+        0
+    })
 }

@@ -16,13 +16,6 @@ protocols.
 
 ## Open
 
-3. **`sven harness work`.** The worker side of a run protocol defined in
-   `sven_control` the way `remote.rs` defines remote control: sign in from a
-   login file, fetch the run descriptor, the package and the input files,
-   run, and at each publishing boundary upload the files and the checkpoint
-   and commit them in one request; heartbeat; obey pause and cancel. Every
-   request carries the run's generation, and a superseded worker stops on
-   `409`, as a superseded `sven rc` does.
 4. **Notices and attachments on the remote-control channel.**
    `ControlCommand::Notify { session_id, event }` and attachments (file
    values) on `NewSession`/`SendInput`. A notice enters the conversation as a
@@ -41,7 +34,8 @@ with `HarnessRun::on_publish` checkpoints, and `retry: never`
 (`docs/reference/harnesses.md`); the client side of MCP's file transfer
 (`docs/reference/mcp.md`, Files); tools and gates served from another
 process (`sven mcp serve --listen`, `ForwardedTool`); skills the signed-in
-server offers (`docs/guides/skills.md`). Every signed-in sven mounts its server's MCP endpoint
+server offers (`docs/guides/skills.md`); the worker of a served run
+(`sven harness work`, `sven_control::work`). Every signed-in sven mounts its server's MCP endpoint
 (`src/main.rs`, `connectors::add_signed_in`; the `sven rc` host through
 `crates/remote/src/host/services.rs`).
 
@@ -49,7 +43,5 @@ server offers (`docs/guides/skills.md`). Every signed-in sven mounts its server'
 
 Each item is done when its own test proves it:
 
-- 3: against a fake server, a stale generation's commit is refused and the
-  worker stops.
 - 4: a notice is shown as a notice, starts no turn unless asked, and leaves
   the system prompt intact on every driver.

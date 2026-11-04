@@ -197,6 +197,24 @@ pub enum HarnessCommands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Run one served harness run for the server that started this worker:
+    /// fetch the package and the files, run (or resume), commit each
+    /// publication with its checkpoint, obey pause and cancel, report the
+    /// verdict. Exit 0 when finished, paused or cancelled; 3 when another
+    /// worker owns the run now.
+    #[cfg(feature = "network")]
+    Work {
+        /// The run's login (JSON: run_url, token, generation).
+        #[arg(long, value_name = "FILE")]
+        login_file: PathBuf,
+        /// Where the run's files are laid out and its tools work.
+        #[arg(long, value_name = "DIR")]
+        workspace: PathBuf,
+        /// The run's private directory (created when missing).
+        #[arg(long, value_name = "DIR")]
+        scratch: PathBuf,
+    },
 }
 
 /// What `run` and `resume` share: where the run's world comes from, its

@@ -200,6 +200,7 @@ or environment is read.
 | `harness run PATH [run options]` | Run a harness once, on a real model with the coding tools. |
 | `harness resume PATH --checkpoint FILE [run options]` | Resume a suspended run from the checkpoint `run --checkpoint-out` wrote. A checkpoint from another program is refused. |
 | `harness replay PATH --recording FILE [--expect-trace FILE] [--json]` | Replay a recording offline; no model, tool or child starts. |
+| `harness work --login-file FILE --workspace DIR --scratch DIR` | Work one served harness run for the server that started this worker (`sven_control::work`): fetch the package and the run's files (each checked against its digest), run or resume, commit each publication with its checkpoint, pause or stop when the heartbeat says so, report the verdict. The login file is JSON (`run_url`, `token`, `generation`). Exit 0 finished, paused or cancelled; 3 when another worker owns the run (the server answered 409), after which nothing more is committed or reported. |
 
 Run options (`run` and `resume`): `--input JSON` or `--input-file FILE`;
 required: `--workspace DIR`, `--model SPEC`, `--model-endpoint URL` and
