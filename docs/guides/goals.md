@@ -71,20 +71,38 @@ a refused one is something to report.
 
 ## Where goals work
 
+The goal always lives in the sven that runs the session, and every surface
+speaks to it with the same `/goal` line:
+
 - **The terminal** (`sven`): the status line shows what changed (`goal: ...`)
   and `/goal` shows the details. The goal is saved with the session, and a
-  resumed session gets it back.
-- **`sven rc`**: `/goal` is one of the commands a connected server can run
-  ([Remote control](remote-control.md)). The goal is kept beside the
-  conversation, so a host that restarts gets it back.
+  resumed session gets it back. This holds whatever model provider the
+  session uses, a hosted one included: nothing about the goal leaves the
+  machine.
+- **`sven rc`**, on your computer or in a hosted environment: `/goal` is one
+  of the commands a connected server can run ([Remote control](remote-control.md)).
+  The goal's turns are one answer, every change reaches the server as
+  `GoalUpdated`, and the goal is kept beside the conversation, so a host
+  that restarts gets it back. A server asks how a goal stands with
+  `report_goal`, answered from the running session or from what was kept.
+- **A terminal attached to a server's conversation** (`sven rc attach --tui`):
+  `/goal` here is sent to the conversation as its line, the `sven rc` that
+  runs the conversation carries it out, and the goal it announces shows here
+  as it does locally.
+- **Headless runs**: a prompt that is a `/goal` line sets the goal and the
+  run takes its turns, reporting each as `[sven:goal]` on stderr. The run
+  ends as the goal does: exit 0 when it completed, 4 out of turns, 5 blocked
+  (it needs a person), 6 paused; a line used wrongly exits 2 before anything
+  runs: `echo '/goal --check "cargo test" fix the tests' | sven --headless`.
+- **Editors** (ACP): a prompt that is a `/goal` line sets or steers the goal,
+  and `/goal` alone answers with how it stands.
 
 A goal that was running when its session stopped (a restart, a resumed
 session, a change of mode or model) comes back **paused**: the work it was
 doing may or may not have taken effect, so nothing runs again until you say
 `/goal resume`.
 
-The `sdlc` mode keeps no goal. Headless runs and editors (ACP) show goal
-changes but do not take `/goal` commands.
+The `sdlc` mode keeps no goal.
 
 ## For integrators
 
@@ -113,6 +131,10 @@ last received.
 `status` is one of `active`, `paused`, `blocked`, `completed` and
 `budget_exhausted`; a blocked goal carries `blocker` with the fields of the
 report, and a stopped one `reason`.
+
+Asked with the control command `report_goal` (a session id), a `sven rc`
+host answers with a `goal` event (`{"type": "goal", "session_id": ...,
+"goal": ...}`, `goal` null when there is none) that belongs to no answer.
 
 A goal command sent with no answer open is the person's turn: it ends with
 `TurnComplete`, or, when it starts work, with the end of that work. A command

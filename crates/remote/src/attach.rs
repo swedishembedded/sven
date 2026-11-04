@@ -15,8 +15,13 @@
 //! The document's messages carry their content as parts, a JSON array of
 //! objects with a `type`: `text` (`text`), `reasoning` (`text`), `tool_call`
 //! (`callId`, `name`, `arguments`), `tool_result` (`callId`, `result`,
-//! `isError`), `approval` (`callId`, `name`, `arguments`, `status`) and
-//! `error` (`message`). Any other type is not shown.
+//! `isError`), `approval` (`callId`, `name`, `arguments`, `status`), `goal`
+//! (`note`, and `goal`: the session's goal as sven announced it) and `error`
+//! (`message`). Any other type is not shown.
+//!
+//! A `/goal` command typed here is sent to the conversation as the line it
+//! stands for (`slash_text`): the sven that runs the session carries it out,
+//! and the goal it announces comes back in the document.
 //!
 //! A tool call that waits for permission is asked about in the UI the way a
 //! local session asks (a yes/no question); the answer goes to the server,
@@ -31,6 +36,7 @@ use sven_frontend::agent::AgentRequest;
 use sven_machines::AgentEvent;
 use sven_session_sync::DocMessage;
 use sven_tools_agent::{Question, QuestionRequest};
+use sven_vocab::goal::{Goal, GoalCommand, GoalUpdate};
 use sven_vocab::ToolCall;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -214,6 +220,16 @@ fn show_parts(shown: &mut Shown, parts: &[Value], streaming: bool, events: &mut 
                     images: Vec::new(),
                 });
             }
+            "goal" => {
+                let goal = part.get("goal").cloned().unwrap_or(Value::Null);
+                // A goal this build cannot read is not shown, never guessed.
+                if let Ok(goal) = serde_json::from_value::<Option<Goal>>(goal) {
+                    events.push(AgentEvent::GoalUpdated(Box::new(GoalUpdate {
+                        goal,
+                        note: field(part, "note").to_string(),
+                    })));
+                }
+            }
             "error" => events.push(AgentEvent::Error(field(part, "message").to_string())),
             _ => {}
         }
@@ -294,6 +310,15 @@ pub async fn remote_agent_task(
                         out.push(AgentEvent::TurnComplete);
                     }
                 }
+                Some(AgentRequest::Goal { command, .. }) => {
+                    let Some(line) = goal_line(&command) else { continue };
+                    translator.sent(&line);
+                    if let Err(e) = client.send_to_conversation(conversation, &line).await {
+                        translator.own.pop_back();
+                        out.push(AgentEvent::Error(format!("{e:#}")));
+                        out.push(AgentEvent::TurnComplete);
+                    }
+                }
                 // History is the conversation's own; titles, tools and
                 // models belong to the machine it runs on.
                 Some(_) => {}
@@ -305,6 +330,12 @@ pub async fn remote_agent_task(
             }
         }
     }
+}
+
+/// The line a goal command stands for; none for a goal put back from
+/// storage, which is the running session's own business.
+fn goal_line(command: &GoalCommand) -> Option<String> {
+    sven_frontend::commands::builtin::goal::slash_text(command)
 }
 
 /// Asks the person whether `waiting` may run and tells the server. A
@@ -619,5 +650,37 @@ mod tests {
             decided,
             vec![serde_json::json!({"callId": "c1", "approve": true})]
         );
+    }
+
+    /// A goal set from here travels as the line it stands for, and the goal
+    /// the conversation's sven announces shows here as it does locally.
+    #[test]
+    fn a_goal_goes_out_as_its_line_and_comes_back_as_the_goal() {
+        let line = goal_line(&GoalCommand::Set {
+            objective: "port the parser".into(),
+            max_turns: Some(10),
+            check: None,
+        });
+        assert_eq!(line.as_deref(), Some("/goal --turns 10 port the parser"));
+
+        let goal = serde_json::json!({
+            "id": "goal-1", "objective": "port the parser", "status": "active",
+            "turns_used": 1, "max_turns": 10, "verified": false,
+        });
+        let mut translator = EventTranslator::default();
+        let events = translator.events(&[message(
+            "a1",
+            "assistant",
+            "streaming",
+            serde_json::json!([{ "type": "goal", "note": "Goal set (10 turns).", "goal": goal }]),
+        )]);
+        let update = events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::GoalUpdated(update) => Some(update.clone()),
+                _ => None,
+            })
+            .expect("the goal is shown");
+        assert_eq!(update.goal.unwrap().objective, "port the parser");
     }
 }

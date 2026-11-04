@@ -87,6 +87,16 @@ fn error_becomes_agent_message_chunk() {
 }
 
 #[test]
+fn a_goal_update_is_said_to_the_client_as_a_message() {
+    let ev = AgentEvent::GoalUpdated(Box::new(sven_vocab::goal::GoalUpdate {
+        goal: None,
+        note: "Goal cleared.".into(),
+    }));
+    let update = agent_event_to_session_update(&ev);
+    assert!(matches!(update, Some(SessionUpdate::AgentMessageChunk(_))));
+}
+
+#[test]
 fn todo_update_becomes_plan() {
     use sven_tool_api::events::{TodoItem, TodoStatus};
     let todos = vec![

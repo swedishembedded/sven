@@ -266,6 +266,8 @@ enum SessionCommand {
         approved: bool,
     },
     Cancel,
+    /// The server asks how the session's goal stands.
+    ReportGoal,
     /// Its conversation was archived or deleted: end it and forget it.
     Close,
 }
@@ -375,6 +377,14 @@ impl SessionActor {
                 if let Some(controller) = &self.controller {
                     controller.cancel().await;
                 }
+            }
+            SessionCommand::ReportGoal => {
+                let goal = self.current_goal();
+                self.send(ControlEvent::Goal {
+                    session_id: self.id,
+                    goal: goal.map(Box::new),
+                })
+                .await;
             }
             SessionCommand::Close => {
                 self.closed = true;
@@ -616,6 +626,18 @@ impl SessionActor {
                 self.upload(AgentEvent::Warning(e.to_string())).await;
             }
             Err(e) => self.fail(&format!("{e:#}")).await,
+        }
+    }
+
+    /// The goal as it stands: the running session's, else the one kept for
+    /// it (a session this run has not opened).
+    fn current_goal(&self) -> Option<Goal> {
+        match &self.controller {
+            Some(controller) => controller.current_goal(),
+            None => self
+                .goal
+                .clone()
+                .or_else(|| self.context.sessions.load_goal(self.id)),
         }
     }
 
@@ -1269,6 +1291,46 @@ mod tests {
             })
             .await;
         assert_eq!(again.goal.map(|g| g.status), Some(GoalStatus::Blocked));
+    }
+
+    /// The server asks how a goal stands; a session this run has not opened
+    /// answers from what it kept, without opening one.
+    #[tokio::test]
+    async fn a_goal_is_reported_from_what_was_kept_without_opening_the_session() {
+        use sven_vocab::goal::GoalStatus;
+        let dir = tempfile::tempdir().unwrap();
+        let (uploads, mut sent) = mpsc::channel(64);
+        let (asks, _asks_open) = mpsc::channel(8);
+        let context = Arc::new(SessionContext {
+            config: Arc::new(mock_config()),
+            working_dir: dir.path().to_path_buf(),
+            hosted: false,
+            wide_access: true,
+            openai_base_url: String::new(),
+            token: String::new(),
+            uploads,
+            sessions: SessionStore::new(dir.path().join("kept")),
+            asks,
+            mcp_tools_wait_ms: 0,
+        });
+        let id = Uuid::new_v4();
+        let mut kept = Goal::new("goal-1".into(), "port the parser".into(), 20, None);
+        kept.status = GoalStatus::Paused;
+        context.sessions.save_goal(id, Some(&kept)).unwrap();
+
+        let mut actor = SessionActor::new(id, Arc::clone(&context));
+        actor.handle(SessionCommand::ReportGoal).await;
+        assert!(actor.controller.is_none(), "nothing was opened to answer");
+        let Some(Upload::Event(event)) = sent.recv().await else {
+            panic!("an answer is uploaded");
+        };
+        match *event {
+            ControlEvent::Goal { session_id, goal } => {
+                assert_eq!(session_id, id);
+                assert_eq!(goal.map(|g| g.status), Some(GoalStatus::Paused));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

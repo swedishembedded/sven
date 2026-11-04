@@ -45,6 +45,8 @@ pub(super) struct CiOutState {
     sven_header_emitted: bool,
     /// Set when a fatal (non-tool) error was observed.
     pub(super) had_error: bool,
+    /// The session's goal as last announced, when the run is a `/goal`.
+    pub(super) goal: Option<sven_vocab::goal::Goal>,
     /// Number of tool calls issued this turn.
     pub(super) tools_used: u32,
     /// Cumulative input + output tokens seen so far this run.
@@ -91,6 +93,7 @@ impl CiOutState {
             streamed_text: String::new(),
             sven_header_emitted: false,
             had_error: false,
+            goal: None,
             tools_used: 0,
             run_total_tokens: 0,
             token_budget,
@@ -404,7 +407,10 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             );
         }
         UiEvent::TodoUpdate(_) => {}
-        UiEvent::GoalUpdated(update) => write_progress(&format!("[sven:goal] {}", update.note)),
+        UiEvent::GoalUpdated(update) => {
+            write_progress(&format!("[sven:goal] {}", update.note));
+            state.goal = update.goal.clone();
+        }
         UiEvent::ModeChanged(m) => write_progress(&format!("[sven:mode] {m}")),
         UiEvent::ModelChanged(m) => write_progress(&format!("[sven:model] {m}")),
         UiEvent::Transition { from, to, event } => {
@@ -552,6 +558,7 @@ mod tests {
             streamed_text: String::new(),
             sven_header_emitted: false,
             had_error: false,
+            goal: None,
             tools_used: 0,
             run_total_tokens: 0,
             token_budget: None,

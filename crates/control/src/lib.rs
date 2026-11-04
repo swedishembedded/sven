@@ -126,6 +126,11 @@ pub enum ControlCommand {
     /// ones included. The host answers with [`ControlEvent::SlashCommands`].
     ListSlashCommands,
 
+    /// Ask a session how its standing goal stands. The host answers with
+    /// [`ControlEvent::Goal`], from the running session or from what it
+    /// kept, without opening one.
+    ReportGoal { session_id: Uuid },
+
     /// The session's conversation was archived or deleted: the host ends the
     /// session and forgets what it kept for it.
     CloseSession { session_id: Uuid },
@@ -202,6 +207,14 @@ pub enum ControlEvent {
     /// The slash commands a session on this host can run: in answer to
     /// [`ControlCommand::ListSlashCommands`], and once when the host attaches.
     SlashCommands { commands: Vec<SlashCommandInfo> },
+
+    /// A session's standing goal as it stands (`None`: it has none), in
+    /// answer to [`ControlCommand::ReportGoal`]. Belongs to no answer: every
+    /// change while one runs arrives as a `GoalUpdated` session event.
+    Goal {
+        session_id: Uuid,
+        goal: Option<Box<sven_vocab::goal::Goal>>,
+    },
 
     /// Reply to [`ControlCommand::Attach`]: the conversation transcript so far.
     ///

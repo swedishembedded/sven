@@ -9,7 +9,36 @@
 //! A session's standing goal in words, the same on every surface: what
 //! `/goal` alone shows.
 
-use sven_vocab::goal::{CheckResult, Goal, GoalStatus};
+use sven_vocab::goal::{CheckResult, Goal, GoalCommand, GoalStatus};
+
+/// What a `/goal` line asks of a surface that reads it as a whole prompt
+/// (a headless run, an editor's prompt).
+#[derive(Debug, PartialEq)]
+pub enum GoalLine {
+    /// A command for the session's goal.
+    Command(GoalCommand),
+    /// `/goal` alone: say how the goal stands.
+    Show,
+    /// The line misuses `/goal`: say this.
+    Usage(String),
+}
+
+/// `text` as a `/goal` line; `None` when it is not one (an ordinary prompt,
+/// or a word that only starts with it).
+#[must_use]
+pub fn goal_line(text: &str) -> Option<GoalLine> {
+    use crate::commands::{builtin::goal, parser::tokenise, ImmediateAction};
+    let rest = text.trim_start().strip_prefix("/goal")?;
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some(match goal::parse(&tokenise(rest.trim())).immediate_action {
+        Some(ImmediateAction::Goal(command)) => GoalLine::Command(command),
+        Some(ImmediateAction::ShowGoal) => GoalLine::Show,
+        Some(ImmediateAction::Notice { text }) => GoalLine::Usage(text),
+        _ => GoalLine::Usage(goal::GOAL_USAGE.to_string()),
+    })
+}
 
 /// What a surface says when the session has no goal.
 pub const NO_GOAL: &str = "No goal is set. Set one using /goal command";
@@ -76,6 +105,19 @@ pub fn describe(goal: Option<&Goal>) -> String {
 mod tests {
     use super::*;
     use sven_vocab::goal::{BlockerReport, GoalCheck};
+
+    #[test]
+    fn a_goal_line_is_read_the_way_the_terminal_reads_it() {
+        assert_eq!(goal_line("fix the tests"), None);
+        assert_eq!(goal_line("/goalpost moved"), None);
+        assert_eq!(goal_line("/goal"), Some(GoalLine::Show));
+        assert_eq!(goal_line("  /goal pause"), Some(GoalLine::Command(GoalCommand::Pause)));
+        assert!(matches!(
+            goal_line("/goal --turns 5 port the parser"),
+            Some(GoalLine::Command(GoalCommand::Set { max_turns: Some(5), .. }))
+        ));
+        assert!(matches!(goal_line("/goal check"), Some(GoalLine::Usage(_))));
+    }
 
     #[test]
     fn no_goal_says_how_to_set_one() {

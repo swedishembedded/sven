@@ -54,6 +54,7 @@ async fn route(
         }
         ControlCommand::SendInput { session_id, text } => (session_id, SessionCommand::Input(text)),
         ControlCommand::CancelSession { session_id } => (session_id, SessionCommand::Cancel),
+        ControlCommand::ReportGoal { session_id } => (session_id, SessionCommand::ReportGoal),
         ControlCommand::ApproveTool {
             session_id,
             call_id,

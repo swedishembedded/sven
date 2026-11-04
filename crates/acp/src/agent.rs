@@ -578,7 +578,36 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
                 let spec = entry.next_spec(&session, None);
                 self.rebuild_session(&entry, &mut session, spec).await?;
             }
-            let _ = session.post(text).await;
+            // A `/goal` line is the session's goal command, read as the
+            // terminal reads it; the turn it starts streams like any other.
+            match sven_frontend::goal::goal_line(&text) {
+                None => {
+                    let _ = session.post(text).await;
+                }
+                Some(sven_frontend::goal::GoalLine::Command(command)) => {
+                    if let Err(e) = session.goal(command, true).await {
+                        return Err(Error::new(
+                            i32::from(ErrorCode::InvalidRequest),
+                            e.to_string(),
+                        ));
+                    }
+                }
+                Some(line) => {
+                    let reply = match line {
+                        sven_frontend::goal::GoalLine::Usage(usage) => usage,
+                        _ => sven_frontend::goal::describe(session.current_goal().as_ref()),
+                    };
+                    let update = agent_event_to_session_update(&AgentEvent::TextDelta(reply));
+                    if let Some(update) = update {
+                        self.send_notification(SessionNotification::new(
+                            args.session_id.clone(),
+                            update,
+                        ))
+                        .await;
+                    }
+                    return Ok(PromptResponse::new(StopReason::EndTurn));
+                }
+            }
         }
 
         // Bridge AgentEvents to ACP session/update notifications until the turn

@@ -35,7 +35,10 @@ use crate::runner::outcome::{exit_code_for_verified_task, verdict_from_context};
 use crate::runner::ui_output::{
     close_sven_section, handle_ui_event, print_total_usage, write_trajectory, CiOutState,
 };
-use crate::runner::{EXIT_AGENT_ERROR, EXIT_SUCCESS, EXIT_TIMEOUT};
+use crate::runner::{
+    EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_NEEDS_HUMAN, EXIT_STOPPED_WITHOUT_CONCLUSION,
+    EXIT_SUCCESS, EXIT_TIMEOUT, EXIT_VALIDATION_ERROR,
+};
 
 // ── RuntimeRunner ─────────────────────────────────────────────────────────────
 
@@ -208,11 +211,28 @@ impl RuntimeRunner {
             .context("failed to build kernel session")?;
         crate::output::report_mcp_events(mcp_events);
 
-        // Post the user prompt.
-        session
-            .post(opts.prompt.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("{e} before UserMessage was delivered"))?;
+        // Post the user prompt, or, for a `/goal` line, set the goal: the
+        // same grammar the terminal and `sven rc` read.
+        let goal_run = match goal_command(&opts.prompt) {
+            Some(Ok(command)) => {
+                session
+                    .goal(command, true)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e} before the goal was set"))?;
+                true
+            }
+            Some(Err(usage)) => {
+                write_stderr(&format!("[sven:error] {usage}"));
+                return Ok(EXIT_VALIDATION_ERROR);
+            }
+            None => {
+                session
+                    .post(opts.prompt.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e} before UserMessage was delivered"))?;
+                false
+            }
+        };
 
         // The trajectory this run records: history replayed into the kernel
         // first, then the new prompt, so the document stands on its own.
@@ -341,6 +361,12 @@ impl RuntimeRunner {
         // exit code is derived from the joined context below. Every other
         // mode keeps the existing detach-and-forget behaviour and its
         // loop-derived `result` unchanged.
+        // A goal run ends as its goal does: done, or why not.
+        let result = if goal_run && result == EXIT_SUCCESS {
+            exit_code_for_goal(state.goal.as_ref())
+        } else {
+            result
+        };
         let (result, verdict) = if is_verified_task {
             match session.join().await {
                 Ok(report) => (
@@ -374,6 +400,32 @@ impl RuntimeRunner {
     }
 }
 
+/// The goal command a headless prompt stands for: `None` when it is not a
+/// `/goal` line, the command's usage when it is one used wrongly (showing the
+/// goal means nothing in a run that starts with none).
+fn goal_command(prompt: &str) -> Option<Result<sven_vocab::goal::GoalCommand, String>> {
+    use sven_frontend::goal::{goal_line, GoalLine};
+    Some(match goal_line(prompt)? {
+        GoalLine::Command(command) => Ok(command),
+        GoalLine::Usage(text) => Err(text),
+        GoalLine::Show => Err(format!(
+            "a headless run starts with no goal to show\n\n{}",
+            sven_frontend::commands::builtin::goal::GOAL_USAGE
+        )),
+    })
+}
+
+/// How a goal run exits: 0 only when its goal completed.
+fn exit_code_for_goal(goal: Option<&sven_vocab::goal::Goal>) -> i32 {
+    use sven_vocab::goal::GoalStatus;
+    match goal.map(|g| g.status) {
+        Some(GoalStatus::Completed) => EXIT_SUCCESS,
+        Some(GoalStatus::BudgetExhausted) => EXIT_BUDGET_EXHAUSTED,
+        Some(GoalStatus::Blocked) => EXIT_NEEDS_HUMAN,
+        Some(GoalStatus::Paused | GoalStatus::Active) | None => EXIT_STOPPED_WITHOUT_CONCLUSION,
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -398,6 +450,30 @@ mod tests {
             token_ledger: false,
         };
         assert!(format!("{opts:?}").contains("agent"));
+    }
+
+    #[test]
+    fn a_goal_line_sets_the_goal_and_its_end_is_the_exit_code() {
+        use sven_vocab::goal::{Goal, GoalCommand, GoalStatus};
+        assert!(goal_command("fix the tests").is_none());
+        assert!(goal_command("/goalkeeper").is_none());
+        assert!(matches!(
+            goal_command("/goal --check \"cargo test\" fix the tests"),
+            Some(Ok(GoalCommand::Set { check: Some(_), .. }))
+        ));
+        assert!(matches!(goal_command("/goal"), Some(Err(_))));
+        assert!(matches!(goal_command("/goal check"), Some(Err(_))));
+
+        let mut goal = Goal::new("g".into(), "x".into(), 3, None);
+        for (status, code) in [
+            (GoalStatus::Completed, EXIT_SUCCESS),
+            (GoalStatus::BudgetExhausted, EXIT_BUDGET_EXHAUSTED),
+            (GoalStatus::Blocked, EXIT_NEEDS_HUMAN),
+            (GoalStatus::Paused, EXIT_STOPPED_WITHOUT_CONCLUSION),
+        ] {
+            goal.status = status;
+            assert_eq!(exit_code_for_goal(Some(&goal)), code, "{status:?}");
+        }
     }
 
     #[test]
