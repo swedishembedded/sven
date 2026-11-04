@@ -85,6 +85,7 @@ but no built-in machine or executor produces them.
 | Event | Payload | Meaning |
 |-------|---------|---------|
 | `CompactRequested` | - | A person asked for the conversation to be compacted now; a machine accepts it at rest and refuses it, with a reason, while busy |
+| `Goal` | a `GoalCommand` | A person set, paused, resumed, cleared or checked the session's standing goal, or a surface put back a goal it kept |
 | `Timeout` | `timer_id` | A scheduled timer elapsed |
 | `VerificationComplete` | `verdict` | An `Effect::Verify` finished: `Passed`, `Failed`, `NeedsHuman` or `Unknown` |
 | `EffectFailed` | `kind`, `error` | An effect was refused or had no executor and no more specific failure event exists |
@@ -186,6 +187,7 @@ Top (root, never active leaf)
 └── Session (composite)
     ├── Idle       <- waiting for the user's next message
     ├── Generating <- model turn in flight; tools run in-state
+    ├── Checking   <- a standing goal's check is running
     └── Compacting <- the conversation is being summarised on request
 ```
 
@@ -200,12 +202,13 @@ removed, so the kernel refuses a file write even if the model proposes one (see
 
 ### State Transitions
 
-#### `Session` (composite parent of `Idle`, `Generating` and `Compacting`)
+#### `Session` (composite parent of `Idle`, `Generating`, `Checking` and `Compacting`)
 
 | Event | -> State | Effects emitted |
 |-------|----------|-----------------|
 | `Internal(Init)` | `Idle` | - |
-| `UserCancelled` | `Idle` | - |
+| `UserCancelled` | `Idle` | an active goal pauses: `Announce(GoalUpdated)` |
+| `Goal` (while busy) | _(stay)_ | `Announce(GoalUpdated)`; setting a goal is refused until the turn ends |
 | _(any other)_ | `Top` (super) | - |
 
 #### `Idle`
@@ -214,11 +217,27 @@ removed, so the kernel refuses a file write even if the model proposes one (see
 |-------|----------|-----------------|
 | `UserMessage { text }` | `Generating` | `CallLlm` on thread `chat` with `text` as the instruction (every tool the session offers) |
 | `CompactRequested` | `Compacting` | `CompactContext` on thread `chat` |
+| `Goal` set or resume | `Generating` | `Announce(GoalUpdated)`, `CallLlm` with the goal turn's instruction |
+| `Goal` (any other) | _(stay)_ | `Announce(GoalUpdated)`, `Announce(TurnComplete)` |
 | _(any other)_ | `Session` (super) | - |
 
 The round budget of the loop is the `agent.max_tool_rounds` configuration value
 (default 200), handed to the machine as a context fact. Without the fact the
 built-in budget is 16.
+
+#### `Checking`
+
+The goal's check runs (`Verify` of a `command` spec) after a goal turn.
+
+| Event | -> State | Effects emitted |
+|-------|----------|-----------------|
+| `VerificationComplete` | `Generating` or `Idle` | `Announce(GoalUpdated)`, then the next goal turn or `Announce(TurnComplete)` |
+| `EffectFailed` of `Verify` | `Idle` | the goal pauses: no verdict is not a pass |
+| `CompactRequested` | _(stay)_ | `CompactContext` with a `refusal` |
+| _(any other)_ | `Session` (super) | - |
+
+The policy that decides between the check, the next turn and the end is
+`crates/machines/src/machines/goal.rs`.
 
 #### `Compacting`
 
@@ -244,7 +263,8 @@ while tools run.
 
 | Event | Condition | -> State | Effects emitted |
 |-------|-----------|----------|-----------------|
-| `LlmTurnComplete`, no tool calls | text non-empty, no unresolved clarification | `Idle` | `Announce(TurnComplete)` (stores `last_response`) |
+| `LlmTurnComplete`, no tool calls | text non-empty, no unresolved clarification, no active goal | `Idle` | `Announce(TurnComplete)` (stores `last_response`) |
+| `LlmTurnComplete`, no tool calls | as above, a goal is active | `Checking`, `Generating` or `Idle` | `Announce(GoalUpdated)`, then the goal's check (`Verify`), its next turn (`CallLlm`) or `Announce(TurnComplete)`, as the goal policy decides |
 | `LlmTurnComplete`, no tool calls | text non-empty, the model asked the user a question and listed alternatives after it | _(stay)_ | one `CallTool` of `ask_question` carrying those alternatives |
 | `LlmTurnComplete`, no tool calls | text empty | _(stay)_ | nudge `CallLlm`; after 3 consecutive empty turns, a wrap-up `CallLlm` without tools |
 | `LlmTurnComplete`, tool calls | round within budget | _(stay)_ | one `CallTool` per call |
@@ -255,7 +275,7 @@ while tools run.
 | `HumanApproved` / `HumanRejected` | for the held tool call | _(stay)_ | approved: `CallTool` for the held call; rejected: continuation `CallLlm` that tells the model the call did not run |
 | `QuestionAsked` / `HumanAnswered` | - | _(stay)_ | `RequestHumanAnswer` / continuation `CallLlm` |
 | `LlmFailed` | transient, fewer than 3 repeats | _(stay)_ | the same turn asked again after a growing pause |
-| `LlmFailed`, `EffectFailed` | - | `Idle` | `Announce(TurnComplete)` (stores `last_error`) |
+| `LlmFailed`, `EffectFailed` | - | `Idle` | an active goal pauses (`Announce(GoalUpdated)`), `Announce(TurnComplete)` (stores `last_error`) |
 | _(any other)_ | - | `Session` (super) | - |
 
 The clarification check is deliberately narrow: it fires only when the model

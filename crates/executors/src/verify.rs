@@ -4,10 +4,9 @@
 //! Evaluating a [`VerifierSpec`] against the real world.
 //!
 //! [`sven_vocab::verify`] only names what to check; this is where the check
-//! actually happens - file reads, hashing, an HTTP request. Not wired into
-//! the kernel yet (no `Effect::Verify` exists): this module is a standalone,
-//! directly-callable evaluator, ready for the verified-task machine that
-//! will drive it through the HSM effect/event plane.
+//! actually happens - file reads, hashing, an HTTP request, a check command.
+//! [`VerifyExecutor`] answers `Effect::Verify` with it; [`evaluate`] is also
+//! callable directly.
 //!
 //! # Path jailing
 //!
@@ -21,18 +20,36 @@
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use sven_tool_api::PathScope;
+use sven_tool_api::{PathScope, Tool};
 use sven_vocab::verify::{JsonCmpOp, VerifierSpec, VerifierVerdict};
 
-/// Evaluate `spec` against `root`.
-///
-/// Boxed/async-recursive to support [`VerifierSpec::All`]/[`VerifierSpec::Any`].
+/// Evaluate `spec` against `root`, with nothing to run a
+/// [`VerifierSpec::Command`] (it is answered [`VerifierVerdict::Unknown`]).
 pub fn evaluate<'a>(
     spec: &'a VerifierSpec,
     root: &'a Path,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = VerifierVerdict> + Send + 'a>> {
+    evaluate_with(spec, root, None)
+}
+
+/// Evaluate `spec` against `root`, running a [`VerifierSpec::Command`] with
+/// `commands`: a confined command runner that takes a harness gate's
+/// arguments and returns its report (`sven_tools_exec::GateCommandTool`).
+///
+/// Boxed/async-recursive to support [`VerifierSpec::All`]/[`VerifierSpec::Any`].
+pub fn evaluate_with<'a>(
+    spec: &'a VerifierSpec,
+    root: &'a Path,
+    commands: Option<&'a dyn Tool>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = VerifierVerdict> + Send + 'a>> {
     Box::pin(async move {
         match spec {
+            VerifierSpec::Command { argv, timeout_secs } => match commands {
+                Some(runner) => run_command(runner, argv, *timeout_secs).await,
+                None => VerifierVerdict::Unknown {
+                    reason: "nothing in this session can run a check command".to_string(),
+                },
+            },
             VerifierSpec::FileExists { path, min_bytes } => {
                 let resolved = match jail(root, path) {
                     Ok(resolved) => resolved,
@@ -198,7 +215,7 @@ pub fn evaluate<'a>(
 
             VerifierSpec::All { specs } => {
                 for s in specs {
-                    let v = evaluate(s, root).await;
+                    let v = evaluate_with(s, root, commands).await;
                     if !matches!(v, VerifierVerdict::Passed) {
                         return v;
                     }
@@ -211,7 +228,7 @@ pub fn evaluate<'a>(
                     reason: "Any with no sub-specs".to_string(),
                 };
                 for s in specs {
-                    let v = evaluate(s, root).await;
+                    let v = evaluate_with(s, root, commands).await;
                     if matches!(v, VerifierVerdict::Passed) {
                         return VerifierVerdict::Passed;
                     }
@@ -227,6 +244,85 @@ pub fn evaluate<'a>(
             },
         }
     })
+}
+
+/// How much of a failed command's output a verdict carries: the end, where
+/// test runners put their summary.
+const COMMAND_DETAIL_CHARS: usize = 2_000;
+
+/// Runs `argv` through `runner` and reads its report: status 0 within the
+/// time passes, any other ending fails with the end of what it printed, and
+/// a command that could not be started (or a report that cannot be read) is
+/// no verdict at all.
+async fn run_command(runner: &dyn Tool, argv: &[String], timeout_secs: u64) -> VerifierVerdict {
+    if argv.first().is_none_or(String::is_empty) {
+        return VerifierVerdict::Unknown {
+            reason: "the check command is empty".to_string(),
+        };
+    }
+    let call = sven_tool_api::ToolCall {
+        id: "verify-command".to_string(),
+        name: runner.name().to_string(),
+        args: serde_json::json!({
+            "steps": [{ "name": "check", "argv": argv }],
+            "timeout_secs": timeout_secs.max(1),
+        }),
+    };
+    let output = runner.execute(&call).await;
+    if output.is_error {
+        return VerifierVerdict::Unknown {
+            reason: format!("the check could not run: {}", output.content),
+        };
+    }
+    let Ok(report) = serde_json::from_str::<serde_json::Value>(&output.content) else {
+        return VerifierVerdict::Unknown {
+            reason: "the check's report could not be read".to_string(),
+        };
+    };
+    if let Some(error) = report.get("error").and_then(serde_json::Value::as_str) {
+        return VerifierVerdict::Unknown {
+            reason: format!("the check could not be started: {error}"),
+        };
+    }
+    let timed_out = report.get("timed_out").and_then(serde_json::Value::as_bool) == Some(true);
+    let exit = report.get("exit_code").and_then(serde_json::Value::as_i64);
+    if exit == Some(0) && !timed_out {
+        return VerifierVerdict::Passed;
+    }
+    let text = |key: &str| {
+        report
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    let printed = [text("stdout"), text("stderr")]
+        .into_iter()
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tail: String = {
+        let chars: Vec<char> = printed.chars().collect();
+        chars[chars.len().saturating_sub(COMMAND_DETAIL_CHARS)..]
+            .iter()
+            .collect()
+    };
+    let ending = if timed_out {
+        format!("`{}` ran out of time ({timeout_secs}s)", argv.join(" "))
+    } else {
+        match exit {
+            Some(code) => format!("`{}` exited with status {code}", argv.join(" ")),
+            None => format!("`{}` was ended by a signal", argv.join(" ")),
+        }
+    };
+    VerifierVerdict::Failed {
+        reason: if tail.is_empty() {
+            ending
+        } else {
+            format!("{ending}:\n{tail}")
+        },
+    }
 }
 
 /// JSON equality with numbers compared by value rather than by
@@ -257,12 +353,25 @@ fn jail(root: &Path, path: &str) -> Result<PathBuf, String> {
 /// instead.
 pub struct VerifyExecutor {
     root: PathBuf,
+    /// Runs a [`VerifierSpec::Command`]; without it a command has no verdict.
+    commands: Option<std::sync::Arc<dyn Tool>>,
 }
 
 impl VerifyExecutor {
     /// Creates an executor that jails every verification to `root`.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            commands: None,
+        }
+    }
+
+    /// Runs check commands with `runner`, a confined command runner that is
+    /// never offered to a model (see [`evaluate_with`]).
+    #[must_use]
+    pub fn with_commands(mut self, runner: std::sync::Arc<dyn Tool>) -> Self {
+        self.commands = Some(runner);
+        self
     }
 }
 
@@ -277,7 +386,7 @@ impl sven_kernel::EffectExecutor for VerifyExecutor {
         let sven_hsm::Effect::Verify { spec } = effect else {
             return;
         };
-        let verdict = evaluate(&spec, &self.root).await;
+        let verdict = evaluate_with(&spec, &self.root, self.commands.as_deref()).await;
         let _ = sink
             .emit(sven_hsm::Event::VerificationComplete { verdict })
             .await;

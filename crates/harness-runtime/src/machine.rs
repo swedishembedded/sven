@@ -666,6 +666,7 @@ pub(super) fn verifier_word(spec: &sven_vocab::verify::VerifierSpec) -> &'static
         VerifierSpec::FileHash { .. } => "file_hash",
         VerifierSpec::JsonPredicate { .. } => "json_predicate",
         VerifierSpec::HttpPredicate { .. } => "http_predicate",
+        VerifierSpec::Command { .. } => "command",
         VerifierSpec::AskHuman { .. } => "ask_human",
         VerifierSpec::All { .. } => "all",
         VerifierSpec::Any { .. } => "any",

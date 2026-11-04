@@ -270,6 +270,11 @@ pub enum Event {
         error: String,
     },
 
+    /// A person asked something of the session's standing goal (set, pause,
+    /// resume, clear, its check, or a kept goal put back). A machine without
+    /// goals ignores it.
+    Goal(sven_vocab::goal::GoalCommand),
+
     /// A kernel-internal event (lifecycle signals + composition signals).
     Internal(InternalEvent),
 }
@@ -409,6 +414,7 @@ impl Event {
             Event::Timeout { .. } => EventKind::Timeout,
             Event::VerificationComplete { .. } => EventKind::VerificationComplete,
             Event::EffectFailed { .. } => EventKind::EffectFailed,
+            Event::Goal(_) => EventKind::Goal,
             Event::Internal(InternalEvent::Entry) => EventKind::Entry,
             Event::Internal(InternalEvent::Exit) => EventKind::Exit,
             Event::Internal(InternalEvent::Init) => EventKind::Init,
@@ -473,6 +479,8 @@ pub enum EventKind {
     VerificationComplete,
     /// See [`Event::EffectFailed`].
     EffectFailed,
+    /// See [`Event::Goal`].
+    Goal,
     /// Reserved entry signal.
     Entry,
     /// Reserved exit signal.

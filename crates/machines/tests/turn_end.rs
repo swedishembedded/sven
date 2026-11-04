@@ -38,7 +38,7 @@ fn reply(text: &str) -> Event {
 fn announces_turn_end(effects: &[Effect]) -> bool {
     effects
         .iter()
-        .any(|e| matches!(e, Effect::Announce { event } if *event == UiEvent::TurnComplete))
+        .any(|e| matches!(e, Effect::Announce { event } if **event == UiEvent::TurnComplete))
 }
 
 fn leaves_turn_end_to_machine(effect: &Effect) -> bool {

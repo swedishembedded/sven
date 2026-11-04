@@ -4,6 +4,8 @@
 //! directly with [`sven_hsm::Hsm`] (pure, synchronous — perfect for tests) or
 //! wrapped in a `sven_kernel::ErasedRuntime` for async production use.
 
+pub mod goal;
+pub mod goal_flow;
 pub mod loop_core;
 mod loop_nudges;
 pub mod predict;

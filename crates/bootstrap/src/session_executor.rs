@@ -215,8 +215,16 @@ pub(crate) fn compose(
         .with_user_slot(Box::new(user_executor))
         .with_timers(Arc::new(SystemClock::new()))
         .with_audit_trail(audit_log_path, parts.audit_trail)
-        .with_turn(turn_executor)
-        .with_verify(verify_root);
+        .with_turn(turn_executor);
+    // A goal's check runs through the confined gate runner, which no model
+    // is ever offered; without it a check reaches no verdict.
+    let base = match sven_tools_exec::GateCommandTool::new(&verify_root) {
+        Ok(runner) => base.with_verify_commands(verify_root, Arc::new(runner)),
+        Err(e) => {
+            tracing::warn!(root = %verify_root.display(), error = %e, "check commands cannot run here");
+            base.with_verify(verify_root)
+        }
+    };
     let composed = match parts.tool_executor_override {
         Some(factory) => base.with_tool_slot(factory(parts.conv_store, parts.call_id_to_thread)),
         None => {

@@ -27,7 +27,9 @@ use sven_chunks::EXPAND_TOOL_NAME;
 use sven_model::ModelProvider;
 use sven_tool_api::events::{TodoItem, ToolEvent};
 use sven_tool_registry::ToolRegistry;
-use sven_tools_agent::{AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool, TodoTool};
+use sven_tools_agent::{
+    AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool, TodoTool, UpdateGoalTool,
+};
 use sven_tools_ctx::{ChunkExpandTool, ChunkExpander, ContextStore};
 #[cfg(feature = "document")]
 use sven_tools_document::{DocumentConvertTool, DocumentLocateTool};
@@ -426,6 +428,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
 
     register_ask_question(&mut reg, p.questions);
     reg.register(TodoTool::new(p.todos, p.tool_event_tx.clone()));
+    reg.register(UpdateGoalTool);
 
     reg.register(
         TaskTool::new(
@@ -482,6 +485,7 @@ fn build_profile_research(
 
     register_ask_question(&mut reg, questions);
     reg.register(TodoTool::new(todos, tool_event_tx.clone()));
+    reg.register(UpdateGoalTool);
 
     // Task is included for delegation; its children are held to read-only
     // modes for as long as this session is.
@@ -713,6 +717,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     let (event_tx, _event_rx) = mpsc::channel::<ToolEvent>(16);
     let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
     reg.register(TodoTool::new(todos, event_tx.clone()));
+    reg.register(UpdateGoalTool);
 
     reg.register(SkillTool::new(Shared::empty()));
 
@@ -945,6 +950,9 @@ mod tests {
             "system",
             "task",
             "todo",
+            // Deferred: a session loads it only when a goal is set, so
+            // outside a goal it costs its one-line summary.
+            "update_goal",
             "web_fetch",
             "web_search",
             "write_file",
@@ -961,6 +969,19 @@ mod tests {
         }
         expected.sort_unstable();
         assert_eq!(got, expected, "the agent's tool set changed");
+    }
+
+    /// The goal machine and the tool name the same report: the machine reads
+    /// the tool by name, from a tier that cannot depend on the tool's crate.
+    #[test]
+    fn the_goal_report_tool_is_the_one_the_goal_machine_reads() {
+        assert_eq!(
+            sven_machines::machines::goal_flow::UPDATE_GOAL_TOOL,
+            sven_tools_agent::goal::UPDATE_GOAL_TOOL
+        );
+        assert!(agent_tools()
+            .iter()
+            .any(|(name, ..)| name == sven_tools_agent::goal::UPDATE_GOAL_TOOL));
     }
 
     /// Every tool a machine allow-lists for a state must be one the agent is

@@ -10,10 +10,13 @@
 //! HTTP requests), so it does not happen here; this crate only names what to
 //! check.
 //!
-//! v1 is declarative-only by design: no `Command`/`UnitTests` shape exists
-//! yet, so there is no arbitrary-code-execution surface at all in this
-//! vocabulary. Every variant here is inherently safe to evaluate without
-//! human approval - see the (future) capability mapping this enables.
+//! Every variant but one is declarative and safe to evaluate without asking
+//! anyone. [`VerifierSpec::Command`] runs a program, so a spec that holds one
+//! needs the shell capability wherever it is evaluated
+//! ([`VerifierSpec::runs_command`]): the kernel's permission gate decides
+//! whether the state that asks for it may run one. A command is only ever
+//! written by the person or the author of the task, never by the model the
+//! check is grading.
 //!
 //! # Forward compatibility
 //!
@@ -79,6 +82,14 @@ pub enum VerifierSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body_contains: Option<String>,
     },
+    /// A command passes when it exits with status 0 within `timeout_secs`;
+    /// run in the evaluator's root, without a shell of its own.
+    Command {
+        /// The program and its arguments.
+        argv: Vec<String>,
+        /// How long it may run, in seconds.
+        timeout_secs: u64,
+    },
     /// No programmatic predicate applies - ask a human.
     ///
     /// Structurally incapable of contributing a [`VerifierVerdict::Passed`]:
@@ -110,6 +121,18 @@ pub enum VerifierSpec {
     /// unrecognized `kind`.
     #[serde(other)]
     Unsupported,
+}
+
+impl VerifierSpec {
+    /// Whether evaluating this spec runs a program, anywhere in it.
+    #[must_use]
+    pub fn runs_command(&self) -> bool {
+        match self {
+            Self::Command { .. } => true,
+            Self::All { specs } | Self::Any { specs } => specs.iter().any(Self::runs_command),
+            _ => false,
+        }
+    }
 }
 
 /// Comparison operator for [`VerifierSpec::JsonPredicate`].

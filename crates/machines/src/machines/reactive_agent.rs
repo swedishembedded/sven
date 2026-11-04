@@ -15,8 +15,18 @@
 //! └── Session
 //!     ├── Idle        ← waiting for the user's next message
 //!     ├── Generating  ← LLM turn in flight; tools executed in-state
+//!     ├── Checking    ← a standing goal's check is running
 //!     └── Compacting  ← the conversation is being summarised on request
 //! ```
+//!
+//! # A standing goal
+//!
+//! `Event::Goal` sets, pauses, resumes, clears or checks the session's goal
+//! (`super::goal_flow`). While a goal is active, a turn that settles is not
+//! the end: the goal policy (`super::goal`) runs its check (`Checking`),
+//! starts the next goal turn, or stops it - and only then does the machine
+//! come to rest and end the person's turn. A cancelled or failed turn pauses
+//! the goal; nothing continues it but the person.
 //!
 //! # Compaction on request
 //!
@@ -82,6 +92,8 @@ use sven_hsm::{
     status::Reaction,
 };
 
+use super::goal::Next;
+use super::goal_flow;
 use super::loop_core::{
     build_turn_effect, handle_tool_event, init_loop, on_llm_turn_complete, GeneratingAction,
     LoopState,
@@ -178,6 +190,8 @@ pub enum ReactiveState {
     Idle,
     /// LLM turn in flight; tool calls executed in-state.
     Generating,
+    /// A standing goal's check is running after a goal turn.
+    Checking,
     /// The conversation is being compacted on request; a turn cannot start
     /// until the executor reports back.
     Compacting,
@@ -452,9 +466,10 @@ impl Machine for ReactiveAgentMachine {
         match state {
             ReactiveState::Top => ReactiveState::Top,
             ReactiveState::Session => ReactiveState::Top,
-            ReactiveState::Idle | ReactiveState::Generating | ReactiveState::Compacting => {
-                ReactiveState::Session
-            }
+            ReactiveState::Idle
+            | ReactiveState::Generating
+            | ReactiveState::Checking
+            | ReactiveState::Compacting => ReactiveState::Session,
         }
     }
 
@@ -470,11 +485,21 @@ impl Machine for ReactiveAgentMachine {
             Top => Reaction::Ignored,
 
             // Session: drills into Idle on Init; handles global cancel.
+            // Session: drills into Idle on Init; handles global cancel and the
+            // goal commands that arrive while the machine is busy.
             Session => match event {
                 Event::Internal(InternalEvent::Init) => Reaction::goto(Idle),
                 Event::UserCancelled => {
-                    Reaction::transition(Idle, vec![], "user cancelled; returning to Idle")
+                    let effects: Vec<Effect> = goal_flow::interrupted(ctx, "the turn was stopped")
+                        .into_iter()
+                        .collect();
+                    Reaction::transition(Idle, effects, "user cancelled; returning to Idle")
                 }
+                Event::Goal(command) => match goal_flow::command(ctx, command, false) {
+                    goal_flow::Answer::Stay(effects) => Reaction::effects(effects),
+                    // A goal turn starts only at rest; a busy answer never asks for one.
+                    goal_flow::Answer::Start { announce, .. } => Reaction::effects(vec![announce]),
+                },
                 _ => Reaction::Super(Top),
             },
 
@@ -493,6 +518,13 @@ impl Machine for ReactiveAgentMachine {
                         "user sent message; starting turn",
                     )
                 }
+                Event::Goal(command) => match goal_flow::command(ctx, command, true) {
+                    goal_flow::Answer::Stay(effects) => Reaction::effects(effects),
+                    goal_flow::Answer::Start {
+                        announce,
+                        instruction,
+                    } => goal_turn(ctx, announce, &instruction),
+                },
                 Event::Internal(InternalEvent::Custom { name, .. }) if name == CONTINUE_SIGNAL => {
                     let ls = start_loop(ctx);
                     Reaction::transition(
@@ -534,12 +566,32 @@ impl Machine for ReactiveAgentMachine {
                 _ => Reaction::Super(Session),
             },
 
+            // Checking: the goal's check runs; its verdict decides what follows.
+            // A check that could not be delivered has no verdict.
+            Checking => match event {
+                Event::VerificationComplete { verdict } => checked(ctx, verdict),
+                Event::EffectFailed {
+                    kind: EffectKind::Verify,
+                    error,
+                } => checked(
+                    ctx,
+                    &sven_vocab::verify::VerifierVerdict::Unknown {
+                        reason: error.clone(),
+                    },
+                ),
+                Event::CompactRequested => Reaction::effects(vec![Self::compact_effect(Some(
+                    "the goal's check is running; wait for it to finish, then compact",
+                ))]),
+                _ => Reaction::Super(Session),
+            },
+
             // Generating: LLM turn in flight; tool loop handled in-state.
             Generating => {
                 // ── 1. Delegate tool/approval events to the shared helper ──────
                 // Returns Some for ToolSucceeded/ToolFailed/ToolApprovalRequired
                 // and for HumanApproved/HumanRejected when a tool approval is
                 // in flight.  Returns None otherwise so we can handle LLM events.
+                goal_flow::observe_result(ctx, event);
                 if let Some(r) = handle_tool_event(ctx, Self::continuation_turn, event) {
                     return r;
                 }
@@ -559,17 +611,25 @@ impl Machine for ReactiveAgentMachine {
                                 Some(ask) => Reaction::effects(vec![ask]),
                                 None => {
                                     ctx.set_fact("last_response", json!(text));
-                                    Reaction::transition(
-                                        Idle,
-                                        vec![turn_ended()],
-                                        "turn complete; final answer",
-                                    )
+                                    match goal_flow::settled(ctx) {
+                                        Some((announce, next)) => goal_step(ctx, announce, next),
+                                        None => Reaction::transition(
+                                            Idle,
+                                            vec![turn_ended()],
+                                            "turn complete; final answer",
+                                        ),
+                                    }
                                 }
                             }
                         }
-                        GeneratingAction::CallTools { tool_effects, .. } => {
+                        GeneratingAction::CallTools {
+                            tool_effects,
+                            calls,
+                            ..
+                        } => {
                             // `on_llm_turn_complete` already registered the pending
                             // calls in LoopState.  Emit CallTool effects and stay.
+                            goal_flow::observe_calls(ctx, &calls);
                             Reaction::effects(tool_effects)
                         }
                         GeneratingAction::EmptyTurn { nudge_effect } => {
@@ -583,16 +643,12 @@ impl Machine for ReactiveAgentMachine {
                     Event::LlmFailed { error } if error.starts_with(sven_hsm::TRANSIENT) => {
                         match retry_transient(ctx) {
                             Some(again) => Reaction::effects(vec![again]),
-                            None => {
-                                ctx.set_fact("last_error", json!(error));
-                                Reaction::transition(Idle, vec![turn_ended()], "turn failed")
-                            }
+                            None => failed(ctx, error),
                         }
                     }
 
                     Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
-                        ctx.set_fact("last_error", json!(error));
-                        Reaction::transition(Idle, vec![turn_ended()], "turn failed")
+                        failed(ctx, error)
                     }
 
                     _ => Reaction::Super(Session),
@@ -612,6 +668,7 @@ impl Machine for ReactiveAgentMachine {
             ReactiveState::Session,
             ReactiveState::Idle,
             ReactiveState::Generating,
+            ReactiveState::Checking,
             ReactiveState::Compacting,
         ]
     }
@@ -634,11 +691,72 @@ fn start_loop(ctx: &mut Context) -> LoopState {
     ls
 }
 
+/// Starts a goal turn with `instruction`, announcing the goal.
+fn goal_turn(ctx: &mut Context, announce: Effect, instruction: &str) -> Reaction<ReactiveState> {
+    let ls = start_loop(ctx);
+    let turn = ls.stamp(build_turn_effect(
+        CHAT_THREAD,
+        &[],
+        AGENT_MODE,
+        None,
+        Some(instruction),
+        None,
+        ls.max_rounds,
+        None,
+        None,
+    ));
+    Reaction::transition(
+        ReactiveState::Generating,
+        vec![announce, turn],
+        "the goal takes a turn",
+    )
+}
+
+/// Does what the goal policy decided after a goal turn or its check.
+fn goal_step(ctx: &mut Context, announce: Effect, next: Next) -> Reaction<ReactiveState> {
+    match next {
+        Next::Check(spec) => Reaction::transition(
+            ReactiveState::Checking,
+            vec![announce, Effect::Verify { spec }],
+            "checking the goal",
+        ),
+        Next::Continue(instruction) => goal_turn(ctx, announce, &instruction),
+        Next::Stop => Reaction::transition(
+            ReactiveState::Idle,
+            vec![announce, turn_ended()],
+            "the goal stopped",
+        ),
+    }
+}
+
+/// The goal's check answered.
+fn checked(
+    ctx: &mut Context,
+    verdict: &sven_vocab::verify::VerifierVerdict,
+) -> Reaction<ReactiveState> {
+    match goal_flow::checked(ctx, verdict) {
+        Some((announce, next)) => goal_step(ctx, announce, next),
+        // Cleared while it ran.
+        None => Reaction::transition(ReactiveState::Idle, vec![turn_ended()], "goal cleared"),
+    }
+}
+
+/// A turn failed beyond recovery: it ends, and an active goal pauses.
+fn failed(ctx: &mut Context, error: &str) -> Reaction<ReactiveState> {
+    ctx.set_fact("last_error", json!(error));
+    let mut effects: Vec<Effect> =
+        goal_flow::interrupted(ctx, &format!("the turn failed: {error}"))
+            .into_iter()
+            .collect();
+    effects.push(turn_ended());
+    Reaction::transition(ReactiveState::Idle, effects, "turn failed")
+}
+
 /// The announcement that the person's turn is over: the machine is at rest
 /// and waits for them.
 fn turn_ended() -> Effect {
     Effect::Announce {
-        event: sven_hsm::UiEvent::TurnComplete,
+        event: Box::new(sven_hsm::UiEvent::TurnComplete),
     }
 }
 

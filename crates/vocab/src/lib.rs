@@ -24,6 +24,7 @@ use serde_json::Value;
 
 mod conclusion;
 pub mod cost;
+pub mod goal;
 pub mod harness;
 pub mod ledger;
 pub mod provenance;
@@ -774,6 +775,10 @@ pub enum SessionEvent {
     Error(String),
     /// The todo list was updated.
     TodoUpdate(Vec<TodoItem>),
+    /// The session's standing goal changed (see [`goal`]): set, cleared,
+    /// checked, a turn taken, or a new status. Carries the whole goal, so a
+    /// surface shows what it last received.
+    GoalUpdated(Box<goal::GoalUpdate>),
     /// The agent mode was changed.
     ModeChanged(AgentMode),
     /// The active model was changed by the agent tool. The string is a

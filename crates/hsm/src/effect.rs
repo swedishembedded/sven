@@ -142,7 +142,7 @@ pub enum Effect {
     /// inward queue and requires no capability: it reports, it does nothing.
     Announce {
         /// What the surfaces observe.
-        event: sven_vocab::SessionEvent,
+        event: Box<sven_vocab::SessionEvent>,
     },
 }
 
@@ -171,13 +171,15 @@ impl Effect {
     /// The capability this effect exercises, if any. An effect that touches
     /// the outside world through a tool reports its capability so the
     /// permission gate can decide whether it is allowed in the current state,
-    /// and starting a child run reports [`ToolCapability::SpawnChild`] so a
-    /// state spawns only where its policy says it may.
+    /// starting a child run reports [`ToolCapability::SpawnChild`] so a
+    /// state spawns only where its policy says it may, and a verification
+    /// that runs a command reports [`ToolCapability::ExecuteShell`].
     #[must_use]
     pub fn required_capability(&self) -> Option<ToolCapability> {
         match self {
             Effect::CallTool { capability, .. } => Some(*capability),
             Effect::InstantiateSubmachine { .. } => Some(ToolCapability::SpawnChild),
+            Effect::Verify { spec } if spec.runs_command() => Some(ToolCapability::ExecuteShell),
             _ => None,
         }
     }
@@ -233,6 +235,28 @@ mod tests {
     #[test]
     fn benign_effect_has_no_capability() {
         assert_eq!(Effect::PersistAudit.required_capability(), None);
+    }
+
+    #[test]
+    fn a_verification_that_runs_a_command_is_gated_as_a_shell_call() {
+        let command = VerifierSpec::Command {
+            argv: vec!["make".into(), "test".into()],
+            timeout_secs: 60,
+        };
+        let nested = VerifierSpec::All {
+            specs: vec![command.clone()],
+        };
+        for spec in [command, nested] {
+            assert_eq!(
+                Effect::Verify { spec }.required_capability(),
+                Some(ToolCapability::ExecuteShell)
+            );
+        }
+        let file = VerifierSpec::FileExists {
+            path: "out.txt".into(),
+            min_bytes: None,
+        };
+        assert_eq!(Effect::Verify { spec: file }.required_capability(), None);
     }
 
     #[test]

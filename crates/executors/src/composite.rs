@@ -183,7 +183,7 @@ impl EffectExecutor for CompositeExecutor {
             // Nothing to carry out: the announcement is the observation.
             EffectKind::Announce => {
                 if let Effect::Announce { event } = effect {
-                    obs.emit(event);
+                    obs.emit(*event);
                 }
             }
         }
@@ -273,6 +273,19 @@ impl CompositeExecutorBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn with_verify(mut self, root: impl Into<PathBuf>) -> Self {
         self.verify = Some(Box::new(VerifyExecutor::new(root)));
+        self
+    }
+
+    /// Attach the verifier executor, jailing every `Effect::Verify` to `root`
+    /// and running its check commands with `commands` (see
+    /// [`VerifyExecutor::with_commands`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_verify_commands(
+        mut self,
+        root: impl Into<PathBuf>,
+        commands: std::sync::Arc<dyn sven_tool_api::Tool>,
+    ) -> Self {
+        self.verify = Some(Box::new(VerifyExecutor::new(root).with_commands(commands)));
         self
     }
 
