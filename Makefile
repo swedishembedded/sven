@@ -31,6 +31,18 @@ CARGO_FLAGS ?= --jobs $(JOBS)
 # and test binaries run as many tests at once.
 export CARGO_BUILD_JOBS ?= $(JOBS)
 export RUST_TEST_THREADS ?= $(JOBS)
+# Tests never see the person's own sven: every test target runs with sven's
+# configuration, data, cache and state directories under target/test-home,
+# so no test can read or change the sign-in, stored keys, connector tokens or
+# kept sessions, whatever it does by mistake. The top-level make empties it
+# when a test target first needs it, so nothing carries over between runs
+# and nothing piles up; `cargo clean` removes it with the rest of target/.
+TEST_HOME_DIR := $(CURDIR)/target/test-home
+TEST_HOME = $(eval TEST_HOME := $(TEST_HOME_DIR))$(if $(filter 0,$(MAKELEVEL)),$(shell rm -rf '$(TEST_HOME_DIR)' && mkdir -p '$(TEST_HOME_DIR)'))$(TEST_HOME)
+test test/%: export XDG_CONFIG_HOME = $(TEST_HOME)/config
+test test/%: export XDG_DATA_HOME = $(TEST_HOME)/data
+test test/%: export XDG_CACHE_HOME = $(TEST_HOME)/cache
+test test/%: export XDG_STATE_HOME = $(TEST_HOME)/state
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 TAG     := v$(VERSION)
 DIST    ?= dist

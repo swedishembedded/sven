@@ -98,6 +98,28 @@ pub struct Config {
     pub ocr: OcrConfig,
 }
 
+/// What a machine knows about reaching a provider beyond the configuration:
+/// where it is when the entry names no URL (a running brain, the server
+/// signed in to) and the key stored for it. Tests give their own, so the
+/// outcome never depends on the sign-in or keys of the machine they run on.
+trait ProviderLookup {
+    fn base_url(&self, entry: &sven_model_drivers::ProviderEntry) -> Option<String>;
+    fn key(&self, entry: &sven_model_drivers::ProviderEntry) -> Option<String>;
+}
+
+/// The machine sven runs on.
+struct ThisMachine;
+
+impl ProviderLookup for ThisMachine {
+    fn base_url(&self, entry: &sven_model_drivers::ProviderEntry) -> Option<String> {
+        sven_model_drivers::provider_base_url(entry)
+    }
+
+    fn key(&self, entry: &sven_model_drivers::ProviderEntry) -> Option<String> {
+        sven_model_drivers::provider_key(entry)
+    }
+}
+
 impl Config {
     /// The sven service a key has been provided for: a `providers.sven`
     /// entry with a key, or the server `sven auth login` signed in to. Where
@@ -105,15 +127,16 @@ impl Config {
     /// `WebSearchConfig::backend`).
     #[must_use]
     pub fn sven_search_endpoint(&self) -> Option<sven_tools_web::SvenEndpoint> {
-        self.sven_search_endpoint_with(sven_model_drivers::provider_key)
+        self.sven_search_endpoint_with(&ThisMachine)
     }
 
-    /// [`Self::sven_search_endpoint`], with `key_of` finding an entry's key.
+    /// [`Self::sven_search_endpoint`], with `machine` saying how a provider
+    /// is reached.
     fn sven_search_endpoint_with(
         &self,
-        key_of: impl Fn(&sven_model_drivers::ProviderEntry) -> Option<String>,
+        machine: &impl ProviderLookup,
     ) -> Option<sven_tools_web::SvenEndpoint> {
-        self.provider_endpoint_with(sven_model_drivers::sven_service::PROVIDER, key_of)
+        self.provider_endpoint_with(sven_model_drivers::sven_service::PROVIDER, machine)
     }
 
     /// Where speech is transcribed: the `provider` named (default: the sven
@@ -125,15 +148,15 @@ impl Config {
     pub fn voice_endpoint(&self, provider: Option<&str>) -> Option<sven_tools_web::SvenEndpoint> {
         self.provider_endpoint_with(
             provider.unwrap_or(sven_model_drivers::sven_service::PROVIDER),
-            sven_model_drivers::provider_key,
+            &ThisMachine,
         )
     }
 
-    /// The base URL and key of the provider `name`, `key_of` finding the key.
+    /// The base URL and key of the provider `name`, as `machine` reaches it.
     fn provider_endpoint_with(
         &self,
         name: &str,
-        key_of: impl Fn(&sven_model_drivers::ProviderEntry) -> Option<String>,
+        machine: &impl ProviderLookup,
     ) -> Option<sven_tools_web::SvenEndpoint> {
         let entry = self.providers.get(name).cloned().unwrap_or_else(|| {
             sven_model_drivers::ProviderEntry {
@@ -141,10 +164,9 @@ impl Config {
                 ..Default::default()
             }
         });
-        let base_url = sven_model_drivers::provider_base_url(&entry)?;
         Some(sven_tools_web::SvenEndpoint {
-            base_url,
-            api_key: key_of(&entry)?,
+            base_url: machine.base_url(&entry)?,
+            api_key: machine.key(&entry)?,
         })
     }
 
@@ -264,27 +286,48 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use sven_model_drivers::ProviderEntry as Entry;
+
+    /// The server the test machine is signed in to.
+    const SIGNED_IN: &str = "https://signed-in.example/v1";
+
+    /// A machine signed in to [`SIGNED_IN`], whose stored keys `.0` finds;
+    /// an entry's own URL wins, as on any machine.
+    struct Machine<K>(K);
+
+    impl<K: Fn(&sven_model_drivers::ProviderEntry) -> Option<String>> super::ProviderLookup
+        for Machine<K>
+    {
+        fn base_url(&self, entry: &sven_model_drivers::ProviderEntry) -> Option<String> {
+            Some(entry.base_url.clone().unwrap_or_else(|| SIGNED_IN.into()))
+        }
+
+        fn key(&self, entry: &sven_model_drivers::ProviderEntry) -> Option<String> {
+            (self.0)(entry)
+        }
+    }
+
     /// "A sven API key has been provided": a `providers.sven` entry with its
     /// base URL and a key makes it the search service; without a key, or
     /// without the entry, there is none.
     #[test]
     fn a_sven_provider_with_a_key_is_the_search_service() {
-        let no_key = |_: &sven_model_drivers::ProviderEntry| None;
-        let stored = |entry: &sven_model_drivers::ProviderEntry| {
+        let no_key = Machine(|_: &Entry| None);
+        let stored = Machine(|entry: &Entry| {
             (entry.name == "sven" && entry.api_key.is_none()).then(|| "signed-in".to_string())
-        };
-        let configured = |entry: &sven_model_drivers::ProviderEntry| entry.api_key.clone();
+        });
+        let configured = Machine(|entry: &Entry| entry.api_key.clone());
         let mut cfg = Config::default();
         assert_eq!(
-            cfg.sven_search_endpoint_with(no_key),
+            cfg.sven_search_endpoint_with(&no_key),
             None,
             "no key, no search service"
         );
         // Signed in to the hosted service (`sven auth login` stored its key).
         assert_eq!(
-            cfg.sven_search_endpoint_with(stored),
+            cfg.sven_search_endpoint_with(&stored),
             Some(sven_tools_web::SvenEndpoint {
-                base_url: "https://sven.swedishembedded.com/v1".into(),
+                base_url: SIGNED_IN.into(),
                 api_key: "signed-in".into(),
             })
         );
@@ -299,7 +342,7 @@ mod tests {
             },
         );
         assert_eq!(
-            cfg.sven_search_endpoint_with(configured),
+            cfg.sven_search_endpoint_with(&configured),
             Some(sven_tools_web::SvenEndpoint {
                 base_url: "https://sven.example/v1".into(),
                 api_key: "service_key".into(),
@@ -324,16 +367,16 @@ mod tests {
             },
         );
         assert_eq!(
-            cfg.voice_endpoint(Some("local")),
+            cfg.provider_endpoint_with("local", &Machine(|entry: &Entry| entry.api_key.clone())),
             Some(sven_tools_web::SvenEndpoint {
                 base_url: "http://127.0.0.1:9/v1".into(),
                 api_key: "local_key".into(),
             })
         );
         assert_eq!(
-            cfg.provider_endpoint_with("sven", |_| Some("k".into()))
+            cfg.provider_endpoint_with("sven", &Machine(|_: &Entry| Some("k".into())))
                 .map(|e| e.base_url),
-            Some("https://sven.swedishembedded.com/v1".into()),
+            Some(SIGNED_IN.into()),
             "no name given means the sven service"
         );
     }
