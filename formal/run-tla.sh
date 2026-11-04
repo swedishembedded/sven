@@ -71,7 +71,8 @@ suite=(
   "Goal|GoalExecutorEndsTurn.cfg|violates:NoWorkAfterTheAnswerEnded|the turn executor ending the person's turn after every reply runs the goal's next turn after the answer closed"
   "Goal|GoalSurfaceContinues.cfg|violates:NoGoalTurnUnlessActive|a surface sending the continuation runs a turn of a goal the person had paused"
   "Goal|GoalReportDecides.cfg|violates:CompletionNeedsAPassingCheck|the model's report completes a goal whose check has not passed"
-  "Goal|GoalStopRace.cfg|gap:NoWorkAfterTheAnswerEnded|turn ends name no input: a stopped answer's late end closes the next answer"
+  "Goal|GoalStopRace.cfg|pass|stopped at any moment, a stopped answer's late end never closes the next: every end names its answer"
+  "Goal|GoalNoAnswerIds.cfg|violates:NoWorkAfterTheAnswerEnded|turn ends that name no answer let a stopped answer's late end close the next one"
 )
 
 # Workers: TLC's own default is 1. Capped rather than unbounded because the

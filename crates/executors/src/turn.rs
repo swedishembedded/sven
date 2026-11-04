@@ -47,6 +47,9 @@
 //! user deliberately cut short. `UiEvent::Aborted` is terminal on its own
 //! (see every consumer: `RuntimeRunner`, `KernelAgent`, ACP's prompt loop),
 //! so unlike the error path it is not followed by a separate `TurnComplete`.
+//! A request that carries `machine_ends_turn` gets no `Aborted` from here
+//! either: its machine ends the stopped turn itself, once, and a cut-off
+//! reply's text is reported as `TextComplete`.
 //!
 //! A cut-off nobody asked for (the thinking-token or thinking-time watchdog)
 //! still ends the turn this way, but is preceded by a `UiEvent::Error` naming
@@ -619,6 +622,7 @@ impl EffectExecutor for TurnExecutor {
             thread_id.clone(),
             Arc::clone(&partial_text),
             obs.clone(),
+            self.machine_ends_turn,
         );
 
         let result = tokio::select! {
@@ -699,9 +703,7 @@ impl EffectExecutor for TurnExecutor {
                     &thread_id,
                     vec![Message::assistant(&persisted)],
                 );
-                obs.emit(UiEvent::Aborted {
-                    partial_text: partial,
-                });
+                interrupted::report_cut(obs, partial, self.machine_ends_turn);
                 let _ = sink.emit(Event::UserCancelled).await;
                 return;
             }

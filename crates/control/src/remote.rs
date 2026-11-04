@@ -382,6 +382,7 @@ mod tests {
                     event: ControlEvent::Session {
                         session_id: session,
                         event: SessionEvent::TextDelta("Hel".into()),
+                        answer_id: None,
                     },
                 },
                 EventEnvelope {
@@ -393,6 +394,7 @@ mod tests {
                             name: "list_dir".into(),
                             args: serde_json::json!({"path": "."}),
                         }),
+                        answer_id: None,
                     },
                 },
                 EventEnvelope {
@@ -406,6 +408,7 @@ mod tests {
                             is_error: false,
                             images: Vec::new(),
                         },
+                        answer_id: None,
                     },
                 },
                 EventEnvelope {
@@ -413,6 +416,7 @@ mod tests {
                     event: ControlEvent::Session {
                         session_id: session,
                         event: SessionEvent::TurnComplete,
+                        answer_id: None,
                     },
                 },
                 EventEnvelope {

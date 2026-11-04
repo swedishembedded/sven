@@ -61,7 +61,10 @@
 //! can still be followed by a clarification question or a transient retry,
 //! which only the machine knows about. The machine announces `TurnComplete`
 //! (`Effect::Announce`) on the transitions that bring it to rest after a
-//! turn; a cancelled turn is ended by the executor's `Aborted` instead.
+//! turn. A turn the person stops is ended by the machine too, with
+//! `Aborted`, exactly once whatever was in flight (a model reply already in,
+//! a tool, the goal's check); the executor then only reports what a cut-off
+//! reply had said.
 //!
 //! # The bounded clarification post-check
 //!
@@ -576,6 +579,7 @@ impl Machine for ReactiveAgentMachine {
             // Checking: the goal's check runs; its verdict decides what follows.
             // A check that could not be delivered has no verdict.
             Checking => match event {
+                Event::UserCancelled => cut(ctx),
                 Event::VerificationComplete { verdict } => checked(ctx, verdict),
                 Event::EffectFailed {
                     kind: EffectKind::Verify,
@@ -608,6 +612,7 @@ impl Machine for ReactiveAgentMachine {
                     reset_transient_retries(ctx);
                 }
                 match event {
+                    Event::UserCancelled => cut(ctx),
                     Event::CompactRequested => Reaction::effects(vec![Self::compact_effect(Some(
                         "a turn is running; stop it or wait for it to finish, then compact",
                     ))]),
@@ -700,6 +705,26 @@ pub(super) fn turn_ended() -> Effect {
     Effect::Announce {
         event: Box::new(sven_hsm::UiEvent::TurnComplete),
     }
+}
+
+/// The person stopped the turn: a goal it worked on pauses, and the turn
+/// ends here, once. Its executor only reports what a cut-off reply had
+/// said, so the ending never depends on what was in flight (a model reply
+/// already in, a tool, the goal's check) when the stop came.
+fn cut(ctx: &mut Context) -> Reaction<ReactiveState> {
+    let mut effects: Vec<Effect> = goal_flow::interrupted(ctx, "the turn was stopped")
+        .into_iter()
+        .collect();
+    effects.push(Effect::Announce {
+        event: Box::new(sven_hsm::UiEvent::Aborted {
+            partial_text: String::new(),
+        }),
+    });
+    Reaction::transition(
+        ReactiveState::Idle,
+        effects,
+        "the person stopped the turn; it ends here",
+    )
 }
 
 /// Times a turn that failed for a reason that may not recur (a dropped

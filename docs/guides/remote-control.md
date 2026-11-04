@@ -121,6 +121,15 @@ server as `GoalUpdated`, and the goal is kept with the conversation. `sven rc` t
 (when it connects and when asked), so the server's interface can offer
 them as you type.
 
+Every message a session takes is one answer, ended once, by `TurnComplete`
+or, when you stop it, `Aborted`. A server names the answer it shows for a
+message (`answer_id` on `send_input`), and every event `sven rc` sends for
+that answer carries the name back, so an answer you stopped never ends or
+fills the next one, however late its last events arrive. A message sent
+right after a stop waits until the stopped turn has ended (ten seconds at
+most); one sent while an answer is still running is refused with a note,
+since the session would not see it.
+
 Each session calls models through the server, with the token, so the
 server's model list and its billing apply.
 

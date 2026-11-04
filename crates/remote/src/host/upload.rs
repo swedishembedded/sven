@@ -162,6 +162,7 @@ mod tests {
                     data: "A".repeat(image_bytes),
                 }],
             },
+            answer_id: None,
         }))
     }
 

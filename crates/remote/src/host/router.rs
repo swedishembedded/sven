@@ -14,6 +14,7 @@ use sven_machines::AgentEvent;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use super::answers::Input;
 use super::upload::Upload;
 use super::{slash, SessionActor, SessionCommand, SessionContext, SESSION_QUEUE};
 
@@ -52,7 +53,11 @@ async fn route(
         ControlCommand::SetModel { session_id, model } => {
             (session_id, SessionCommand::Model(model))
         }
-        ControlCommand::SendInput { session_id, text } => (session_id, SessionCommand::Input(text)),
+        ControlCommand::SendInput {
+            session_id,
+            text,
+            answer_id,
+        } => (session_id, SessionCommand::Input(Input { text, answer_id })),
         ControlCommand::CancelSession { session_id } => (session_id, SessionCommand::Cancel),
         ControlCommand::ReportGoal { session_id } => (session_id, SessionCommand::ReportGoal),
         ControlCommand::ApproveTool {
@@ -103,11 +108,17 @@ async fn route(
             return;
         }
     };
+    // A refused input's answer is ended under its own name.
+    let answer_id = match &message {
+        SessionCommand::Input(input) => input.answer_id.clone(),
+        _ => None,
+    };
     if !sessions.contains_key(&session_id) && !room_for_one_more(sessions) {
         tracing::warn!("session {session_id}: refused, {MAX_LIVE_SESSIONS} sessions are open");
         report(
             context,
             session_id,
+            answer_id,
             "This computer already has as many conversations open as it takes. Close one, or restart `sven rc`.",
         );
         return;
@@ -133,7 +144,7 @@ async fn route(
                 actor.task.abort();
             }
             tracing::warn!("session {session_id} stopped taking its commands; stopped it");
-            report_stopped(context, session_id);
+            report_stopped(context, session_id, answer_id);
         }
     }
 }
@@ -154,25 +165,28 @@ fn room_for_one_more(sessions: &mut HashMap<Uuid, Mailbox>) -> bool {
 
 /// Ends the waiting answer of a session the router had to stop, without
 /// waiting on the uploader: the person sees why, and can send again.
-fn report_stopped(context: &SessionContext, session_id: Uuid) {
+fn report_stopped(context: &SessionContext, session_id: Uuid, answer_id: Option<String>) {
     report(
         context,
         session_id,
+        answer_id,
         "This conversation stopped responding and was restarted. Send your last message again.",
     );
 }
 
 /// Ends the waiting answer of `session_id` with `message`, without waiting
 /// on the uploader.
-fn report(context: &SessionContext, session_id: Uuid, message: &str) {
+fn report(context: &SessionContext, session_id: Uuid, answer_id: Option<String>, message: &str) {
     let events = [
         ControlEvent::Session {
             session_id,
             event: AgentEvent::Error(message.into()),
+            answer_id: answer_id.clone(),
         },
         ControlEvent::Session {
             session_id,
             event: AgentEvent::TurnComplete,
+            answer_id,
         },
         ControlEvent::SessionState {
             session_id,
@@ -283,7 +297,7 @@ mod tests {
         let mut told = false;
         while let Ok(Upload::Event(event)) = uploaded.try_recv() {
             told |= matches!(*event,
-                ControlEvent::Session { session_id, event: AgentEvent::Error(_) } if session_id == refused);
+                ControlEvent::Session { session_id, event: AgentEvent::Error(_), .. } if session_id == refused);
         }
         assert!(told, "the refused conversation is told");
 
@@ -337,7 +351,7 @@ mod tests {
         }
         assert!(
             told.iter().any(|event| matches!(event,
-                ControlEvent::Session { session_id, event: AgentEvent::Error(_) } if *session_id == wedged)),
+                ControlEvent::Session { session_id, event: AgentEvent::Error(_), .. } if *session_id == wedged)),
             "its conversation is told it stopped: {told:?}"
         );
     }

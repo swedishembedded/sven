@@ -27,6 +27,7 @@ pub(super) struct RecordOnDrop {
     thread_id: String,
     partial_text: Arc<Mutex<String>>,
     obs: ObservationSink,
+    machine_ends_turn: bool,
     armed: bool,
 }
 
@@ -36,12 +37,14 @@ impl RecordOnDrop {
         thread_id: String,
         partial_text: Arc<Mutex<String>>,
         obs: ObservationSink,
+        machine_ends_turn: bool,
     ) -> Self {
         Self {
             store,
             thread_id,
             partial_text,
             obs,
+            machine_ends_turn,
             armed: true,
         }
     }
@@ -80,8 +83,20 @@ impl Drop for RecordOnDrop {
             &self.thread_id,
             vec![Message::assistant(&persisted)],
         );
-        self.obs.emit(UiEvent::Aborted {
+        report_cut(&self.obs, partial, self.machine_ends_turn);
+    }
+}
+
+/// Tells observers what a cut-off reply had said. A turn its machine ends
+/// is ended by that machine, once, whatever was in flight when it was
+/// stopped: the text so far is then only the reply's text (`TextComplete`),
+/// never a second ending. Any other turn ends here, with `Aborted`.
+pub(super) fn report_cut(obs: &ObservationSink, partial: String, machine_ends_turn: bool) {
+    if !machine_ends_turn {
+        obs.emit(UiEvent::Aborted {
             partial_text: partial,
         });
+    } else if !partial.is_empty() {
+        obs.emit(UiEvent::TextComplete(partial));
     }
 }

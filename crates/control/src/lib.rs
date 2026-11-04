@@ -67,7 +67,16 @@ pub enum ControlCommand {
     },
 
     /// Submit a text message to an active session.
-    SendInput { session_id: Uuid, text: String },
+    SendInput {
+        session_id: Uuid,
+        text: String,
+        /// The answer the server shows for this input: the host tags every
+        /// event of it with this id ([`ControlEvent::Session::answer_id`]),
+        /// so an event of an answer the server already ended (stopped) never
+        /// lands in the next one. Absent from an older server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_id: Option<String>,
+    },
 
     /// Switch the model of an active session.
     ///
@@ -160,6 +169,11 @@ pub enum ControlEvent {
     Session {
         session_id: Uuid,
         event: sven_vocab::SessionEvent,
+        /// The answer the event belongs to: the `answer_id` of the input it
+        /// answers. Absent when the input carried none (an older server) or
+        /// the event answers no input of the server's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_id: Option<String>,
     },
 
     /// A tool call requires operator approval before executing.
@@ -359,6 +373,7 @@ pub fn ui_event_to_control(ev: sven_hsm::UiEvent, session_id: Uuid) -> ControlEv
     ControlEvent::Session {
         session_id,
         event: ev,
+        answer_id: None,
     }
 }
 
@@ -479,6 +494,7 @@ mod tests {
         let cmd = ControlCommand::SendInput {
             session_id: Uuid::new_v4(),
             text: "do the thing".into(),
+            answer_id: None,
         };
         match control_command_to_kernel_event(&cmd) {
             Some(sven_hsm::Event::UserMessage { text }) => assert_eq!(text, "do the thing"),
@@ -524,7 +540,11 @@ mod tests {
     fn ui_text_delta_wraps_as_session_event_with_session_id() {
         let sid = Uuid::new_v4();
         match ui_event_to_control(sven_hsm::UiEvent::TextDelta("hi".into()), sid) {
-            ControlEvent::Session { session_id, event } => {
+            ControlEvent::Session {
+                session_id,
+                event,
+                answer_id: None,
+            } => {
                 assert_eq!(session_id, sid);
                 assert!(matches!(event, sven_vocab::SessionEvent::TextDelta(d) if d == "hi"));
             }
@@ -586,7 +606,8 @@ mod tests {
         assert_eq!(
             control_command_session_id(&ControlCommand::SendInput {
                 session_id: sid,
-                text: "x".into()
+                text: "x".into(),
+                answer_id: None,
             }),
             Some(sid)
         );

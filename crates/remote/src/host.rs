@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use sven_bootstrap::Config;
 use sven_control::{ControlCommand, ControlEvent, HistoryEntry, SessionState};
-use sven_frontend::{RequestError, SessionController, SessionOptions, SessionSpec};
+use sven_frontend::{SessionController, SessionOptions, SessionSpec};
 use sven_machines::AgentEvent;
 use sven_model::Message;
 use sven_model_drivers::ModelConfig;
@@ -38,8 +38,11 @@ use crate::approvals::{PendingApprovals, RemoteApprovals, APPROVAL_TIMEOUT};
 use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused, UnreadableCommand};
 use crate::login::RemoteLogin;
 use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
+use answers::{sleep_until, Answers};
 use upload::{upload_loop, Upload};
 
+mod answers;
+mod commands;
 mod describe;
 mod hosted;
 mod router;
@@ -259,7 +262,7 @@ enum SessionCommand {
         replace: bool,
     },
     Model(String),
-    Input(String),
+    Input(answers::Input),
     /// The server's answer to a tool call waiting for permission.
     Decide {
         call_id: String,
@@ -298,6 +301,12 @@ struct SessionActor {
     /// Each running tool call's description and when it started, to tell
     /// the server how long it ran.
     running: HashMap<String, (Instant, describe::Described)>,
+    /// The answers waiting for the session's ending (`answers.rs`).
+    answers: Answers,
+    /// The answer of the input being handled, and whether the session was
+    /// asked to end it (else the host ends it itself).
+    asking: Option<String>,
+    expecting: bool,
     events_tx: mpsc::Sender<AgentEvent>,
     events_rx: mpsc::Receiver<AgentEvent>,
 }
@@ -318,6 +327,9 @@ impl SessionActor {
             closed: false,
             approvals: PendingApprovals::default(),
             running: HashMap::new(),
+            answers: Answers::default(),
+            asking: None,
+            expecting: false,
             events_tx,
             events_rx,
         }
@@ -329,12 +341,18 @@ impl SessionActor {
 
     async fn run(mut self, mut commands: mpsc::Receiver<SessionCommand>) {
         loop {
+            let deadline = self.answers.deadline();
             tokio::select! {
                 command = commands.recv() => match command {
                     Some(command) => self.handle(command).await,
                     None => break,
                 },
                 Some(event) = self.events_rx.recv() => self.forward(event).await,
+                () = sleep_until(deadline), if deadline.is_some() => {
+                    tracing::debug!("session {}: a stopped answer never ended", self.id);
+                    self.answers.give_up();
+                    self.release_held().await;
+                }
             }
         }
     }
@@ -364,7 +382,11 @@ impl SessionActor {
                 }
             }
             SessionCommand::Model(model) => self.model = Some(model),
-            SessionCommand::Input(text) => self.answer(text).await,
+            SessionCommand::Input(input) => {
+                if let Some(input) = self.answers.admit(input, Instant::now()) {
+                    self.take(input).await;
+                }
+            }
             SessionCommand::Decide { call_id, approved } => {
                 if !self.approvals.decide(&call_id, approved) {
                     tracing::debug!(
@@ -374,6 +396,9 @@ impl SessionActor {
                 }
             }
             SessionCommand::Cancel => {
+                if self.working {
+                    self.answers.stop();
+                }
                 if let Some(controller) = &self.controller {
                     controller.cancel().await;
                 }
@@ -413,6 +438,7 @@ impl SessionActor {
         let (events_tx, events_rx) = mpsc::channel(1024);
         self.events_tx = events_tx;
         self.events_rx = events_rx;
+        self.answers.forget();
         if self.working {
             self.state(SessionState::Idle).await;
         }
@@ -469,6 +495,13 @@ impl SessionActor {
                 }
             }
         };
+        // The session ignores a message while its turn runs, and the answer
+        // would never end: refused, not lost.
+        if self.working {
+            self.reply("A turn is running. Stop it or wait for it to finish, then send again.")
+                .await;
+            return;
+        }
         if let Err(e) = self.submit(text).await {
             self.fail(&format!("{e:#}")).await;
         }
@@ -533,6 +566,7 @@ impl SessionActor {
     async fn submit(&mut self, text: String) -> anyhow::Result<()> {
         let model = self.model_config()?;
         self.state(SessionState::Running).await;
+        self.expect_ending();
         match &mut self.controller {
             Some(controller) => {
                 controller
@@ -546,110 +580,6 @@ impl SessionActor {
             }
         }
         Ok(())
-    }
-
-    /// `/compact`: the session summarises its conversation now. The answer
-    /// is the kernel's own: `ContextCompacted` with the summary, or a warning
-    /// when there is nothing to summarise, then `TurnComplete`. What the
-    /// kernel cannot answer is answered here, so the server never waits for
-    /// an ending that will not come: a turn still running (the request is
-    /// refused, never queued) and a mode that cannot compact.
-    async fn compact(&mut self) {
-        if self.working {
-            self.reply("Cannot compact now: a turn is running. Stop it or wait for it to finish.")
-                .await;
-            return;
-        }
-        if let Err(e) = self.start_compaction().await {
-            self.fail(&format!("{e:#}")).await;
-        }
-    }
-
-    async fn start_compaction(&mut self) -> anyhow::Result<()> {
-        self.ensure_controller().await?;
-        self.state(SessionState::Running).await;
-        let Some(controller) = &self.controller else {
-            return Ok(());
-        };
-        match controller.compact().await {
-            Ok(()) => Ok(()),
-            Err(e @ RequestError::Unsupported { .. }) => {
-                self.reply(&format!("{e}.")).await;
-                Ok(())
-            }
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Opens the live session if there is none, on the conversation kept.
-    async fn ensure_controller(&mut self) -> anyhow::Result<()> {
-        if self.controller.is_none() {
-            let model = self.model_config()?;
-            self.controller = Some(self.open_controller(model).await?);
-        }
-        Ok(())
-    }
-
-    /// `/goal ...`: hands the command to the session. At rest the answer is
-    /// the session's own (the goal's announcement and its end); a command
-    /// while a turn runs only changes what follows it.
-    async fn goal_command(&mut self, command: GoalCommand) {
-        // The same goal asked for again - the server repeating the request a
-        // stopped host was working on, or the person - continues it instead
-        // of starting it over.
-        let command = match (&command, &self.goal) {
-            (GoalCommand::Set { objective, .. }, Some(kept))
-                if kept.objective == objective.trim()
-                    && (kept.status.is_resumable() || kept.status.is_active()) =>
-            {
-                GoalCommand::Resume
-            }
-            _ => command,
-        };
-        if let Err(e) = self.ensure_controller().await {
-            self.fail(&format!("{e:#}")).await;
-            return;
-        }
-        let at_rest = !self.working;
-        if at_rest {
-            self.state(SessionState::Running).await;
-        }
-        let Some(controller) = &self.controller else {
-            return;
-        };
-        match controller.goal(command, at_rest).await {
-            Ok(()) => {}
-            Err(e @ RequestError::Unsupported { .. }) if at_rest => {
-                self.reply(&format!("{e}.")).await;
-            }
-            Err(e @ RequestError::Unsupported { .. }) => {
-                self.upload(AgentEvent::Warning(e.to_string())).await;
-            }
-            Err(e) => self.fail(&format!("{e:#}")).await,
-        }
-    }
-
-    /// The goal as it stands: the running session's, else the one kept for
-    /// it (a session this run has not opened).
-    fn current_goal(&self) -> Option<Goal> {
-        match &self.controller {
-            Some(controller) => controller.current_goal(),
-            None => self
-                .goal
-                .clone()
-                .or_else(|| self.context.sessions.load_goal(self.id)),
-        }
-    }
-
-    /// Keeps the goal the session announced, beside its conversation.
-    fn keep_goal(&mut self, goal: Option<Goal>) {
-        if self.closed {
-            return;
-        }
-        if let Err(e) = self.context.sessions.save_goal(self.id, goal.as_ref()) {
-            tracing::warn!("session {}: could not keep its goal: {e:#}", self.id);
-        }
-        self.goal = goal;
     }
 
     /// Starts the session over with no conversation: the live one is let go
@@ -668,19 +598,53 @@ impl SessionActor {
         }
     }
 
+    /// Takes one input of the server's, as the answer it names.
+    async fn take(&mut self, input: answers::Input) {
+        self.asking = input.answer_id;
+        self.expecting = false;
+        self.answer(input.text).await;
+        self.asking = None;
+    }
+
+    /// The inputs held behind a stopped answer, once it ended.
+    async fn release_held(&mut self) {
+        while let Some(input) = self.answers.release() {
+            self.take(input).await;
+        }
+    }
+
+    /// The session is asked for the answer of the input being handled.
+    fn expect_ending(&mut self) {
+        self.answers.expect(self.asking.clone());
+        self.expecting = true;
+    }
+
     /// Answers a command the host carried out itself, ending the answer.
     async fn reply(&mut self, text: &str) {
         println!("[{}]   {}", self.short(), printable(text));
-        self.upload(AgentEvent::TextDelta(text.to_string())).await;
-        self.upload(AgentEvent::TurnComplete).await;
-        self.state(SessionState::Idle).await;
+        self.end_asked(AgentEvent::TextDelta(text.to_string()))
+            .await;
     }
 
     /// Reports a failure the session itself never saw, ending the answer.
     async fn fail(&mut self, message: &str) {
         println!("[{}] ! {}", self.short(), printable(message));
-        self.upload(AgentEvent::Error(message.to_string())).await;
-        self.upload(AgentEvent::TurnComplete).await;
+        self.end_asked(AgentEvent::Error(message.to_string())).await;
+    }
+
+    /// Ends the answer of the input being handled with `last`; the session,
+    /// if it was asked for it, no longer ends it. The state goes back to idle
+    /// only when no other answer is being written.
+    async fn end_asked(&mut self, last: AgentEvent) {
+        if std::mem::take(&mut self.expecting) {
+            self.answers.withdraw();
+        }
+        let id = self.asking.clone();
+        self.upload(last, id.clone()).await;
+        self.upload(AgentEvent::TurnComplete, id).await;
+        if self.answers.writing() {
+            return;
+        }
         self.state(SessionState::Idle).await;
     }
 
@@ -710,7 +674,7 @@ impl SessionActor {
         // loses none of the work it did.
         let checkpoint = finished || matches!(event, AgentEvent::ToolCallFinished { .. });
         let described = self.describe(&event);
-        self.upload(event).await;
+        self.upload(event, self.answers.current()).await;
         if let Some(described) = described {
             self.send(described).await;
         }
@@ -719,7 +683,9 @@ impl SessionActor {
         }
         if finished {
             println!("[{}] done", self.short());
+            self.answers.ended();
             self.state(SessionState::Idle).await;
+            self.release_held().await;
         }
     }
 
@@ -773,10 +739,11 @@ impl SessionActor {
         }
     }
 
-    async fn upload(&self, event: AgentEvent) {
+    async fn upload(&self, event: AgentEvent, answer_id: Option<String>) {
         let event = ControlEvent::Session {
             session_id: self.id,
             event,
+            answer_id,
         };
         let _ = self
             .context
@@ -1331,6 +1298,100 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// The person stops a goal and at once sends the next request. The
+    /// server already ended the stopped answer and shows the new one; every
+    /// event the stopped turn still sends names the stopped answer, so it
+    /// never ends or fills the new one, and the new request waits for the
+    /// stopped turn instead of being lost to it.
+    #[tokio::test]
+    async fn a_stopped_answers_late_events_never_reach_the_next_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (uploads, mut sent) = mpsc::channel(UPLOAD_QUEUE);
+        let (asks, _asks_open) = mpsc::channel(8);
+        let context = Arc::new(SessionContext {
+            config: Arc::new(mock_config()),
+            working_dir: dir.path().to_path_buf(),
+            hosted: false,
+            wide_access: true,
+            openai_base_url: String::new(),
+            token: String::new(),
+            uploads,
+            sessions: SessionStore::new(dir.path().join("kept")),
+            asks,
+            mcp_tools_wait_ms: 0,
+        });
+        let mut actor = SessionActor::new(Uuid::new_v4(), context);
+        let model = ModelConfig {
+            provider: "mock".into(),
+            name: "mock-model".into(),
+            ..ModelConfig::default()
+        };
+        actor.controller = Some(actor.open_controller(model).await.expect("opens"));
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        let input = |text: &str, id: &str| {
+            SessionCommand::Input(answers::Input {
+                text: text.into(),
+                answer_id: Some(id.into()),
+            })
+        };
+        commands
+            .send(input("/goal tidy the readme", "a"))
+            .await
+            .unwrap();
+        commands.send(SessionCommand::Cancel).await.unwrap();
+        commands.send(input("/goal resume", "b")).await.unwrap();
+
+        let mut tagged = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let upload = tokio::time::timeout_at(deadline, sent.recv())
+                .await
+                .expect("the next answer ends in time")
+                .expect("the session is alive");
+            let Upload::Event(event) = upload else {
+                continue;
+            };
+            let ControlEvent::Session {
+                event, answer_id, ..
+            } = *event
+            else {
+                continue;
+            };
+            let ending = matches!(event, AgentEvent::TurnComplete | AgentEvent::Aborted { .. });
+            tagged.push((answer_id.clone(), ending));
+            if ending && answer_id.as_deref() == Some("b") {
+                break;
+            }
+        }
+        task.abort();
+
+        assert!(
+            tagged.iter().all(|(id, _)| id.is_some()),
+            "every event names its answer: {tagged:?}"
+        );
+        let first_of_b = tagged
+            .iter()
+            .position(|(id, _)| id.as_deref() == Some("b"))
+            .unwrap();
+        let (before, after) = tagged.split_at(first_of_b);
+        assert!(
+            before
+                .iter()
+                .any(|(id, ending)| *ending && id.as_deref() == Some("a")),
+            "the stopped answer ended before the next began: {tagged:?}"
+        );
+        assert!(
+            after.iter().all(|(id, _)| id.as_deref() == Some("b")),
+            "nothing of the stopped answer lands in the next: {tagged:?}"
+        );
+        assert_eq!(
+            after.iter().filter(|(_, ending)| *ending).count(),
+            1,
+            "the next answer ends once: {tagged:?}"
+        );
     }
 
     #[test]

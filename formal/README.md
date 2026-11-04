@@ -230,11 +230,13 @@ The model found two things the first implementation got wrong or did not
 say. A command sent while an answer was open could be dispatched once the
 kernel was at rest, start a goal turn and end an answer nobody was waiting
 for; `Event::Goal` now carries `awaits_answer`, and only a command the person
-waits for starts work or ends a turn. And a turn's end names no input, so a
-stopped answer's late end closes the next answer the person opened - for a
-plain message as much as a goal. That one is the protocol's, not the goal's,
-and stays in the suite as a gap (`GoalStopRace.cfg`) until turn ends carry
-the input they answer.
+waits for starts work or ends a turn. And a turn's end named no input, so a
+stopped answer's late end closed the next answer the person opened - for a
+plain message as much as a goal. Every answer is named now (`answer_id`, from
+the server's `send_input` to every event `sven rc` sends for it) and the
+machine ends a stopped turn itself, once, whatever was in flight:
+`GoalStopRace.cfg` (stop at any moment) passes, and `GoalNoAnswerIds.cfg`
+keeps the unnamed protocol as the rejected design.
 
 ### `lean/Sven/Goal.lean` -- the goal policy decides honestly for every value
 

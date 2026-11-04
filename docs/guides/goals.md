@@ -96,6 +96,8 @@ speaks to it with the same `/goal` line:
   runs: `echo '/goal --check "cargo test" fix the tests' | sven --headless`.
 - **Editors** (ACP): a prompt that is a `/goal` line sets or steers the goal,
   and `/goal` alone answers with how it stands.
+- **Programs** (`sven-sdk`): `Agent::goal` sets or steers the goal and runs
+  it until it stops; `AgentState::goal()` reads it ([SDK](../reference/sdk.md#standing-goals)).
 
 A goal that was running when its session stopped (a restart, a resumed
 session, a change of mode or model) comes back **paused**: the work it was

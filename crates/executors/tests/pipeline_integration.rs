@@ -256,7 +256,9 @@ impl sven_model::ModelProvider for HangingProvider {
 /// `Event::UserCancelled` (not `Event::LlmFailed`) so the machine returns
 /// cleanly to `Idle` rather than a failure state, and never emit a
 /// `UiEvent::TurnComplete` (superseded by `Aborted`, which every consumer
-/// already treats as terminal on its own).
+/// already treats as terminal on its own). This machine ends its own turns,
+/// so the cut-off text comes as the reply's `TextComplete` and the machine
+/// ends the turn with exactly one `Aborted`.
 #[tokio::test]
 async fn cancelling_mid_stream_preserves_partial_text_and_reports_aborted() {
     use sven_executors::CompositeExecutorBuilder;
@@ -324,32 +326,24 @@ async fn cancelling_mid_stream_preserves_partial_text_and_reports_aborted() {
     let sender = cancel_handle.lock().await.take();
     drop(sender);
 
-    // Collect observations until Aborted (or the deadline).
+    // Everything the stop sends, a second end included, arrives in this window.
     let mut events: Vec<UiEvent> = Vec::new();
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(500);
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        tokio::select! {
-            Ok(ev) = rt_obs_rx.recv() => {
-                let is_aborted = matches!(ev, UiEvent::Aborted { .. });
-                events.push(ev);
-                if is_aborted { break; }
-            }
-            _ = tokio::time::sleep(remaining) => break,
-        }
+    let window = tokio::time::Instant::now() + tokio::time::Duration::from_millis(500);
+    while let Ok(Ok(ev)) = tokio::time::timeout_at(window, rt_obs_rx.recv()).await {
+        events.push(ev);
     }
 
-    let aborted = events.iter().find_map(|ev| match ev {
-        UiEvent::Aborted { partial_text } => Some(partial_text.clone()),
-        _ => None,
-    });
+    let at = |want: fn(&UiEvent) -> bool| events.iter().position(want);
+    let ended = |ev: &UiEvent| matches!(ev, UiEvent::Aborted { .. });
     assert_eq!(
-        aborted.as_deref(),
-        Some("partial reply"),
-        "Aborted must carry the text streamed before cancellation: {events:?}"
+        events.iter().filter(|ev| ended(ev)).count(),
+        1,
+        "one end: {events:?}"
+    );
+    let reply = at(|ev| *ev == UiEvent::TextComplete("partial reply".into()));
+    assert!(
+        reply < at(ended) && reply.is_some(),
+        "partial text first: {events:?}"
     );
     assert!(
         !events.contains(&UiEvent::TurnComplete),
