@@ -5,9 +5,17 @@
 //! session's actor without ever waiting on one, starts an actor on first
 //! sight and again after it died, and stops one that stopped taking its
 //! commands, so no conversation can hold up another.
+//!
+//! It also keeps only the conversations in use connected: one nobody has
+//! written to for [`RELEASE_AFTER`] is released (its record kept, its next
+//! message opens it again), and a full host makes room for a new one by
+//! releasing the one idle longest. A session whose turn runs (a tool, an
+//! approval waited on) is never released.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use sven_control::{ControlCommand, ControlEvent, SessionState};
 use sven_machines::AgentEvent;
@@ -23,8 +31,99 @@ use super::{slash, SessionActor, SessionCommand, SessionContext, SESSION_QUEUE};
 /// conversation from wherever it is open (`sven rc attach`, the server).
 pub(super) async fn router(mut rx: mpsc::Receiver<ControlCommand>, context: Arc<SessionContext>) {
     let mut sessions: HashMap<Uuid, Mailbox> = HashMap::new();
-    while let Some(command) = rx.recv().await {
-        route(command, &mut sessions, &context).await;
+    let mut check = tokio::time::interval(RELEASE_CHECK);
+    loop {
+        tokio::select! {
+            command = rx.recv() => match command {
+                Some(command) => route(command, &mut sessions, &context).await,
+                None => break,
+            },
+            _ = check.tick() => release_idle(&mut sessions, Instant::now()),
+        }
+    }
+}
+
+/// How long a session nobody has written to stays connected.
+const RELEASE_AFTER: Duration = Duration::from_secs(10 * 60);
+
+/// How often the router looks for sessions to release.
+const RELEASE_CHECK: Duration = Duration::from_secs(60);
+
+/// What a session's actor tells the router about itself: whether a turn
+/// runs, and when it was last in use.
+pub(super) struct Activity {
+    working: AtomicBool,
+    last: Mutex<Instant>,
+}
+
+impl Default for Activity {
+    fn default() -> Self {
+        Self {
+            working: AtomicBool::new(false),
+            last: Mutex::new(Instant::now()),
+        }
+    }
+}
+
+impl Activity {
+    /// A turn started (true) or ended (false); either way it is in use now.
+    pub(super) fn set_working(&self, working: bool) {
+        self.working.store(working, Ordering::Release);
+        self.touch();
+    }
+
+    /// In use now.
+    pub(super) fn touch(&self) {
+        self.set_last(Instant::now());
+    }
+
+    fn set_last(&self, at: Instant) {
+        *self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = at;
+    }
+
+    /// How long it has been idle, or `None` while a turn runs.
+    fn idle_for(&self, now: Instant) -> Option<Duration> {
+        if self.working.load(Ordering::Acquire) {
+            return None;
+        }
+        let last = *self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Some(now.saturating_duration_since(last))
+    }
+}
+
+/// Releases every session idle for [`RELEASE_AFTER`]: it saves its record and
+/// ends, so it holds no agent; its next message starts it again from that
+/// record. A session whose turn runs is left alone, however long it runs.
+fn release_idle(sessions: &mut HashMap<Uuid, Mailbox>, now: Instant) {
+    let idle: Vec<Uuid> = sessions
+        .iter()
+        .filter(|(_, actor)| {
+            actor
+                .activity
+                .idle_for(now)
+                .is_some_and(|idle| idle >= RELEASE_AFTER)
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    for id in idle {
+        release(sessions, id);
+    }
+}
+
+/// Lets session `id` go: it saves its record and ends. One that cannot take
+/// the command is stopped instead; its record is as it last saved it.
+fn release(sessions: &mut HashMap<Uuid, Mailbox>, id: Uuid) {
+    if let Some(actor) = sessions.remove(&id) {
+        tracing::debug!("session {id}: released");
+        if actor.commands.try_send(SessionCommand::Release).is_err() {
+            actor.task.abort();
+        }
     }
 }
 
@@ -134,6 +233,7 @@ async fn route(
     let actor = sessions
         .entry(session_id)
         .or_insert_with(|| Mailbox::start(session_id, context));
+    actor.activity.touch();
     match actor.commands.try_send(message) {
         Ok(()) => {}
         // Its actor ended (it panicked): this command starts it again.
@@ -162,11 +262,23 @@ async fn route(
 /// bound a server could open them until the person's machine runs out.
 const MAX_LIVE_SESSIONS: usize = 32;
 
-/// Whether one more session may start, after forgetting those whose actor
-/// has ended (a closed or finished conversation's).
+/// Whether one more session may start: after forgetting those whose actor
+/// has ended (a closed or finished conversation's), and else releasing the
+/// session idle longest. Only when every session's turn runs is there none.
 fn room_for_one_more(sessions: &mut HashMap<Uuid, Mailbox>) -> bool {
     if sessions.len() >= MAX_LIVE_SESSIONS {
         sessions.retain(|_, actor| !actor.task.is_finished());
+    }
+    if sessions.len() >= MAX_LIVE_SESSIONS {
+        let now = Instant::now();
+        let longest = sessions
+            .iter()
+            .filter_map(|(id, actor)| actor.activity.idle_for(now).map(|idle| (*id, idle)))
+            .max_by_key(|(_, idle)| *idle)
+            .map(|(id, _)| id);
+        if let Some(id) = longest {
+            release(sessions, id);
+        }
     }
     sessions.len() < MAX_LIVE_SESSIONS
 }
@@ -218,15 +330,20 @@ fn report(context: &SessionContext, session_id: Uuid, answer_id: Option<String>,
 struct Mailbox {
     commands: mpsc::Sender<SessionCommand>,
     task: tokio::task::AbortHandle,
+    /// Whether its turn runs, and when it was last in use.
+    activity: Arc<Activity>,
 }
 
 impl Mailbox {
     fn start(session_id: Uuid, context: &Arc<SessionContext>) -> Self {
         let (commands, rx) = mpsc::channel(SESSION_QUEUE);
-        let task = tokio::spawn(SessionActor::new(session_id, Arc::clone(context)).run(rx));
+        let activity = Arc::new(Activity::default());
+        let actor = SessionActor::new(session_id, Arc::clone(context), Arc::clone(&activity));
+        let task = tokio::spawn(actor.run(rx));
         Self {
             commands,
             task: task.abort_handle(),
+            activity,
         }
     }
 }
@@ -250,6 +367,7 @@ pub(super) fn list_slash_commands(context: &SessionContext) {
 mod tests {
     use super::*;
     use crate::sessions::SessionStore;
+    use std::time::{Duration, Instant};
 
     type Uploaded = mpsc::Receiver<Upload>;
 
@@ -279,18 +397,78 @@ mod tests {
     }
 
     fn live_mailbox() -> Mailbox {
+        mailbox(true, Duration::ZERO).0
+    }
+
+    /// A session's mailbox whose actor never reads it: working (a turn
+    /// running) or not, last active `idle_for` ago; and what it is sent.
+    fn mailbox(working: bool, idle_for: Duration) -> (Mailbox, mpsc::Receiver<SessionCommand>) {
         let (commands, receiver) = mpsc::channel(SESSION_QUEUE);
-        std::mem::forget(receiver);
-        Mailbox {
-            commands,
-            task: tokio::spawn(std::future::pending::<()>()).abort_handle(),
-        }
+        let activity = Arc::new(Activity::default());
+        activity.set_working(working);
+        activity.set_last(Instant::now() - idle_for);
+        (
+            Mailbox {
+                commands,
+                task: tokio::spawn(std::future::pending::<()>()).abort_handle(),
+                activity,
+            },
+            receiver,
+        )
+    }
+
+    fn released(receiver: &mut mpsc::Receiver<SessionCommand>) -> bool {
+        matches!(receiver.try_recv(), Ok(SessionCommand::Release))
+    }
+
+    /// A conversation nobody has written to for RELEASE_AFTER is let go:
+    /// its record is kept and its next message opens it again. One whose
+    /// turn runs (a tool, an approval waited on) is never let go, however
+    /// long it has run.
+    #[tokio::test]
+    async fn an_idle_session_is_released_and_a_working_one_never_is() {
+        let (old_idle, mut old_idle_rx) = mailbox(false, RELEASE_AFTER + Duration::from_secs(60));
+        let (old_working, mut old_working_rx) = mailbox(true, RELEASE_AFTER * 6);
+        let (recent, mut recent_rx) = mailbox(false, Duration::from_secs(60));
+        let ids = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+        let mut sessions =
+            HashMap::from([(ids[0], old_idle), (ids[1], old_working), (ids[2], recent)]);
+        release_idle(&mut sessions, Instant::now());
+        assert!(!sessions.contains_key(&ids[0]) && released(&mut old_idle_rx));
+        assert!(sessions.contains_key(&ids[1]) && !released(&mut old_working_rx));
+        assert!(sessions.contains_key(&ids[2]) && !released(&mut recent_rx));
+    }
+
+    /// A host full of conversations takes a new one in place of the one
+    /// idle longest, never one whose turn runs.
+    #[tokio::test]
+    async fn a_new_conversation_takes_the_place_of_the_session_idle_longest() {
+        let (_dir, context, _uploaded) = test_context();
+        let mut sessions: HashMap<Uuid, Mailbox> = (0..MAX_LIVE_SESSIONS - 2)
+            .map(|_| (Uuid::new_v4(), live_mailbox()))
+            .collect();
+        let (longest, mut longest_rx) = mailbox(false, Duration::from_secs(300));
+        let (shorter, mut shorter_rx) = mailbox(false, Duration::from_secs(30));
+        let (longest_id, shorter_id) = (Uuid::new_v4(), Uuid::new_v4());
+        sessions.insert(longest_id, longest);
+        sessions.insert(shorter_id, shorter);
+        let next = Uuid::new_v4();
+        route(
+            ControlCommand::CancelSession { session_id: next },
+            &mut sessions,
+            &context,
+        )
+        .await;
+        assert!(sessions.contains_key(&next));
+        assert!(!sessions.contains_key(&longest_id) && released(&mut longest_rx));
+        assert!(sessions.contains_key(&shorter_id) && !released(&mut shorter_rx));
     }
 
     /// The server chooses session ids, and each session holds an agent (and
     /// may start MCP servers): a server cannot open more than
-    /// [`MAX_LIVE_SESSIONS`] at once on a person's machine. One more is
-    /// refused and its conversation told why; an ended one frees its place.
+    /// [`MAX_LIVE_SESSIONS`] at once on a person's machine. With every one of
+    /// them working, one more is refused and its conversation told why; an
+    /// ended one frees its place.
     #[tokio::test]
     async fn a_server_cannot_open_sessions_without_end() {
         let (_dir, context, mut uploaded) = test_context();
@@ -334,6 +512,7 @@ mod tests {
             Mailbox {
                 commands,
                 task: stuck.abort_handle(),
+                activity: Arc::default(),
             },
         )]);
         let cancel = |session_id| ControlCommand::CancelSession { session_id };

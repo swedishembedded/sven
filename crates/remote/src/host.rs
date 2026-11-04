@@ -264,6 +264,10 @@ enum SessionCommand {
     },
     Model(String),
     Input(answers::Input),
+    /// Let go of the session to free what it holds: its record is saved and
+    /// the actor ends; the next command for it starts it again from that
+    /// record (`router::release_idle`). Sent only while no turn runs.
+    Release,
     /// The server's answer to a tool call waiting for permission.
     Decide {
         call_id: String,
@@ -297,6 +301,10 @@ struct SessionActor {
     /// Closed: nothing is kept for it any more, even by an answer that was
     /// still finishing.
     closed: bool,
+    /// Released by the router: its record is saved and the actor ends.
+    released: bool,
+    /// What the router reads to decide when to release it.
+    activity: Arc<router::Activity>,
     /// This session's tool calls waiting for the server's permission.
     approvals: PendingApprovals,
     /// Each running tool call's description and when it started, to tell
@@ -313,7 +321,7 @@ struct SessionActor {
 }
 
 impl SessionActor {
-    fn new(id: Uuid, context: Arc<SessionContext>) -> Self {
+    fn new(id: Uuid, context: Arc<SessionContext>, activity: Arc<router::Activity>) -> Self {
         let (events_tx, events_rx) = mpsc::channel(1024);
         Self {
             id,
@@ -326,6 +334,8 @@ impl SessionActor {
             controller: None,
             working: false,
             closed: false,
+            released: false,
+            activity,
             approvals: PendingApprovals::default(),
             running: HashMap::new(),
             answers: Answers::default(),
@@ -345,7 +355,12 @@ impl SessionActor {
             let deadline = self.answers.deadline();
             tokio::select! {
                 command = commands.recv() => match command {
-                    Some(command) => self.handle(command).await,
+                    Some(command) => {
+                        self.handle(command).await;
+                        if self.released {
+                            break;
+                        }
+                    }
                     None => break,
                 },
                 Some(event) = self.events_rx.recv() => self.forward(event).await,
@@ -411,6 +426,15 @@ impl SessionActor {
                     goal: goal.map(Box::new),
                 })
                 .await;
+            }
+            SessionCommand::Release => {
+                // Never while a turn runs: the router releases only an idle
+                // session, and one that became busy since keeps going.
+                if self.working {
+                    return;
+                }
+                self.keep();
+                self.released = true;
             }
             SessionCommand::Close => {
                 self.closed = true;
@@ -763,6 +787,7 @@ impl SessionActor {
 
     async fn state(&mut self, state: SessionState) {
         self.working = state == SessionState::Running;
+        self.activity.set_working(self.working);
         let event = ControlEvent::SessionState {
             session_id: self.id,
             state,
@@ -995,7 +1020,7 @@ mod tests {
             asks,
             mcp_tools_wait_ms,
         });
-        SessionActor::new(Uuid::new_v4(), context)
+        SessionActor::new(Uuid::new_v4(), context, Arc::default())
     }
 
     /// An MCP server over Streamable HTTP with one tool, `ping`, that lists
@@ -1258,7 +1283,7 @@ mod tests {
         assert_eq!(kept.status, GoalStatus::Blocked);
         assert_eq!(kept.turns_used, 3);
 
-        let mut again = SessionActor::new(actor.id, Arc::clone(&actor.context));
+        let mut again = SessionActor::new(actor.id, Arc::clone(&actor.context), Arc::default());
         again
             .handle(SessionCommand::Open {
                 mode: AgentMode::Agent,
@@ -1294,7 +1319,7 @@ mod tests {
         kept.status = GoalStatus::Paused;
         context.sessions.save_goal(id, Some(&kept)).unwrap();
 
-        let mut actor = SessionActor::new(id, Arc::clone(&context));
+        let mut actor = SessionActor::new(id, Arc::clone(&context), Arc::default());
         actor.handle(SessionCommand::ReportGoal).await;
         assert!(actor.controller.is_none(), "nothing was opened to answer");
         let Some(Upload::Event(event)) = sent.recv().await else {
@@ -1331,7 +1356,7 @@ mod tests {
             asks,
             mcp_tools_wait_ms: 0,
         });
-        let mut actor = SessionActor::new(Uuid::new_v4(), context);
+        let mut actor = SessionActor::new(Uuid::new_v4(), context, Arc::default());
         let model = ModelConfig {
             provider: "mock".into(),
             name: "mock-model".into(),

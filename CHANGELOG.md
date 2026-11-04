@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **harness**: `type: file` inputs, `publish:` steps that keep a task's outputs with a checkpoint, `retry: never`, packages that carry their skills and scripts, and `sven harness work`, the worker of a run a server serves (`sven_control::work`).
 
 ### Changed
+- **remote**: a host keeps only the conversations in use connected: one nobody has written to for 10 minutes is released (its record kept, its next message opens it again), and a host with 32 open makes room for a new one by releasing the one idle longest. A conversation whose turn runs, a tool or an approval included, is never released.
 - **remote**: every answer is named: a server names the answer it shows for a message (`answer_id` on `send_input`) and `sven rc` names it again on every event of that answer, so an answer the person stopped never ends or fills the next one, however late its last events arrive. A message sent right after a stop waits for the stopped turn to end (ten seconds at most); one sent while a turn runs is refused with a note instead of being lost.
 - **machines**: the reactive agent ends the person's turn itself when it comes to rest, and ends a stopped turn itself, exactly once, whatever was in flight; the turn executor reports a cut-off reply's text as `TextComplete`.
 
