@@ -12,6 +12,7 @@ sven-cost     = { path = "../cost" }
 sven-model-catalog = { path = "../model-catalog" }
 sven-decision = { path = "../decision" }
 sven-hsm      = { path = "../hsm" }
+sven-http     = { path = "../http" }
 sven-rt       = { path = "../rt" }
 sven-kernel   = { path = "../kernel" }
 sven-tool-api = { path = "../tool-api" }

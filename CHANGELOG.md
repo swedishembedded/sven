@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **remote**: the sign-in code pasted into `sven auth login` is masked as it is entered: the terminal shows its first and last ten characters, as the server's page does.
 
+### Fixed
+- **verify**: an HTTP verifier reaches its URL again: it built reqwest's default client, which has no TLS provider since the crypto library was unified, and panicked.
+
 ## [4.4.4] - 2026-11-03
 
 ### Fixed

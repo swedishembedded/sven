@@ -143,7 +143,21 @@ pub fn evaluate<'a>(
                 expect_status,
                 body_contains,
             } => {
-                let response = match reqwest::get(url).await {
+                // The workspace's client: it installs the TLS provider
+                // reqwest is built without (`sven_http::client_builder`).
+                let response = match sven_http::client_builder()
+                    .build()
+                    .map_err(|e| e.to_string())
+                    .map(|client| client.get(url))
+                {
+                    Ok(request) => request.send().await,
+                    Err(e) => {
+                        return VerifierVerdict::Unknown {
+                            reason: format!("{url}: no HTTP client: {e}"),
+                        }
+                    }
+                };
+                let response = match response {
                     Ok(r) => r,
                     Err(e) => {
                         return VerifierVerdict::Unknown {
