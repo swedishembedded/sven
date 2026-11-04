@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.5] - 2026-11-04
+
 ### Security
 - **ci**: release and CI workflows are read-only except the job that publishes a release, and every third-party action and `cross` is pinned to a commit.
 - **remote**: a server can open at most 32 sessions at once on one `sven rc` host; the command stream no longer drops when TCP splits a character or a line end.
