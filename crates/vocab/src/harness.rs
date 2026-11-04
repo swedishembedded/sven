@@ -23,6 +23,16 @@ use serde_json::Value;
 /// The run-scoped fields (plan and bundle digests, the inputs) travel with
 /// [`SessionEvent::Harness`](crate::SessionEvent::Harness) together with the run id that links the run's
 /// events across a suspend and a resume; each variant carries what belongs
+/// A file a finished task handed its host.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PublishedFile {
+    /// The file's workspace-relative path.
+    pub path: String,
+    /// The digest of the path and the file's bytes, as the harness's digest
+    /// tool computes it.
+    pub digest: String,
+}
+
 /// to that one event.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -114,6 +124,17 @@ pub enum HarnessEvent {
         item: String,
         /// The item's index in the frozen collection, from 0.
         index: u64,
+    },
+    /// A finished task handed its files to the host, each with its digest.
+    /// The host checkpoints here: everything before it is done.
+    Published {
+        /// The publish step.
+        step: String,
+        /// The task whose files these are.
+        task: String,
+        /// Each file's workspace-relative path and digest, in the order the
+        /// task names them.
+        files: Vec<PublishedFile>,
     },
     /// An agent asked to set a run variable.
     VariableSet {
@@ -291,6 +312,9 @@ impl std::fmt::Display for HarnessEvent {
                 f,
                 "loop `{step}` started item `{item}` (#{index}, start {attempt})"
             ),
+            Self::Published { task, files, .. } => {
+                write!(f, "task `{task}` published {} file(s)", files.len())
+            }
             Self::ItemCompleted { step, item, index } => {
                 write!(f, "loop `{step}` completed item `{item}` (#{index})")
             }

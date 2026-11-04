@@ -49,7 +49,12 @@ impl DigestFilesTool {
 
     /// One group's digest: each path with the SHA-256 of its bytes, or
     /// `absent` when there is no such file.
-    async fn group(&self, call: &ToolCall, paths: &[Value]) -> Result<String, ToolOutput> {
+    async fn group(
+        &self,
+        call: &ToolCall,
+        paths: &[Value],
+        require: bool,
+    ) -> Result<String, ToolOutput> {
         let mut hasher = Sha256::new();
         for path in paths {
             let Some(path) = path.as_str() else {
@@ -68,6 +73,9 @@ impl DigestFilesTool {
                         &call.id,
                         format!("{path} is larger than the {MAX_BYTES} bytes a digest reads"),
                     ))
+                }
+                _ if require => {
+                    return Err(ToolOutput::err(&call.id, format!("{path} is not a file")))
                 }
                 Ok(_) => "not-a-file".to_string(),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => "absent".to_string(),
@@ -106,6 +114,10 @@ impl Tool for DigestFilesTool {
                     "type": "object",
                     "description": "Group name to the workspace-relative paths in it",
                     "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                },
+                "require": {
+                    "type": "boolean",
+                    "description": "Refuse a path that is not a file instead of digesting it as absent"
                 }
             },
             "required": ["groups"],
@@ -133,6 +145,13 @@ impl Tool for DigestFilesTool {
         if groups.len() > MAX_GROUPS {
             return ToolOutput::err(&call.id, format!("more than {MAX_GROUPS} groups"));
         }
+        // A publication must hand over files that are there: with `require`
+        // a missing path is refused instead of digesting as absent.
+        let require = call
+            .args
+            .get("require")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let mut answer = Map::new();
         for (name, paths) in groups {
             let Some(paths) = paths.as_array().filter(|p| p.len() <= MAX_COVERS) else {
@@ -141,7 +160,7 @@ impl Tool for DigestFilesTool {
                     format!("group `{name}` must be a list of at most {MAX_COVERS} paths"),
                 );
             };
-            match self.group(call, paths).await {
+            match self.group(call, paths, require).await {
                 Ok(digest) => {
                     answer.insert(name.clone(), Value::String(digest));
                 }
@@ -189,6 +208,25 @@ mod tests {
         std::fs::write(dir.path().join("b.h"), "x").unwrap();
         let (_, appeared) = digests(&dir, ask).await;
         assert_ne!(changed["m"], appeared["m"], "a file that was absent exists");
+    }
+
+    #[tokio::test]
+    async fn require_refuses_a_file_that_is_not_there() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.c"), "one").unwrap();
+        let (is_error, _) = digests(
+            &dir,
+            json!({ "groups": { "a.c": ["a.c"] }, "require": true }),
+        )
+        .await;
+        assert!(!is_error);
+        let (is_error, answer) = digests(
+            &dir,
+            json!({ "groups": { "b.h": ["b.h"] }, "require": true }),
+        )
+        .await;
+        assert!(is_error);
+        assert!(answer.to_string().contains("b.h is not a file"), "{answer}");
     }
 
     #[tokio::test]

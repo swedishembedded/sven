@@ -83,6 +83,7 @@ pub fn admit(decl: &VariableDecl, value: Value) -> Result<Value, String> {
     };
     let fits = match decl.ty {
         IOType::String => value.is_string(),
+        IOType::File => IOType::File.matches(&value),
         IOType::Number => value.is_number(),
         IOType::Boolean => value.is_boolean(),
         IOType::Json => true,
@@ -109,6 +110,7 @@ pub fn admit(decl: &VariableDecl, value: Value) -> Result<Value, String> {
 fn io_name(ty: &IOType) -> &'static str {
     match ty {
         IOType::String => "string",
+        IOType::File => "workspace file path",
         IOType::Number => "number",
         IOType::Boolean => "boolean",
         IOType::Json => "JSON value",

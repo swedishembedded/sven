@@ -505,6 +505,9 @@ impl HarnessMachine {
                 if self.is_gate_step(&inflight.step) {
                     return self.gate_settled(&mut run, &inflight.step, Ok(observation), ctx);
                 }
+                if self.is_publish_step(&inflight.step) {
+                    return self.publish_settled(&mut run, &inflight.step, Ok(observation), ctx);
+                }
                 if self.is_iterate_step(&inflight.step) {
                     return self.snapshot_settled(&mut run, &inflight.step, Ok(observation), ctx);
                 }
@@ -516,6 +519,9 @@ impl HarnessMachine {
             } if Some(done) == inflight.call_id.as_ref() => {
                 if self.is_gate_step(&inflight.step) {
                     return self.gate_settled(&mut run, &inflight.step, Err(error), ctx);
+                }
+                if self.is_publish_step(&inflight.step) {
+                    return self.publish_settled(&mut run, &inflight.step, Err(error), ctx);
                 }
                 if self.is_iterate_step(&inflight.step) {
                     return self.snapshot_settled(&mut run, &inflight.step, Err(error), ctx);
@@ -654,6 +660,7 @@ pub(super) fn primitive_word(primitive: &PlanPrimitive) -> &'static str {
         PlanPrimitive::Return { .. } => "return",
         PlanPrimitive::Fail { .. } => "fail",
         PlanPrimitive::Gate { .. } => "gate",
+        PlanPrimitive::Publish { .. } => "publish",
         PlanPrimitive::Iterate { .. } => "iterate",
     }
 }
@@ -682,7 +689,9 @@ pub(super) fn then_of(primitive: &PlanPrimitive) -> String {
         | PlanPrimitive::Verify { then, .. }
         | PlanPrimitive::Assign { then, .. }
         | PlanPrimitive::Delegate { then, .. } => then.clone(),
-        PlanPrimitive::Gate { then, .. } | PlanPrimitive::Iterate { then, .. } => then.clone(),
+        PlanPrimitive::Gate { then, .. }
+        | PlanPrimitive::Iterate { then, .. }
+        | PlanPrimitive::Publish { then, .. } => then.clone(),
         PlanPrimitive::Branch { .. }
         | PlanPrimitive::Return { .. }
         | PlanPrimitive::Fail { .. } => String::new(),

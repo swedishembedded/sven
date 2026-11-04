@@ -79,6 +79,7 @@ pub struct HarnessRun {
     workspace: Option<sven_tool_api::PathScope>,
     /// Told of a checkpoint whenever a `for_each` item has completed.
     item_checkpoint: Option<ItemCheckpointSink>,
+    publication: Option<PublicationSink>,
     /// Told of the conversations that changed whenever an item has finished.
     pub(super) item_conversations: Option<live_trajectory::ConversationSink>,
     /// Whether the trajectory file a gate reads outlives the run.
@@ -91,6 +92,22 @@ pub struct HarnessRun {
 
 /// Receives the checkpoint a host asked for at each completed work item.
 type ItemCheckpointSink = Box<dyn Fn(HarnessCheckpoint) + Send + Sync>;
+type PublicationSink = Box<dyn Fn(Publication) + Send + Sync>;
+
+/// A finished task's files, handed to the host with a checkpoint taken right
+/// after: keep both together and a run killed later resumes past the task,
+/// with the files it left.
+#[derive(Clone, Debug)]
+pub struct Publication {
+    /// The publish step.
+    pub step: String,
+    /// The task whose files these are.
+    pub task: String,
+    /// Each file's workspace-relative path and digest.
+    pub files: Vec<sven_vocab::PublishedFile>,
+    /// The run as it rests after the publication.
+    pub checkpoint: HarnessCheckpoint,
+}
 
 struct RestoredMachine {
     machine: Box<dyn ErasedMachine>,
@@ -163,6 +180,7 @@ impl HarnessRun {
             evidence: None,
             workspace: None,
             item_checkpoint: None,
+            publication: None,
             item_conversations: None,
             keep_trajectory_file: false,
             scratchpad_choice: None,
@@ -270,6 +288,35 @@ impl HarnessRun {
         self
     }
 
+    /// Hands `sink` every publication of a task that names `publish:`, with
+    /// a checkpoint of the run as it rests after it. A host that keeps the
+    /// files and the checkpoint together resumes a killed run past every
+    /// task it published, and can replace a published file before resuming:
+    /// the tasks after it then read the replacement.
+    #[must_use]
+    pub fn on_publish(mut self, sink: impl Fn(Publication) + Send + Sync + 'static) -> Self {
+        self.publication = Some(Box::new(sink));
+        self
+    }
+
+    /// Gives the host's publication sink each publication `records` hold,
+    /// with the run as it rests at `snapshot`.
+    fn hand_publications(&self, records: &[TraceRecord], snapshot: &Snapshot) {
+        let Some(sink) = &self.publication else {
+            return;
+        };
+        for record in records {
+            if let TraceRecord::Published { step, task, files } = record {
+                sink(Publication {
+                    step: step.clone(),
+                    task: task.clone(),
+                    files: files.clone(),
+                    checkpoint: checkpoint_at(snapshot.clone(), &self.plan.digest, &self.run_id),
+                });
+            }
+        }
+    }
+
     /// Gives the host's item-checkpoint sink the run as it rests at
     /// `snapshot`, when an item has just completed.
     fn checkpoint_item(&self, completed_loops: &[String], snapshot: &Snapshot) {
@@ -349,6 +396,9 @@ impl HarnessRun {
             Some(_) => None,
             None => Some(self.fresh_data()?),
         };
+        if fresh.is_some() {
+            check_input_files(&self.plan, &self.inputs, root.as_deref())?;
+        }
         let recorded = restored_state
             .as_ref()
             .and_then(|state| state.run_values().scratchpad);
@@ -631,7 +681,7 @@ impl HarnessRun {
                         tap_open = changed.is_ok();
                         let latest = tap.borrow_and_update().clone();
                         if let Some(snapshot) = latest {
-                            let completed_loops = publish_trace(
+                            let (completed_loops, published) = publish_trace(
                                 &snapshot.context,
                                 &mut emitted_trace,
                                 &self.trace_tx,
@@ -640,12 +690,13 @@ impl HarnessRun {
                                 &mut observed,
                             );
                             self.checkpoint_item(&completed_loops, &snapshot);
+                            self.hand_publications(&published, &snapshot);
                             live_trajectory::hand_over_finished(handoff.as_mut(), &completed_loops);
                         }
                     },
                     captured = settled.as_mut() => match captured {
                         Some(snapshot) => {
-                            let completed_loops = publish_trace(
+                            let (completed_loops, published) = publish_trace(
                                 &snapshot.context,
                                 &mut emitted_trace,
                                 &self.trace_tx,
@@ -654,6 +705,7 @@ impl HarnessRun {
                                 &mut observed,
                             );
                             self.checkpoint_item(&completed_loops, &snapshot);
+                            self.hand_publications(&published, &snapshot);
                             live_trajectory::hand_over_finished(handoff.as_mut(), &completed_loops);
                             // A capture is only served when the machine has
                             // nothing left to do; two in a row over the very
@@ -699,13 +751,22 @@ impl HarnessRun {
             .await
             .map_err(|e| CallError::Infrastructure(anyhow::anyhow!(e)))?;
         let run_state = HarnessRunState::load(&report.ctx);
-        publish_trace(
+        let (_, published) = publish_trace(
             &report.ctx,
             &mut emitted_trace,
             &self.trace_tx,
             &self.events,
             &self.run_id,
             &mut observed,
+        );
+        // A task that published right before the run ended is handed over
+        // too, with the run as it ended.
+        self.hand_publications(
+            &published,
+            &Snapshot {
+                state: report.state_label.clone(),
+                context: report.ctx.clone(),
+            },
         );
         let result = outcome_of(&report.state_label, report.ctx.fact(OUTCOME_FACT));
         let state_label = report.state_label.clone();
@@ -786,4 +847,46 @@ pub struct HarnessFailure {
     pub code: String,
     /// What the failure means, for a person reading the outcome.
     pub message: String,
+}
+
+/// A fresh run's `file` inputs must name files that are in its workspace
+/// before anything starts: the host lays the tree out, the harness reads it.
+fn check_input_files(
+    plan: &sven_harness_spec::HarnessPlan,
+    inputs: &Value,
+    root: Option<&std::path::Path>,
+) -> Result<(), CallError> {
+    let Some(declared) = &plan.inputs else {
+        return Ok(());
+    };
+    let mut problems = Vec::new();
+    for (name, input) in declared {
+        if input.ty != sven_harness_spec::IOType::File {
+            continue;
+        }
+        let Some(path) = inputs.get(name).and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(root) = root else {
+            problems.push(format!(
+                "`{name}` names a file, but the run has no workspace"
+            ));
+            continue;
+        };
+        let inside = root
+            .join(path)
+            .canonicalize()
+            .ok()
+            .filter(|real| root.canonicalize().is_ok_and(|r| real.starts_with(r)));
+        match inside {
+            Some(real) if real.is_file() => {}
+            Some(_) => problems.push(format!("`{name}`: {path} is not a file")),
+            None => problems.push(format!("`{name}`: {path} is not a file in the workspace")),
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(CallError::Precondition(problems.join("; ")))
+    }
 }

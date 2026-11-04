@@ -523,7 +523,7 @@ fn captured(
             "false" => Value::Bool(false),
             other => return Err(format!("`{other}` is not true or false")),
         },
-        IOType::String => Value::String(text.to_string()),
+        IOType::String | IOType::File => Value::String(text.to_string()),
     };
     sven_harness_spec::vars::admit(decl, value)
 }

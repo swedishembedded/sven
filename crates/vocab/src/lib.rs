@@ -36,7 +36,7 @@ pub mod verify;
 pub mod wait;
 
 pub use cost::Amount;
-pub use harness::HarnessEvent;
+pub use harness::{HarnessEvent, PublishedFile};
 pub use ledger::{
     ContextRecovery, ContextView, DecisionInference, DecisionTraceRecord, DemotionRecord,
     LedgerSummary, ReportedUsage, RequestBreakdown, ToolActivity, STEP_DECISIONS_EXTRA_KEY,

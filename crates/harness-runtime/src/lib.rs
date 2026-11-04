@@ -39,6 +39,7 @@ mod exec;
 mod host_values;
 mod iteration;
 mod machine;
+mod publish;
 mod registry;
 mod run;
 mod sourced;

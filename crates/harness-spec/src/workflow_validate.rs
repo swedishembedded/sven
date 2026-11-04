@@ -316,6 +316,7 @@ fn validate_tasks(w: &WorkflowSpec) -> Result<(), HarnessError> {
         )?;
         validate_model_only(task, &place)?;
         validate_attach(task, &place)?;
+        validate_publish(task, &place)?;
         validate_allowance(w, &place, &task.allowance)?;
         if let Some(repair) = &task.repair {
             validate_allowance(w, &format!("{place}: repair"), &repair.allowance)?;
@@ -539,6 +540,44 @@ fn validate_attach(task: &crate::workflow::TaskSpec, place: &str) -> Result<(), 
     Ok(())
 }
 
+/// `publish` names the files a finished task hands its host: paths inside
+/// the workspace, on a task that runs once (not a loop, not inside one), so
+/// each publication is one boundary a host can checkpoint at.
+fn validate_publish(task: &crate::workflow::TaskSpec, place: &str) -> Result<(), HarnessError> {
+    if task.publish.is_empty() {
+        return Ok(());
+    }
+    if task.for_each.is_some() || task.until.is_some() || !task.body.is_empty() {
+        return Err(invalid(format!(
+            "{place}: `publish` hands over what a task left when it is done; a loop's tasks \
+             finish many times, so publish from a task after the loop"
+        )));
+    }
+    if task.use_import.is_some() {
+        return Err(invalid(format!(
+            "{place}: a `use` task's files are its child's; publish them from a task after it"
+        )));
+    }
+    if task.publish.len() > crate::names::MAX_COVERS {
+        return Err(invalid(format!(
+            "{place}: `publish` names at most {} files",
+            crate::names::MAX_COVERS
+        )));
+    }
+    for path in &task.publish {
+        let trimmed = path.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with('/')
+            || trimmed.split(['/', '\\']).any(|segment| segment == "..")
+        {
+            return Err(invalid(format!(
+                "{place}: publish `{path}` is not a path inside the workspace (relative, no `..`)"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// A `model_only` task is one model turn without tools.
 fn validate_model_only(task: &crate::workflow::TaskSpec, place: &str) -> Result<(), HarnessError> {
     if task.schema.is_some() && !task.model_only {
@@ -662,8 +701,9 @@ fn validate_use(w: &WorkflowSpec) -> Result<(), HarnessError> {
 }
 
 /// The capabilities the workflow exercises: its agent profile, a shell for
-/// every command gate that is used, and the verifier for every file or
-/// metric check.
+/// every command gate that is used, the verifier for every file or metric
+/// check, and reading files for a loop over a file, its covers, and a
+/// publication.
 pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<String> {
     let mut needed: BTreeSet<String> = w
         .agent
@@ -705,6 +745,8 @@ pub(super) fn needed_capabilities(w: &WorkflowSpec) -> BTreeSet<String> {
         reads_files |= task.for_each.as_ref().is_some_and(|each| {
             matches!(each.source, IterateSource::Json(_)) || !each.covers.is_empty()
         });
+        // A publication digests the files it hands over.
+        reads_files |= !task.publish.is_empty();
         for check in &task.verify {
             match check {
                 Check::Gate(name) | Check::Soft(name) => note(w.gates.get(name)),

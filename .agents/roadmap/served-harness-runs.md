@@ -16,18 +16,6 @@ protocols.
 
 ## Open
 
-2. **File inputs, published outputs, task checkpoints.**
-   - `type: file` inputs, resolved by the host to workspace paths.
-   - `publish:` on a task: files a finished task hands its host, with
-     digests.
-   - A checkpoint at every publishing task's boundary. Today a running
-     harness hands one only after a `for_each` item with
-     `checkpoint_each_item` (`HarnessRun::on_item_checkpoint`,
-     `crates/sdk/src/harness/run.rs`) or when a bound stops it
-     (`HarnessRun::checkpoint`).
-   - Resume with a published file replaced: the tasks after it run again.
-   - `retry: never` on a task with external side effects: a run interrupted
-     inside one is not resumed into it.
 3. **`sven harness work`.** The worker side of a run protocol defined in
    `sven_control` the way `remote.rs` defines remote control: sign in from a
    login file, fetch the run descriptor, the package and the input files,
@@ -69,7 +57,9 @@ protocols.
    never reach the plan, the gate scripts or the network.
 
 Already in place: packages carry their `skills/` and `bin/` under the bundle
-digest (`docs/reference/harnesses.md`, Imports). Every signed-in sven mounts its server's MCP endpoint
+digest (`docs/reference/harnesses.md`, Imports); `file` inputs, `publish:`
+with `HarnessRun::on_publish` checkpoints, and `retry: never`
+(`docs/reference/harnesses.md`). Every signed-in sven mounts its server's MCP endpoint
 (`src/main.rs`, `connectors::add_signed_in`; the `sven rc` host through
 `crates/remote/src/host/services.rs`).
 
@@ -77,8 +67,6 @@ digest (`docs/reference/harnesses.md`, Imports). Every signed-in sven mounts its
 
 Each item is done when its own test proves it:
 
-- 2: a run killed after a publishing task resumes there with the same
-  digest; a replaced file reruns only the tasks after it.
 - 3: against a fake server, a stale generation's commit is refused and the
   worker stops.
 - 4: a notice is shown as a notice, starts no turn unless asked, and leaves

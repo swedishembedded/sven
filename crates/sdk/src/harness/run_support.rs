@@ -140,12 +140,16 @@ pub(super) fn publish_trace(
     events: &broadcast::Sender<SessionEvent>,
     run_id: &str,
     observed: &mut Option<tokio::time::Instant>,
-) -> Vec<String> {
+) -> (Vec<String>, Vec<TraceRecord>) {
     let state = HarnessRunState::load(ctx);
     let mut completed_loops = Vec::new();
+    let mut published = Vec::new();
     for record in state.trace.iter().skip(*emitted) {
         if let Some(step) = finished_item_loop(record) {
             completed_loops.push(step.to_string());
+        }
+        if matches!(record, TraceRecord::Published { .. }) {
+            published.push(record.clone());
         }
         let duration_ms = observed
             .replace(tokio::time::Instant::now())
@@ -157,7 +161,7 @@ pub(super) fn publish_trace(
         });
     }
     *emitted = state.trace.len();
-    completed_loops
+    (completed_loops, published)
 }
 
 /// The verdict a finished run reported, read off its terminal state and

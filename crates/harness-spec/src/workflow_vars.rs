@@ -351,6 +351,7 @@ pub(super) fn lower_required(
 fn reminder_text(name: &str, ty: &IOType, description: Option<&str>) -> String {
     let ty = match ty {
         IOType::String => "a string",
+        IOType::File => "a workspace file path",
         IOType::Number => "a number",
         IOType::Boolean => "a boolean",
         IOType::Json => "a JSON value",

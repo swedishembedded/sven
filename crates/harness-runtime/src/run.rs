@@ -320,6 +320,15 @@ pub enum TraceRecord {
         /// How many times this item's body has been started, from 1.
         attempt: u64,
     },
+    /// A finished task handed its files to the host.
+    Published {
+        /// The publish step.
+        step: String,
+        /// The task whose files these are.
+        task: String,
+        /// Each file's path and digest.
+        files: Vec<sven_vocab::PublishedFile>,
+    },
     /// An item's body finished with every check passed.
     ItemCompleted {
         /// The iterate step.

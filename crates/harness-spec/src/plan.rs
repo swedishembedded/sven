@@ -63,6 +63,10 @@ pub struct HarnessPlan {
     /// Where each generated step came from in the authored document.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub source_map: std::collections::BTreeMap<String, SourceRef>,
+    /// The tasks declared `retry: never`: a run interrupted inside one is
+    /// not resumed into it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub no_retry: std::collections::BTreeSet<String>,
     /// The steps, in canonical (sorted) order.
     pub steps: std::collections::BTreeMap<String, PlanStep>,
     /// Lowercase hex SHA-256 of the canonical form.
@@ -305,6 +309,15 @@ pub enum PlanPrimitive {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         store_as: Option<String>,
     },
+    /// Compiled `publish` .
+    Publish {
+        /// The task whose files these are.
+        task: String,
+        /// The files, workspace-relative path templates, parsed.
+        files: Vec<Template>,
+        /// The next step.
+        then: String,
+    },
     /// Compiled `gate` .
     Gate {
         /// The commands, run in order, each an argv of templates.
@@ -466,6 +479,11 @@ pub fn compile(spec: &HarnessSpec) -> HarnessPlan {
             .as_ref()
             .map(|l| l.source_map.clone())
             .unwrap_or_default(),
+        no_retry: spec
+            .lowering
+            .as_ref()
+            .map(|l| l.no_retry.clone())
+            .unwrap_or_default(),
         steps,
         // Placeholder, replaced below.
         digest: String::new(),
@@ -614,6 +632,11 @@ fn compile_step(id: &str, step: &StepSpec) -> PlanStep {
             capture: g.capture.clone(),
             then: g.then.clone(),
             on_fail: g.on_fail.clone(),
+        },
+        StepSpec::Publish(p) => PlanPrimitive::Publish {
+            task: p.task.clone(),
+            files: p.files.iter().map(|file| parsed(file)).collect(),
+            then: p.then.clone(),
         },
     };
     PlanStep {

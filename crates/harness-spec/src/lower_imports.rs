@@ -177,7 +177,11 @@ fn check_value(
                 .then(|| w.inputs.as_ref().and_then(|i| i.get(input)))
                 .flatten();
             if let Some(declared) = declared {
-                if declared.ty != *wanted && *wanted != IOType::Json && declared.ty != IOType::Json
+                let both_text = declared.ty.is_text() && wanted.is_text();
+                if declared.ty != *wanted
+                    && !both_text
+                    && *wanted != IOType::Json
+                    && declared.ty != IOType::Json
                 {
                     return Err(mismatch(&format!(
                         "input `{input}` of type {:?}",
@@ -189,7 +193,7 @@ fn check_value(
         return Ok(());
     }
     // Text with a hole inside it is text.
-    if matches!(wanted, IOType::String | IOType::Json)
+    if matches!(wanted, IOType::String | IOType::File | IOType::Json)
         || !text.contains("{{") && wanted.matches(value)
     {
         Ok(())

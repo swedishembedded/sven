@@ -119,8 +119,8 @@ impl std::fmt::Display for CapabilityName {
 }
 
 /// The type of an input or output value. Serialized as its lowercase name
-/// (`string`, `number`, `boolean`, `json`) — the form harness documents
-/// write.
+/// (`string`, `number`, `boolean`, `json`, `file`) — the form harness
+/// documents write.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IOType {
@@ -132,6 +132,10 @@ pub enum IOType {
     Boolean,
     /// Any JSON value (object, array, scalar).
     Json,
+    /// A file in the run's workspace, given as its workspace-relative path
+    /// (a string). The host checks the path stays in the workspace and the
+    /// file is there before the run starts; templates read the path.
+    File,
 }
 
 impl IOType {
@@ -143,8 +147,26 @@ impl IOType {
             Self::Number => value.is_number(),
             Self::Boolean => value.is_boolean(),
             Self::Json => true,
+            Self::File => value.as_str().is_some_and(is_workspace_path),
         }
     }
+
+    /// Reads as text in a template: a string or a file's path.
+    #[must_use]
+    pub fn is_text(&self) -> bool {
+        matches!(self, Self::String | Self::File)
+    }
+}
+
+/// Whether `path` names a place inside a workspace: relative, not empty, and
+/// never climbing out through `..`.
+#[must_use]
+pub fn is_workspace_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.contains('\0')
+        && path.split('/').all(|part| part != "..")
 }
 
 /// A declared input or output: a name and its type.
@@ -312,6 +334,9 @@ pub enum StepSpec {
     /// Repeat a body over a frozen collection, or until a condition holds,
     /// within a bound.
     Iterate(Box<IterateStepSpec>),
+    /// Hand a finished task's files to the host, each with its digest: the
+    /// boundary a host checkpoints at and publishes from.
+    Publish(Box<PublishStepSpec>),
 }
 
 /// `predict`: one constrained model turn.
@@ -509,6 +534,23 @@ pub struct FailStepSpec {
     pub message: Option<String>,
 }
 
+/// `publish`: hand a finished task's files to the host.
+///
+/// The host learns each file's path and digest from the run's trace, with a
+/// checkpoint taken right after, so it can keep them and the run's state
+/// together; a file that is not there fails the run. Lowered from a task's
+/// `publish:`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishStepSpec {
+    /// The task whose files these are.
+    pub task: String,
+    /// The files, workspace-relative paths (templates).
+    pub files: Vec<String>,
+    /// The next step.
+    pub then: String,
+}
+
 /// `gate`: run a command; its exit status decides.
 ///
 /// The command is trusted workflow configuration: it is part of the compiled
@@ -579,6 +621,7 @@ impl StepSpec {
             Self::Fail(_) => "fail",
             Self::Gate(_) => "gate",
             Self::Iterate(_) => "iterate",
+            Self::Publish(_) => "publish",
         }
     }
 }
@@ -633,6 +676,9 @@ impl TryFrom<serde_json::Value> for StepSpec {
             "iterate" => serde_json::from_str(&text)
                 .map(|i| Self::Iterate(Box::new(i)))
                 .map_err(|e| format!("bad `iterate` step: {e}")),
+            "publish" => serde_json::from_str(&text)
+                .map(|p| Self::Publish(Box::new(p)))
+                .map_err(|e| format!("bad `publish` step: {e}")),
             other => Err(format!("unknown step primitive `{other}`")),
         }
     }
@@ -651,6 +697,7 @@ impl From<StepSpec> for serde_json::Value {
             StepSpec::Fail(f) => ("fail", serde_json::to_value(f).unwrap_or_default()),
             StepSpec::Gate(g) => ("gate", serde_json::to_value(g).unwrap_or_default()),
             StepSpec::Iterate(i) => ("iterate", serde_json::to_value(i).unwrap_or_default()),
+            StepSpec::Publish(p) => ("publish", serde_json::to_value(p).unwrap_or_default()),
         };
         serde_json::json!({ key: body })
     }

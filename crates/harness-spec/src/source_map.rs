@@ -27,7 +27,7 @@ pub struct SourceRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
     /// What the step does for its task: `when`, `work`, `follow_up`,
-    /// `check`, `repair`, `failure`, `success`, `complete`.
+    /// `check`, `repair`, `failure`, `publish`, `success`, `complete`.
     pub role: String,
     /// The gate or check the step evaluates or reports on, when it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,4 +49,6 @@ pub struct Lowering {
     pub scratchpad: Option<String>,
     /// Generated step id to its authored origin.
     pub source_map: BTreeMap<String, SourceRef>,
+    /// The tasks declared `retry: never`.
+    pub no_retry: std::collections::BTreeSet<String>,
 }

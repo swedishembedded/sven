@@ -35,7 +35,7 @@ schema` (`crates/harness-spec/schema/harness-document.schema.json`,
 |-----|---|
 | `api_version` | required, `"2"` |
 | `name`, `description` | `name` is lowercase letters, digits, `-`, `_`; no `__`; at most 48 characters |
-| `inputs` | typed per-run inputs (`name: type` or `{type, description}`, type `string`, `number`, `boolean` or `json`); templates read `{{ inputs.<name> }}` and an undeclared one is an error |
+| `inputs` | typed per-run inputs (`name: type` or `{type, description}`, type `string`, `number`, `boolean`, `json` or `file`); templates read `{{ inputs.<name> }}` and an undeclared one is an error. A `file` input is a workspace-relative path (no `..`, not absolute) to a file that must exist in the run's workspace before the run starts; templates read the path |
 | `outputs` | `name: {type, value}`; the value is a template over inputs and task outputs; without `outputs` the run returns `{"status": "completed"}` |
 | `agent` | `profile` (`none` or `coding`), `instructions` (prepended to every task prompt), `system` (the model's system message for the agent's conversation, a template over inputs; or a list of `{when, text}` variants, see below), `tools` (an allowlist for every task, also enforced on proposed calls), and `sampling`, `thinking`, `turn` defaults for every task |
 | `execution` | `limits` (`model_turns` is required; `steps`, `tool_calls`, `delegate_depth` optional), `workspace: repository`, `resume: true`, `scratchpad` (the run's private directory, below) |
@@ -107,6 +107,25 @@ A check written `{gate: <name>, required: false}` is *soft*: it runs and its
 result is readable, but it neither earns a repair nor fails the task. With
 `on_failure: return` a failed check or exhausted loop ends the run by returning
 its outputs with `status: failed` and `failure`, instead of failing it.
+
+**Published files.** `publish: [<path>, ...]` on a task hands its host the
+files the task left once its checks passed: workspace-relative path
+templates, at most 64. It lowers to one `publish` step between the task and
+what follows (`<task>__publish`, role `publish` in the source map), which
+digests the files with the harness's digest tool and records
+`Published {step, task, files: [{path, digest}]}` in the trace; a file that is
+not there fails the run with `publish_failed`. A publishing task derives
+`ReadFile`. It is refused on a loop, a task inside one and a `use` task, which
+finish more than once or not by themselves. A host gets each publication with
+a checkpoint of the run right after it (`HarnessRun::on_publish`, below).
+
+**Tasks that must not repeat.** `retry: never` marks a task with effects
+outside the run (a deployment, a device). A checkpoint taken after the task
+acted (a step of it completed, a tool call of it is in flight, or its agent
+loop proposed or ran tools) is refused by `Harness::resume` with
+`Precondition`: the host finds out what happened before running it again. A
+checkpoint resting before that resumes as usual. The plan lists these tasks in
+`no_retry`.
 
 **Attached files.** `attach: [<path>, ...]` on an agent task sends files with
 its prompt, as parts of the task's first message: paths relative to the
@@ -680,6 +699,13 @@ checkpoint carried with the time the resume began. `harness replay
 --expect-trace` ignores the stamp.
 
 ## Checkpoints, recordings and replay
+
+`HarnessRun::on_publish(sink)` hands the host a `Publication` (step, task,
+files with digests, and a `HarnessCheckpoint` of the run right after it) for
+every task that publishes, the last one included when the run ends right
+after it. Keeping the files and the checkpoint together lets a host resume a
+killed run past every published task; a published file replaced before the
+resume is what the tasks after it read.
 
 **Checkpoint.** A run stopped by a bound (`RunConclusion::Timeout` or
 `BudgetExhausted`) leaves a `HarnessCheckpoint`: the kernel snapshot, the plan

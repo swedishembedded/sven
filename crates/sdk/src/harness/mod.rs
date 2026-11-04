@@ -48,7 +48,7 @@ mod trajectory;
 
 pub use live_trajectory::ConversationUpdate;
 pub use record::{HarnessRecording, HarnessReplay};
-pub use run::{HarnessFailure, HarnessOutcome, HarnessRun};
+pub use run::{HarnessFailure, HarnessOutcome, HarnessRun, Publication};
 pub use sven_session_store::trace_images::TrajectoryImage;
 pub use trajectory::{write_trajectory_images, Correction, RefusedMessage};
 
@@ -288,6 +288,7 @@ impl Harness {
                 checkpoint.plan_digest, self.plan.digest
             )));
         }
+        refuse_unretryable(&self.plan, &checkpoint)?;
         let (machine, _) = match &self.source {
             HarnessSource::Document(text) => {
                 HarnessMachine::restore(text.clone(), checkpoint.snapshot.clone())
@@ -313,8 +314,49 @@ impl Harness {
 fn io_type_word(ty: &sven_harness_spec::IOType) -> &'static str {
     match ty {
         sven_harness_spec::IOType::String => "a string",
+        sven_harness_spec::IOType::File => "a workspace-relative file path",
         sven_harness_spec::IOType::Number => "a number",
         sven_harness_spec::IOType::Boolean => "a boolean",
         sven_harness_spec::IOType::Json => "any JSON value",
     }
+}
+
+/// A checkpoint taken while a `retry: never` task was under way is not
+/// resumed into it: that task has effects outside the run, which may or may
+/// not have happened. "Under way" means it acted: one of its steps completed,
+/// a tool call of it is in flight, or its agent loop has proposed or run
+/// tools. A checkpoint resting before that (its first model turn not yet
+/// answered, which has no effect outside the run) resumes as usual.
+fn refuse_unretryable(plan: &HarnessPlan, checkpoint: &HarnessCheckpoint) -> Result<(), CallError> {
+    if plan.no_retry.is_empty() {
+        return Ok(());
+    }
+    let state = sven_harness_runtime::HarnessRunState::load(&checkpoint.snapshot.context);
+    let task_of = |step: &str| {
+        plan.source_map
+            .get(step)
+            .and_then(|origin| origin.task.clone())
+    };
+    let Some(task) = task_of(&state.current).filter(|task| plan.no_retry.contains(task)) else {
+        return Ok(());
+    };
+    let ours = |step: &str| task_of(step).as_deref() == Some(task.as_str());
+    let completed = state.trace.iter().any(|record| {
+        matches!(record, sven_harness_runtime::TraceRecord::StepCompleted { step, .. } if ours(step))
+    });
+    let calling = state
+        .inflight
+        .as_ref()
+        .is_some_and(|inflight| inflight.call_id.is_some() && ours(&inflight.step));
+    let looping = state
+        .agent
+        .as_ref()
+        .is_some_and(|agent| ours(&agent.step) && (!agent.pending.is_empty() || agent.rounds > 1));
+    if completed || calling || looping {
+        return Err(CallError::Precondition(format!(
+            "task `{task}` was interrupted and is declared `retry: never`: it has effects outside \
+             the run, so it is not resumed; find out what it did before running it again"
+        )));
+    }
+    Ok(())
 }

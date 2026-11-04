@@ -522,6 +522,16 @@ pub struct ItemFailure {
     pub verify: Vec<String>,
 }
 
+/// Whether a task may be run again after it was interrupted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryPolicy {
+    /// Never: the task has effects outside the run (a deployment, a
+    /// device), so a run interrupted inside it is not resumed into it; the
+    /// host decides what happened instead.
+    Never,
+}
+
 /// When a task hands the host a durable checkpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -662,6 +672,11 @@ pub struct TaskSpec {
     /// variables); a directory stands for the images and audio directly in
     /// it. The model sees them without having to open them.
     pub attach: Vec<String>,
+    /// Files the finished task hands its host (workspace-relative path
+    /// templates), each with its digest, at a boundary the host checkpoints.
+    pub publish: Vec<String>,
+    /// `never`: a run interrupted inside this task is not resumed into it.
+    pub retry: Option<RetryPolicy>,
     /// A supervisor that writes the messages the agent is sent after its
     /// result was judged.
     pub corrections: Option<Corrections>,

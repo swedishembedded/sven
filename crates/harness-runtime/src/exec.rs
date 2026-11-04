@@ -274,6 +274,7 @@ impl HarnessMachine {
                 self.fail_now(run, &code, &text, ctx)
             }
             PlanPrimitive::Gate { .. } => self.run_gate(run, &step, ctx),
+            PlanPrimitive::Publish { .. } => self.run_publish(run, &step, ctx),
             PlanPrimitive::Iterate { .. } => self.run_iterate(run, &step, ctx),
             PlanPrimitive::Delegate { .. } => self.run_delegate(run, &step, ctx),
         }

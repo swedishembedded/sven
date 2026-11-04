@@ -372,6 +372,7 @@ fn template_texts(step: &StepSpec) -> Vec<String> {
             .chain(g.stdin.iter())
             .cloned()
             .collect(),
+        StepSpec::Publish(p) => p.files.clone(),
         StepSpec::Verify(_) | StepSpec::Branch(_) | StepSpec::Iterate(_) | StepSpec::Return(_) => {
             Vec::new()
         }
@@ -399,6 +400,7 @@ fn successors(step: &StepSpec) -> Vec<String> {
         StepSpec::Branch(b) => vec![b.when_true.clone(), b.when_false.clone()],
         StepSpec::Delegate(d) => vec![d.then.clone()],
         StepSpec::Gate(g) => vec![g.then.clone(), g.on_fail.clone()],
+        StepSpec::Publish(p) => vec![p.then.clone()],
         StepSpec::Iterate(i) => {
             let mut out = vec![i.body.clone(), i.then.clone()];
             out.extend(i.on_exhausted.clone());
@@ -475,6 +477,8 @@ fn required_capability(step: &StepSpec) -> Option<&'static str> {
         StepSpec::Verify(_) => return Some("RunVerifier"),
         StepSpec::Delegate(_) => return Some("SpawnChild"),
         StepSpec::Gate(_) => return Some("ExecuteShell"),
+        // It digests the files it hands over.
+        StepSpec::Publish(_) => return Some("ReadFile"),
         StepSpec::Iterate(i) => {
             return match i.for_each.as_ref().map(|each| &each.source) {
                 Some(IterateSource::Json(_)) => Some("ReadFile"),

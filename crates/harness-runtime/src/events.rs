@@ -86,6 +86,11 @@ pub fn harness_event(record: &TraceRecord, step_duration_ms: u64) -> HarnessEven
             added: *added,
             removed: *removed,
         },
+        TraceRecord::Published { step, task, files } => HarnessEvent::Published {
+            step: step.clone(),
+            task: task.clone(),
+            files: files.clone(),
+        },
         TraceRecord::ItemCompleted { step, item, index } => HarnessEvent::ItemCompleted {
             step: step.clone(),
             item: item.clone(),

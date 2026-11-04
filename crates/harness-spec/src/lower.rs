@@ -169,6 +169,29 @@ pub(super) fn lower_task(
     if let Some(offered) = crate::lower_imports::offered(w, task) {
         return crate::lower_imports::lower_use(cx, b, task, &offered.name, next);
     }
+    // A task that publishes hands its files to the host once it is done,
+    // checks passed: one more step between it and what follows.
+    let publish_id = format!("{}__publish", task.name);
+    let next = if task.publish.is_empty() {
+        next
+    } else {
+        let scope = cx.scope(format!("{place}: publish"), through, vars);
+        let files = task
+            .publish
+            .iter()
+            .map(|file| rewrite_text(file.trim(), &scope))
+            .collect::<Result<Vec<_>, _>>()?;
+        b.add(
+            &publish_id,
+            StepSpec::Publish(Box::new(crate::steps::PublishStepSpec {
+                task: task.name.clone(),
+                files,
+                then: next.to_string(),
+            })),
+            origin(Some(&task.name), "publish"),
+        );
+        publish_id.as_str()
+    };
     let looping = task.for_each.is_some() || task.until.is_some();
     let conversation = crate::lower_body::conversation(cx, task, vars, before)?;
     let item_failure = crate::lower_body::item_failure_entry(w, task);
@@ -784,6 +807,12 @@ pub(super) fn lower(w: &WorkflowSpec) -> Result<HarnessSpec, HarnessError> {
             profile: w.agent.profile.as_str().to_string(),
             scratchpad: scratchpad::lower(&cx)?,
             source_map: b.source,
+            no_retry: w
+                .all_tasks()
+                .into_iter()
+                .filter(|t| t.retry == Some(crate::workflow::RetryPolicy::Never))
+                .map(|t| t.name.clone())
+                .collect(),
         }),
     })
 }

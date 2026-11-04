@@ -71,8 +71,8 @@ pub use source_map::{Lowering, SourceRef};
 pub use steps::{
     AgentStepSpec, AssignStepSpec, BranchStepSpec, CapabilityName, DelegateStepSpec, FailStepSpec,
     ForEachSpec, GateStepSpec, HarnessSpec, IOType, InputValue, IterateSource, IterateStepSpec,
-    JsonSource, LimitsSpec, PredictStepSpec, Reconcile, ReturnStepSpec, StepDecoding, StepId,
-    StepSpec, UntilSpec, VerifyStepSpec, API_VERSION, DEFAULT_ANSWER_REPAIRS,
+    JsonSource, LimitsSpec, PredictStepSpec, PublishStepSpec, Reconcile, ReturnStepSpec,
+    StepDecoding, StepId, StepSpec, UntilSpec, VerifyStepSpec, API_VERSION, DEFAULT_ANSWER_REPAIRS,
     DEFAULT_GATE_TIMEOUT_SECS, DEFAULT_MAX_ITEMS, DIGEST_TOOL, GATE_TOOL, ITEM_FAILED_FACT,
     MAX_COVERS, MAX_GATE_TIMEOUT_SECS, MAX_ITEMS_LIMIT, MAX_ITERATIONS_LIMIT, RESERVED_TOOLS,
     SNAPSHOT_TOOL,
