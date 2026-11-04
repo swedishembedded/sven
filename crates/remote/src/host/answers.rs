@@ -33,6 +33,8 @@ pub(super) const HOLD_LIMIT: Duration = Duration::from_secs(10);
 pub(super) struct Input {
     pub text: String,
     pub answer_id: Option<String>,
+    /// Files the person attached ([`super::attachments`]).
+    pub attachments: Vec<sven_control::Attachment>,
 }
 
 #[derive(Debug)]
@@ -154,6 +156,7 @@ mod tests {
         Input {
             text: format!("text of {id}"),
             answer_id: Some(id.into()),
+            attachments: Vec::new(),
         }
     }
 

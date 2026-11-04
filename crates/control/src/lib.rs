@@ -76,6 +76,10 @@ pub enum ControlCommand {
         /// lands in the next one. Absent from an older server.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answer_id: Option<String>,
+        /// Files the person attached to this input, held by the server and
+        /// fetched from it by their `uri` (MCP's `files/authorizeDownload`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<Attachment>,
     },
 
     /// Switch the model of an active session.
@@ -277,6 +281,18 @@ pub struct HistoryEntry {
     pub role: HistoryRole,
     /// The turn's text content, rendered flat for display.
     pub text: String,
+}
+
+/// A file attached to an input: the server's file value (MCP's file
+/// transfer extension), without the bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    /// The server's URI of the file, e.g. `mcp-file://files/<id>`.
+    pub uri: String,
+    pub name: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub size: u64,
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────
@@ -495,11 +511,39 @@ mod tests {
             session_id: Uuid::new_v4(),
             text: "do the thing".into(),
             answer_id: None,
+            attachments: Vec::new(),
         };
         match control_command_to_kernel_event(&cmd) {
             Some(sven_hsm::Event::UserMessage { text }) => assert_eq!(text, "do the thing"),
             other => panic!("expected UserMessage, got {other:?}"),
         }
+    }
+
+    /// The JSON a server writes, spelled out so a server in another language
+    /// is held to these literals; an input without files writes none.
+    #[test]
+    fn a_servers_input_with_attachments_parses() {
+        let parsed: ControlCommand = serde_json::from_value(serde_json::json!({
+            "type": "send_input",
+            "session_id": "6f1c1d1e-6c1a-4d43-9a43-6f2a9d3b2a10",
+            "text": "read this",
+            "attachments": [{ "uri": "mcp-file://files/a", "name": "q.xlsx",
+                              "mimeType": "application/vnd.ms-excel", "size": 12 }],
+        }))
+        .unwrap();
+        let ControlCommand::SendInput { attachments, .. } = parsed else {
+            panic!("a send_input");
+        };
+        assert_eq!(attachments[0].name, "q.xlsx");
+        assert_eq!(attachments[0].mime_type, "application/vnd.ms-excel");
+        let plain = serde_json::to_value(ControlCommand::SendInput {
+            session_id: Uuid::nil(),
+            text: "x".into(),
+            answer_id: None,
+            attachments: Vec::new(),
+        })
+        .unwrap();
+        assert!(plain.get("attachments").is_none());
     }
 
     #[test]
@@ -608,6 +652,7 @@ mod tests {
                 session_id: sid,
                 text: "x".into(),
                 answer_id: None,
+                attachments: Vec::new(),
             }),
             Some(sid)
         );

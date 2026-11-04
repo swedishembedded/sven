@@ -57,7 +57,15 @@ async fn route(
             session_id,
             text,
             answer_id,
-        } => (session_id, SessionCommand::Input(Input { text, answer_id })),
+            attachments,
+        } => (
+            session_id,
+            SessionCommand::Input(Input {
+                text,
+                answer_id,
+                attachments,
+            }),
+        ),
         ControlCommand::CancelSession { session_id } => (session_id, SessionCommand::Cancel),
         ControlCommand::ReportGoal { session_id } => (session_id, SessionCommand::ReportGoal),
         ControlCommand::ApproveTool {

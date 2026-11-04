@@ -42,6 +42,7 @@ use answers::{sleep_until, Answers};
 use upload::{upload_loop, Upload};
 
 mod answers;
+mod attachments;
 mod commands;
 mod describe;
 mod hosted;
@@ -456,7 +457,7 @@ impl SessionActor {
         }
     }
 
-    async fn answer(&mut self, text: String) {
+    async fn answer(&mut self, text: String, attached: &[sven_control::Attachment]) {
         println!("[{}] > {}", self.short(), printable(first_line(&text)));
         // The server asking again for the answer this host was stopped in
         // the middle of: continue it, rather than start it over.
@@ -465,7 +466,15 @@ impl SessionActor {
             CONTINUE_INTERRUPTED.to_string()
         } else {
             match slash::interpret(&text, &self.context.working_dir) {
-                slash::Typed::Message(text) | slash::Typed::Expanded(text) => text,
+                slash::Typed::Message(text) | slash::Typed::Expanded(text) => {
+                    match self.with_attachments(text, attached).await {
+                        Ok(text) => text,
+                        Err(e) => {
+                            self.fail(&format!("{e:#}")).await;
+                            return;
+                        }
+                    }
+                }
                 slash::Typed::Mode(mode) => {
                     self.mode = mode;
                     self.reply(&format!("Mode is now {mode}.")).await;
@@ -531,7 +540,7 @@ impl SessionActor {
             self.context.wide_access,
         )?;
         let mut options = SessionOptions::new(
-            Arc::clone(&self.context.config),
+            attachments::for_session(&self.context.config, self.id),
             runtime,
             self.events_tx.clone(),
         );
@@ -602,7 +611,7 @@ impl SessionActor {
     async fn take(&mut self, input: answers::Input) {
         self.asking = input.answer_id;
         self.expecting = false;
-        self.answer(input.text).await;
+        self.answer(input.text, &input.attachments).await;
         self.asking = None;
     }
 
@@ -1223,7 +1232,7 @@ mod tests {
         use sven_vocab::goal::GoalStatus;
         let dir = tempfile::tempdir().unwrap();
         let mut actor = running_session(dir.path()).await;
-        actor.answer("/goal tidy the readme".into()).await;
+        actor.answer("/goal tidy the readme".into(), &[]).await;
         assert!(actor.working, "the answer is running");
 
         let mut ended = 0;
@@ -1335,6 +1344,7 @@ mod tests {
             SessionCommand::Input(answers::Input {
                 text: text.into(),
                 answer_id: Some(id.into()),
+                attachments: Vec::new(),
             })
         };
         commands

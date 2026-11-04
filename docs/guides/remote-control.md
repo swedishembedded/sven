@@ -130,6 +130,15 @@ right after a stop waits until the stopped turn has ended (ten seconds at
 most); one sent while an answer is still running is refused with a note,
 since the session would not see it.
 
+Files you attach to a message at the server (`attachments` on
+`send_input`: each file's `uri`, `name`, `mimeType` and `size`) are fetched
+from it with MCP's `files/authorizeDownload`, checked against their digest,
+into `.sven/attachments/<file id>/` in the working directory, and the
+message tells the agent where each one is. A file that cannot be fetched is
+named in the message as such, so the agent can tell you. Every file request
+a session makes names its conversation in `_meta["sven/session"]`, so the
+server hands out, and takes uploads for, that conversation alone.
+
 Each session calls models through the server, with the token, so the
 server's model list and its billing apply.
 
