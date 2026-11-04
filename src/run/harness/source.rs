@@ -88,9 +88,13 @@ impl Source {
         } else if !HarnessDocument::imports_of(&text)
             .map_err(|e| harness(e.to_string()))?
             .is_empty()
+            || path
+                .parent()
+                .is_some_and(sven_harness_spec::resources::has_resources)
         {
-            // A document with imports is a package: the files it imports are
-            // read from its directory and travel with it as a bundle.
+            // A document with imports, or with skills or scripts beside it, is
+            // a package: the files it imports and carries are read from its
+            // directory and travel with it as a bundle.
             let bundle = load_package_file(path).map_err(|e| harness(e.to_string()))?;
             let compiled = bundle.compile().map_err(|e| harness(e.to_string()))?;
             Ok(Self {

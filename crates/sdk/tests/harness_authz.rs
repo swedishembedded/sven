@@ -87,6 +87,7 @@ fn package(main: &str, imports: &[(&str, &str)]) -> String {
             .iter()
             .map(|(path, text)| ((*path).to_string(), (*text).to_string()))
             .collect::<BTreeMap<_, _>>(),
+        ..Default::default()
     };
     serde_yaml::to_string(&bundle).expect("a package serializes")
 }

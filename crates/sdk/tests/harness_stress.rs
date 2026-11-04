@@ -166,6 +166,7 @@ async fn one_run(
     let package = HarnessBundle {
         document: PROGRAM.to_string(),
         imports: BTreeMap::from([("stress-child.yaml".to_string(), CHILD.to_string())]),
+        ..Default::default()
     };
     let harness = engine
         .load_harness_from_str(&serde_yaml::to_string(&package).map_err(|e| e.to_string())?)

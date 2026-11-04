@@ -27,6 +27,12 @@ pub struct HarnessBundle {
     /// bundle's digest; a file nothing imports is a bundle error.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub imports: std::collections::BTreeMap<String, String>,
+    /// The skills and scripts the package carries beside its workflows, by
+    /// their path relative to the package root (under `skills/` or `bin/`).
+    /// Pinned by the bundle's digest like the imports
+    /// ([`crate::resources`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub resources: std::collections::BTreeMap<String, crate::resources::Resource>,
 }
 
 impl HarnessBundle {
@@ -35,8 +41,10 @@ impl HarnessBundle {
     /// # Errors
     ///
     /// Everything [`crate::HarnessDocument::compile`] can produce, plus the
-    /// package's own errors (an import that is missing or that nothing uses).
+    /// package's own errors (an import that is missing or that nothing uses, a
+    /// resource path or size the rules refuse).
     pub fn compile(&self) -> Result<CompiledBundle, HarnessError> {
+        crate::resources::check(&self.resources)?;
         let package = crate::package::compile_package(&self.document, &self.imports)?;
         Ok(CompiledBundle {
             plan: package.plan,
@@ -72,6 +80,12 @@ impl HarnessBundle {
                 .map(|(path, plan)| (path.as_str(), plan.digest.as_str()))
                 .collect();
             value["imports"] = serde_json::json!(pinned);
+        }
+        if !self.resources.is_empty() {
+            // Each skill and script by its bytes and mode: a changed script is
+            // a changed program. Absent when there are none, so a bundle of
+            // workflows alone keeps the digest it always had.
+            value["resources"] = crate::resources::pins(&self.resources);
         }
         let mut hasher = sha2::Sha256::new();
         use sha2::Digest;

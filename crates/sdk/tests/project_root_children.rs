@@ -56,6 +56,7 @@ fn package(parent: &str, child: &str) -> String {
     let bundle = HarnessBundle {
         document: parent.to_string(),
         imports: BTreeMap::from([("child.yaml".to_string(), child.to_string())]),
+        ..Default::default()
     };
     serde_yaml::to_string(&bundle).expect("a package serializes")
 }

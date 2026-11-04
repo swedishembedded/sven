@@ -197,6 +197,7 @@ fn the_bundle_digest_pins_imported_behaviour_and_ignores_formatting() {
     let bundle = |review: &str| HarnessBundle {
         document: MAIN.to_string(),
         imports: files(&[("review.yaml", review)]),
+        ..Default::default()
     };
     let base = bundle(REVIEW).digest();
     assert!(!base.is_empty());
@@ -240,4 +241,129 @@ fn a_package_directory_loads_with_its_imports_and_refuses_a_symlink_out() {
         let error = load_package(&pkg).expect_err("refused").to_string();
         assert!(error.contains("outside the package"), "{error}");
     }
+}
+
+/// A package that carries a skill and a gate script.
+fn package_with_resources(script: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let root = tempfile::tempdir().unwrap();
+    let pkg = root.path().join("pkg");
+    std::fs::create_dir_all(pkg.join("skills/cad")).unwrap();
+    std::fs::create_dir_all(pkg.join("bin")).unwrap();
+    std::fs::write(pkg.join("harness.yaml"), MAIN).unwrap();
+    std::fs::write(pkg.join("review.yaml"), REVIEW).unwrap();
+    std::fs::write(
+        pkg.join("skills/cad/SKILL.md"),
+        "---\nname: cad\n---\nMeasure twice.\n",
+    )
+    .unwrap();
+    std::fs::write(pkg.join("bin/check.sh"), script).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            pkg.join("bin/check.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    (root, pkg)
+}
+
+#[test]
+fn a_package_carries_its_skills_and_scripts_and_its_digest_pins_them() {
+    let (_root, pkg) = package_with_resources("#!/bin/sh\nexit 0\n");
+    let bundle = load_package(&pkg).expect("loads");
+    assert_eq!(
+        bundle.resources.keys().collect::<Vec<_>>(),
+        ["bin/check.sh", "skills/cad/SKILL.md"]
+    );
+    assert!(bundle.resources["bin/check.sh"].executable);
+    assert!(!bundle.resources["skills/cad/SKILL.md"].executable);
+    bundle.compile().expect("a package with resources compiles");
+
+    // A bundle without resources keeps the digest it always had.
+    let workflows_only = HarnessBundle {
+        resources: BTreeMap::new(),
+        ..bundle.clone()
+    };
+    assert_ne!(
+        bundle.digest(),
+        workflows_only.digest(),
+        "resources are pinned"
+    );
+
+    // A changed script is a changed program; so is a changed mode.
+    let (_other, changed) = package_with_resources("#!/bin/sh\nexit 1\n");
+    assert_ne!(load_package(&changed).unwrap().digest(), bundle.digest());
+    let mut not_executable = bundle.clone();
+    not_executable
+        .resources
+        .get_mut("bin/check.sh")
+        .unwrap()
+        .executable = false;
+    assert_ne!(not_executable.digest(), bundle.digest());
+
+    // The serialized bundle carries them, and reads back the same.
+    let text = serde_yaml::to_string(&bundle).unwrap();
+    let back: HarnessBundle = serde_yaml::from_str(&text).unwrap();
+    assert_eq!(back, bundle);
+    assert_eq!(back.digest(), bundle.digest());
+}
+
+#[test]
+fn package_resources_materialize_with_their_modes() {
+    let (_root, pkg) = package_with_resources("#!/bin/sh\nexit 0\n");
+    let bundle = load_package(&pkg).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    sven_harness_spec::resources::materialize(&bundle.resources, out.path()).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(out.path().join("skills/cad/SKILL.md")).unwrap(),
+        "---\nname: cad\n---\nMeasure twice.\n"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(out.path().join("bin/check.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+    }
+}
+
+#[test]
+fn package_resources_refuse_symlinks_and_paths_outside_their_directories() {
+    let (_root, pkg) = package_with_resources("#!/bin/sh\nexit 0\n");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("/etc/passwd", pkg.join("bin/passwd")).unwrap();
+        let refused = load_package(&pkg).unwrap_err().to_string();
+        assert!(refused.contains("symlink"), "{refused}");
+        std::fs::remove_file(pkg.join("bin/passwd")).unwrap();
+    }
+    for bad in [
+        "etc/passwd",
+        "bin/../x",
+        "bin/",
+        "skills//x",
+        "/bin/x",
+        "bin/a b",
+    ] {
+        assert!(
+            sven_harness_spec::resources::check_path(bad).is_err(),
+            "{bad} must be refused"
+        );
+    }
+    let mut bundle = load_package(&pkg).unwrap();
+    bundle.resources.insert(
+        "../escape".to_string(),
+        sven_harness_spec::resources::Resource {
+            content: b"x".to_vec(),
+            executable: false,
+        },
+    );
+    assert!(
+        bundle.compile().is_err(),
+        "a bundle cannot smuggle a path out"
+    );
 }

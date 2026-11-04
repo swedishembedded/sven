@@ -226,13 +226,15 @@ pub fn compile_package(
     })
 }
 
-/// Reads the package in directory `dir`: `harness.yaml` and everything it
-/// imports, transitively, as a bundle that pins them.
+/// Reads the package in directory `dir`: `harness.yaml`, everything it
+/// imports, transitively, and the files under its `skills/` and `bin/`
+/// ([`crate::resources`]), as a bundle that pins them.
 ///
 /// # Errors
 ///
 /// An unreadable or oversized file, an import that leaves the directory
-/// (through `..` or through a symlink), and the package rules of
+/// (through `..` or through a symlink), a symlink among the resources, and
+/// the package rules of
 /// [`compile_package`] (checked by compiling the result).
 pub fn load_package(dir: &Path) -> Result<HarnessBundle, HarnessError> {
     load_package_file(&dir.join(MAIN_DOCUMENT))
@@ -295,5 +297,6 @@ pub fn load_package_file(main: &Path) -> Result<HarnessBundle, HarnessError> {
     Ok(HarnessBundle {
         document: main,
         imports,
+        resources: crate::resources::read(&root)?,
     })
 }

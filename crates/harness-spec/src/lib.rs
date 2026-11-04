@@ -43,6 +43,7 @@ mod names;
 pub mod package;
 mod parse;
 mod plan;
+pub mod resources;
 mod rewrite;
 mod scratchpad;
 mod source_map;

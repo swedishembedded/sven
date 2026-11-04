@@ -127,6 +127,7 @@ async fn a_delegated_childs_conversation_and_sampling_identity_are_in_the_parent
     let package = HarnessBundle {
         document: PARENT.to_string(),
         imports: BTreeMap::from([("worker.yaml".to_string(), WORKER.to_string())]),
+        ..Default::default()
     };
     let parent = engine
         .load_harness_from_str(&serde_yaml::to_string(&package).expect("serializes"))

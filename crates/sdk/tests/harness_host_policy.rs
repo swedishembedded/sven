@@ -247,6 +247,7 @@ async fn child_writes(ceiling: Option<Vec<ToolCapability>>) -> usize {
     let package = HarnessBundle {
         document: PARENT.to_string(),
         imports: BTreeMap::from([("writer.yaml".to_string(), CHILD.to_string())]),
+        ..Default::default()
     };
     let parent = engine
         .load_harness_from_str(&serde_yaml::to_string(&package).expect("serializes"))

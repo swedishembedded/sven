@@ -425,6 +425,18 @@ directory whose `harness.yaml` has `imports` as a package automatically, and
 `Engine::load_harness_from_str` registers the main workflow and every import
 together or not at all.
 
+*Skills and scripts.* A package also carries every file under its `skills/`
+and `bin/` directories (`HarnessBundle::resources`, `sven_harness_spec::resources`):
+each by its bytes and whether it is executable, pinned by the bundle digest, so
+a changed script or a changed mode is a changed pin. A bundle without them keeps
+the digest it had. Their paths are plain names under those two directories; a
+symlink is refused, not followed; at most 512 files, 16 MiB each and 64 MiB in
+all. A directory with `skills/` or `bin/` beside its `harness.yaml` is read as a
+package even without imports. A host writes them out with
+`resources::materialize` (scripts with mode 0755, the rest 0644): skills where
+its agents find skills, `bin/` as the trusted directory its gates run from
+(`cwd_input`, below).
+
 *Shared limits.* A child starts with a ceiling of what its parent had left of
 its model-turn and tool-call budgets (its own limits can only be tighter) and,
 when it ends, its usage is added to the parent's counters: a tree of runs never

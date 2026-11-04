@@ -16,13 +16,6 @@ protocols.
 
 ## Open
 
-1. **Packages carry skills and scripts.** A harness package is workflows
-   only (`crates/harness-spec/src/package.rs`, `bundle.rs`); a host passes
-   skills and scripts beside it (a benchmark host passes skills and a `bin` directory today). A package
-   gains `skills/` and `bin/` under its bundle digest, so one digest pins
-   everything a run executes. Gate scripts land in the host-given trusted
-   directory gates already support (`cwd_input`,
-   `docs/reference/harnesses.md`, "Gate inputs").
 2. **File inputs, published outputs, task checkpoints.**
    - `type: file` inputs, resolved by the host to workspace paths.
    - `publish:` on a task: files a finished task hands its host, with
@@ -75,7 +68,8 @@ protocols.
    built-in one, `crates/sdk/src/engine.rs`), so content a run reads can
    never reach the plan, the gate scripts or the network.
 
-Already in place: every signed-in sven mounts its server's MCP endpoint
+Already in place: packages carry their `skills/` and `bin/` under the bundle
+digest (`docs/reference/harnesses.md`, Imports). Every signed-in sven mounts its server's MCP endpoint
 (`src/main.rs`, `connectors::add_signed_in`; the `sven rc` host through
 `crates/remote/src/host/services.rs`).
 
@@ -83,8 +77,6 @@ Already in place: every signed-in sven mounts its server's MCP endpoint
 
 Each item is done when its own test proves it:
 
-- 1: a package with skills and scripts validates and changes its digest when
-  a script changes.
 - 2: a run killed after a publishing task resumes there with the same
   digest; a replaced file reruns only the tasks after it.
 - 3: against a fake server, a stale generation's commit is refused and the
