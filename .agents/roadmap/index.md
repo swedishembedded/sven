@@ -30,4 +30,5 @@ heading and a `Scope: <one sentence>` line under it, then run
 | [`remote-control`](remote-control.md) | remote-control | `sven auth login` and `sven rc` (`sven-remote`), the HTTP binding in |
 | [`research-upgrades`](research-upgrades.md) | research-to-stack - sven share | Isolated multi-attempt runs, per-attempt effects and the prompt each model call saw, for an embedding application. |
 | [`security`](security.md) | security | Hardening `sven rc` so that a compromised remote-control server (which chooses tool calls and relays approvals) gets no more than the machine owner allowed locally. |
+| [`served-harness-runs`](served-harness-runs.md) | served-harness-runs | Running harness packages for a server's users as durable, resumable, file-in/file-out runs, with files and notices flowing between a signed-in sven and its server. |
 | [`training-instrumentation`](training-instrumentation.md) | Training-grade trajectories | What a trajectory records so an application that trains models can learn from it and a run can be reproduced. |
