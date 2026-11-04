@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.6] - 2026-11-04
+
 ### Added
 - **goal**: standing goals. `/goal <objective>` sets a goal the session keeps working toward, turn after turn, until it is done, blocked, paused or out of turns (`--turns N`, default 20); `--check "<command>"` names a command whose pass is the only thing that completes it. `/goal` shows it; `pause`, `resume`, `clear` and `check` steer it. A supervisor in the reactive agent decides after every turn: the same blocker three turns running or three turns without progress blocks the goal for the person, and a stopped or restored goal comes back paused. The model reports with `update_goal` and, only when the person asks it to word one, sets a goal with `set_goal`. Works the same in the terminal, `sven rc` (kept across restarts; a server asks how it stands with `report_goal`), `sven rc attach --tui`, headless runs (exit 0 completed, 4 out of turns, 5 blocked, 6 paused, 2 for a line used wrongly), editors (ACP) and the SDK (`Agent::goal`, `AgentState::goal()`). Every change is a `GoalUpdated` session event. The protocol is model-checked (`formal/tla/Goal.tla`) and the policy proved (`formal/lean/Sven/Goal.lean`); see `docs/guides/goals.md`.
 - **remote**: a server can attach files to a message (`send_input` attachments); `sven rc` fetches each through the server's MCP endpoint, checked against its digest, into `.sven/attachments/` and tells the agent where it is.
