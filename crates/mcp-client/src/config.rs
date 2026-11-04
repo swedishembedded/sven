@@ -227,6 +227,11 @@ pub struct McpServerConfig {
     /// to a configuration file: it carries the key.
     #[serde(skip)]
     pub token_exchange: Option<crate::TokenExchange>,
+    /// What a host adds to the `_meta` of every file request to this server
+    /// (the session an upload is for, [`crate::files`]). Set by sven itself,
+    /// never read from a configuration file.
+    #[serde(skip)]
+    pub file_meta: serde_json::Map<String, serde_json::Value>,
 }
 
 impl McpServerConfig {
@@ -298,6 +303,7 @@ impl Default for McpServerConfig {
             timeout_secs: default_mcp_timeout(),
             tools: HashMap::new(),
             token_exchange: None,
+            file_meta: serde_json::Map::new(),
         }
     }
 }

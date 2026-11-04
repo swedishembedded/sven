@@ -30,6 +30,7 @@ mod connection;
 mod dedupe;
 mod events;
 pub mod exchange;
+pub mod files;
 pub mod health;
 pub mod manager;
 

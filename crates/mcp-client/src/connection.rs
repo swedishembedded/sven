@@ -24,8 +24,8 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig,
-    GetPromptRequestParams, Implementation, JsonObject, Prompt, ProtocolVersion, Tool,
+    CallToolRequestParams, CallToolResult, ClientConfig, GetPromptRequestParams, Implementation,
+    JsonObject, Prompt, ProtocolVersion, Tool,
 };
 use rmcp::service::{ClientInitializeError, NotificationContext, RunningService};
 use rmcp::transport::auth::AuthClient;
@@ -77,7 +77,7 @@ impl Handler {
 impl ClientHandler for Handler {
     fn get_info(&self) -> ClientConfig {
         ClientConfig::new(
-            ClientCapabilities::default(),
+            crate::files::capabilities(),
             Implementation::new("sven", env!("CARGO_PKG_VERSION")),
         )
     }
@@ -241,6 +241,23 @@ impl Connection {
         within(self.timeout, self.peer().list_all_prompts())
             .await
             .context("prompts/list")
+    }
+
+    /// A request outside the spec (an extension's method), answered as the
+    /// JSON the server sent.
+    pub async fn request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let request = rmcp::model::ClientRequest::CustomRequest(rmcp::model::CustomRequest::new(
+            method,
+            Some(params),
+        ));
+        match within(self.timeout, self.peer().send_request(request)).await? {
+            rmcp::model::ServerResult::CustomResult(result) => Ok(result.0),
+            other => Ok(serde_json::to_value(other)?),
+        }
     }
 
     /// Call `tool` with `args` (a JSON object, or nothing).

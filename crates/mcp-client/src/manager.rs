@@ -485,6 +485,51 @@ impl McpManager {
     // ── Tool execution ────────────────────────────────────────────────────────
 
     /// The live connection to `server`, cloned so the caller holds no lock.
+    /// Where `server`'s file arguments resolve (the directory sven works
+    /// in) and what its file requests carry in `_meta`.
+    async fn file_context(&self, server: &str) -> crate::files::FileContext {
+        let meta = self
+            .config
+            .read()
+            .await
+            .get(server)
+            .map(|c| c.file_meta.clone())
+            .unwrap_or_default();
+        crate::files::FileContext {
+            root: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            meta,
+        }
+    }
+
+    /// `args` for a call of `server`'s tool whose input schema is `schema`,
+    /// with every local path in a file argument uploaded and replaced by the
+    /// file URI the server minted ([`crate::files`]).
+    pub async fn prepare_file_arguments(
+        &self,
+        server: &str,
+        schema: &Value,
+        args: &Value,
+    ) -> Result<Value> {
+        if crate::files::file_fields(schema).is_empty() {
+            return Ok(args.clone());
+        }
+        let context = self.file_context(server).await;
+        crate::files::prepare_arguments(&self.connection(server).await?, schema, args, &context)
+            .await
+    }
+
+    /// Fetches the file `uri` from `server` into `dir`, checked against its
+    /// digest ([`crate::files`]).
+    pub async fn download_file(
+        &self,
+        server: &str,
+        uri: &str,
+        dir: &std::path::Path,
+    ) -> Result<std::path::PathBuf> {
+        let context = self.file_context(server).await;
+        crate::files::download(&self.connection(server).await?, &context, uri, dir).await
+    }
+
     async fn connection(&self, server: &str) -> Result<Connection> {
         self.servers
             .read()

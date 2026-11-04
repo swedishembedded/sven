@@ -104,6 +104,28 @@ and lists them again when the server says they changed.
 - A prompt is a slash command named `/<server>/<prompt>` in the TUI, with the
   prompt's arguments completed as `<name>`.
 
+### Files
+
+sven speaks MCP's file transfer extension (SEP-2631, now the experimental
+extension `experimental-ext-file-uploads`; sven follows the PR revision of
+2026-06-16) and declares it as the client extension
+`io.modelcontextprotocol/files`:
+
+- A tool argument marked `x-mcp-file` (a URI string, or a list of them)
+  takes a file. When the model writes a local path there, sven asks the
+  server `files/authorizeUpload` (name, media type, size, SHA-256 in
+  base64url), uploads the bytes to the URL it answers (a single HTTPS
+  request; a multipart form is refused), and calls the tool with the file
+  URI the server minted. A path outside the directory sven works in, or a
+  symlink out of it, is refused before anything is sent. A value that
+  already names a file (`scheme://...`, `data:`) is passed as it is.
+- A file URI is fetched with `files/authorizeDownload` and kept only when it
+  matches the digest the server gave; its name is kept to one path segment.
+- The model never sees an upload or download URL.
+
+A host can add fields to the `_meta` of every file request to a server (the
+session an upload is for); `sven rc` sets `sven/session` to the session's id.
+
 ### Connected accounts
 
 Signed in to a server that offers connected accounts (`sven auth login`),

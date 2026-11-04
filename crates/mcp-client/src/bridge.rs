@@ -128,9 +128,19 @@ impl Tool for McpTool {
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        // A local path in a file argument goes to the server as the file it
+        // names, never as a path the server cannot read.
+        let args = match self
+            .manager
+            .prepare_file_arguments(&self.server_name, &self.schema, &call.args)
+            .await
+        {
+            Ok(args) => args,
+            Err(e) => return ToolOutput::err(&call.id, format!("{e:#}")),
+        };
         match self
             .manager
-            .call_tool(&self.server_name, &self.original_name, &call.args)
+            .call_tool(&self.server_name, &self.original_name, &args)
             .await
         {
             Ok(result) => tool_output(&call.id, result),

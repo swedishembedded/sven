@@ -34,15 +34,6 @@ protocols.
    agent's instructions. It is typed as a notice in session events and
    traces, so no surface or export takes it for the person. A notice starts
    a turn only when the server says so.
-5. **Files over MCP.** The client side of MCP's file transfer (SEP-2631,
-   now the experimental extension `experimental-ext-file-uploads`, pinned to
-   the PR revision of 2026-06-16): declare the `files` capability (under
-   `extensions` in rmcp 3.8 until it is final), turn a local path the model
-   wrote into an `x-mcp-file` argument through `files/authorizeUpload`
-   (rmcp's `ClientRequest::CustomRequest`), and materialize file values and
-   `FileContent` results through `files/authorizeDownload`, verifying the
-   sha-256 digest. One module, used by sessions and by the `sven rc` host for
-   attachments (item 4); the model never sees a transfer URL.
 6. **Skills from the signed-in server.** The `skill` tool
    (`crates/tools-agent/src/skill.rs`) lists and loads skills the signed-in
    server offers, beside local ones. sven's MCP client ignores a server's
@@ -59,7 +50,8 @@ protocols.
 Already in place: packages carry their `skills/` and `bin/` under the bundle
 digest (`docs/reference/harnesses.md`, Imports); `file` inputs, `publish:`
 with `HarnessRun::on_publish` checkpoints, and `retry: never`
-(`docs/reference/harnesses.md`). Every signed-in sven mounts its server's MCP endpoint
+(`docs/reference/harnesses.md`); the client side of MCP's file transfer
+(`docs/reference/mcp.md`, Files). Every signed-in sven mounts its server's MCP endpoint
 (`src/main.rs`, `connectors::add_signed_in`; the `sven rc` host through
 `crates/remote/src/host/services.rs`).
 
@@ -71,7 +63,5 @@ Each item is done when its own test proves it:
   worker stops.
 - 4: a notice is shown as a notice, starts no turn unless asked, and leaves
   the system prompt intact on every driver.
-- 5: an `x-mcp-file` argument uploads, a digest mismatch is refused, and no
-  URL reaches the model's context.
 - 7: a harness run whose tools live in another `sven mcp serve` passes its
   gates; the agent cannot read the gate scripts.
