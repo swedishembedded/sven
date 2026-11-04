@@ -45,6 +45,9 @@ pub(crate) enum Entry {
     Message(String),
     /// No message: the conversation continues from what it already holds.
     Continue,
+    /// A command for the agent's standing goal; the run lasts as long as
+    /// the work it starts.
+    Goal(sven_vocab::goal::GoalCommand),
     /// The answer to the question the agent is waiting on.
     Answer {
         question_id: sven_hsm::QuestionId,

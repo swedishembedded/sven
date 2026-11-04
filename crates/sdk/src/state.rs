@@ -286,6 +286,12 @@ impl AgentState {
         self
     }
 
+    /// The agent's standing goal as its last run left it, if it has one.
+    #[must_use]
+    pub fn goal(&self) -> Option<crate::Goal> {
+        sven_machines::machines::goal_flow::load(&self.kernel.as_ref()?.context)
+    }
+
     /// The kernel state the last step ended in, if it has run.
     #[must_use]
     pub fn kernel(&self) -> Option<&Snapshot> {

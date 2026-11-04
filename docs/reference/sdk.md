@@ -321,6 +321,27 @@ the agent keeps the history and kernel state it had, so it can be sent to
 again. The tool-round budget is `AgentConfig.max_tool_rounds`; a turn the
 budget cut short still ends with an answer, and reports `BudgetExhausted`.
 
+## Standing goals
+
+`Agent::goal(command)` gives the agent a [goal](../guides/goals.md) it keeps
+working toward: `GoalCommand::Set { objective, max_turns, check }` starts it,
+and the run lasts until the goal is done, blocked, paused or out of turns
+(within the run's bounds, as `goal_with` takes them). `Pause`, `Resume`,
+`Clear` and `Check` steer it. The goal is kept with the agent's state, so
+`AgentState::goal()` reads it without running anything and a later run
+continues it.
+
+```rust,ignore
+use sven_sdk::{GoalCheck, GoalCommand, GoalStatus};
+
+agent.goal(GoalCommand::Set {
+    objective: "the parser tests pass".into(),
+    max_turns: Some(20),
+    check: Some(GoalCheck { argv: vec!["cargo".into(), "test".into()], timeout_secs: 600 }),
+}).await?;
+assert_eq!(agent.state().goal().map(|g| g.status), Some(GoalStatus::Completed));
+```
+
 ## Typed model-driven methods
 
 A `Method<T>` is a contract: instructions, a return type, and the limits on

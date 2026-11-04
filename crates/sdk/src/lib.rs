@@ -86,6 +86,7 @@ pub use sven_harness_runtime::{sourced_trace, Source, SourceTracker, SourcedReco
 /// Identifies an approval, as a [`HumanGate::Approval`] and a parked
 /// [`Approval`] carry it.
 pub use sven_hsm::ApprovalId;
+pub use sven_vocab::goal::{Goal, GoalCheck, GoalCommand, GoalStatus};
 pub use sven_vocab::HarnessEvent;
 pub use transcript::{ToolCallRecord, Turn};
 

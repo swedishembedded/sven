@@ -82,6 +82,33 @@ impl Agent {
         self.run(Entry::Continue, &options, &bounds).await
     }
 
+    /// Gives the agent's standing goal a command - set, pause, resume,
+    /// clear or a check - and runs as long as the work it starts: a goal set
+    /// or resumed runs until it is done, blocked, paused or out of turns,
+    /// within the engine's bounds. The goal is kept with the agent's state
+    /// ([`crate::AgentState::goal`]), so a later run continues it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::send_with`].
+    pub async fn goal(&mut self, command: crate::GoalCommand) -> Result<RunOutcome, CallError> {
+        self.goal_with(command, RunOptions::default()).await
+    }
+
+    /// [`Self::goal`] within `bounds`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::send_with`].
+    pub async fn goal_with(
+        &mut self,
+        command: crate::GoalCommand,
+        bounds: RunOptions,
+    ) -> Result<RunOutcome, CallError> {
+        self.run(Entry::Goal(command), &TurnOptions::default(), &bounds)
+            .await
+    }
+
     /// Answers the question the agent is waiting on and continues the run.
     /// See [`Self::answer_with`].
     ///

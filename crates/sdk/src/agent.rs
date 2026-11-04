@@ -308,7 +308,7 @@ impl Agent {
         // A message starts a run. An answer or a decision continues the run
         // the agent is parked in, which keeps its id.
         let run_id = match &entry {
-            Entry::Message(_) | Entry::Continue => RunId::new(),
+            Entry::Message(_) | Entry::Continue | Entry::Goal(_) => RunId::new(),
             Entry::Answer { .. } | Entry::Decision { .. } => {
                 self.state.open_run.unwrap_or_else(RunId::new)
             }
@@ -356,6 +356,14 @@ impl Agent {
                         approval_id,
                         reason: Some(reason),
                     },
+                },
+                None,
+            ),
+            // The caller waits for the run, so the command is its turn.
+            Entry::Goal(command) => (
+                Event::Goal {
+                    command,
+                    awaits_answer: true,
                 },
                 None,
             ),
