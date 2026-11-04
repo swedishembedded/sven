@@ -98,7 +98,7 @@ fn every_workflow_the_compiler_accepts_validates() {
     let validator = validator();
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut checked = 0;
-    for dir in ["tests", "../harness-runtime/tests", "../sdk/tests"] {
+    for dir in ["tests/it", "../harness-runtime/tests/it", "../sdk/tests/it"] {
         let Ok(entries) = std::fs::read_dir(manifest.join(dir)) else {
             continue;
         };
