@@ -28,7 +28,7 @@ serve: install
 ## publish        - upload the Docker image to the edge host ($(TARGET)) via SSH
 publish: build
 	@echo "Publishing $(IMAGE):v$(VERSION) to $(TARGET)..."
-	$(DOCKER) save $(IMAGE):v$(VERSION) | ssh $(TARGET) docker load
+	$(DOCKER) save $(IMAGE):v$(VERSION) | ssh $(TARGET) sudo -n docker load
 	@echo "Done. Release it with portal_agentsven_version: v$(VERSION) in the infrastructure repository."
 
 ## install        - install npm dependencies
