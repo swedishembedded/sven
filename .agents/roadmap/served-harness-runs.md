@@ -38,20 +38,13 @@ protocols.
    (`crates/tools-agent/src/skill.rs`) lists and loads skills the signed-in
    server offers, beside local ones. sven's MCP client ignores a server's
    `instructions` and prompts today (`crates/mcp-client`).
-7. **`sven mcp serve` reachable from another pod.** Streamable HTTP with a
-   bearer token read from a file (rmcp's `transport-streamable-http-server`
-   is already a dependency of `crates/mcp`), and `shell_gate` servable on
-   request. A host then keeps the model and the plan in one process and runs
-   tools, and gates, elsewhere by registering forwarding tools with
-   `EngineBuilder::tool` (a registered tool wins a name collision with a
-   built-in one, `crates/sdk/src/engine.rs`), so content a run reads can
-   never reach the plan, the gate scripts or the network.
 
 Already in place: packages carry their `skills/` and `bin/` under the bundle
 digest (`docs/reference/harnesses.md`, Imports); `file` inputs, `publish:`
 with `HarnessRun::on_publish` checkpoints, and `retry: never`
 (`docs/reference/harnesses.md`); the client side of MCP's file transfer
-(`docs/reference/mcp.md`, Files). Every signed-in sven mounts its server's MCP endpoint
+(`docs/reference/mcp.md`, Files); tools and gates served from another
+process (`sven mcp serve --listen`, `ForwardedTool`). Every signed-in sven mounts its server's MCP endpoint
 (`src/main.rs`, `connectors::add_signed_in`; the `sven rc` host through
 `crates/remote/src/host/services.rs`).
 
@@ -63,5 +56,3 @@ Each item is done when its own test proves it:
   worker stops.
 - 4: a notice is shown as a notice, starts no turn unless asked, and leaves
   the system prompt intact on every driver.
-- 7: a harness run whose tools live in another `sven mcp serve` passes its
-  gates; the agent cannot read the gate scripts.

@@ -153,6 +153,88 @@ impl Tool for McpTool {
 /// and audio as themselves, an embedded resource as its text (or a note
 /// naming a binary one), a resource link as its URI, and the structured
 /// result as JSON when the server sent no content to read it from.
+/// A tool of an MCP server offered under its own name, as if it ran here:
+/// for a host that keeps its plan in one process and runs tools in another
+/// (a sandbox, a verifier). The host gives each the capability its local
+/// namesake has (`capability`), so the permission gate and the registry
+/// reconciliation hold it to the same bucket, and a call cannot widen what
+/// the plan declared by going through another server.
+pub struct ForwardedTool {
+    name: String,
+    description: String,
+    summary: String,
+    schema: Value,
+    server: String,
+    manager: Arc<McpManager>,
+    capability: ToolCapability,
+}
+
+impl ForwardedTool {
+    /// Every tool `server` offers, each forwarded under its own name.
+    pub async fn all(
+        manager: &Arc<McpManager>,
+        server: &str,
+        capability: impl Fn(&str) -> ToolCapability,
+    ) -> Vec<Arc<dyn Tool>> {
+        manager
+            .tools()
+            .await
+            .into_iter()
+            .filter(|tool| tool.server_name() == server)
+            .map(|tool| {
+                let name = tool.original_name().to_string();
+                Arc::new(ForwardedTool {
+                    capability: capability(&name),
+                    description: tool.description().to_string(),
+                    summary: tool.summary().to_string(),
+                    schema: tool.parameters_schema(),
+                    server: server.to_string(),
+                    manager: Arc::clone(manager),
+                    name,
+                }) as Arc<dyn Tool>
+            })
+            .collect()
+    }
+}
+
+#[async_trait]
+impl Tool for ForwardedTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    fn parameters_schema(&self) -> Value {
+        self.schema.clone()
+    }
+
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+
+    fn kernel_capability(&self) -> ToolCapability {
+        self.capability
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        match self
+            .manager
+            .call_tool(&self.server, &self.name, &call.args)
+            .await
+        {
+            Ok(result) => tool_output(&call.id, result),
+            Err(e) => ToolOutput::err(&call.id, format!("{e:#}")),
+        }
+    }
+}
+
 pub fn tool_output(call_id: &str, result: CallToolResult) -> ToolOutput {
     let mut parts: Vec<ToolOutputPart> = result.content.into_iter().map(content_part).collect();
     if parts.is_empty() {

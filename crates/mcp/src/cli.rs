@@ -47,6 +47,18 @@ pub enum McpCommands {
         /// May also be provided via the BRAVE_API_KEY environment variable.
         #[arg(long, env = "BRAVE_API_KEY", value_name = "KEY")]
         brave_api_key: Option<String>,
+
+        /// Serve over Streamable HTTP at `http://ADDR/mcp` instead of stdio,
+        /// for a host that runs tools in another container than its plan.
+        /// Needs --token-file. `shell_gate` is served only when --tools
+        /// names it.
+        #[arg(long, value_name = "ADDR", requires = "token_file")]
+        listen: Option<std::net::SocketAddr>,
+
+        /// The file holding the bearer token an HTTP client must present (at
+        /// least 32 characters; readable by its owner alone).
+        #[arg(long, value_name = "PATH", requires = "listen")]
+        token_file: Option<std::path::PathBuf>,
     },
 
     /// Add an MCP server to your account, or to a configuration file.
@@ -143,6 +155,8 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
         McpCommands::Serve {
             tools,
             brave_api_key,
+            listen,
+            token_file,
         } => {
             crate::check_requested_tools(tools.as_deref())?;
             let config = sven_bootstrap::Config::load(None)?;
@@ -155,7 +169,19 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
                 &config.tools,
                 scope,
             ));
-            crate::serve_stdio(registry).await
+            match (listen, token_file) {
+                (Some(addr), Some(path)) => {
+                    let token = read_token(path)?;
+                    let listener = tokio::net::TcpListener::bind(addr).await?;
+                    eprintln!(
+                        "sven mcp: serving {} at http://{}/mcp",
+                        root.display(),
+                        listener.local_addr()?
+                    );
+                    crate::serve_http(registry, listener, token).await
+                }
+                _ => crate::serve_stdio(registry).await,
+            }
         }
         McpCommands::Add {
             name,
@@ -419,4 +445,24 @@ async fn auth(server: &str) -> anyhow::Result<()> {
     let tools = sign_in_and_connect(server).await?;
     println!("Signed in to '{server}'. Connected {server}: {tools} tools.");
     Ok(())
+}
+
+/// The bearer token in `path`: refused when others may read the file.
+fn read_token(path: &std::path::Path) -> anyhow::Result<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path)
+            .map_err(|e| anyhow::anyhow!("--token-file {}: {e}", path.display()))?
+            .permissions()
+            .mode();
+        anyhow::ensure!(
+            mode & 0o077 == 0,
+            "--token-file {} may be read by others; make it readable by its owner alone (chmod 600)",
+            path.display()
+        );
+    }
+    let token = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("--token-file {}: {e}", path.display()))?;
+    Ok(token.trim().to_string())
 }

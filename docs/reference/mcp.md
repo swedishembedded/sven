@@ -282,6 +282,17 @@ these built-in tools by default: `edit_file`, `find_file`, `grep`,
 |------|---------|
 | `--tools a,b,...` | serve only these tools; `default` or no flag serves the nine above; a name outside that set (including a stale `all`) is an error. The set is deliberately smaller than the agent's tools: those that need a live session (`ask_question`, `todo`, `switch_mode`) or change agent state are not offered to MCP clients |
 | `--brave-api-key KEY` | key for `web_search` (also read from `BRAVE_API_KEY`) |
+| `--listen ADDR` | serve over Streamable HTTP at `http://ADDR/mcp` instead of stdio; needs `--token-file` |
+| `--token-file PATH` | the bearer token an HTTP client must present: at least 32 characters, in a file readable by its owner alone; any other request is answered 401 |
+
+`shell_gate` (the command a harness gate runs, whose exit status decides it)
+is served only when `--tools` names it. Over HTTP the server is for a host
+that keeps its plan in one place and runs tools in another, a sandbox or a
+verifier on a private network: `sven_mcp_client::ForwardedTool` offers a
+served tool under its own name and the capability its local namesake has,
+so a harness registered with them (`EngineBuilder::tool`) runs its agent's
+tools in one server and its gates in another, and the agent cannot read
+what the gates run.
 
 Every served tool runs when the host calls it; the host applies its own
 permission UI. The file tools, and the directory the shell starts in, are

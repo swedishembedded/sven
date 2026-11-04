@@ -37,7 +37,7 @@ pub mod manager;
 // ── Public re-exports ─────────────────────────────────────────────────────────
 
 pub use auth::TokenStore;
-pub use bridge::{McpPromptArgInfo, McpPromptInfo, McpTool};
+pub use bridge::{ForwardedTool, McpPromptArgInfo, McpPromptInfo, McpTool};
 pub use callback::{
     bind_loopback, open_browser, sign_in_link, wait_showing, Redirect, CALLBACK_TIMEOUT,
 };

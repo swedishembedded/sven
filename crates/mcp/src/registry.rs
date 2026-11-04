@@ -39,6 +39,11 @@ pub const DEFAULT_TOOL_NAMES: &[&str] = &[
     "write_file",
 ];
 
+/// Tools served only when named in `--tools`: `shell_gate`, the command a
+/// harness's gate runs and whose exit status decides it. A host that keeps
+/// its plan elsewhere runs its gates through it in a verifier it controls.
+pub const OPT_IN_TOOL_NAMES: &[&str] = &["shell_gate"];
+
 /// The `--tools` value that selects [`DEFAULT_TOOL_NAMES`].
 pub const DEFAULT_KEYWORD: &str = "default";
 
@@ -51,12 +56,14 @@ pub fn check_requested_tools(requested: Option<&str>) -> anyhow::Result<()> {
     let unknown: Vec<&str> = list
         .split(',')
         .map(str::trim)
-        .filter(|name| !DEFAULT_TOOL_NAMES.contains(name))
+        .filter(|name| !DEFAULT_TOOL_NAMES.contains(name) && !OPT_IN_TOOL_NAMES.contains(name))
         .collect();
     anyhow::ensure!(
         unknown.is_empty(),
-        "--tools: unknown tool {unknown:?}; the server offers {} (or `{DEFAULT_KEYWORD}` for all of them)",
-        DEFAULT_TOOL_NAMES.join(", ")
+        "--tools: unknown tool {unknown:?}; the server offers {} (or `{DEFAULT_KEYWORD}` for those but {}), and {} when named",
+        DEFAULT_TOOL_NAMES.join(", "),
+        OPT_IN_TOOL_NAMES.join(", "),
+        OPT_IN_TOOL_NAMES.join(", ")
     );
     Ok(())
 }
@@ -89,14 +96,22 @@ pub fn build_mcp_registry(
         Some(list) => Some(list.split(',').map(|s| s.trim()).collect()),
     };
 
+    let mut reg = ToolRegistry::new();
+
     let allow = |name: &str| -> bool {
         match &filter {
-            None => true,
+            None => !OPT_IN_TOOL_NAMES.contains(&name),
             Some(set) => set.contains(name),
         }
     };
-
-    let mut reg = ToolRegistry::new();
+    if allow("shell_gate") {
+        if let Some(gate) = scope
+            .root()
+            .and_then(|root| sven_tools_exec::GateCommandTool::new(root).ok())
+        {
+            reg.register(gate);
+        }
+    }
 
     if allow("edit_file") {
         reg.register(EditFileTool::new(scope.clone()));
