@@ -227,7 +227,10 @@ mod tests {
         assert_eq!(parsed.files[0].path, "front.png");
         assert!(parsed.checkpoint.is_none());
         assert_eq!(
-            serde_json::to_value(HeartbeatAnswer { desired: Desired::Paused }).unwrap(),
+            serde_json::to_value(HeartbeatAnswer {
+                desired: Desired::Paused
+            })
+            .unwrap(),
             serde_json::json!({ "desired": "paused" })
         );
     }
