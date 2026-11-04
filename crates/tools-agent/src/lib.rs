@@ -21,7 +21,7 @@ pub mod system;
 pub mod todo;
 
 pub use ask_question::{AskQuestionTool, Question, QuestionRequest};
-pub use goal::UpdateGoalTool;
+pub use goal::{SetGoalTool, UpdateGoalTool};
 pub use harness_vars::HarnessVarTool;
 pub use skill::SkillTool;
 mod skill_search;

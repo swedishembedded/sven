@@ -107,6 +107,7 @@ fn set(objective: &str, max_turns: Option<u32>) -> GoalCommand {
     GoalCommand::Set {
         objective: objective.into(),
         max_turns,
+        check: None,
     }
 }
 
@@ -423,4 +424,58 @@ fn a_command_sent_during_a_turn_that_arrives_after_it_starts_and_ends_nothing() 
     for command in [GoalCommand::Pause, GoalCommand::Clear] {
         assert!(!ends_turn(&s.late(command)));
     }
+}
+
+#[test]
+fn the_goal_the_person_asks_the_model_to_word_starts_in_the_same_answer() {
+    let mut s = Session::new();
+    s.send(Event::user_message(
+        "set the most appropriately worded goal for this session",
+    ));
+    s.call(
+        goal_flow::SET_GOAL_TOOL,
+        json!({"objective": "Every parser test passes", "check": ["cargo", "test"]}),
+    );
+    let effects = s.reply("I set the goal: every parser test passes.");
+    assert_eq!(
+        s.state(),
+        ReactiveState::Generating,
+        "the goal starts at once"
+    );
+    assert!(!ends_turn(&effects), "in the same answer");
+    let goal = goal_flow::load(&s.ctx).unwrap();
+    assert_eq!(goal.objective, "Every parser test passes");
+    assert_eq!(goal.check.unwrap().argv, ["cargo", "test"]);
+    assert!(turn_instruction(&effects)
+        .unwrap()
+        .contains("Every parser test passes"));
+}
+
+#[test]
+fn the_model_cannot_change_the_goal_it_is_working_toward() {
+    let mut s = Session::new();
+    s.goal(set("port the parser", None));
+    s.call(
+        goal_flow::SET_GOAL_TOOL,
+        json!({"objective": "something easier"}),
+    );
+    let effects = s.reply("I changed the goal.");
+    let goal = goal_flow::load(&s.ctx).unwrap();
+    assert_eq!(goal.objective, "port the parser", "unchanged");
+    let instruction = turn_instruction(&effects).expect("the goal goes on");
+    assert!(instruction.contains("not applied"), "{instruction}");
+}
+
+#[test]
+fn a_goal_set_in_one_turn_does_not_leak_into_the_next() {
+    let mut s = Session::new();
+    s.send(Event::user_message("hi"));
+    s.call(goal_flow::SET_GOAL_TOOL, json!({"objective": ""}));
+    s.reply("ok");
+    assert_eq!(s.status(), None, "an empty objective sets nothing");
+    s.send(Event::user_message("thanks"));
+    let effects = s.reply("you're welcome");
+    assert_eq!(s.state(), ReactiveState::Idle);
+    assert!(ends_turn(&effects));
+    assert_eq!(s.status(), None);
 }

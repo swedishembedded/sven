@@ -22,6 +22,7 @@
 
 pub mod child_records;
 pub mod child_spawner;
+pub mod cli_registry;
 pub mod config;
 pub mod connectors;
 pub mod context;
@@ -49,6 +50,7 @@ mod tool_events;
 #[cfg(feature = "android")]
 pub mod ui_test_dispatch;
 
+pub use cli_registry::build_cli_tool_registry;
 pub use config::{
     AgentConfig, AssemblyConfig, AssemblyMode, Config, ContextSettings, DisclosureConfig,
     ListingConfig, ToolsConfig,
@@ -65,8 +67,7 @@ pub use evidence_share::evidence_store_path;
 pub use kernel_bridge::{spawn_observation_bridge, spawn_question_bridge, KernelAgentSession};
 pub use modes::mode_registry;
 pub use registry::{
-    build_cli_tool_registry, build_tool_registry, build_tool_registry_with_integrations,
-    IntegrationProviders,
+    build_tool_registry, build_tool_registry_with_integrations, IntegrationProviders,
 };
 pub use runtime_builder::{
     KernelChannels, RuntimeBuilder, RuntimeHandle, SessionBundle, ToolExecutorFactory,

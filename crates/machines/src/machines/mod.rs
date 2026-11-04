@@ -10,6 +10,7 @@ pub mod loop_core;
 mod loop_nudges;
 pub mod predict;
 pub mod reactive_agent;
+mod reactive_goal;
 pub mod sdlc;
 pub mod ui_test;
 pub mod verified_task;

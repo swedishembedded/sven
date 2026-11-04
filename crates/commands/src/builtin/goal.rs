@@ -20,7 +20,7 @@ use crate::{CommandContext, CommandResult, CompletionItem, ImmediateAction, Slas
 
 /// How to use `/goal`, shown when it is used wrongly.
 pub const GOAL_USAGE: &str =
-    "Usage:\n  /goal [--turns N] <objective>   set the goal and start working on it\n  \
+    "Usage:\n  /goal [--turns N] [--check \"<command>\"] <objective>   set the goal and start working on it\n  \
 /goal                           show the goal\n  /goal pause | resume | clear\n  \
 /goal check [--timeout SECS] <command...>   decide completion with a command\n  \
 /goal check off                 decide on the agent's report again";
@@ -60,15 +60,89 @@ pub fn parse(args: &[String]) -> CommandResult {
         "resume" => only(GoalCommand::Resume),
         "clear" => only(GoalCommand::Clear),
         "check" => parse_check(rest),
-        "--turns" => match rest.split_first() {
-            Some((turns, objective)) => match turns.parse::<u32>() {
-                Ok(n) if n > 0 => set(objective, Some(n)),
-                _ => usage("--turns takes a positive number."),
-            },
-            None => usage("--turns takes a number."),
-        },
-        _ => set(args, None),
+        _ => parse_set(args),
     }
+}
+
+/// `/goal [--turns N] [--check "<command>"] <objective>`, the flags in any
+/// order before the objective.
+fn parse_set(mut args: &[String]) -> CommandResult {
+    let mut max_turns = None;
+    let mut check = None;
+    loop {
+        match args {
+            [flag, turns, rest @ ..] if flag == "--turns" => match turns.parse::<u32>() {
+                Ok(n) if n > 0 => {
+                    max_turns = Some(n);
+                    args = rest;
+                }
+                _ => return usage("--turns takes a positive number."),
+            },
+            [flag, command, rest @ ..] if flag == "--check" => {
+                let argv = crate::parser::tokenise(command);
+                if argv.is_empty() {
+                    return usage("--check takes a command.");
+                }
+                check = Some(GoalCheck {
+                    argv,
+                    timeout_secs: DEFAULT_CHECK_TIMEOUT_SECS,
+                });
+                args = rest;
+            }
+            [flag] if flag == "--turns" || flag == "--check" => {
+                return usage(&format!("{flag} takes a value."))
+            }
+            _ => break,
+        }
+    }
+    set(args, max_turns, check)
+}
+
+/// The `/goal` line that stands for `command`, as [`parse`] reads it: what a
+/// surface that cannot run the command itself sends to the sven that runs
+/// the session (an attached terminal, a server's chat). `None` for a goal put
+/// back from storage, which no person types. A check given with the goal
+/// cannot hold an argument with a space in it (`--check` takes one quoted
+/// command line); `/goal check` can.
+#[must_use]
+pub fn slash_text(command: &GoalCommand) -> Option<String> {
+    let quoted = |arg: &str| {
+        if arg.is_empty() || arg.contains(char::is_whitespace) {
+            format!("\"{arg}\"")
+        } else {
+            arg.to_string()
+        }
+    };
+    Some(match command {
+        GoalCommand::Set {
+            objective,
+            max_turns,
+            check,
+        } => {
+            let mut line = "/goal".to_string();
+            if let Some(n) = max_turns {
+                line.push_str(&format!(" --turns {n}"));
+            }
+            if let Some(check) = check {
+                let argv: Vec<String> = check.argv.iter().map(|a| quoted(a)).collect();
+                line.push_str(&format!(" --check \"{}\"", argv.join(" ").replace('"', "")));
+            }
+            format!("{line} {objective}")
+        }
+        GoalCommand::Pause => "/goal pause".into(),
+        GoalCommand::Resume => "/goal resume".into(),
+        GoalCommand::Clear => "/goal clear".into(),
+        GoalCommand::Check { check: None } => "/goal check off".into(),
+        GoalCommand::Check { check: Some(check) } => {
+            let argv: Vec<String> = check.argv.iter().map(|a| quoted(a)).collect();
+            format!(
+                "/goal check --timeout {} {}",
+                check.timeout_secs,
+                argv.join(" ")
+            )
+        }
+        GoalCommand::Restore { .. } => return None,
+    })
 }
 
 fn only_show(rest: &[String]) -> CommandResult {
@@ -79,7 +153,7 @@ fn only_show(rest: &[String]) -> CommandResult {
     }
 }
 
-fn set(objective: &[String], max_turns: Option<u32>) -> CommandResult {
+fn set(objective: &[String], max_turns: Option<u32>, check: Option<GoalCheck>) -> CommandResult {
     let objective = objective.join(" ");
     if objective.trim().is_empty() {
         return usage("A goal needs an objective.");
@@ -87,6 +161,7 @@ fn set(objective: &[String], max_turns: Option<u32>) -> CommandResult {
     action(ImmediateAction::Goal(GoalCommand::Set {
         objective,
         max_turns,
+        check,
     }))
 }
 
@@ -163,12 +238,12 @@ mod tests {
         assert!(result.message_to_send.is_none());
         assert!(matches!(
             result.immediate_action,
-            Some(ImmediateAction::Goal(GoalCommand::Set { ref objective, max_turns: None }))
+            Some(ImmediateAction::Goal(GoalCommand::Set { ref objective, max_turns: None, check: None }))
                 if objective == "make the tests pass"
         ));
         assert!(matches!(
             run("--turns 40 port the parser"),
-            Some(ImmediateAction::Goal(GoalCommand::Set { ref objective, max_turns: Some(40) }))
+            Some(ImmediateAction::Goal(GoalCommand::Set { ref objective, max_turns: Some(40), .. }))
                 if objective == "port the parser"
         ));
     }
@@ -219,5 +294,64 @@ mod tests {
             run("check --timeout x make"),
             Some(ImmediateAction::Notice { .. })
         ));
+    }
+
+    #[test]
+    fn a_goal_can_name_its_check_and_its_turns_in_one_line() {
+        match run(r#"--check "cargo test -p parser" --turns 30 make the parser tests pass"#) {
+            Some(ImmediateAction::Goal(GoalCommand::Set {
+                objective,
+                max_turns,
+                check,
+            })) => {
+                assert_eq!(objective, "make the parser tests pass");
+                assert_eq!(max_turns, Some(30));
+                assert_eq!(check.unwrap().argv, ["cargo", "test", "-p", "parser"]);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            run("--check"),
+            Some(ImmediateAction::Notice { .. })
+        ));
+    }
+
+    /// What a surface sends for a command reads back as that command: one
+    /// grammar, in one place.
+    #[test]
+    fn every_command_round_trips_through_its_line() {
+        let commands = [
+            GoalCommand::Set {
+                objective: "port the parser".into(),
+                max_turns: Some(12),
+                check: Some(GoalCheck {
+                    argv: vec!["make".into(), "test".into()],
+                    timeout_secs: DEFAULT_CHECK_TIMEOUT_SECS,
+                }),
+            },
+            GoalCommand::Set {
+                objective: "ship it".into(),
+                max_turns: None,
+                check: None,
+            },
+            GoalCommand::Pause,
+            GoalCommand::Resume,
+            GoalCommand::Clear,
+            GoalCommand::Check { check: None },
+            GoalCommand::Check {
+                check: Some(GoalCheck {
+                    argv: vec!["cargo".into(), "test".into(), "my crate".into()],
+                    timeout_secs: 90,
+                }),
+            },
+        ];
+        for command in commands {
+            let line = slash_text(&command).expect("a person can type it");
+            let args = crate::parser::tokenise(line.strip_prefix("/goal").unwrap().trim());
+            match GoalCommandHandler.execute(args).immediate_action {
+                Some(ImmediateAction::Goal(back)) => assert_eq!(back, command, "{line}"),
+                other => panic!("{line}: {other:?}"),
+            }
+        }
     }
 }

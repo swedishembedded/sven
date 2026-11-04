@@ -26,6 +26,13 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_MAX_TURNS: u32 = 20;
 /// The most goal turns a person may grant at once.
 pub const MAX_TURNS_LIMIT: u32 = 500;
+/// The tool the model sets the goal with when the person asks it to
+/// (`set_goal`). Named here because the machine that honours it and the
+/// tool that offers it live in crates that cannot depend on each other.
+pub const SET_GOAL_TOOL: &str = "set_goal";
+/// The tool the model reports on the goal with (`update_goal`).
+pub const UPDATE_GOAL_TOOL: &str = "update_goal";
+
 /// Consecutive goal turns that must report the same blocker before the goal
 /// is blocked. One report is often a step the model can recover from itself.
 pub const BLOCKED_AFTER: u32 = 3;
@@ -235,6 +242,10 @@ pub enum GoalCommand {
         /// The goal turns it gets; [`DEFAULT_MAX_TURNS`] when absent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_turns: Option<u32>,
+        /// The command that decides it, if completion is not to rest on the
+        /// model's report.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check: Option<GoalCheck>,
     },
     /// Stop taking further goal turns; the turn running finishes.
     Pause,

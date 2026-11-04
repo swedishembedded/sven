@@ -92,12 +92,12 @@ use sven_hsm::{
     status::Reaction,
 };
 
-use super::goal::Next;
 use super::goal_flow;
 use super::loop_core::{
     build_turn_effect, handle_tool_event, init_loop, on_llm_turn_complete, GeneratingAction,
     LoopState,
 };
+use super::reactive_goal::{checked, failed, goal_step, goal_turn, person_turn_ended};
 
 /// The conversation thread name used by the reactive agent.
 pub const CHAT_THREAD: &str = "chat";
@@ -142,7 +142,7 @@ fn configured_max_tool_rounds(ctx: &Context) -> u32 {
 }
 
 /// Default mode for all-tools resolution.
-const AGENT_MODE: &str = "agent";
+pub(super) const AGENT_MODE: &str = "agent";
 
 /// The tool the clarification post-check calls.
 ///
@@ -514,6 +514,7 @@ impl Machine for ReactiveAgentMachine {
                     "compaction requested; summarising the conversation",
                 ),
                 Event::UserMessage { text } => {
+                    goal_flow::begin_person_turn(ctx);
                     let ls = start_loop(ctx);
                     Reaction::transition(
                         Generating,
@@ -619,11 +620,7 @@ impl Machine for ReactiveAgentMachine {
                                     ctx.set_fact("last_response", json!(text));
                                     match goal_flow::settled(ctx) {
                                         Some((announce, next)) => goal_step(ctx, announce, next),
-                                        None => Reaction::transition(
-                                            Idle,
-                                            vec![turn_ended()],
-                                            "turn complete; final answer",
-                                        ),
+                                        None => person_turn_ended(ctx),
                                     }
                                 }
                             }
@@ -683,7 +680,7 @@ impl Machine for ReactiveAgentMachine {
 /// Starts the tool loop of a new turn, configured for this machine: its
 /// round budget from the session, and the end of the turn left to the
 /// machine ([`LoopState::machine_ends_turn`]).
-fn start_loop(ctx: &mut Context) -> LoopState {
+pub(super) fn start_loop(ctx: &mut Context) -> LoopState {
     init_loop(
         ctx,
         CHAT_THREAD,
@@ -697,70 +694,9 @@ fn start_loop(ctx: &mut Context) -> LoopState {
     ls
 }
 
-/// Starts a goal turn with `instruction`, announcing the goal.
-fn goal_turn(ctx: &mut Context, announce: Effect, instruction: &str) -> Reaction<ReactiveState> {
-    let ls = start_loop(ctx);
-    let turn = ls.stamp(build_turn_effect(
-        CHAT_THREAD,
-        &[],
-        AGENT_MODE,
-        None,
-        Some(instruction),
-        None,
-        ls.max_rounds,
-        None,
-        None,
-    ));
-    Reaction::transition(
-        ReactiveState::Generating,
-        vec![announce, turn],
-        "the goal takes a turn",
-    )
-}
-
-/// Does what the goal policy decided after a goal turn or its check.
-fn goal_step(ctx: &mut Context, announce: Effect, next: Next) -> Reaction<ReactiveState> {
-    match next {
-        Next::Check(spec) => Reaction::transition(
-            ReactiveState::Checking,
-            vec![announce, Effect::Verify { spec }],
-            "checking the goal",
-        ),
-        Next::Continue(instruction) => goal_turn(ctx, announce, &instruction),
-        Next::Stop => Reaction::transition(
-            ReactiveState::Idle,
-            vec![announce, turn_ended()],
-            "the goal stopped",
-        ),
-    }
-}
-
-/// The goal's check answered.
-fn checked(
-    ctx: &mut Context,
-    verdict: &sven_vocab::verify::VerifierVerdict,
-) -> Reaction<ReactiveState> {
-    match goal_flow::checked(ctx, verdict) {
-        Some((announce, next)) => goal_step(ctx, announce, next),
-        // Cleared while it ran.
-        None => Reaction::transition(ReactiveState::Idle, vec![turn_ended()], "goal cleared"),
-    }
-}
-
-/// A turn failed beyond recovery: it ends, and an active goal pauses.
-fn failed(ctx: &mut Context, error: &str) -> Reaction<ReactiveState> {
-    ctx.set_fact("last_error", json!(error));
-    let mut effects: Vec<Effect> =
-        goal_flow::interrupted(ctx, &format!("the turn failed: {error}"))
-            .into_iter()
-            .collect();
-    effects.push(turn_ended());
-    Reaction::transition(ReactiveState::Idle, effects, "turn failed")
-}
-
 /// The announcement that the person's turn is over: the machine is at rest
 /// and waits for them.
-fn turn_ended() -> Effect {
+pub(super) fn turn_ended() -> Effect {
     Effect::Announce {
         event: Box::new(sven_hsm::UiEvent::TurnComplete),
     }

@@ -26,9 +26,7 @@ use sven_vocab::verify::VerifierVerdict;
 use super::goal::{self, after_check, after_turn, check_summary, Next, TurnRecord};
 use super::loop_core::LoopState;
 
-/// The tool the model reports on the goal with. Named by string: the tool
-/// lives in a domain-tier crate this one cannot depend on.
-pub const UPDATE_GOAL_TOOL: &str = "update_goal";
+pub use sven_vocab::goal::{SET_GOAL_TOOL, UPDATE_GOAL_TOOL};
 /// Context fact holding the [`Goal`], or `null` when there is none.
 pub const GOAL_FACT: &str = "goal";
 /// Context fact counting the goals set in this session, so each gets an id
@@ -36,6 +34,11 @@ pub const GOAL_FACT: &str = "goal";
 const REVISION_FACT: &str = "goal.revision";
 /// Context fact holding the [`TurnRecord`] of the goal turn running.
 const TURN_FACT: &str = "goal.turn";
+/// Context fact holding the goal the model set in the person's turn
+/// running (`set_goal`), applied when the turn ends.
+const PROPOSED_FACT: &str = "goal.proposed";
+/// Context fact: the model tried to set the goal during the goal's own turn.
+const REFUSED_FACT: &str = "goal.refused_set";
 
 /// The session's goal, if it has one.
 #[must_use]
@@ -126,6 +129,7 @@ pub fn command(
         GoalCommand::Set {
             objective,
             max_turns,
+            check,
         } => {
             let objective = objective.trim();
             if objective.is_empty() {
@@ -146,11 +150,18 @@ pub fn command(
             let max_turns = max_turns
                 .unwrap_or(DEFAULT_MAX_TURNS)
                 .clamp(1, MAX_TURNS_LIMIT);
+            let check = check
+                .as_ref()
+                .filter(|c| c.argv.first().is_some_and(|p| !p.is_empty()))
+                .map(|c| GoalCheck {
+                    argv: c.argv.clone(),
+                    timeout_secs: c.timeout_secs.max(1),
+                });
             let goal = Goal::new(
                 format!("goal-{revision}"),
                 bounded(objective, MAX_OBJECTIVE_CHARS),
                 max_turns,
-                None,
+                check,
             );
             store(ctx, Some(&goal));
             ctx.activate_tools(&[UPDATE_GOAL_TOOL.to_string()]);
@@ -282,24 +293,78 @@ pub fn observe_calls(ctx: &mut Context, calls: &[ProposedToolCall]) {
     store_turn(ctx, &record);
 }
 
-/// Notes a goal report the model made: a call to `update_goal` that ran.
-/// The report is read from the call as proposed, so a call the tool refused
-/// (missing fields) reports nothing.
+/// A person's turn starts: nothing the model set in an earlier one carries
+/// over.
+pub fn begin_person_turn(ctx: &mut Context) {
+    ctx.set_fact(PROPOSED_FACT, Value::Null);
+}
+
+/// The goal the model set in the person's turn that just ended, carried out
+/// as the person's own `/goal` would be; `None` when it set none.
+pub fn proposed(ctx: &mut Context) -> Option<Answer> {
+    let value = ctx.fact(PROPOSED_FACT).cloned()?;
+    ctx.set_fact(PROPOSED_FACT, Value::Null);
+    let set: GoalCommand = serde_json::from_value(value).ok()?;
+    Some(command(ctx, &set, true, true))
+}
+
+/// The `set_goal` arguments as the person's `/goal` command.
+fn parse_proposal(args: &Value) -> Option<GoalCommand> {
+    let objective = args.get("objective").and_then(Value::as_str)?.trim();
+    if objective.is_empty() {
+        return None;
+    }
+    let max_turns = args
+        .get("max_turns")
+        .and_then(Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok());
+    let check = args
+        .get("check")
+        .and_then(Value::as_array)
+        .and_then(|argv| {
+            argv.iter()
+                .map(|a| a.as_str().map(str::to_string))
+                .collect::<Option<Vec<String>>>()
+        })
+        .filter(|argv| argv.first().is_some_and(|p| !p.is_empty()))
+        .map(|argv| GoalCheck {
+            argv,
+            timeout_secs: sven_vocab::goal::DEFAULT_CHECK_TIMEOUT_SECS,
+        });
+    Some(GoalCommand::Set {
+        objective: bounded(objective, MAX_OBJECTIVE_CHARS),
+        max_turns,
+        check,
+    })
+}
+
+/// Notes a goal call the model made that ran: a report (`update_goal`)
+/// during a goal turn, or a goal it set (`set_goal`). The call is read as
+/// proposed, so one the tool refused (missing fields) counts for nothing. A
+/// goal set during the goal's own turn is refused: the model never changes
+/// what it is working toward on its own.
 pub fn observe_result(ctx: &mut Context, event: &Event) {
     let Event::ToolSucceeded { call_id, .. } = event else {
         return;
     };
-    if !is_active(ctx) {
-        return;
-    }
     let ls = LoopState::load(ctx);
-    let Some(call) = ls
-        .proposed
-        .get(call_id)
-        .filter(|c| c.name == UPDATE_GOAL_TOOL)
-    else {
+    let Some(call) = ls.proposed.get(call_id) else {
         return;
     };
+    if call.name == SET_GOAL_TOOL {
+        if is_active(ctx) {
+            ctx.set_fact(REFUSED_FACT, json!(true));
+        } else if let Some(set) = parse_proposal(&call.args) {
+            ctx.set_fact(
+                PROPOSED_FACT,
+                serde_json::to_value(set).unwrap_or(Value::Null),
+            );
+        }
+        return;
+    }
+    if call.name != UPDATE_GOAL_TOOL || !is_active(ctx) {
+        return;
+    }
     if let Some(report) = parse_report(&call.args) {
         let mut record = turn(ctx);
         record.report = Some(report);
@@ -343,8 +408,11 @@ pub fn parse_report(args: &Value) -> Option<GoalReport> {
 pub fn settled(ctx: &mut Context) -> Option<(Effect, Next)> {
     let mut goal = load(ctx).filter(|g| g.status.is_active())?;
     let record = turn(ctx);
-    let next = after_turn(&mut goal, &record);
+    let mut next = after_turn(&mut goal, &record);
     store(ctx, Some(&goal));
+    if !matches!(next, Next::Check(_)) {
+        say_refusal(ctx, &mut next);
+    }
     let note = match &next {
         Next::Check(_) => format!("Turn {} done; running the check.", goal.turns_used),
         Next::Continue(_) => format!("Turn {} of {}.", goal.turns_used + 1, goal.max_turns),
@@ -361,8 +429,9 @@ pub fn settled(ctx: &mut Context) -> Option<(Effect, Next)> {
 pub fn checked(ctx: &mut Context, verdict: &VerifierVerdict) -> Option<(Effect, Next)> {
     let mut goal = load(ctx)?;
     let record = turn(ctx);
-    let next = after_check(&mut goal, verdict, &record);
+    let mut next = after_check(&mut goal, verdict, &record);
     store(ctx, Some(&goal));
+    say_refusal(ctx, &mut next);
     let note = match &next {
         Next::Continue(_) => format!(
             "{}; turn {} of {}.",
@@ -376,6 +445,21 @@ pub fn checked(ctx: &mut Context, verdict: &VerifierVerdict) -> Option<(Effect, 
         begin_turn(ctx);
     }
     Some((announce(Some(&goal), note), next))
+}
+
+/// Tells the model, in the goal's next turn, that the goal it tried to set
+/// during the last one was not: only the person changes a running goal.
+fn say_refusal(ctx: &mut Context, next: &mut Next) {
+    if ctx.fact(REFUSED_FACT).and_then(Value::as_bool) != Some(true) {
+        return;
+    }
+    ctx.set_fact(REFUSED_FACT, json!(false));
+    if let Next::Continue(instruction) = next {
+        instruction.push_str(
+            "\nYour set_goal call was not applied: only the person changes the goal while it \
+             runs. Work toward the goal above.\n",
+        );
+    }
 }
 
 /// An active goal stops because its turn did not finish: the person stopped

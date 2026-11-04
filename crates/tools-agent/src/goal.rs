@@ -6,7 +6,8 @@
 // and when they are stuck for its clients. If your team needs expertise in
 // supervised, long-running agent work then you can procure our services by
 // sending an email to info@swedishembedded.com.
-//! `update_goal`: the model reports on the session's standing goal.
+//! `update_goal` and `set_goal`: the model reports on the session's
+//! standing goal, and sets one when the person asks it to.
 //!
 //! The tool only checks that a report is complete and acknowledges it. What
 //! the report means is decided by the machine running the goal, which reads
@@ -15,6 +16,11 @@
 //! set, and a blocker stops the goal only after it recurs. The tool never
 //! changes the goal itself, so a report cannot resume a goal, change its
 //! objective or remove its check.
+//!
+//! `set_goal` is how a person has the agent word the goal for them ("set the
+//! best goal for this session"). The machine sets it when the reply ends,
+//! and only in a turn the person started: during the goal's own turns the
+//! model cannot change what it is working toward.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -22,8 +28,7 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
-/// The tool's name, as the goal machine knows it.
-pub const UPDATE_GOAL_TOOL: &str = "update_goal";
+pub use sven_vocab::goal::{SET_GOAL_TOOL, UPDATE_GOAL_TOOL};
 
 /// Reports that the goal is complete or blocked.
 #[derive(Default)]
@@ -178,5 +183,92 @@ mod tests {
     #[test]
     fn the_summary_fits_the_deferred_listing() {
         assert!(UpdateGoalTool.summary().len() <= 100);
+    }
+}
+
+/// Sets the session's standing goal, when the person asked for it.
+#[derive(Default)]
+pub struct SetGoalTool;
+
+#[async_trait]
+impl Tool for SetGoalTool {
+    fn name(&self) -> &str {
+        SET_GOAL_TOOL
+    }
+
+    fn summary(&self) -> &str {
+        "Set the session's standing goal when the person asks you to set or word one."
+    }
+
+    fn description(&self) -> &str {
+        "Set the standing goal the session then keeps working toward, turn after turn, until \
+         it is met. Use it only when the person asked you to set, word or change the goal; \
+         never to give yourself one. Word the objective so that it says what done looks like. \
+         Give `check` (a command and its arguments) when a command can decide it, such as a \
+         test run. The goal is set when this reply ends; it cannot be changed from inside the \
+         goal's own turns."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "objective": { "type": "string", "description": "What to achieve, worded so that done is recognisable" },
+                "max_turns": { "type": "integer", "minimum": 1, "maximum": sven_vocab::goal::MAX_TURNS_LIMIT },
+                "check": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "A command that passes when the goal is met, as a program and its arguments"
+                },
+            },
+            "required": ["objective"],
+            "additionalProperties": false
+        })
+    }
+
+    /// A person who approves calls approves this one too.
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Ask
+    }
+
+    /// Nothing outside the session changes.
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::ReadFile
+    }
+
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let objective = call
+            .args
+            .get("objective")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if objective.trim().is_empty() {
+            return ToolOutput::err(&call.id, "`objective` is required");
+        }
+        ToolOutput::ok(
+            &call.id,
+            "The goal is set when this reply ends, and the session then works toward it. End \
+             your reply by saying what you set.",
+        )
+    }
+}
+
+impl ToolDisplay for SetGoalTool {
+    fn display_name(&self) -> &str {
+        "Set goal"
+    }
+    fn icon(&self) -> &str {
+        "◎"
+    }
+    fn category(&self) -> &str {
+        "system"
+    }
+    fn collapsed_summary(&self, args: &Value) -> String {
+        args.get("objective")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .chars()
+            .take(60)
+            .collect()
     }
 }

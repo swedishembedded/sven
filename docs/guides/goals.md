@@ -18,6 +18,7 @@ sven then marks as unverified.
 |---------|--------------|
 | `/goal <objective>` | Set the goal and start working on it now, with 20 turns. Replaces any goal there was. Only at rest: while a turn runs, wait for it or stop it first. |
 | `/goal --turns N <objective>` | The same with `N` turns (at most 500). |
+| `/goal --check "<command>" <objective>` | The same, decided by that command (see `/goal check`). The flags go before the objective, in any order. |
 | `/goal` or `/goal status` | Show the goal: its status, turns, check and last result, and what blocks it. Without a goal: `No goal is set. Set one using /goal command`. |
 | `/goal check [--timeout SECS] <command...>` | Decide completion with a command from now on: the goal is met when it exits with status 0 within its time (default 600 seconds). It is a program and its arguments, run in the project without a shell of its own; quote an argument that holds spaces. |
 | `/goal check off` | Remove the check; the model's report decides again. |
@@ -27,6 +28,13 @@ sven then marks as unverified.
 
 Stopping the running turn (`Esc`, `/abort`, or stopping the answer from a
 server) pauses the goal; `/goal resume` continues it.
+
+You can also ask the agent to set the goal for you: "set the most
+appropriately worded goal for this session". It words the objective (and a
+check, when a command can decide it) with its `set_goal` tool, and the goal
+starts when its reply ends, in the same answer. The agent sets a goal only in
+a turn you started: during the goal's own turns it cannot change what it is
+working toward, and a session that asks before tool calls asks you first.
 
 ## How a goal runs
 

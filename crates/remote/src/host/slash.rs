@@ -137,7 +137,8 @@ mod tests {
             interpret("/goal make the tests pass", project.path()),
             Typed::Goal(GoalCommand::Set {
                 objective: "make the tests pass".into(),
-                max_turns: None
+                max_turns: None,
+                check: None,
             })
         );
         assert_eq!(

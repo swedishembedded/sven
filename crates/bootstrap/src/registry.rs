@@ -28,7 +28,8 @@ use sven_model::ModelProvider;
 use sven_tool_api::events::{TodoItem, ToolEvent};
 use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{
-    AskQuestionTool, ModelCatalogEntry, SkillTool, SystemTool, TodoTool, UpdateGoalTool,
+    AskQuestionTool, ModelCatalogEntry, SetGoalTool, SkillTool, SystemTool, TodoTool,
+    UpdateGoalTool,
 };
 use sven_tools_ctx::{ChunkExpandTool, ChunkExpander, ContextStore};
 #[cfg(feature = "document")]
@@ -40,7 +41,6 @@ use sven_tools_fs::{EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool,
 use sven_tools_gdb::GdbSessionState;
 use sven_tools_web::GrepTool;
 use sven_vocab::AgentMode;
-use sven_workspace::Shared;
 
 use sven_turn::AgentRuntimeContext;
 
@@ -370,6 +370,18 @@ fn system_tool(
 }
 
 /// Offers `ask_question` routed as `questions` says, if at all.
+/// The tools that keep the session's own state: its todo list, and the
+/// goal the model reports on or sets when asked.
+pub(crate) fn register_session_tools(
+    reg: &mut ToolRegistry,
+    todos: Arc<Mutex<Vec<TodoItem>>>,
+    events: mpsc::Sender<ToolEvent>,
+) {
+    reg.register(TodoTool::new(todos, events));
+    reg.register(UpdateGoalTool);
+    reg.register(SetGoalTool);
+}
+
 pub(crate) fn register_ask_question(reg: &mut ToolRegistry, questions: Questions) {
     match questions {
         Questions::Answered(tx) => reg.register(AskQuestionTool::new_tui(tx)),
@@ -427,8 +439,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     );
 
     register_ask_question(&mut reg, p.questions);
-    reg.register(TodoTool::new(p.todos, p.tool_event_tx.clone()));
-    reg.register(UpdateGoalTool);
+    register_session_tools(&mut reg, p.todos, p.tool_event_tx.clone());
 
     reg.register(
         TaskTool::new(
@@ -484,8 +495,7 @@ fn build_profile_research(
     ));
 
     register_ask_question(&mut reg, questions);
-    reg.register(TodoTool::new(todos, tool_event_tx.clone()));
-    reg.register(UpdateGoalTool);
+    register_session_tools(&mut reg, todos, tool_event_tx.clone());
 
     // Task is included for delegation; its children are held to read-only
     // modes for as long as this session is.
@@ -670,78 +680,6 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
         // Suppress the unused warning for the event channel in the SubAgent path.
         let _ = tool_event_tx;
     }
-}
-
-/// Build a lightweight [`ToolRegistry`] for direct CLI invocation.
-///
-/// Contains the same consolidated tool set as the agent, minus tools that
-/// require a live model or TUI channel. Intended for `sven tool <name> <args>`
-/// direct invocation.
-pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
-    let mut reg = ToolRegistry::new();
-
-    // ── File I/O ─────────────────────────────────────────────────────────────
-    reg.register(ReadFileTool::default());
-    reg.register(FindFileTool::default());
-    reg.register(WriteTool::default());
-    reg.register_with_display(EditFileTool::default());
-
-    // ── PDF to Markdown ───────────────────────────────────────────────────────
-    #[cfg(feature = "document")]
-    reg.register_with_display(DocumentLocateTool::new(
-        sven_tool_api::PathScope::unconfined(),
-    ));
-    #[cfg(feature = "document")]
-    reg.register_with_display(DocumentConvertTool::new(
-        sven_tool_api::PathScope::unconfined(),
-        Arc::new(crate::ConfigOcrModels::new(cfg.clone())),
-        crate::convert_options(&cfg.ocr),
-    ));
-
-    // ── Multimodal attachments ───────────────────────────────────────────────
-    // No live model in the CLI registry, so audio is always transcribed —
-    // the only answer that is correct for every possible target model.
-    #[cfg(feature = "media")]
-    reg.register(AttachFileTool::new(None, cfg.tools.asr.clone()));
-
-    // ── Search ────────────────────────────────────────────────────────────────
-    reg.register(GrepTool::default());
-
-    // ── Web ───────────────────────────────────────────────────────────────────
-    reg.register(cfg.tools.web.fetch_tool());
-    reg.register(cfg.web_search_tool());
-
-    // ── System ────────────────────────────────────────────────────────────────
-    reg.register(cfg.tools.shell_tool(sven_tool_api::PathScope::default()));
-
-    let (event_tx, _event_rx) = mpsc::channel::<ToolEvent>(16);
-    let todos = Arc::new(Mutex::new(Vec::<TodoItem>::new()));
-    reg.register(TodoTool::new(todos, event_tx.clone()));
-    reg.register(UpdateGoalTool);
-
-    reg.register(SkillTool::new(Shared::empty()));
-
-    // ── Memory ────────────────────────────────────────────────────────────────
-    let knowledge = Shared::empty();
-    reg.register(cfg.tools.memory.tool(knowledge));
-
-    // ── Context (no model available for query/reduce) ─────────────────────────
-    // Only open/read/grep are fully usable without a model.
-    // The compound context tool is not registered in CLI mode since query/reduce
-    // require a live model provider.
-
-    // ── GDB ───────────────────────────────────────────────────────────────────
-    // GDB tools use Unix signal APIs and are only available on Unix platforms.
-    #[cfg(all(unix, feature = "gdb"))]
-    {
-        let gdb_state = Arc::new(Mutex::new(GdbSessionState::default()));
-        reg.register(
-            GdbTool::new(gdb_state, cfg.tools.gdb.clone())
-                .with_command_policy(Arc::new(cfg.tools.policy())),
-        );
-    }
-
-    reg
 }
 
 /// The discovery tool of a session whose tool definitions are deferred.
@@ -949,6 +887,7 @@ mod tests {
             "skill",
             "system",
             "task",
+            "set_goal",
             "todo",
             // Deferred: a session loads it only when a goal is set, so
             // outside a goal it costs its one-line summary.
@@ -969,19 +908,6 @@ mod tests {
         }
         expected.sort_unstable();
         assert_eq!(got, expected, "the agent's tool set changed");
-    }
-
-    /// The goal machine and the tool name the same report: the machine reads
-    /// the tool by name, from a tier that cannot depend on the tool's crate.
-    #[test]
-    fn the_goal_report_tool_is_the_one_the_goal_machine_reads() {
-        assert_eq!(
-            sven_machines::machines::goal_flow::UPDATE_GOAL_TOOL,
-            sven_tools_agent::goal::UPDATE_GOAL_TOOL
-        );
-        assert!(agent_tools()
-            .iter()
-            .any(|(name, ..)| name == sven_tools_agent::goal::UPDATE_GOAL_TOOL));
     }
 
     /// Every tool a machine allow-lists for a state must be one the agent is
