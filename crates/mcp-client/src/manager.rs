@@ -488,15 +488,15 @@ impl McpManager {
     /// Where `server`'s file arguments resolve (the directory sven works
     /// in) and what its file requests carry in `_meta`.
     async fn file_context(&self, server: &str) -> crate::files::FileContext {
-        let meta = self
+        let (meta, root) = self
             .config
             .read()
             .await
             .get(server)
-            .map(|c| c.request_meta.clone())
+            .map(|c| (c.request_meta.clone(), c.file_root.clone()))
             .unwrap_or_default();
         crate::files::FileContext {
-            root: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            root: root.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))),
             meta,
         }
     }

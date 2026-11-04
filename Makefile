@@ -295,7 +295,7 @@ test/harness/runtime:
 
 ## test/harness/sdk - harness through the SDK: run, replay, authz, children and the 1000-run stress test
 test/harness/sdk:
-	$(HARNESS_TEST) -p sven-sdk --test harness_run --test harness_replay --test harness_authz --test harness_host_policy --test harness_item_checkpoints --test harness_children --test harness_stress -- --test-threads=4
+	$(HARNESS_TEST) -p sven-sdk --test it -- --test-threads=4 harness_run:: harness_replay:: harness_authz:: harness_host_policy:: harness_item_checkpoints:: harness_children:: harness_stress::
 
 ## test/harness/cli - the `sven harness` command line, against a loopback scripted model server
 test/harness/cli:

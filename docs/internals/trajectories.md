@@ -80,7 +80,7 @@ warning and is reported by `journal_error` and `close_journal`; it never fails t
 `incomplete`, tolerates a record cut short at the end (counted in `torn_tail_bytes`) and
 refuses damage before the last record. A journal without its end record was never finished
 and its trajectory says so; a consumer that admits only finished runs refuses it by reading
-that field. The kill test (`crates/sdk/tests/journal_kill.rs`) runs a real second process,
+that field. The kill test (`crates/sdk/tests/it/journal_kill.rs`) runs a real second process,
 SIGKILLs it inside a model request and reads the journal back.
 
 ## Children
@@ -96,7 +96,7 @@ the transcript like any other. Nested children are listed flat, each with its de
 ## Reproducibility
 
 - With a scripted mock provider a run is exactly reproducible: the same scripts, tools and
-  sampling give the same event stream and the same trajectory (`crates/sdk/tests/reproduce.rs`),
+  sampling give the same event stream and the same trajectory (`crates/sdk/tests/it/reproduce.rs`),
   and a trajectory alone holds what is needed to rebuild the model's side of the stream.
   The two measurements of a run, its timestamps and each tool call's `duration_ms`, differ from
   run to run and are the only fields that do.

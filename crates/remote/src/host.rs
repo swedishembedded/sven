@@ -564,7 +564,7 @@ impl SessionActor {
             self.context.wide_access,
         )?;
         let mut options = SessionOptions::new(
-            attachments::for_session(&self.context.config, self.id),
+            attachments::for_session(&self.context.config, self.id, &self.context.working_dir),
             runtime,
             self.events_tx.clone(),
         );

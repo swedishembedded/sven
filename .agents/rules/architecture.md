@@ -39,7 +39,7 @@ are held by review.
   audit ledger possible.
 - A machine keeps its durable state in `Context`, not in its own fields, and
   implements `all_states()`; otherwise a snapshot cannot resume it
-  (`docs/internals/resumable-agents.md`, `crates/machines/tests/restorable.rs`).
+  (`docs/internals/resumable-agents.md`, `crates/machines/tests/it/restorable.rs`).
 
 ## One event type
 

@@ -21,5 +21,5 @@ higher than `input_budget / 1.5`, so the refusal came before the trigger.
 `compaction_due` now also fires when the sizing estimate passes the input
 budget (and still never when the threshold is 1.0). Regression tests:
 `a_request_under_the_limit_whose_response_sizing_overflows_is_compacted_not_refused`
-in `crates/executors/tests/fork_compaction.rs`, and the two
+in `crates/executors/tests/it/fork_compaction.rs`, and the two
 `trajectory_fidelity` compaction tests.

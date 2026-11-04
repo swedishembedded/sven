@@ -190,7 +190,7 @@ async fn a_cheating_run_fails_its_own_gate_and_the_others_complete() {
         panic!("the cheat's gate fails: {:?}", cheat.result);
     };
     assert_eq!(failure.code, "gate_failed");
-    // A failed run is not a success (crates/sdk/tests/harness_run.rs); what
+    // A failed run is not a success (crates/sdk/tests/it/harness_run.rs); what
     // isolation adds is that only the cheat's run failed.
     assert_eq!(cheat.conclusion, RunConclusion::AgentError);
     assert_eq!(honest.conclusion, RunConclusion::Success);

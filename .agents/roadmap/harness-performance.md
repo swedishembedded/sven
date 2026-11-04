@@ -72,7 +72,7 @@ What limits success now:
 - Fast inner loop: replay a recorded request at a failure point with one
   section or tool description swapped, many samples
   (`docs/guides/request-replay.md`); confirm a winner on tasks.
-- Gates: CI pins prompt bytes (`crates/turn/tests/system_prompt_golden.rs`),
+- Gates: CI pins prompt bytes (`crates/turn/tests/it/system_prompt_golden.rs`),
   request cost and cache-prefix stability, zero harness aborts on scripted
   runs; a small real-model suite before a release must not lose to the
   previous release on paired tasks.

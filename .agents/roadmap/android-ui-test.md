@@ -158,7 +158,7 @@ touched here).
 Not yet done - real gaps, not swept under "mocked":
 
 - **No real-device/real-checkpoint pass through the CLI entry point.**
-  `crates/bootstrap/tests/live_ui_test_dispatch.rs` (added by this file's own
+  `crates/bootstrap/tests/it/live_ui_test_dispatch.rs` (added by this file's own
   CLI-wiring update below) self-skips cleanly without one, matching
   `tools-android/tests/live_device.rs`/`tools-ground/tests/live_ground.rs`'s
   existing convention - it did not run in this environment either.
@@ -302,7 +302,7 @@ checkpoint needed for the default `cargo test` run):
   retry-budget-exhausted failure.
 - `src/run/agent_dispatch.rs` - 5 tests: stdin request parsing (with/without
   a device, with/without `params`, malformed JSON, missing `mode`).
-- `crates/bootstrap/tests/live_ui_test_dispatch.rs` - the real-device/real-
+- `crates/bootstrap/tests/it/live_ui_test_dispatch.rs` - the real-device/real-
   checkpoint integration test this file's own "not yet done" list above
   points at; self-skips cleanly without both, matching
   `live_ground.rs`/`live_device.rs`'s convention. Did not run in this

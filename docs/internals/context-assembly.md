@@ -275,7 +275,7 @@ records 0 expansions.
   tokens, and the `context` tool's definition (920 tokens over its requests)
   is the price of being able to expand them.
 - A resumed three-stage task (two stages of reads, a recorded fact, a failing
-  test run and a todo list, in `crates/bootstrap/tests/context_reconstruct.rs`)
+  test run and a todo list, in `crates/bootstrap/tests/it/context_reconstruct.rs`)
   sends 17,407 estimated tokens when its transcript is replayed and 6,098 when
   it is reconstructed, with the constraint, the recorded fact, the open todo
   item and the error line all present, and the task completes.

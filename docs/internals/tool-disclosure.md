@@ -222,7 +222,7 @@ tool's name from the same ranker.
 ### Search quality
 
 Search is the safety property of deferral: a tool the model cannot find is a
-failed task. `crates/tool-registry/tests/search_quality.rs` measures it on
+failed task. `crates/tool-registry/tests/it/search_quality.rs` measures it on
 generated catalogs of 40 to 288 overlapping tools, with four query kinds:
 **exact** (the words of the tool's name), **paraphrased** (synonyms of them),
 **indirect** (the tool's domain described without being named) and
@@ -241,9 +241,9 @@ occurs in the catalog's text cannot be answered by any lexical ranker, so the
 numbers compare rankers and do not predict a given catalog.
 
 ```
-cargo test -p sven-tool-registry --test search_quality                       # pins the held-out recall floor
-cargo test -p sven-tool-registry --test search_quality -- --ignored --nocapture   # larger sweep, result sizes, ambiguity
-cargo test --release -p sven-tool-registry --test search_tuning -- --ignored --nocapture
+cargo test -p sven-tool-registry --test it -- search_quality::                       # pins the held-out recall floor
+cargo test -p sven-tool-registry --test it -- search_quality:: --ignored --nocapture   # larger sweep, result sizes, ambiguity
+cargo test --release -p sven-tool-registry --test it -- search_tuning:: --ignored --nocapture
 ```
 
 The `tool_selection` suite of the

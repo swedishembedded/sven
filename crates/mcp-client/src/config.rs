@@ -233,6 +233,12 @@ pub struct McpServerConfig {
     /// configuration file.
     #[serde(skip)]
     pub request_meta: serde_json::Map<String, serde_json::Value>,
+    /// Where a local path in this server's file arguments resolves: the
+    /// directory the session works in. Unset, the process's current
+    /// directory. Set by sven itself (a host running many sessions sets each
+    /// one's), never read from a configuration file.
+    #[serde(skip)]
+    pub file_root: Option<std::path::PathBuf>,
 }
 
 impl McpServerConfig {
@@ -305,6 +311,7 @@ impl Default for McpServerConfig {
             tools: HashMap::new(),
             token_exchange: None,
             request_meta: serde_json::Map::new(),
+            file_root: None,
         }
     }
 }

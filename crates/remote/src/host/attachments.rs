@@ -36,14 +36,18 @@ pub(super) const DIR: &str = ".sven/attachments";
 /// The `_meta` key that names a session's conversation in file requests.
 const SESSION_META: &str = "sven/session";
 
-/// `config` for session `id`: its server's file requests name the session.
-pub(super) fn for_session(config: &Arc<Config>, id: Uuid) -> Arc<Config> {
-    let server = sven_bootstrap::connectors::SERVER;
-    if !config.mcp_servers.contains_key(server) {
+/// `config` for session `id` working in `working_dir`: every MCP server
+/// resolves the session's file arguments there, not in the host's own
+/// directory, and the signed-in server's requests name the session.
+pub(super) fn for_session(config: &Arc<Config>, id: Uuid, working_dir: &Path) -> Arc<Config> {
+    if config.mcp_servers.is_empty() {
         return Arc::clone(config);
     }
     let mut own = Config::clone(config);
-    if let Some(server) = own.mcp_servers.get_mut(server) {
+    for server in own.mcp_servers.values_mut() {
+        server.file_root = Some(working_dir.to_path_buf());
+    }
+    if let Some(server) = own.mcp_servers.get_mut(sven_bootstrap::connectors::SERVER) {
         server.request_meta.insert(
             SESSION_META.into(),
             serde_json::Value::String(id.to_string()),
@@ -234,7 +238,7 @@ mod tests {
     async fn manager(url: &str, id: Uuid, home: &Path) -> Arc<McpManager> {
         let mut config = Config::default();
         sven_bootstrap::connectors::add(&mut config, url, None, "key");
-        let own = for_session(&Arc::new(config), id);
+        let own = for_session(&Arc::new(config), id, home);
         let (events, _) = tokio::sync::mpsc::channel(64);
         let manager = McpManager::with_token_store(
             own.mcp_servers.clone(),
@@ -305,6 +309,9 @@ mod tests {
     #[test]
     fn a_host_without_a_server_shares_its_configuration() {
         let plain = Arc::new(Config::default());
-        assert!(Arc::ptr_eq(&for_session(&plain, Uuid::new_v4()), &plain));
+        assert!(Arc::ptr_eq(
+            &for_session(&plain, Uuid::new_v4(), Path::new("/work")),
+            &plain
+        ));
     }
 }

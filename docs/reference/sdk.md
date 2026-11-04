@@ -162,7 +162,7 @@ application controls) replaces that built-in for the agent and for all its
 children. This is the contract for containment: the root confines the
 in-process tools, and the application's own tool confines the process-spawning
 ones; neither relies on detecting a violation afterwards. Both are pinned by
-`crates/sdk/tests/project_root_children.rs`.
+`crates/sdk/tests/it/project_root_children.rs`.
 
 Without a root, paths resolve against the process working directory as they
 always have, the audit log is written beneath it, and nothing is discovered.
@@ -497,7 +497,7 @@ diversity (distinct candidates over evaluations). A candidate that crashes or
 times out is a result (a failed verdict and its floor utility); an `Err` from
 the environment or proposer, or a non-finite utility, aborts the search.
 
-Validation (`crates/sdk/tests/search.rs`): a hidden 24-bit string with the
+Validation (`crates/sdk/tests/it/search.rs`): a hidden 24-bit string with the
 fraction of matching bits as partial credit and an all-bits-match verifier.
 From the all-zero candidate with single-bit-flip proposals, 20 seeds and a
 budget of 1000 evaluations, annealing (`initial_temperature` 0.05, `cooling`

@@ -1,0 +1,565 @@
+// Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+//! The harness machine's spec, driven directly against `dispatch_state` the
+//! way the verified-task machine's unit tests drive theirs: transitions and
+//! effects asserted at the kernel boundary, entry handlers followed by hand
+//! (no executor in a unit test), no I/O anywhere.
+
+use crate::common;
+
+use common::{drive, start, turn};
+use sven_harness_runtime::{HarnessMachine, OUTCOME_FACT, RUN_STATE_FACT};
+use sven_hsm::{Effect, Event, Machine};
+use sven_vocab::verify::{VerifierSpec, VerifierVerdict};
+
+const FAILING: &str = r#"
+api_version: "2"
+name: moody
+entry: ask
+limits: { max_steps: 50, max_model_turns: 5 }
+steps:
+  ask:
+    predict:
+      prompt: "Mood?"
+      store_as: mood
+      then: bad
+  bad:
+    fail:
+      code: "no_mood"
+      message: "the mood was {{ steps.ask.value }}"
+"#;
+
+const GREET: &str = r#"
+api_version: "2"
+name: greet
+entry: ask
+limits: { max_steps: 50, max_model_turns: 5 }
+steps:
+  ask:
+    predict:
+      prompt: "Say hello to {{ inputs.name }}"
+      store_as: greeting
+      then: save
+  save:
+    assign:
+      set:
+        spoken: "{{ steps.ask.value }}"
+      then: out
+  out:
+    return:
+      value:
+        message: "{{ facts.spoken }}"
+"#;
+
+#[test]
+fn a_predict_step_emits_one_call_llm_and_stores_its_answer() {
+    let (mut m, mut ctx, mut state) = start(GREET, serde_json::json!({ "name": "Ada" }));
+
+    // The predict step: one constrained turn, in the harness's own thread.
+    assert_eq!(state, sven_harness_runtime::HarnessState::WaitingForModel);
+    let ask = m
+        .step_effect()
+        .expect("the entered step emitted its effect");
+    let Effect::CallLlm { request } = &ask else {
+        panic!("a predict step asks the model, got {ask:?}");
+    };
+    assert_eq!(request["thread"], "harness.greet");
+    assert!(request["instruction"].as_str().unwrap().contains("Ada"));
+
+    let fx = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        turn("harness.greet", "Hello Ada"),
+    );
+    // Storing the answer advances the walk itself (the advance signal
+    // bounce) through the pure tail to the run's end: internal signals and
+    // audit bookkeeping, but no I/O.
+    assert!(
+        fx.iter()
+            .all(|fx| matches!(fx, Effect::EmitInternal { .. } | Effect::PersistAudit)),
+        "storing the answer advances without I/O: {fx:?}"
+    );
+    assert_eq!(
+        ctx.fact(RUN_STATE_FACT).and_then(|v| v
+            .get("steps")
+            .and_then(|s| s.get("ask"))
+            .map(|s| s["value"].clone())),
+        Some(serde_json::json!("Hello Ada"))
+    );
+
+    // The pure tail (assign → return) advances without I/O and completes.
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Completed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    assert!(m.is_terminal(state), "Completed is terminal");
+    let out = m.outcome().expect("a completed run has an outcome");
+    assert_eq!(out["message"], serde_json::json!("Hello Ada"));
+}
+
+#[test]
+fn a_gate_step_emits_the_gate_call_with_a_deterministic_call_id_and_stores_the_report() {
+    let yaml = r#"
+api_version: "2"
+name: checker
+entry: probe
+capabilities: [ExecuteShell]
+limits: { max_steps: 50, max_tool_calls: 10 }
+steps:
+  probe:
+    gate:
+      steps: [{ name: cat, argv: [cat, "notes/scratch.txt"] }]
+      then: out
+      on_fail: bad
+  out:
+    return:
+      value: "{{ steps.probe.stdout }}"
+  bad:
+    fail: { code: gate_failed }
+"#;
+    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
+
+    let ask = m.step_effect().expect("the gate step emitted its effect");
+    let Effect::CallTool {
+        call_id,
+        name,
+        args,
+        ..
+    } = &ask
+    else {
+        panic!("a gate step calls the gate tool, got {ask:?}");
+    };
+    assert_eq!(name, "shell_gate");
+    assert_eq!(
+        args["steps"][0]["argv"],
+        serde_json::json!(["cat", "notes/scratch.txt"])
+    );
+    // Deterministic per step: replay reproduces the same id, so the recorded
+    // ToolSucceeded still matches after a checkpoint restore.
+    let expected = sven_harness_runtime::step_call_id("checker", "probe");
+    assert_eq!(*call_id, expected);
+
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::ToolSucceeded {
+            call_id: expected,
+            observation: serde_json::json!({ "exit_code": 0, "timed_out": false, "error": null,
+                "stdout": "file contents", "stderr": "" })
+            .to_string()
+            .into(),
+        },
+    );
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Completed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    assert_eq!(
+        m.outcome().unwrap(),
+        serde_json::json!("file contents"),
+        "a single-hole template carries the value's type through"
+    );
+}
+
+#[test]
+fn a_branch_step_chooses_between_successors_without_io() {
+    let yaml = r#"
+api_version: "2"
+name: router
+entry: ask
+limits: { max_steps: 50, max_model_turns: 5 }
+steps:
+  ask:
+    predict:
+      prompt: "Is it raining?"
+      store_as: answer
+      then: route
+  route:
+    branch:
+      on: "steps.ask.value"
+      when_true: wet
+      when_false: dry
+  wet:
+    assign: { set: { where: umbrella }, then: out }
+  dry:
+    assign: { set: { where: sunglasses }, then: out }
+  out:
+    return:
+      value: "{{ facts.where }}"
+"#;
+    // The model answers "yes" → the truthy branch.
+    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
+    let _ = m.step_effect().expect("predict emitted its turn");
+    let _ = drive(&mut m, &mut ctx, &mut state, turn("harness.router", "yes"));
+    let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    assert_eq!(m.outcome().unwrap(), serde_json::json!("umbrella"));
+}
+
+#[test]
+fn an_agent_step_runs_the_tool_loop_and_stores_the_final_text() {
+    let yaml = r#"
+api_version: "2"
+name: worker
+entry: do
+capabilities: [ExecuteShell]
+limits: { max_steps: 100, max_model_turns: 20, max_tool_calls: 20 }
+steps:
+  do:
+    agent:
+      prompt: "Create the file"
+      tools: [read_file, write_file]
+      store_as: report
+      then: out
+  out:
+    return:
+      value: "{{ steps.do.value }}"
+"#;
+    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
+    let _ = m.step_effect().expect("the agent step opened its loop");
+    assert_eq!(state, sven_harness_runtime::HarnessState::WaitingForModel);
+
+    // The loop asks for tools; the machine stays in WaitingForModel and
+    // emits CallTool effects.
+    let call_id = sven_hsm::ids::ToolCallId::new();
+    let fx = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::LlmTurnComplete {
+            thread: "harness.worker".into(),
+            text: String::new(),
+            tool_calls: vec![sven_hsm::ProposedToolCall {
+                call_id,
+                name: "write_file".into(),
+                args: serde_json::json!({ "path": "x.txt", "content": "hi" }),
+                capability: sven_hsm::ToolCapability::WriteFile,
+            }],
+        },
+    );
+    assert_eq!(state, sven_harness_runtime::HarnessState::WaitingForModel);
+    assert!(
+        fx.iter()
+            .any(|e| matches!(e, Effect::CallTool { name, .. } if name == "write_file")),
+        "the loop runs the proposed tools"
+    );
+
+    // The tool result resumes the loop; the next turn with no tools is final.
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::ToolSucceeded {
+            call_id,
+            observation: serde_json::json!("written"),
+        },
+    );
+    let fx = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        turn("harness.worker", "wrote x.txt"),
+    );
+    assert!(
+        fx.iter()
+            .all(|fx| matches!(fx, Effect::EmitInternal { .. } | Effect::PersistAudit)),
+        "a final turn stores the answer and advances without I/O: {fx:?}"
+    );
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Completed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    assert_eq!(m.outcome().unwrap(), serde_json::json!("wrote x.txt"));
+}
+
+#[test]
+fn a_verify_step_waits_for_the_verifier_and_stores_the_verdict() {
+    let yaml = r#"
+api_version: "2"
+name: graded
+entry: check
+capabilities: [RunVerifier]
+limits: { max_steps: 50 }
+steps:
+  check:
+    verify:
+      spec:
+        kind: file_exists
+        path: "report/done.txt"
+      store_as: verdict
+      then: out
+  out:
+    return:
+      value: "{{ steps.check.value }}"
+"#;
+    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
+    let ask = m.step_effect().expect("the verify step emitted its effect");
+    assert_eq!(
+        state,
+        sven_harness_runtime::HarnessState::WaitingForVerifier
+    );
+    let Effect::Verify { spec } = &ask else {
+        panic!("a verify step emits Effect::Verify, got {ask:?}");
+    };
+    assert_eq!(
+        *spec,
+        VerifierSpec::FileExists {
+            path: "report/done.txt".into(),
+            min_bytes: None,
+        }
+    );
+
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::VerificationComplete {
+            verdict: VerifierVerdict::Passed,
+        },
+    );
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Completed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    assert_eq!(m.outcome().unwrap(), serde_json::json!("passed"));
+}
+
+#[test]
+fn a_fail_step_ends_the_run_failed_with_code_and_message() {
+    let yaml = r#"
+api_version: "2"
+name: moody
+entry: ask
+limits: { max_steps: 50, max_model_turns: 5 }
+steps:
+  ask:
+    predict:
+      prompt: "Mood?"
+      store_as: mood
+      then: route
+  route:
+    branch:
+      on: "{{ steps.ask.value }}"
+      when_true: bad
+      when_false: bad
+  bad:
+    fail:
+      code: "no_mood"
+      message: "the mood was {{ steps.ask.value }}"
+"#;
+    let (mut m, mut ctx, mut state) = start(yaml, serde_json::json!({}));
+    let _ = m.step_effect().expect("predict emitted its turn");
+    let _ = drive(&mut m, &mut ctx, &mut state, turn("harness.moody", "grim"));
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Failed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Failed);
+    assert!(m.is_terminal(state));
+    let out = m.outcome().expect("a failed run has an outcome");
+    assert_eq!(out["code"], "no_mood");
+    assert_eq!(out["message"], "the mood was grim");
+}
+
+#[test]
+fn the_state_hierarchy_is_fixed_regardless_of_plan_size() {
+    let (m, _ctx, _state) = start(GREET, serde_json::json!({}));
+    let states = m.all_states();
+    let names: Vec<String> = states.iter().map(|s| format!("{s:?}")).collect();
+    for expected in [
+        "Root",
+        "Ready",
+        "Advancing",
+        "WaitingForModel",
+        "WaitingForTool",
+        "WaitingForVerifier",
+        "WaitingForChild",
+        "Completed",
+        "Failed",
+        "Cancelled",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "missing {expected}: {names:?}"
+        );
+    }
+    // Restorability: every leaf, in a fresh machine.
+    let (m2, _c, _s) = start(GREET, serde_json::json!({}));
+    assert!(
+        m2.restorable_state_labels().iter().all(|l| !l.is_empty()),
+        "all_states feeds snapshot restore"
+    );
+    let (m3, _c, _s) = start(GREET, serde_json::json!({}));
+    assert_eq!(
+        m3.all_states().len(),
+        10,
+        "the hierarchy is fixed: ten states"
+    );
+}
+
+#[test]
+fn run_state_lives_in_the_context_and_survives_a_snapshot_round_trip() {
+    let (mut m, mut ctx, mut state) = start(GREET, serde_json::json!({ "name": "Ada" }));
+    let _ = m.step_effect().expect("predict emitted its turn");
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        turn("harness.greet", "Hello Ada"),
+    );
+
+    // Snapshot → restore into a fresh machine: the run continues from the
+    // stored step data, no entry actions re-fire.
+    let snap = m.snapshot(&ctx);
+    let (m2, ctx2) = common::restore(GREET, snap).expect("restorable");
+    assert_eq!(
+        ctx2.fact(RUN_STATE_FACT).and_then(|v| v
+            .get("steps")
+            .and_then(|s| s.get("ask"))
+            .map(|s| s["value"].clone())),
+        Some(serde_json::json!("Hello Ada")),
+        "the step result survived the round trip"
+    );
+    // And the restored machine finishes the run.
+    let (m2, mut ctx2) = (m2, ctx2);
+    let mut state = sven_harness_runtime::HarnessState::WaitingForModel;
+    let mut m2 = m2;
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Completed {
+            break;
+        }
+        let _ = drive(&mut m2, &mut ctx2, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    assert_eq!(
+        m2.outcome().unwrap()["message"],
+        serde_json::json!("Hello Ada")
+    );
+}
+
+#[test]
+fn the_permission_policy_is_the_declared_capabilities_in_every_state() {
+    let yaml = r#"
+api_version: "2"
+name: writer
+entry: do
+capabilities: [ReadFile, WriteFile]
+limits: { max_steps: 100, max_model_turns: 2 }
+steps:
+  do:
+    predict: { prompt: "Say done.", then: out }
+  out:
+    return: { value: "done" }
+"#;
+    let run = common::data(yaml, serde_json::json!({})).expect("valid harness");
+    let policy = HarnessMachine::permission_policy_for(&run);
+    use sven_hsm::ToolCapability;
+    assert!(policy.allows_in_every_state(ToolCapability::ReadFile));
+    assert!(policy.allows_in_every_state(ToolCapability::WriteFile));
+    assert!(
+        !policy.allows_in_every_state(ToolCapability::NetworkAccess),
+        "an undeclared capability stays undeclared"
+    );
+    assert!(
+        !policy.allows_in_every_state(ToolCapability::ExecuteShell),
+        "only declared capabilities are granted"
+    );
+
+    // No capabilities declared: nothing is granted.
+    let bare = r#"
+api_version: "2"
+name: pure
+entry: only
+limits: { max_steps: 10 }
+steps:
+  only:
+    assign: { set: { x: "1" }, then: out }
+  out:
+    return: { value: "ok" }
+"#;
+    let run = common::data(bare, serde_json::json!({})).expect("valid harness");
+    let policy = HarnessMachine::permission_policy_for(&run);
+    for cap in sven_hsm::ToolCapability::ALL {
+        assert!(
+            !policy.allows_in_every_state(cap),
+            "a capability-free harness grants nothing: {cap:?}"
+        );
+    }
+}
+
+/// The run's terminal outcome is reported as a context fact: a parent
+/// harvesting a child's report holds only the context, so the outcome the
+/// machine also keeps for `outcome()` must reach the fact plane — for a
+/// return, a fail and a cancel alike.
+#[test]
+fn the_terminal_outcome_is_reported_as_a_context_fact() {
+    // A completed run: the fact carries the return value.
+    let (mut m, mut ctx, mut state) = start(GREET, serde_json::json!({ "name": "Ada" }));
+    let _ = m.step_effect().expect("predict emitted its turn");
+    let _ = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        turn("harness.greet", "Hello Ada"),
+    );
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Completed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Completed);
+    let expected = m.outcome().expect("outcome");
+    assert_eq!(
+        ctx.fact(OUTCOME_FACT).cloned(),
+        Some(expected),
+        "a completed run's return value is the outcome fact"
+    );
+
+    // A failed run: the fact carries the code and message.
+    let (mut m, mut ctx, mut state) = start(FAILING, serde_json::json!({}));
+    let _ = m.step_effect().expect("predict emitted its turn");
+    let _ = drive(&mut m, &mut ctx, &mut state, turn("harness.moody", "grim"));
+    for _ in 0..8 {
+        if state == sven_harness_runtime::HarnessState::Failed {
+            break;
+        }
+        let _ = drive(&mut m, &mut ctx, &mut state, Event::user_message("tick"));
+    }
+    assert_eq!(state, sven_harness_runtime::HarnessState::Failed);
+    let expected = m.outcome().expect("outcome");
+    assert_eq!(
+        ctx.fact(OUTCOME_FACT).cloned(),
+        Some(expected),
+        "a failed run's code and message are the outcome fact"
+    );
+
+    // A cancelled run: the fact says so.
+    let (mut m, mut ctx, mut state) = start(GREET, serde_json::json!({}));
+    let _ = m.step_effect().expect("predict emitted its turn");
+    let _ = drive(&mut m, &mut ctx, &mut state, Event::UserCancelled);
+    assert_eq!(state, sven_harness_runtime::HarnessState::Cancelled);
+    assert_eq!(
+        ctx.fact(OUTCOME_FACT).cloned(),
+        m.outcome(),
+        "a cancelled run's outcome is the outcome fact"
+    );
+}

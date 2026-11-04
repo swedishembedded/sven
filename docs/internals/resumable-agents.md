@@ -95,7 +95,7 @@ silently drop it back to its initial state and re-run work that has already
 happened - a corruption that would surface much later, as a duplicated action
 rather than as an error.
 
-`crates/machines/tests/restorable.rs` asserts this for every mode in
+`crates/machines/tests/it/restorable.rs` asserts this for every mode in
 `ModeRegistry::default_registry()` and for `ui-test`, so a new mode that omits
 `all_states()` fails the suite rather than failing in production.
 

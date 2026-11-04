@@ -346,13 +346,13 @@ cycle.
 # ── File-size ratchet. `lines` is a high-water mark: it may only shrink. ───
 # Regenerate with `cargo run -p xtask -- arch --bless`.
 [[allow.large_file]]
-path = "crates/model-drivers/tests/wire_format_tests.rs"
+path = "crates/model-drivers/tests/it/wire_format_tests.rs"
 lines = 1729
 [[allow.large_file]]
 path = "crates/ci/src/runner/mod.rs"
 lines = 1433
 [[allow.large_file]]
-path = "crates/tools-ctx/tests/context_integration.rs"
+path = "crates/tools-ctx/tests/it/context_integration.rs"
 lines = 1418
 [[allow.large_file]]
 path = "crates/session-store/src/trace_session.rs"
@@ -361,7 +361,7 @@ lines = 1289
 path = "crates/session-store/src/trace_session_tests.rs"
 lines = 1249
 [[allow.large_file]]
-path = "crates/executors/tests/pipeline_integration.rs"
+path = "crates/executors/tests/it/pipeline_integration.rs"
 lines = 1066
 [[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
