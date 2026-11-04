@@ -8,7 +8,11 @@
 //! the same the terminal shows), and its name made readable. Nothing asks the
 //! model to describe its own calls, so describing them costs no tokens.
 
+use std::time::Instant;
+
 use serde_json::Value;
+use sven_control::ControlEvent;
+use sven_machines::AgentEvent;
 
 /// What the call did, its one-line title, and its category.
 #[derive(Clone)]
@@ -50,6 +54,35 @@ pub(super) fn describe(name: &str, args: &Value) -> Described {
         },
         action,
         category,
+    }
+}
+
+impl super::SessionActor {
+    /// A tool call in words, after it starts and again, timed, after it
+    /// finishes; nothing for any other event.
+    pub(super) fn describe_call(&mut self, event: &AgentEvent) -> Option<ControlEvent> {
+        let (call_id, described, duration_ms) = match event {
+            AgentEvent::ToolCallStarted(call) => {
+                let described = describe(&call.name, &call.args);
+                self.running
+                    .insert(call.id.clone(), (Instant::now(), described.clone()));
+                (call.id.clone(), described, None)
+            }
+            AgentEvent::ToolCallFinished { call_id, .. } => {
+                let (started, described) = self.running.remove(call_id)?;
+                let ran = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                (call_id.clone(), described, Some(ran))
+            }
+            _ => return None,
+        };
+        Some(ControlEvent::ToolCallDescribed {
+            session_id: self.id,
+            call_id,
+            action: described.action,
+            title: described.title,
+            category: described.category,
+            duration_ms,
+        })
     }
 }
 
