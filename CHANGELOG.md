@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **goal**: standing goals. `/goal <objective>` sets a goal the session keeps working toward, turn after turn, until it is done, blocked, paused or out of turns (`--turns N`, default 20); `--check "<command>"` names a command whose pass is the only thing that completes it. `/goal` shows it; `pause`, `resume`, `clear` and `check` steer it. A supervisor in the reactive agent decides after every turn: the same blocker three turns running or three turns without progress blocks the goal for the person, and a stopped or restored goal comes back paused. The model reports with `update_goal` and, only when the person asks it to word one, sets a goal with `set_goal`. Works the same in the terminal, `sven rc` (kept across restarts; a server asks how it stands with `report_goal`), `sven rc attach --tui`, headless runs (exit 0 completed, 4 out of turns, 5 blocked, 6 paused, 2 for a line used wrongly), editors (ACP) and the SDK (`Agent::goal`, `AgentState::goal()`). Every change is a `GoalUpdated` session event. The protocol is model-checked (`formal/tla/Goal.tla`) and the policy proved (`formal/lean/Sven/Goal.lean`); see `docs/guides/goals.md`.
+- **remote**: a server can attach files to a message (`send_input` attachments); `sven rc` fetches each through the server's MCP endpoint, checked against its digest, into `.sven/attachments/` and tells the agent where it is.
+- **mcp**: `sven mcp serve --listen ADDR --token-file PATH` serves sven's tools over Streamable HTTP to a client holding the bearer token, and `sven_mcp_client::ForwardedTool` offers a served tool under its own name, so a harness can run its agent's tools in one process and its gates in another.
+- **mcp-client**: files over MCP (the experimental file transfer extension): a local path the model passes to an `x-mcp-file` argument is uploaded out of band, a file URI is fetched and kept only when it matches its digest, and the model never sees a transfer URL. What a host adds to a server's requests in `_meta` (`request_meta`) goes on every tool call too; `sven rc` names the conversation in `sven/session`.
+- **skills**: skills the signed-in server offers as MCP resources (`skill://`) join every session's, below every other source.
+- **harness**: `type: file` inputs, `publish:` steps that keep a task's outputs with a checkpoint, `retry: never`, packages that carry their skills and scripts, and `sven harness work`, the worker of a run a server serves (`sven_control::work`).
+
+### Changed
+- **remote**: every answer is named: a server names the answer it shows for a message (`answer_id` on `send_input`) and `sven rc` names it again on every event of that answer, so an answer the person stopped never ends or fills the next one, however late its last events arrive. A message sent right after a stop waits for the stopped turn to end (ten seconds at most); one sent while a turn runs is refused with a note instead of being lost.
+- **machines**: the reactive agent ends the person's turn itself when it comes to rest, and ends a stopped turn itself, exactly once, whatever was in flight; the turn executor reports a cut-off reply's text as `TextComplete`.
+
 ### Fixed
+- **machines**: stopping a turn whose model reply had already arrived ended it with nothing at all, so a server waited on an answer that never ended.
 - **ci**: the release waits for the experimental aarch64 (glibc) and Windows builds before publishing, so their files are no longer missing when they finish late (v4.4.5 shipped without the aarch64 build); their failure still never blocks a release.
 
 ## [4.4.5] - 2026-11-04
