@@ -568,6 +568,7 @@ impl RuntimeBuilder {
         };
 
         // ── MCP setup ────────────────────────────────────────────────────────
+        let reused_mcp = self.shared_mcp_manager.is_some();
         let (mcp_manager, mcp_event_rx) = crate::mcp_setup::connect(crate::mcp_setup::McpSetup {
             shared: self.shared_mcp_manager.take(),
             no_builtin_tools: self.builtin_tools == BuiltinTools::None,
@@ -576,6 +577,11 @@ impl RuntimeBuilder {
             wait_for_tools_ms: self.wait_for_mcp_tools_ms,
         })
         .await;
+        // The skills the signed-in server offers join the session's, below
+        // the person's own. A session rebuild keeps those it already has.
+        if !reused_mcp {
+            crate::connectors::add_served_skills(&mcp_manager, &self.runtime_ctx.skills).await;
+        }
 
         // ── Build tool registry ───────────────────────────────────────────────
         // Seed the mode lock from the interactive mode so in-session `/mode`

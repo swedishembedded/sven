@@ -530,6 +530,12 @@ impl McpManager {
         crate::files::download(&self.connection(server).await?, &context, uri, dir).await
     }
 
+    /// Writes the skills `server` offers ([`crate::served_skills`]) into
+    /// `dest`; how many files.
+    pub async fn sync_served_skills(&self, server: &str, dest: &std::path::Path) -> Result<usize> {
+        crate::served_skills::sync(&self.connection(server).await?, dest).await
+    }
+
     async fn connection(&self, server: &str) -> Result<Connection> {
         self.servers
             .read()

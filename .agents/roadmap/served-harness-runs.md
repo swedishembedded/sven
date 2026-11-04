@@ -34,17 +34,14 @@ protocols.
    agent's instructions. It is typed as a notice in session events and
    traces, so no surface or export takes it for the person. A notice starts
    a turn only when the server says so.
-6. **Skills from the signed-in server.** The `skill` tool
-   (`crates/tools-agent/src/skill.rs`) lists and loads skills the signed-in
-   server offers, beside local ones. sven's MCP client ignores a server's
-   `instructions` and prompts today (`crates/mcp-client`).
 
 Already in place: packages carry their `skills/` and `bin/` under the bundle
 digest (`docs/reference/harnesses.md`, Imports); `file` inputs, `publish:`
 with `HarnessRun::on_publish` checkpoints, and `retry: never`
 (`docs/reference/harnesses.md`); the client side of MCP's file transfer
 (`docs/reference/mcp.md`, Files); tools and gates served from another
-process (`sven mcp serve --listen`, `ForwardedTool`). Every signed-in sven mounts its server's MCP endpoint
+process (`sven mcp serve --listen`, `ForwardedTool`); skills the signed-in
+server offers (`docs/guides/skills.md`). Every signed-in sven mounts its server's MCP endpoint
 (`src/main.rs`, `connectors::add_signed_in`; the `sven rc` host through
 `crates/remote/src/host/services.rs`).
 

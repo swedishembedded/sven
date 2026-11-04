@@ -33,6 +33,7 @@ pub mod exchange;
 pub mod files;
 pub mod health;
 pub mod manager;
+pub mod served_skills;
 
 // ── Public re-exports ─────────────────────────────────────────────────────────
 

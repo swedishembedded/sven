@@ -220,6 +220,43 @@ pub fn account_groups<'a>(tool_names: impl IntoIterator<Item = &'a str>) -> Vec<
     groups
 }
 
+/// Where the skills the signed-in server offers are kept: a directory per
+/// server under the user's data directory.
+#[must_use]
+pub fn served_skills_dir() -> Option<std::path::PathBuf> {
+    dirs::data_dir().map(|dir| dir.join("sven").join("served-skills").join(SERVER))
+}
+
+/// Fetches the skills the signed-in server offers and adds them to `skills`
+/// at the lowest precedence. Only that server's: a skill puts instructions
+/// in front of the agent, so one offered by any other configured server is
+/// never taken. Best effort: a server without skills, or one that cannot be
+/// reached, leaves the skills as they were.
+pub async fn add_served_skills(
+    manager: &sven_mcp_client::McpManager,
+    skills: &sven_workspace::SharedSkills,
+) {
+    let Some(dir) = served_skills_dir() else {
+        return;
+    };
+    if !manager
+        .server_statuses()
+        .await
+        .iter()
+        .any(|status| status.name == SERVER)
+    {
+        return;
+    }
+    match manager.sync_served_skills(SERVER, &dir).await {
+        Ok(0) => {}
+        Ok(count) => {
+            tracing::info!(count, "skill files offered by the signed-in server");
+            sven_workspace::add_served_skills(skills, &dir, "served");
+        }
+        Err(e) => tracing::debug!("no skills from the signed-in server: {e:#}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

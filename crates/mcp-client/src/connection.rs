@@ -243,6 +243,31 @@ impl Connection {
             .context("prompts/list")
     }
 
+    /// Every resource, following the server's pages to the end. A server
+    /// without resources has none.
+    pub async fn list_resources(&self) -> Result<Vec<rmcp::model::Resource>> {
+        if self
+            .peer()
+            .peer_info()
+            .is_some_and(|info| info.capabilities.resources.is_none())
+        {
+            return Ok(Vec::new());
+        }
+        within(self.timeout, self.peer().list_all_resources())
+            .await
+            .context("resources/list")
+    }
+
+    /// One resource's contents.
+    pub async fn read_resource(
+        &self,
+        params: rmcp::model::ReadResourceRequestParams,
+    ) -> Result<rmcp::model::ReadResourceResult> {
+        within(self.timeout, self.peer().read_resource(params))
+            .await
+            .context("resources/read")
+    }
+
     /// A request outside the spec (an extension's method), answered as the
     /// JSON the server sent.
     pub async fn request(

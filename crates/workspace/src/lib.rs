@@ -24,8 +24,9 @@ pub use agents::{discover_agents, AgentInfo, SharedAgents};
 mod skill_frontmatter;
 pub mod skills;
 pub use skills::{
-    discover_commands, discover_skills, discover_skills_anchored, load_skill_content_from_disk,
-    parse_skill_file, parse_skill_frontmatter, ParsedSkill, SharedSkills, SkillInfo, SvenSkillMeta,
+    add_served_skills, discover_commands, discover_skills, discover_skills_anchored,
+    load_skill_content_from_disk, parse_skill_file, parse_skill_frontmatter, ParsedSkill,
+    SharedSkills, SkillInfo, SvenSkillMeta,
 };
 
 pub mod knowledge;

@@ -65,6 +65,20 @@ inspector.
 
 ---
 
+
+### Skills from the server you signed in to
+
+After `sven auth login`, the server you signed in to can offer skills of its
+own: MCP resources whose URI is `skill://<skill>/<file>`
+(`skill://case-manager/SKILL.md`, `skill://case-manager/references/intake.md`).
+When a session connects to that server, sven writes them under
+`<data dir>/sven/served-skills/connectors/` and adds them below every other
+source: a skill of yours with the same name wins. Only the signed-in server's
+skills are taken, never those of another MCP server you configured, since a
+skill puts instructions in front of the agent. A path must be plain names
+(no `..`), and a server offers at most 512 files and 16 MiB; a sync replaces
+the previous one, so a skill the server stopped offering is gone.
+
 ### Creating a skill
 
 A skill is a directory containing a `SKILL.md` file:

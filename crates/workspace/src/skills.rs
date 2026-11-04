@@ -350,6 +350,20 @@ fn scan_recursive(root: &Path, dir: &Path, source: &str, out: &mut Vec<SkillInfo
     }
 }
 
+/// Adds the skills under `dir` (skills a server offers, written there by its
+/// MCP client) to `skills` at the lowest precedence: a skill already known
+/// under the same command keeps its place, so a person's own skill wins over
+/// a served one of the same name.
+pub fn add_served_skills(skills: &SharedSkills, dir: &Path, source: &str) {
+    let current = skills.get();
+    let mut merged: Vec<SkillInfo> = scan_skills_dir(dir, source)
+        .into_iter()
+        .filter(|served| current.iter().all(|known| known.command != served.command))
+        .collect();
+    merged.extend(current.iter().cloned());
+    skills.set(merged);
+}
+
 /// Scan one skills root directory and return all valid skills found within it
 /// (including those nested at any depth).
 fn scan_skills_dir(dir: &Path, source: &str) -> Vec<SkillInfo> {
@@ -1216,5 +1230,39 @@ mod tests {
             "content should not include frontmatter"
         );
         assert!(content.contains("## Usage"));
+    }
+}
+
+#[cfg(test)]
+mod served_tests {
+    use super::*;
+
+    fn skill(root: &Path, command: &str, description: &str) {
+        let dir = root.join(command);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {command}\ndescription: {description}\n---\nBody.\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn served_skills_join_below_the_persons_own() {
+        let local = tempfile::tempdir().unwrap();
+        let served = tempfile::tempdir().unwrap();
+        skill(local.path(), "review", "Mine.");
+        skill(served.path(), "review", "Theirs.");
+        skill(served.path(), "case-manager", "Interview for a case.");
+        let skills = SharedSkills::new(scan_skills_dir(local.path(), "local"));
+        add_served_skills(&skills, served.path(), "served");
+        let all = skills.get();
+        let review = all.iter().find(|s| s.command == "review").unwrap();
+        assert_eq!(review.description, "Mine.", "the person's own skill wins");
+        assert!(
+            all.iter().any(|s| s.command == "case-manager"),
+            "a served skill joins"
+        );
+        assert_eq!(all.iter().filter(|s| s.command == "review").count(), 1);
     }
 }
