@@ -131,7 +131,8 @@ fn a_killed_run_leaves_a_parseable_incomplete_journal_of_its_settled_steps() {
     std::fs::write(dir.path().join(CHILD_MARKER), b"").unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args([
-            "journaled_run_that_hangs",
+            // Its path in the crate's one test binary (`tests/it`).
+            "journal_kill::journaled_run_that_hangs",
             "--exact",
             "--ignored",
             "--nocapture",
