@@ -286,10 +286,19 @@ impl Connection {
     }
 
     /// Call `tool` with `args` (a JSON object, or nothing).
-    pub async fn call_tool(&self, tool: &str, args: &serde_json::Value) -> Result<CallToolResult> {
+    /// Calls `tool` with `args`; a non-empty `meta` goes in its `_meta`.
+    pub async fn call_tool(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+        meta: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<CallToolResult> {
         let mut params = CallToolRequestParams::new(tool.to_string());
         if let Some(object) = as_object(args) {
             params = params.with_arguments(object);
+        }
+        if !meta.is_empty() {
+            params.meta = Some(rmcp::model::RequestMetaObject(meta.clone().into()));
         }
         within(self.timeout, self.peer().call_tool(params))
             .await

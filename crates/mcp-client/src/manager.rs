@@ -493,7 +493,7 @@ impl McpManager {
             .read()
             .await
             .get(server)
-            .map(|c| c.file_meta.clone())
+            .map(|c| c.request_meta.clone())
             .unwrap_or_default();
         crate::files::FileContext {
             root: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
@@ -553,7 +553,17 @@ impl McpManager {
         tool: &str,
         args: &Value,
     ) -> Result<CallToolResult> {
-        self.connection(server).await?.call_tool(tool, args).await
+        let meta = self
+            .config
+            .read()
+            .await
+            .get(server)
+            .map(|c| c.request_meta.clone())
+            .unwrap_or_default();
+        self.connection(server)
+            .await?
+            .call_tool(tool, args, &meta)
+            .await
     }
 
     pub async fn get_prompt(

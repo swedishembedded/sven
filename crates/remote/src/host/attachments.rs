@@ -11,10 +11,11 @@
 //! checked against its digest) into the working directory, where the agent's
 //! file tools reach it, and the input tells the agent where each one is.
 //!
-//! A machine runs many conversations, so every file request of a session
-//! names its conversation in `_meta["sven/session"]` ([`for_session`]): the
-//! server hands out only that conversation's files, and takes the agent's
-//! own uploads as that conversation's.
+//! A machine runs many conversations, so every tool call and file request of
+//! a session names its conversation in `_meta["sven/session"]`
+//! ([`for_session`]): the server hands out only that conversation's files,
+//! takes the agent's own uploads as that conversation's, and knows which
+//! conversation a call is made in.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -43,7 +44,7 @@ pub(super) fn for_session(config: &Arc<Config>, id: Uuid) -> Arc<Config> {
     }
     let mut own = Config::clone(config);
     if let Some(server) = own.mcp_servers.get_mut(server) {
-        server.file_meta.insert(
+        server.request_meta.insert(
             SESSION_META.into(),
             serde_json::Value::String(id.to_string()),
         );

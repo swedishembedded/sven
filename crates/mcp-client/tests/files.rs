@@ -128,7 +128,7 @@ async fn serve(seen: Arc<Mutex<Seen>>) -> String {
                             }))
                         }
                         "tools/call" => Some(json!({ "content": [{
-                            "type": "text", "text": format!("made from {}", request["params"]["arguments"]["drawing"]),
+                            "type": "text", "text": format!("made from {} for {}", request["params"]["arguments"]["drawing"], request["params"]["_meta"]["sven/session"]),
                         }] })),
                         _ => None,
                     };
@@ -165,7 +165,7 @@ async fn manager(url: String, dir: &std::path::Path) -> Arc<McpManager> {
         timeout_secs: 10,
         ..McpServerConfig::default()
     };
-    config.file_meta.insert(
+    config.request_meta.insert(
         "sven/session".into(),
         json!("6f1c1d1e-6c1a-4d43-9a43-6f2a9d3b2a10"),
     );
@@ -205,8 +205,9 @@ async fn a_file_argument_uploads_the_file_and_a_fetched_file_must_match_its_dige
         .await;
     assert!(!output.is_error, "{}", output.content);
     assert_eq!(
-        output.content, "made from \"mcp-file://files/1\"",
-        "the server got the file, not the path"
+        output.content,
+        "made from \"mcp-file://files/1\" for \"6f1c1d1e-6c1a-4d43-9a43-6f2a9d3b2a10\"",
+        "the server got the file, not the path, and the call named its session"
     );
     assert!(
         !output.content.contains("/upload/"),
