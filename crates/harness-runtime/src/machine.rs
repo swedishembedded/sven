@@ -233,6 +233,7 @@ impl HarnessMachine {
             decoding: shape.decoding,
             attachments: Vec::new(),
             delay_ms: (state.retry_delay_ms > 0).then_some(state.retry_delay_ms),
+            machine_ends_turn: false,
         };
         Effect::CallLlm {
             request: request.to_value(),

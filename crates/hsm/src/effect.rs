@@ -136,6 +136,14 @@ pub enum Effect {
         /// The predicate to check.
         spec: VerifierSpec,
     },
+    /// Tell the surfaces something only the machine knows, on the outward
+    /// observation plane: that the person's turn has ended
+    /// (`TurnComplete`), or how a standing goal stands. Never re-enters the
+    /// inward queue and requires no capability: it reports, it does nothing.
+    Announce {
+        /// What the surfaces observe.
+        event: sven_vocab::SessionEvent,
+    },
 }
 
 impl Effect {
@@ -156,6 +164,7 @@ impl Effect {
             Effect::InstantiateSubmachine { .. } => EffectKind::InstantiateSubmachine,
             Effect::CompactContext { .. } => EffectKind::CompactContext,
             Effect::Verify { .. } => EffectKind::Verify,
+            Effect::Announce { .. } => EffectKind::Announce,
         }
     }
 
@@ -201,6 +210,8 @@ pub enum EffectKind {
     CompactContext,
     /// See [`Effect::Verify`].
     Verify,
+    /// See [`Effect::Announce`].
+    Announce,
 }
 
 #[cfg(test)]

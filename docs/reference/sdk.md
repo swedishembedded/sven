@@ -818,9 +818,11 @@ snapshot is taken through `ErasedRuntime::capture`, which is served only once
 the kernel's event queue has drained - so it always shows the machine at rest
 rather than part-way through a turn.
 
-That guarantee leans on the turn executor's documented ordering: the inward
-completion event is posted *before* the outward `TurnComplete` that tells a
-caller the turn is over. The completion event is therefore already queued ahead
+That guarantee leans on a documented ordering: the inward completion event is
+posted *before* the outward `TurnComplete` that tells a caller the turn is
+over. The turn executor keeps it for the machines whose turns it ends, and a
+machine that ends its own turns (the reactive agent) announces `TurnComplete`
+only from the transition that processed that event. The completion event is therefore already queued ahead
 of any capture request, and the capture is served after the machine has
 processed it. Without that ordering a snapshot could catch the machine mid-turn,
 and resuming from one would land in a state that ignores the next user message -

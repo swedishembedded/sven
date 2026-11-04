@@ -179,6 +179,13 @@ impl EffectExecutor for CompositeExecutor {
                     answer_undeliverable(&effect, sink, "no verify executor is configured").await;
                 }
             }
+
+            // Nothing to carry out: the announcement is the observation.
+            EffectKind::Announce => {
+                if let Effect::Announce { event } = effect {
+                    obs.emit(event);
+                }
+            }
         }
     }
 }

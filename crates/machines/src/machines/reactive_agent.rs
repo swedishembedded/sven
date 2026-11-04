@@ -44,6 +44,15 @@
 //!
 //! A tool-free `LlmTurnComplete` transitions the machine to `Idle`.
 //!
+//! # The machine ends the person's turn
+//!
+//! Every turn this machine asks for carries `machine_ends_turn`, so the turn
+//! executor never reports `TurnComplete` for it: a reply without tool calls
+//! can still be followed by a clarification question or a transient retry,
+//! which only the machine knows about. The machine announces `TurnComplete`
+//! (`Effect::Announce`) on the transitions that bring it to rest after a
+//! turn; a cancelled turn is ended by the executor's `Aborted` instead.
+//!
 //! # The bounded clarification post-check
 //!
 //! `Generating` has no separate "needs clarification" state - adding one would
@@ -477,35 +486,28 @@ impl Machine for ReactiveAgentMachine {
                     "compaction requested; summarising the conversation",
                 ),
                 Event::UserMessage { text } => {
-                    init_loop(
-                        ctx,
-                        CHAT_THREAD,
-                        &[],
-                        AGENT_MODE,
-                        configured_max_tool_rounds(ctx),
-                    );
+                    let ls = start_loop(ctx);
                     Reaction::transition(
                         Generating,
-                        vec![Self::first_turn_effect(text)],
+                        vec![ls.stamp(Self::first_turn_effect(text))],
                         "user sent message; starting turn",
                     )
                 }
                 Event::Internal(InternalEvent::Custom { name, .. }) if name == CONTINUE_SIGNAL => {
-                    let rounds = configured_max_tool_rounds(ctx);
-                    init_loop(ctx, CHAT_THREAD, &[], AGENT_MODE, rounds);
+                    let ls = start_loop(ctx);
                     Reaction::transition(
                         Generating,
-                        vec![build_turn_effect(
+                        vec![ls.stamp(build_turn_effect(
                             CHAT_THREAD,
                             &[],
                             AGENT_MODE,
                             None,
                             None,
                             None,
-                            rounds,
+                            ls.max_rounds,
                             None,
                             None,
-                        )],
+                        ))],
                         "the conversation continues",
                     )
                 }
@@ -559,7 +561,7 @@ impl Machine for ReactiveAgentMachine {
                                     ctx.set_fact("last_response", json!(text));
                                     Reaction::transition(
                                         Idle,
-                                        vec![],
+                                        vec![turn_ended()],
                                         "turn complete; final answer",
                                     )
                                 }
@@ -583,14 +585,14 @@ impl Machine for ReactiveAgentMachine {
                             Some(again) => Reaction::effects(vec![again]),
                             None => {
                                 ctx.set_fact("last_error", json!(error));
-                                Reaction::transition(Idle, vec![], "turn failed")
+                                Reaction::transition(Idle, vec![turn_ended()], "turn failed")
                             }
                         }
                     }
 
                     Event::LlmFailed { error } | Event::EffectFailed { error, .. } => {
                         ctx.set_fact("last_error", json!(error));
-                        Reaction::transition(Idle, vec![], "turn failed")
+                        Reaction::transition(Idle, vec![turn_ended()], "turn failed")
                     }
 
                     _ => Reaction::Super(Session),
@@ -612,6 +614,31 @@ impl Machine for ReactiveAgentMachine {
             ReactiveState::Generating,
             ReactiveState::Compacting,
         ]
+    }
+}
+
+/// Starts the tool loop of a new turn, configured for this machine: its
+/// round budget from the session, and the end of the turn left to the
+/// machine ([`LoopState::machine_ends_turn`]).
+fn start_loop(ctx: &mut Context) -> LoopState {
+    init_loop(
+        ctx,
+        CHAT_THREAD,
+        &[],
+        AGENT_MODE,
+        configured_max_tool_rounds(ctx),
+    );
+    let mut ls = LoopState::load(ctx);
+    ls.machine_ends_turn = true;
+    ls.store(ctx);
+    ls
+}
+
+/// The announcement that the person's turn is over: the machine is at rest
+/// and waits for them.
+fn turn_ended() -> Effect {
+    Effect::Announce {
+        event: sven_hsm::UiEvent::TurnComplete,
     }
 }
 
@@ -720,7 +747,7 @@ mod tests {
         let out = hsm.dispatch(&final_answer(WORK_DONE_THEN_A_CLOSING_QUESTION), &mut ctx);
 
         assert!(
-            out.effects.is_empty(),
+            out.effects == vec![turn_ended()],
             "a resolved answer must finish the turn exactly as it did before \
              the post-check existed, got {:?}",
             out.effects
@@ -1092,7 +1119,7 @@ mod tests {
         ls.store(&mut ctx);
         let out = hsm.dispatch(&final_answer(UNRESOLVED_ANSWER), &mut ctx);
         assert!(
-            out.effects.is_empty(),
+            out.effects == vec![turn_ended()],
             "the post-check must not spend a round past the budget"
         );
         assert_eq!(hsm.state(), ReactiveState::Idle);
@@ -1106,7 +1133,7 @@ mod tests {
         ctx.set_fact(ASK_QUESTION_AVAILABLE_FACT, json!(false));
         hsm.dispatch(&Event::user_message("port the parser"), &mut ctx);
         let out = hsm.dispatch(&final_answer(UNRESOLVED_ANSWER), &mut ctx);
-        assert!(out.effects.is_empty(), "{:?}", out.effects);
+        assert!(out.effects == vec![turn_ended()], "{:?}", out.effects);
         assert_eq!(hsm.state(), ReactiveState::Idle);
     }
 
@@ -1118,7 +1145,7 @@ mod tests {
 
         assert_eq!(hsm.state(), ReactiveState::Idle);
         assert!(out.transitioned);
-        assert!(out.effects.is_empty());
+        assert!(out.effects == vec![turn_ended()]);
         assert_eq!(
             ctx.fact("last_response").unwrap(),
             &json!(UNAMBIGUOUS_ANSWER)

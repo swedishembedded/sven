@@ -26,7 +26,11 @@
 //!
 //! `UiEvent::TurnComplete` is emitted **after** the inward completion event
 //! is already in the kernel queue, preventing the TUI from marking the turn
-//! complete before the machine has transitioned.
+//! complete before the machine has transitioned. A request that carries
+//! `machine_ends_turn` gets no `TurnComplete` from here at all: its machine
+//! announces the end of the turn itself once it is at rest, because a reply
+//! without tool calls can still be followed by a question, a retry or the
+//! next step of a goal (see `TurnExecutor::end_turn`).
 //!
 //! # Cancellation
 //!
@@ -151,6 +155,9 @@ pub struct TurnExecutor {
     /// Models already warned about for lacking tool calling, so each is
     /// mentioned once per session however many turns it serves.
     warned_without_tools: std::collections::HashSet<String>,
+    /// The request being answered leaves the end of the person's turn to its
+    /// machine ([`TurnRequest::machine_ends_turn`]); see [`Self::end_turn`].
+    machine_ends_turn: bool,
     /// Decision accounting charged to the next request's ledger record.
     decisions: Option<Arc<DecisionTelemetry>>,
     /// Builds the context view of each request when addressable context is on.
@@ -196,6 +203,7 @@ impl TurnExecutor {
             cancel_handle,
             empty_turns: Arc::new(Mutex::new(HashMap::new())),
             warned_without_tools: std::collections::HashSet::new(),
+            machine_ends_turn: false,
             decisions: None,
             context: None,
             cost: CostPolicy::default(),
@@ -211,6 +219,16 @@ impl TurnExecutor {
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
             limits: sven_turn::TurnLimits::default(),
+        }
+    }
+
+    /// Reports that the person's turn has ended - unless the request being
+    /// answered leaves that to its machine, which announces it once it is at
+    /// rest (a reply can be followed by a question, a retry or a goal's next
+    /// step, none of which a turn executor can see).
+    fn end_turn(&self, obs: &ObservationSink) {
+        if !self.machine_ends_turn {
+            obs.emit(UiEvent::TurnComplete);
         }
     }
 
@@ -328,6 +346,7 @@ impl EffectExecutor for TurnExecutor {
             }
             _ => return,
         };
+        self.machine_ends_turn = TurnRequest::ends_turn_by_machine(&request);
 
         if !TurnRequest::is_turn(&request) {
             tracing::warn!("TurnExecutor received a non-turn CallLlm; ignoring");
@@ -336,7 +355,7 @@ impl EffectExecutor for TurnExecutor {
                     error: "turn executor received a non-turn request".into(),
                 })
                 .await;
-            obs.emit(UiEvent::TurnComplete);
+            self.end_turn(obs);
             return;
         }
 
@@ -345,7 +364,7 @@ impl EffectExecutor for TurnExecutor {
             Err(e) => {
                 let msg = format!("failed to deserialise TurnRequest: {e}");
                 let _ = sink.emit(Event::LlmFailed { error: msg }).await;
-                obs.emit(UiEvent::TurnComplete);
+                self.end_turn(obs);
                 return;
             }
         };
@@ -363,7 +382,7 @@ impl EffectExecutor for TurnExecutor {
             Err(error) => {
                 obs.emit(UiEvent::Error(error.clone()));
                 let _ = sink.emit(Event::LlmFailed { error }).await;
-                obs.emit(UiEvent::TurnComplete);
+                self.end_turn(obs);
                 return;
             }
         };
@@ -386,7 +405,7 @@ impl EffectExecutor for TurnExecutor {
                 Err(error) => {
                     obs.emit(UiEvent::Error(error.clone()));
                     let _ = sink.emit(Event::LlmFailed { error }).await;
-                    obs.emit(UiEvent::TurnComplete);
+                    self.end_turn(obs);
                     return;
                 }
             }
@@ -532,7 +551,7 @@ impl EffectExecutor for TurnExecutor {
             let msg = no_room(estimate, budget);
             obs.emit(UiEvent::Error(msg.clone()));
             let _ = sink.emit(Event::LlmFailed { error: msg }).await;
-            obs.emit(UiEvent::TurnComplete);
+            self.end_turn(obs);
             return;
         }
         // The response may ask for what this prompt actually leaves of the
@@ -548,7 +567,7 @@ impl EffectExecutor for TurnExecutor {
             let msg = no_room(sizing, input_budget.unwrap_or(0));
             obs.emit(UiEvent::Error(msg.clone()));
             let _ = sink.emit(Event::LlmFailed { error: msg }).await;
-            obs.emit(UiEvent::TurnComplete);
+            self.end_turn(obs);
             return;
         }
 
@@ -773,7 +792,7 @@ impl EffectExecutor for TurnExecutor {
                 let msg = replies::failure_text(&format!("{e:#}"));
                 obs.emit(UiEvent::Error(msg.clone()));
                 let _ = sink.emit(Event::LlmFailed { error: msg }).await;
-                obs.emit(UiEvent::TurnComplete);
+                self.end_turn(obs);
                 return;
             }
         };

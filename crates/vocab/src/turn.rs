@@ -129,6 +129,13 @@ pub struct TurnRequest {
     /// first message instead of only if it chooses to open it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
+    /// The machine that asked for this turn announces the end of the
+    /// person's turn itself, once it is at rest, so the executor reports no
+    /// `TurnComplete` for it. A reply without tool calls does not end a turn
+    /// that the machine continues: a question it asks first, a failure it
+    /// asks again after, or the next step of a standing goal.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub machine_ends_turn: bool,
 }
 
 /// Sampling and thinking settings of one turn. Every field is optional; an
@@ -225,5 +232,16 @@ impl TurnRequest {
     #[must_use]
     pub fn is_turn(request: &Value) -> bool {
         request.get("kind").and_then(Value::as_str) == Some(TURN_KIND)
+    }
+
+    /// Whether `request` leaves the end of the turn to its machine (see
+    /// [`TurnRequest::machine_ends_turn`]), read from the raw value so that a
+    /// request that does not parse is answered the way its machine expects.
+    #[must_use]
+    pub fn ends_turn_by_machine(request: &Value) -> bool {
+        request
+            .get("machine_ends_turn")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
     }
 }

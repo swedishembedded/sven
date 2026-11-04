@@ -94,7 +94,7 @@ impl TurnExecutor {
             };
             obs.emit(UiEvent::Error(msg.clone()));
             let _ = sink.emit(Event::LlmFailed { error: msg }).await;
-            obs.emit(UiEvent::TurnComplete);
+            self.end_turn(obs);
             return;
         }
 
@@ -181,7 +181,7 @@ impl TurnExecutor {
         // treats TurnComplete as "the run is over" - emitting it here would
         // exit with a false success instead of giving the nudge a chance.
         if !has_tool_calls && !is_empty_turn {
-            obs.emit(UiEvent::TurnComplete);
+            self.end_turn(obs);
         }
     }
 }

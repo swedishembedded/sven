@@ -113,6 +113,7 @@ directly; it asks the kernel to do it by returning an effect
 | `InstantiateSubmachine` | `machine`, `descriptor` | Start a child run ([Parallel Submachine Fan-out](../internals/parallel-submachines.md)) |
 | `CompactContext` | `thread`, `refusal?` | Answer a `CompactRequested`: summarise the thread into notes now (`ContextCompacted` carries them, then `TurnComplete`; the machine is told with `Internal(Custom "context.compaction_finished")`), or, with a `refusal`, only tell the person why not |
 | `Verify` | `spec` | Evaluate a declarative verifier against the real world; the verdict arrives as `VerificationComplete` |
+| `Announce` | `event` | Tell the surfaces something only the machine knows (that the person's turn has ended, how a goal stands); nothing re-enters the queue |
 
 ### `CallLlm` requests
 
@@ -124,6 +125,11 @@ Every `CallLlm` request carries `kind = "turn"` and is handled by
 - It executes no tool. It posts `LlmTurnComplete { thread, text, tool_calls }`
   (or `LlmFailed`) back into the kernel queue.
 - The machine then decides what to do from `tool_calls` and the text alone.
+- It also reports `TurnComplete` after a reply without tool calls, unless the
+  request carries `machine_ends_turn`: then the machine announces the end of
+  the turn itself (`Announce`), once it is at rest. The reactive agent's turns
+  all carry it, because a reply can still be followed by a clarification
+  question, a transient retry or a goal's next step.
 
 The request fields are described in the
 [Deliberation Engine](deliberation.md#the-turnrequest).
@@ -238,7 +244,7 @@ while tools run.
 
 | Event | Condition | -> State | Effects emitted |
 |-------|-----------|----------|-----------------|
-| `LlmTurnComplete`, no tool calls | text non-empty, no unresolved clarification | `Idle` | - (stores `last_response`) |
+| `LlmTurnComplete`, no tool calls | text non-empty, no unresolved clarification | `Idle` | `Announce(TurnComplete)` (stores `last_response`) |
 | `LlmTurnComplete`, no tool calls | text non-empty, the model asked the user a question and listed alternatives after it | _(stay)_ | one `CallTool` of `ask_question` carrying those alternatives |
 | `LlmTurnComplete`, no tool calls | text empty | _(stay)_ | nudge `CallLlm`; after 3 consecutive empty turns, a wrap-up `CallLlm` without tools |
 | `LlmTurnComplete`, tool calls | round within budget | _(stay)_ | one `CallTool` per call |
@@ -248,7 +254,8 @@ while tools run.
 | `ToolApprovalRequired` | - | _(stay)_ | `RequestHumanApproval` for that call |
 | `HumanApproved` / `HumanRejected` | for the held tool call | _(stay)_ | approved: `CallTool` for the held call; rejected: continuation `CallLlm` that tells the model the call did not run |
 | `QuestionAsked` / `HumanAnswered` | - | _(stay)_ | `RequestHumanAnswer` / continuation `CallLlm` |
-| `LlmFailed`, `EffectFailed` | - | `Idle` | - (stores `last_error`) |
+| `LlmFailed` | transient, fewer than 3 repeats | _(stay)_ | the same turn asked again after a growing pause |
+| `LlmFailed`, `EffectFailed` | - | `Idle` | `Announce(TurnComplete)` (stores `last_error`) |
 | _(any other)_ | - | `Session` (super) | - |
 
 The clarification check is deliberately narrow: it fires only when the model

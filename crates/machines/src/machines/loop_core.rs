@@ -113,6 +113,11 @@ pub struct LoopState {
     /// never ran; ordered so a replayed transition emits the same effect.
     #[serde(default)]
     pub refusals: std::collections::BTreeMap<String, String>,
+    /// The machine running this loop announces the end of the person's turn
+    /// itself, so every turn the loop asks for says so
+    /// ([`TurnRequest::machine_ends_turn`]).
+    #[serde(default)]
+    pub machine_ends_turn: bool,
 }
 
 impl LoopState {
@@ -138,6 +143,19 @@ impl LoopState {
         self.pending.is_empty()
             && self.awaiting_tool_approval.is_none()
             && self.awaiting_answer.is_none()
+    }
+
+    /// `effect` as this loop asks for it: a turn of a loop whose machine
+    /// ends the person's turn itself carries
+    /// [`TurnRequest::machine_ends_turn`]. Anything else is returned as it is.
+    #[must_use]
+    pub fn stamp(&self, mut effect: Effect) -> Effect {
+        if self.machine_ends_turn {
+            if let Effect::CallLlm { request } = &mut effect {
+                request["machine_ends_turn"] = Value::Bool(true);
+            }
+        }
+        effect
     }
 
     /// Build a continuation `CallLlm { kind:"turn" }` from the current state.
@@ -192,6 +210,7 @@ impl LoopState {
             decoding: sven_vocab::TurnDecoding::default(),
             attachments: Vec::new(),
             delay_ms: None,
+            machine_ends_turn: self.machine_ends_turn,
         };
         Effect::CallLlm {
             request: req.to_value(),
@@ -363,6 +382,7 @@ pub fn build_turn_effect(
         decoding: sven_vocab::TurnDecoding::default(),
         attachments: Vec::new(),
         delay_ms: None,
+        machine_ends_turn: false,
     };
     Effect::CallLlm {
         request: req.to_value(),
@@ -403,6 +423,7 @@ pub fn init_loop(
         stall_nudge: None,
         empty_turns: 0,
         truncated: false,
+        machine_ends_turn: false,
     };
     ls.store(ctx);
     ctx.set_fact(MAX_ROUNDS_REACHED_FACT, serde_json::json!(false));
@@ -461,7 +482,7 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
 
     // Max rounds exceeded AND there are tool calls → force a wrap-up turn.
     if round > max && !tool_calls.is_empty() {
-        let wrapup_effect = build_turn_effect(
+        let wrapup_effect = ls.stamp(build_turn_effect(
             &thread,
             &[],
             "",
@@ -471,7 +492,7 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
             0,
             None,
             None,
-        );
+        ));
         ls.store(ctx);
         ctx.set_fact(MAX_ROUNDS_REACHED_FACT, serde_json::json!(true));
         return GeneratingAction::MaxRoundsReached { wrapup_effect };
@@ -485,7 +506,7 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
                 // The nudge had its chances; the model keeps returning
                 // nothing. End the turn the same way an exceeded round
                 // budget ends it, with a wrap-up that says why.
-                let wrapup_effect = build_turn_effect(
+                let wrapup_effect = ls.stamp(build_turn_effect(
                     &thread,
                     &[],
                     "",
@@ -495,7 +516,7 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
                     0,
                     None,
                     None,
-                );
+                ));
                 ls.store(ctx);
                 return GeneratingAction::MaxRoundsReached { wrapup_effect };
             }
@@ -504,7 +525,7 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
             } else {
                 EMPTY_TURN_NUDGE
             };
-            let nudge_effect = build_turn_effect(
+            let nudge_effect = ls.stamp(build_turn_effect(
                 &thread,
                 &ls.tools,
                 &ls.all_tools_mode,
@@ -514,7 +535,7 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
                 max.saturating_sub(round),
                 None,
                 None,
-            );
+            ));
             ls.store(ctx);
             return GeneratingAction::EmptyTurn { nudge_effect };
         }
