@@ -19,7 +19,9 @@ use sven_hsm::{Event, Snapshot};
 use sven_vocab::{HarnessEvent, SessionEvent};
 use tokio::sync::broadcast;
 
+use super::handoff::{check_input_files, hand_over, Publication, PublicationSink};
 use super::live_trajectory;
+pub use super::outcome::{HarnessFailure, HarnessOutcome};
 use super::record::{start_checkpoint, Recorder};
 use super::run_support::{
     checkpoint_at, conclusion_of, harness_tools, interrupted_failure, outcome_of, publish_trace,
@@ -32,7 +34,7 @@ use crate::engine::Engine;
 use crate::error::CallError;
 use crate::gates::{ask_through, forward};
 use crate::meter::Meter;
-use crate::run::{RunConclusion, RunOptions, Usage};
+use crate::run::{RunConclusion, RunOptions};
 
 /// How many captures may be served with nothing processed in between
 /// before a resting run is judged stuck.
@@ -92,22 +94,6 @@ pub struct HarnessRun {
 
 /// Receives the checkpoint a host asked for at each completed work item.
 type ItemCheckpointSink = Box<dyn Fn(HarnessCheckpoint) + Send + Sync>;
-type PublicationSink = Box<dyn Fn(Publication) + Send + Sync>;
-
-/// A finished task's files, handed to the host with a checkpoint taken right
-/// after: keep both together and a run killed later resumes past the task,
-/// with the files it left.
-#[derive(Clone, Debug)]
-pub struct Publication {
-    /// The publish step.
-    pub step: String,
-    /// The task whose files these are.
-    pub task: String,
-    /// Each file's workspace-relative path and digest.
-    pub files: Vec<sven_vocab::PublishedFile>,
-    /// The run as it rests after the publication.
-    pub checkpoint: HarnessCheckpoint,
-}
 
 struct RestoredMachine {
     machine: Box<dyn ErasedMachine>,
@@ -302,18 +288,8 @@ impl HarnessRun {
     /// Gives the host's publication sink each publication `records` hold,
     /// with the run as it rests at `snapshot`.
     fn hand_publications(&self, records: &[TraceRecord], snapshot: &Snapshot) {
-        let Some(sink) = &self.publication else {
-            return;
-        };
-        for record in records {
-            if let TraceRecord::Published { step, task, files } = record {
-                sink(Publication {
-                    step: step.clone(),
-                    task: task.clone(),
-                    files: files.clone(),
-                    checkpoint: checkpoint_at(snapshot.clone(), &self.plan.digest, &self.run_id),
-                });
-            }
+        if let Some(sink) = &self.publication {
+            hand_over(records, snapshot, &self.plan.digest, &self.run_id, sink);
         }
     }
 
@@ -813,80 +789,5 @@ impl HarnessRun {
             live_trajectory::write_final(&scratch.trajectory_file(), self.trajectory_with_images());
         }
         Ok(outcome)
-    }
-}
-
-/// The verdict of one harness run.
-#[derive(Debug, Clone)]
-pub struct HarnessOutcome {
-    /// How the run ended. A run that reached its own `return` or `fail`
-    /// ended on [`RunConclusion::Success`]: the run completed, whatever it
-    /// decided. [`RunConclusion::Cancelled`] means the user cancelled it;
-    /// the verdict is its cancelled failure. [`RunConclusion::Timeout`]
-    /// and [`RunConclusion::BudgetExhausted`] mean an operational bound
-    /// suspended it before a verdict.
-    pub conclusion: RunConclusion,
-    /// The plan's verdict: the `return` value, or the `fail` code and
-    /// message; the cancelled failure for a cancelled run. `None` - with
-    /// [`HarnessRun::checkpoint`] - when a bound suspended the run before
-    /// it reached one.
-    pub result: Option<Result<Value, HarnessFailure>>,
-    /// What the run used, children included.
-    pub usage: Usage,
-    /// The structured execution trace: what the run did, in order.
-    pub trace: Vec<TraceRecord>,
-    /// How many step executions the run made.
-    pub steps: u64,
-}
-
-/// A harness run's own failure: the code a `fail` step (or a bound the
-/// plan itself exceeded) reported.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HarnessFailure {
-    /// The failure code the plan declared.
-    pub code: String,
-    /// What the failure means, for a person reading the outcome.
-    pub message: String,
-}
-
-/// A fresh run's `file` inputs must name files that are in its workspace
-/// before anything starts: the host lays the tree out, the harness reads it.
-fn check_input_files(
-    plan: &sven_harness_spec::HarnessPlan,
-    inputs: &Value,
-    root: Option<&std::path::Path>,
-) -> Result<(), CallError> {
-    let Some(declared) = &plan.inputs else {
-        return Ok(());
-    };
-    let mut problems = Vec::new();
-    for (name, input) in declared {
-        if input.ty != sven_harness_spec::IOType::File {
-            continue;
-        }
-        let Some(path) = inputs.get(name).and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(root) = root else {
-            problems.push(format!(
-                "`{name}` names a file, but the run has no workspace"
-            ));
-            continue;
-        };
-        let inside = root
-            .join(path)
-            .canonicalize()
-            .ok()
-            .filter(|real| root.canonicalize().is_ok_and(|r| real.starts_with(r)));
-        match inside {
-            Some(real) if real.is_file() => {}
-            Some(_) => problems.push(format!("`{name}`: {path} is not a file")),
-            None => problems.push(format!("`{name}`: {path} is not a file in the workspace")),
-        }
-    }
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(CallError::Precondition(problems.join("; ")))
     }
 }

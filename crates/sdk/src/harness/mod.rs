@@ -38,6 +38,7 @@ use sven_hsm::Snapshot;
 use crate::engine::Engine;
 use crate::error::CallError;
 
+mod handoff;
 pub(crate) mod live_trajectory;
 mod outcome;
 mod record;
@@ -46,9 +47,10 @@ mod run_support;
 mod scratchpad;
 mod trajectory;
 
+pub use handoff::Publication;
 pub use live_trajectory::ConversationUpdate;
 pub use record::{HarnessRecording, HarnessReplay};
-pub use run::{HarnessFailure, HarnessOutcome, HarnessRun, Publication};
+pub use run::{HarnessFailure, HarnessOutcome, HarnessRun};
 pub use sven_session_store::trace_images::TrajectoryImage;
 pub use trajectory::{write_trajectory_images, Correction, RefusedMessage};
 

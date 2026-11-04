@@ -38,6 +38,7 @@ mod lower_context;
 mod lower_corrections;
 mod lower_counts;
 mod lower_imports;
+mod lower_publish;
 mod lower_system;
 mod names;
 pub mod package;
