@@ -121,10 +121,12 @@ async fn serve(seen: Arc<Mutex<Seen>>) -> String {
                             } else {
                                 digest(&state.stored)
                             };
-                            // As an MCP server SDK answers it: `resultType` and
-                            // the whole file value beside the download.
+                            // As an MCP server SDK answers it: `resultType`, its
+                            // identity in `_meta` (rmcp once read that as a tool
+                            // result), and the whole file value beside the download.
                             Some(json!({
                                 "resultType": "complete",
+                                "_meta": { "io.modelcontextprotocol/serverInfo": { "name": "server", "version": "1" } },
                                 "file": { "uri": "mcp-file://files/1", "name": "../../part.step",
                                           "mimeType": "application/step", "size": state.stored.len(),
                                           "digest": { "algorithm": "sha-256", "value": value } },

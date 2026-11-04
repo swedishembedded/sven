@@ -81,6 +81,8 @@ members = [
     "samples/agent/task",
     "samples/host/sessions",
 ]
+# A patched copy of a dependency, not a member (third_party/rmcp/PATCHED.md).
+exclude = ["third_party/rmcp"]
 
 # Single source of truth for the sven release version. The top-level `sven`
 # binary crate's `[package]` inherits this (see below), and so does every
@@ -330,3 +332,9 @@ debug    = "line-tables-only"
 [profile.ci]
 inherits      = "dev"
 debug         = 0
+
+# rmcp 3.8.0 with one fix (third_party/rmcp/PATCHED.md): a result carrying
+# only `_meta`, which servers stamp on every result, is not a tool result.
+# Remove once a release carries the fix.
+[patch.crates-io]
+rmcp = { path = "third_party/rmcp" }

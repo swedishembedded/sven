@@ -451,7 +451,13 @@ fn walk_rs_files_into(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
             // branch's files as this tree's violations -- 65 of them here,
             // from three locked worktrees -- so `make check` could not pass
             // for anyone regardless of what the working tree contained.
-            if file_name == "target" || file_name == ".git" || file_name == ".claude" {
+            // `third_party` holds patched copies of dependencies: upstream's
+            // code, laid out as upstream lays it out, not this repo's to split.
+            if file_name == "target"
+                || file_name == ".git"
+                || file_name == ".claude"
+                || file_name == "third_party"
+            {
                 continue;
             }
             walk_rs_files_into(&path, out)?;
