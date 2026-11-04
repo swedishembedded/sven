@@ -245,6 +245,7 @@ fn type_word(ty: &IOType) -> &'static str {
         IOType::Number => "number",
         IOType::Boolean => "boolean",
         IOType::Json => "json",
+        IOType::File => "file",
     }
 }
 

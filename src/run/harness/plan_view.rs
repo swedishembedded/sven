@@ -75,14 +75,15 @@ fn edge(to: &str, label: &'static str) -> Edge {
 /// Every edge out of `primitive`, in the order the runtime prefers them.
 pub(super) fn edges(primitive: &PlanPrimitive) -> Vec<Edge> {
     use PlanPrimitive::{
-        Agent, Assign, Branch, Delegate, Fail, Gate, Iterate, Predict, Return, Verify,
+        Agent, Assign, Branch, Delegate, Fail, Gate, Iterate, Predict, Publish, Return, Verify,
     };
     match primitive {
         Predict { then, .. }
         | Agent { then, .. }
         | Verify { then, .. }
         | Assign { then, .. }
-        | Delegate { then, .. } => vec![edge(then, "")],
+        | Delegate { then, .. }
+        | Publish { then, .. } => vec![edge(then, "")],
         Branch {
             when_true,
             when_false,
