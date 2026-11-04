@@ -45,13 +45,10 @@ impl Tool for UpdateGoalTool {
     }
 
     fn description(&self) -> &str {
-        "Report on the standing goal the person set. status \"complete\": every requirement \
-         is met and you checked it; give the evidence. If the goal has a check, the check \
-         decides, not this report. status \"blocked\": something outside your control stops \
-         you (a permission, a credential, a service, a decision only the person can make); say \
-         what fails (blocker), the evidence, what is completed, what remains, what you need \
-         (request) and what must be true to resume (resume_condition). The same blocker \
-         reported on consecutive turns stops the goal, so first look for another way."
+        "Report on the standing goal. \"complete\": every requirement is met and checked; \
+         give evidence (a goal's check, if set, decides). \"blocked\": only something outside \
+         your control stops you; fill every field. The same blocker on consecutive turns stops \
+         the goal."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -60,13 +57,13 @@ impl Tool for UpdateGoalTool {
             "type": "object",
             "properties": {
                 "status": { "type": "string", "enum": ["complete", "blocked"] },
-                "evidence": text("What shows it: test results, files, command output"),
-                "blocker": text("The operation that fails and why (blocked)"),
-                "completed": text("What is done toward the goal (blocked)"),
-                "remaining": text("What is left to do (blocked)"),
-                "verification": text("What was checked and how it turned out (blocked)"),
-                "request": text("What the person has to do (blocked)"),
-                "resume_condition": text("What must be true before work can go on (blocked)"),
+                "evidence": text("What shows it: test results, command output"),
+                "blocker": text("What fails, and why"),
+                "completed": { "type": "string" },
+                "remaining": { "type": "string" },
+                "verification": { "type": "string" },
+                "request": text("What the person has to do"),
+                "resume_condition": { "type": "string" },
             },
             "required": ["status"],
             "additionalProperties": false
@@ -201,24 +198,20 @@ impl Tool for SetGoalTool {
     }
 
     fn description(&self) -> &str {
-        "Set the standing goal the session then keeps working toward, turn after turn, until \
-         it is met. Use it only when the person asked you to set, word or change the goal; \
-         never to give yourself one. Word the objective so that it says what done looks like. \
-         Give `check` (a command and its arguments) when a command can decide it, such as a \
-         test run. The goal is set when this reply ends; it cannot be changed from inside the \
-         goal's own turns."
+        "Set the standing goal the session works toward until it is met, when this reply ends. \
+         Only when the person asks you to set or word one. Word it so done is recognisable; \
+         give `check` (program and arguments) when a command can decide it."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "objective": { "type": "string", "description": "What to achieve, worded so that done is recognisable" },
+                "objective": { "type": "string" },
                 "max_turns": { "type": "integer", "minimum": 1, "maximum": sven_vocab::goal::MAX_TURNS_LIMIT },
                 "check": {
                     "type": "array",
-                    "items": { "type": "string" },
-                    "description": "A command that passes when the goal is met, as a program and its arguments"
+                    "items": { "type": "string" }
                 },
             },
             "required": ["objective"],
