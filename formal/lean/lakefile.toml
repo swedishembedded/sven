@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# No dependencies, deliberately: the proofs here need Lean's own core and
+# `omega`, and a proof suite that needs a multi-gigabyte library build is one
+# nobody runs.
+name = "sven"
+defaultTargets = ["Sven"]
+
+[[lean_lib]]
+name = "Sven"

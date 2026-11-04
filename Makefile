@@ -305,14 +305,22 @@ test/e2e/delegation/local-model: build
 	@test -n "$(ENDPOINT)" || { echo "test/e2e/delegation/local-model: pass ENDPOINT=<url> MODEL=<name> of a model server you are already running"; exit 2; }
 	bash tests/e2e/delegation/local-model.sh --endpoint $(ENDPOINT) --model $(MODEL) --driver $(DRIVER) $(if $(KEY_FILE),--key-file $(KEY_FILE)) $(if $(NO_THINKING),--no-thinking)
 
-## test/formal - machine-check the TLA+ models of the HSM kernel (needs a JRE; not part of `make test`)
+## test/formal - default: test/formal/tla and test/formal/lean (not part of `make test`)
 # Not part of `make check`: the models need a JRE and a pinned 2 MB download,
-# and `check` is the inner loop. Several of them are EXPECTED to fail -- they
-# pin down designs the engine rejected -- so the runner compares each model
-# against the outcome the suite declares for it rather than against TLC's exit
-# code. See formal/README.md.
-test/formal:
+# the proofs a pinned Lean toolchain, and `check` is the inner loop. See
+# formal/README.md.
+test/formal: test/formal/tla test/formal/lean
+
+## test/formal/tla - machine-check the TLA+ models of the kernel and the goal protocol (needs a JRE)
+# Several of them are EXPECTED to fail -- they pin down designs the engine
+# rejected -- so the runner compares each model against the outcome the suite
+# declares for it rather than against TLC's exit code.
+test/formal/tla:
 	bash formal/run-tla.sh
+
+## test/formal/lean - build the Lean proofs of the goal policy and audit their axioms (needs lake)
+test/formal/lean:
+	bash formal/run-lean.sh
 
 ## check - default: check/fmt, check/gates, check/arch, check/features, check/clippy, check/doc
 # In that order on purpose: a rustfmt drift, a baked-in machine path or an
@@ -731,7 +739,7 @@ generate/roadmap/index:
         test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness $(HARNESS_TARGETS) \
         generate \
         generate/config generate/config/golden generate/roadmap generate/roadmap/index \
-        test/crate $(TEST_CRATE_TARGETS) test/formal test/wasm test/wasm/browser build/wasm \
+        test/crate $(TEST_CRATE_TARGETS) test/formal test/formal/tla test/formal/lean test/wasm test/wasm/browser build/wasm \
         check check/fmt check/features check/wasm check/clippy check/doc check/arch \
         check/gates $(GATE_TARGETS) \
         fmt clean help \

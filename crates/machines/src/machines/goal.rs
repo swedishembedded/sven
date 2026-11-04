@@ -461,6 +461,115 @@ mod tests {
         assert_eq!(g.turns_used, 0);
     }
 
+    /// The properties `formal/lean/Sven/Goal.lean` proves of its model,
+    /// checked of this code over every goal and turn in a small grid: a
+    /// difference between the model and the code fails here.
+    #[test]
+    fn the_code_has_the_properties_the_model_proves() {
+        let statuses = [
+            GoalStatus::Active,
+            GoalStatus::Paused,
+            GoalStatus::Blocked,
+            GoalStatus::Completed,
+            GoalStatus::BudgetExhausted,
+        ];
+        let reports = [
+            None,
+            Some(GoalReport::Complete {
+                evidence: "e".into(),
+            }),
+            Some(GoalReport::Blocked(BlockerReport {
+                blocker: "denied".into(),
+                ..BlockerReport::default()
+            })),
+            Some(GoalReport::Blocked(BlockerReport {
+                blocker: "offline".into(),
+                ..BlockerReport::default()
+            })),
+        ];
+        let verdicts = [
+            VerifierVerdict::Passed,
+            VerifierVerdict::Failed { reason: "f".into() },
+            VerifierVerdict::Unknown { reason: "u".into() },
+        ];
+        let mut cases = 0;
+        for status in statuses {
+            for max in 1..=4u32 {
+                for used in 0..=max {
+                    for check in [false, true] {
+                        for blocked_turns in 0..=3u32 {
+                            for idle in 0..=3u32 {
+                                for key in [None, Some(blocker_key("denied"))] {
+                                    for report in &reports {
+                                        for acted in [false, true] {
+                                            let mut g = goal(max, check);
+                                            g.status = status;
+                                            g.turns_used = used;
+                                            g.blocked_turns = blocked_turns;
+                                            g.idle_turns = idle;
+                                            g.blocker_key = key.clone();
+                                            let t = TurnRecord {
+                                                acted,
+                                                report: report.clone(),
+                                            };
+                                            let before = g.clone();
+                                            let next = after_turn(&mut g, &t);
+                                            cases += 1;
+                                            if before.status != GoalStatus::Active {
+                                                assert_eq!((g, next), (before, Next::Stop));
+                                                continue;
+                                            }
+                                            assert_eq!(g.max_turns, before.max_turns);
+                                            assert_eq!(g.turns_used, before.turns_used + 1);
+                                            if check {
+                                                assert!(matches!(next, Next::Check(_)));
+                                                assert_eq!(g.status, GoalStatus::Active);
+                                                for v in &verdicts {
+                                                    let mut c = g.clone();
+                                                    let n = after_check(&mut c, v, &t);
+                                                    let passed =
+                                                        matches!(v, VerifierVerdict::Passed);
+                                                    assert_eq!(
+                                                        c.status == GoalStatus::Completed,
+                                                        passed
+                                                    );
+                                                    assert_eq!(c.verified, passed);
+                                                    if matches!(n, Next::Continue(_)) {
+                                                        assert_eq!(c.status, GoalStatus::Active);
+                                                        assert!(c.turns_used < c.max_turns);
+                                                    }
+                                                }
+                                                continue;
+                                            }
+                                            if matches!(next, Next::Continue(_)) {
+                                                assert_eq!(g.status, GoalStatus::Active);
+                                                assert!(g.turns_used < g.max_turns);
+                                            }
+                                            if g.status == GoalStatus::Completed {
+                                                assert!(matches!(
+                                                    t.report,
+                                                    Some(GoalReport::Complete { .. })
+                                                ));
+                                                assert!(!g.verified);
+                                            }
+                                            if g.status == GoalStatus::Blocked {
+                                                assert!(
+                                                    g.blocked_turns >= BLOCKED_AFTER
+                                                        || g.idle_turns >= IDLE_AFTER
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cases > 10_000, "{cases}");
+    }
+
     #[test]
     fn the_instruction_names_the_goal_and_how_it_is_decided() {
         let g = goal(20, true);

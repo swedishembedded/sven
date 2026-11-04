@@ -68,6 +68,7 @@ portal-devices.yaml
 
 # Formal-model tooling (pinned third-party jar, fetched not committed)
 /formal/tools/
+/formal/lean/.lake/
 
 # Generated documentation publication
 /build/

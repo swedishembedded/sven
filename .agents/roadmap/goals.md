@@ -8,7 +8,9 @@ Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 Scope: standing goals (`/goal`): what is left after the supervised goal loop, its check commands and its terminal and `sven rc` surfaces shipped.
 
 Shipped (2026-11-04) and described in `docs/guides/goals.md`: the goal
-policy (`crates/machines/src/machines/goal.rs`), its
+policy (`crates/machines/src/machines/goal.rs`, proved in
+`formal/lean/Sven/Goal.lean`; the protocol around it model-checked in
+`formal/tla/Goal.tla`), its
 place in the reactive agent (`goal_flow.rs`, the `Checking` state), check
 commands (`VerifierSpec::Command` through the confined gate runner), the
 `update_goal` report tool, and `/goal` in the TUI and `sven rc` with the
@@ -34,6 +36,11 @@ goal kept across restarts and rebuilds.
   false completions, false blocks, and turns spent after a blocker was
   evident. Learned stopping stays out until such a bench shows its false
   stops on this agent's tasks.
+- **Turn ends name no input.** A stopped answer's late `TurnComplete` (or
+  `Aborted`) closes the next answer the person opened, for a goal and a plain
+  message alike (`formal/tla/GoalStopRace.cfg`, a tracked gap). Closing it
+  needs each input to carry an id that its end repeats, on the session
+  protocol a server reads.
 - **Blocker identity.** The same blocker is recognised by its normalised
   first twelve words; a model that rewords it each turn resets the count,
   and only the idle and turn limits stop it then.

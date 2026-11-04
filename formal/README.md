@@ -3,8 +3,10 @@
 Machine-checked models of the parts of sven whose correctness argument is
 otherwise only a comment and a handful of example transitions.
 
-Run them with `make test/formal`. It is not part of `make check`: the models need a
-JRE and a 2 MB download, and `check` is the inner loop.
+Run them with `make test/formal` (`test/formal/tla` for the TLA+ models,
+`test/formal/lean` for the Lean proofs). It is not part of `make check`: the
+models need a JRE and a 2 MB download, the proofs a pinned Lean toolchain,
+and `check` is the inner loop.
 
 ## What this is for
 
@@ -197,12 +199,66 @@ and drops the effects in flight, but nothing is left waiting on them - the
 machine that emitted them is not dispatched again, and the child runs it
 started are cancelled with it (`kernel/src/children.rs`).
 
+### `Goal.tla` -- a goal runs only while it is active, in an answer the person can see
+
+Models `crates/machines/src/machines/reactive_agent.rs` with `goal_flow.rs`
+and the surfaces that show it (`crates/remote/src/host.rs`, the TUI): a
+person's `/goal` commands and stops, the kernel dispatching one event at a
+time, the executors answering turns and checks, and a surface that shows one
+answer per input and closes it at `TurnComplete`. The goal policy itself is
+abstracted to its outcome classes and proved in full in Lean (below).
+
+Shipped, for every interleaving at the bounds (4 inputs, 3 goal turns):
+
+- `NoGoalTurnUnlessActive`: a pause or clear the kernel has processed is
+  never followed by a turn of the goal it stopped.
+- `NoWorkAfterTheAnswerEnded`: a goal turn starts only while the person's
+  answer is open, so nothing it does arrives after a server stopped
+  listening (a turn the person already stopped is the exception: the cancel
+  queued behind it cuts it).
+- `CompletionNeedsAPassingCheck`, `TurnsWithinBudget`, and the liveness
+  `EveryAnswerEnds`: an answer the person opened is always ended.
+
+Three designs are pinned as rejected, each failing on its own property: the
+turn executor ending the person's turn after every reply
+(`GoalExecutorEndsTurn.cfg`), a surface sending the goal's continuation
+(`GoalSurfaceContinues.cfg`, the race a lock around "read the goal, start the
+turn" exists for elsewhere; here the kernel decides inside one dispatch), and
+the model's report completing a checked goal (`GoalReportDecides.cfg`).
+
+The model found two things the first implementation got wrong or did not
+say. A command sent while an answer was open could be dispatched once the
+kernel was at rest, start a goal turn and end an answer nobody was waiting
+for; `Event::Goal` now carries `awaits_answer`, and only a command the person
+waits for starts work or ends a turn. And a turn's end names no input, so a
+stopped answer's late end closes the next answer the person opened - for a
+plain message as much as a goal. That one is the protocol's, not the goal's,
+and stays in the suite as a gap (`GoalStopRace.cfg`) until turn ends carry
+the input they answer.
+
+### `lean/Sven/Goal.lean` -- the goal policy decides honestly for every value
+
+A model of `crates/machines/src/machines/goal.rs`, rule for rule, with proofs
+for every goal and every sequence of turns: only a passing check completes or
+verifies a checked goal, a check without a verdict never completes one, a
+stopped goal takes no turn, only an active goal with turns left continues, a
+goal stops within the turns it has left whatever each turn reports, and a
+goal is blocked only after the same blocker on three turns in a row or three
+turns without action. `formal/run-lean.sh` rejects a `sorry` and prints the
+axioms each headline theorem rests on (`Sven/Audit.lean`): Lean's own only.
+The Rust policy is held to the same properties by an exhaustive test over a
+grid of goals and turns (`the_code_has_the_properties_the_model_proves`).
+
 ## The tools
 
 TLC comes from the pinned, SHA-256-verified `tla2tools.jar` that
 `formal/fetch-tools.sh` downloads into the gitignored `formal/tools/`. The jar
 is third-party and is never committed; the pin and the checksum are, so what
 ran is what the suite says ran.
+
+The Lean proofs build with the toolchain `formal/lean/lean-toolchain` pins
+(installed by `elan`) and no dependencies; their build directory
+`formal/lean/.lake/` is gitignored.
 
 ## Adding a model
 

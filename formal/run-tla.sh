@@ -67,6 +67,11 @@ suite=(
   "EffectDelivery|EffectDeliveryUnanswered.cfg|violates:NoSilentStall|a refused batch the machine is never told about leaves it waiting forever"
   "EffectDelivery|EffectDeliveryPerEffect.cfg|pass|and gating each effect on its own keeps the allowed ones running too"
   "EffectDelivery|EffectDeliveryBatchDrop.cfg|tradeoff:InnocentEffectSurvivesARefusal|the all-or-nothing batch drops an allowed effect because another in the same dispatch was refused"
+  "Goal|Goal.cfg|pass|a goal turn starts only while the goal is active and its answer open, a checked goal completes only on a pass, and every answer ends"
+  "Goal|GoalExecutorEndsTurn.cfg|violates:NoWorkAfterTheAnswerEnded|the turn executor ending the person's turn after every reply runs the goal's next turn after the answer closed"
+  "Goal|GoalSurfaceContinues.cfg|violates:NoGoalTurnUnlessActive|a surface sending the continuation runs a turn of a goal the person had paused"
+  "Goal|GoalReportDecides.cfg|violates:CompletionNeedsAPassingCheck|the model's report completes a goal whose check has not passed"
+  "Goal|GoalStopRace.cfg|gap:NoWorkAfterTheAnswerEnded|turn ends name no input: a stopped answer's late end closes the next answer"
 )
 
 # Workers: TLC's own default is 1. Capped rather than unbounded because the
