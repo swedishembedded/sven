@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **ci**: the release waits for the experimental aarch64 (glibc) and Windows builds before publishing, so their files are no longer missing when they finish late (v4.4.5 shipped without the aarch64 build); their failure still never blocks a release.
+
 ## [4.4.5] - 2026-11-04
 
 ### Security

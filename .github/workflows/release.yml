@@ -266,11 +266,20 @@ jobs:
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    # The glibc aarch64 build and Windows are excluded from needs so their
-    # failures never block the release.  e2e-basic must pass - if any basic test
-    # fails the release is aborted - and both static Linux binaries must
-    # build, since install.sh and hosted agents install them.
-    needs: [e2e-basic, build-linux-x86_64, build-linux-musl, build-macos]
+    # Waits for every build, the experimental glibc aarch64 and Windows ones
+    # included: a job not waited for is raced, and its files are simply
+    # missing from the release (v4.4.5 shipped without the aarch64 build,
+    # which finished two minutes after this job). Their failure still never
+    # blocks the release: only e2e-basic (if any basic test fails the
+    # release is aborted), the static Linux binaries (install.sh and hosted
+    # agents install them), x86_64 and macOS must succeed.
+    needs: [e2e-basic, build-linux-x86_64, build-linux-musl, build-macos, build-linux-aarch64, build-windows]
+    if: >-
+      ${{ !cancelled() &&
+          needs.e2e-basic.result == 'success' &&
+          needs.build-linux-x86_64.result == 'success' &&
+          needs.build-linux-musl.result == 'success' &&
+          needs.build-macos.result == 'success' }}
     permissions:
       contents: write
     steps:
