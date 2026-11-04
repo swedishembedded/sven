@@ -102,13 +102,20 @@ pub enum Answer {
 }
 
 /// Carries out `command`. `at_rest` says whether the machine is waiting for
-/// the person: only then can a goal turn start, and only then does the
-/// answer end the person's turn.
-pub fn command(ctx: &mut Context, command: &GoalCommand, at_rest: bool) -> Answer {
+/// the person, `awaits_answer` whether the person waits for an answer to
+/// this command. Only both together start a goal turn; the answer ends the
+/// person's turn when they wait for it, by itself or with the work started.
+pub fn command(
+    ctx: &mut Context,
+    command: &GoalCommand,
+    at_rest: bool,
+    awaits_answer: bool,
+) -> Answer {
     let current = load(ctx);
+    let starts = at_rest && awaits_answer;
     let stay = |ctx: &Context, note: String| {
         let mut effects = vec![announce(load(ctx).as_ref(), note)];
-        if at_rest {
+        if awaits_answer {
             effects.push(Effect::Announce {
                 event: Box::new(UiEvent::TurnComplete),
             });
@@ -127,10 +134,10 @@ pub fn command(ctx: &mut Context, command: &GoalCommand, at_rest: bool) -> Answe
                     "A goal needs an objective: /goal <what to achieve>.".into(),
                 );
             }
-            if !at_rest {
+            if !starts {
                 return stay(
                     ctx,
-                    "A turn is running; set the goal once it has finished, or stop it first."
+                    "A turn was running; set the goal once it has finished, or stop it first."
                         .into(),
                 );
             }
@@ -181,9 +188,16 @@ pub fn command(ctx: &mut Context, command: &GoalCommand, at_rest: bool) -> Answe
                 goal.blocker = None;
                 goal.idle_turns = 0;
                 goal.reason = None;
+                if at_rest && !starts {
+                    return stay(
+                        ctx,
+                        "The goal was not resumed: a turn was running when you asked. Resume it again."
+                            .into(),
+                    );
+                }
                 store(ctx, Some(&goal));
                 ctx.activate_tools(&[UPDATE_GOAL_TOOL.to_string()]);
-                if at_rest {
+                if starts {
                     begin_turn(ctx);
                     Answer::Start {
                         announce: announce(

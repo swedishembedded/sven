@@ -20,9 +20,11 @@ use crate::app::App;
 use crate::chat::segment::ChatSegment;
 
 impl App {
-    /// Hands `command` to the active session's agent. At rest the session
-    /// is busy until the answer ends (`TurnComplete`): at once for a command
-    /// that starts no work, at the goal's end for one that does.
+    /// Hands `command` to the active session's agent. At rest the command is
+    /// an answer of its own and the session is busy until it ends
+    /// (`TurnComplete`): at once for a command that starts no work, at the
+    /// goal's end for one that does. While busy it only changes what
+    /// follows, and ends nothing.
     pub(crate) async fn goal_command(&mut self, command: GoalCommand) {
         if self.session.mode == AgentMode::Sdlc {
             self.agent.notice =
@@ -43,11 +45,18 @@ impl App {
                 self.scroll_to_bottom();
             }
         }
-        if tx.send(AgentRequest::Goal(command)).await.is_err() {
+        let awaits_answer = !self.agent.busy;
+        let request = AgentRequest::Goal {
+            command,
+            awaits_answer,
+        };
+        if tx.send(request).await.is_err() {
             self.agent.notice = Some("warning: the agent session has stopped".into());
             return;
         }
-        self.agent.busy = true;
+        if awaits_answer {
+            self.agent.busy = true;
+        }
     }
 
     /// `/goal` alone: the goal the active session last reported.
@@ -73,8 +82,11 @@ impl App {
     /// freshly started agent, if it has one.
     pub(crate) fn restore_goal_request(&self) -> Option<AgentRequest> {
         let goal = self.sessions.get(&self.sessions.active_id)?.goal.clone()?;
-        Some(AgentRequest::Goal(GoalCommand::Restore {
-            goal: Box::new(goal),
-        }))
+        Some(AgentRequest::Goal {
+            command: GoalCommand::Restore {
+                goal: Box::new(goal),
+            },
+            awaits_answer: false,
+        })
     }
 }

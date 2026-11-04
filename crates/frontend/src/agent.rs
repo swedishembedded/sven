@@ -63,9 +63,13 @@ pub enum AgentRequest {
     /// `ContextCompacted` event carrying the summary, then `TurnComplete`.
     Compact,
     /// A `/goal` command for the session's standing goal. The answer is a
-    /// `GoalUpdated` event; at rest it ends with `TurnComplete`, or with the
+    /// `GoalUpdated` event; when the person waits for it (`awaits_answer`:
+    /// sent with no answer open) it ends with `TurnComplete`, or with the
     /// goal's own end when it starts work.
-    Goal(sven_vocab::goal::GoalCommand),
+    Goal {
+        command: sven_vocab::goal::GoalCommand,
+        awaits_answer: bool,
+    },
 }
 
 /// Lightweight helper to generate a title from a given model configuration.
@@ -306,11 +310,16 @@ pub(crate) async fn run_kernel_session_task(
                 }
             }
 
-            AgentRequest::Goal(command) => match session.goal(command).await {
+            AgentRequest::Goal {
+                command,
+                awaits_answer,
+            } => match session.goal(command, awaits_answer).await {
                 Ok(()) => {}
                 Err(e @ RequestError::Unsupported { .. }) => {
                     let _ = tx.send(AgentEvent::Warning(e.to_string())).await;
-                    let _ = tx.send(AgentEvent::TurnComplete).await;
+                    if awaits_answer {
+                        let _ = tx.send(AgentEvent::TurnComplete).await;
+                    }
                 }
                 Err(e) => {
                     let _ = tx.send(AgentEvent::Error(e.to_string())).await;
@@ -664,13 +673,19 @@ mod tests {
             );
             goal.status = GoalStatus::Paused;
             req_tx
-                .send(AgentRequest::Goal(GoalCommand::Restore {
-                    goal: Box::new(goal),
-                }))
+                .send(AgentRequest::Goal {
+                    command: GoalCommand::Restore {
+                        goal: Box::new(goal),
+                    },
+                    awaits_answer: false,
+                })
                 .await
                 .unwrap();
             req_tx
-                .send(AgentRequest::Goal(GoalCommand::Resume))
+                .send(AgentRequest::Goal {
+                    command: GoalCommand::Resume,
+                    awaits_answer: true,
+                })
                 .await
                 .unwrap();
             let events = turn_events(&mut ev).await;

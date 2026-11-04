@@ -104,7 +104,13 @@ last received.
 
 `status` is one of `active`, `paused`, `blocked`, `completed` and
 `budget_exhausted`; a blocked goal carries `blocker` with the fields of the
-report, and a stopped one `reason`. A goal command at rest ends its answer
-with `TurnComplete`; one that starts work ends when the goal comes to rest.
+report, and a stopped one `reason`.
+
+A goal command sent with no answer open is the person's turn: it ends with
+`TurnComplete`, or, when it starts work, with the end of that work. A command
+sent while an answer is open (`/goal pause` during a goal) only changes what
+follows: it never starts work and ends nothing, even if the turn it was sent
+during has finished by the time it arrives - setting or resuming a goal that
+way is refused, and says so.
 The machine's side is described in
 [State machines](../concepts/state-machines.md).

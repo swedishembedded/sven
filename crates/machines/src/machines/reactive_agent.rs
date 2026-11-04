@@ -495,7 +495,10 @@ impl Machine for ReactiveAgentMachine {
                         .collect();
                     Reaction::transition(Idle, effects, "user cancelled; returning to Idle")
                 }
-                Event::Goal(command) => match goal_flow::command(ctx, command, false) {
+                Event::Goal {
+                    command,
+                    awaits_answer,
+                } => match goal_flow::command(ctx, command, false, *awaits_answer) {
                     goal_flow::Answer::Stay(effects) => Reaction::effects(effects),
                     // A goal turn starts only at rest; a busy answer never asks for one.
                     goal_flow::Answer::Start { announce, .. } => Reaction::effects(vec![announce]),
@@ -518,7 +521,10 @@ impl Machine for ReactiveAgentMachine {
                         "user sent message; starting turn",
                     )
                 }
-                Event::Goal(command) => match goal_flow::command(ctx, command, true) {
+                Event::Goal {
+                    command,
+                    awaits_answer,
+                } => match goal_flow::command(ctx, command, true, *awaits_answer) {
                     goal_flow::Answer::Stay(effects) => Reaction::effects(effects),
                     goal_flow::Answer::Start {
                         announce,

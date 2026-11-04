@@ -41,8 +41,23 @@ impl Session {
         self.hsm.dispatch(&event, &mut self.ctx).effects
     }
 
+    /// A person's command, sent the way a surface sends it: waited for when
+    /// nothing is running, otherwise only changing what follows.
     fn goal(&mut self, command: GoalCommand) -> Vec<Effect> {
-        self.send(Event::Goal(command))
+        let awaits_answer = self.state() == ReactiveState::Idle;
+        self.send(Event::Goal {
+            command,
+            awaits_answer,
+        })
+    }
+
+    /// A command sent while an answer was open but dispatched once the
+    /// machine came to rest: the race `formal/tla/Goal.tla` found.
+    fn late(&mut self, command: GoalCommand) -> Vec<Effect> {
+        self.send(Event::Goal {
+            command,
+            awaits_answer: false,
+        })
     }
 
     fn state(&self) -> ReactiveState {
@@ -356,7 +371,7 @@ fn a_goal_cannot_be_set_while_a_turn_runs() {
     assert!(goal_announced(&effects)
         .unwrap()
         .1
-        .contains("turn is running"));
+        .contains("turn was running"));
 }
 
 #[test]
@@ -380,4 +395,32 @@ fn an_ordinary_turn_with_no_goal_is_unchanged() {
     assert_eq!(s.state(), ReactiveState::Idle);
     assert_eq!(effects.len(), 1);
     assert!(ends_turn(&effects));
+}
+
+#[test]
+fn a_command_sent_during_a_turn_that_arrives_after_it_starts_and_ends_nothing() {
+    // The answer it was sent in is already over: a goal turn started now
+    // would run with no answer open, and a turn end would close the next.
+    let mut s = Session::new();
+    let effects = s.late(set("port the parser", None));
+    assert_eq!(s.state(), ReactiveState::Idle);
+    assert_eq!(s.status(), None, "not set");
+    assert!(!ends_turn(&effects));
+
+    s.goal(set("port the parser", None));
+    s.goal(GoalCommand::Pause);
+    s.working_turn();
+    assert_eq!(s.status(), Some(GoalStatus::Paused));
+    let effects = s.late(GoalCommand::Resume);
+    assert_eq!(s.state(), ReactiveState::Idle, "no turn starts");
+    assert_eq!(s.status(), Some(GoalStatus::Paused));
+    assert!(!ends_turn(&effects));
+    assert!(goal_announced(&effects)
+        .unwrap()
+        .1
+        .contains("Resume it again"));
+
+    for command in [GoalCommand::Pause, GoalCommand::Clear] {
+        assert!(!ends_turn(&s.late(command)));
+    }
 }

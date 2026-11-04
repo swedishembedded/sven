@@ -395,11 +395,11 @@ impl SessionController {
                 goal: Box::new(goal),
             };
             if self.conversational("work toward a goal").is_ok() {
-                self.session
-                    .handle()
-                    .sink()
-                    .emit(sven_hsm::Event::Goal(restore))
-                    .await;
+                let event = sven_hsm::Event::Goal {
+                    command: restore,
+                    awaits_answer: false,
+                };
+                self.session.handle().sink().emit(event).await;
             }
         }
         Ok(())
@@ -490,25 +490,29 @@ impl SessionController {
         }
     }
 
-    /// Hands `command` to the session's standing goal. The answer is a
-    /// `GoalUpdated` event; a command that leaves the session at rest also
-    /// ends with `TurnComplete`, and one that starts work ends when the goal
-    /// comes to rest.
+    /// Hands `command` to the session's standing goal. `awaits_answer`: the
+    /// person waits for an answer to it - the surface sent it with no answer
+    /// open. The answer is a `GoalUpdated` event, ended with `TurnComplete`
+    /// when the person waits for it (at once, or when the work it started
+    /// comes to rest); a command sent while an answer is open never starts
+    /// work and ends nothing.
     ///
     /// # Errors
     ///
     /// [`RequestError::Unsupported`] when the session's machine keeps no
     /// goal, so nothing would ever answer; [`RequestError::QueueClosed`]
     /// when the session is over.
-    pub async fn goal(&self, command: sven_vocab::goal::GoalCommand) -> Result<(), RequestError> {
+    pub async fn goal(
+        &self,
+        command: sven_vocab::goal::GoalCommand,
+        awaits_answer: bool,
+    ) -> Result<(), RequestError> {
         self.conversational("work toward a goal")?;
-        if self
-            .session
-            .handle()
-            .sink()
-            .emit(sven_hsm::Event::Goal(command))
-            .await
-        {
+        let event = sven_hsm::Event::Goal {
+            command,
+            awaits_answer,
+        };
+        if self.session.handle().sink().emit(event).await {
             Ok(())
         } else {
             Err(RequestError::QueueClosed)

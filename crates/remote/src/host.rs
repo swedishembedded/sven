@@ -513,7 +513,7 @@ impl SessionActor {
             let restore = GoalCommand::Restore {
                 goal: Box::new(goal),
             };
-            if let Err(e) = controller.goal(restore).await {
+            if let Err(e) = controller.goal(restore, false).await {
                 tracing::debug!("session {}: its goal is not restored: {e}", self.id);
             }
         }
@@ -607,7 +607,7 @@ impl SessionActor {
         let Some(controller) = &self.controller else {
             return;
         };
-        match controller.goal(command).await {
+        match controller.goal(command, at_rest).await {
             Ok(()) => {}
             Err(e @ RequestError::Unsupported { .. }) if at_rest => {
                 self.reply(&format!("{e}.")).await;

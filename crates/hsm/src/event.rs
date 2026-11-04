@@ -273,7 +273,16 @@ pub enum Event {
     /// A person asked something of the session's standing goal (set, pause,
     /// resume, clear, its check, or a kept goal put back). A machine without
     /// goals ignores it.
-    Goal(sven_vocab::goal::GoalCommand),
+    Goal {
+        /// What was asked.
+        command: sven_vocab::goal::GoalCommand,
+        /// The person waits for an answer to it: the surface sent it at rest
+        /// and shows it as an answer of its own, which the machine ends. A
+        /// command sent while an answer was open only changes what follows,
+        /// and never starts work: the answer it would run in may already be
+        /// over when it is dispatched (`formal/tla/Goal.tla`).
+        awaits_answer: bool,
+    },
 
     /// A kernel-internal event (lifecycle signals + composition signals).
     Internal(InternalEvent),
@@ -414,7 +423,7 @@ impl Event {
             Event::Timeout { .. } => EventKind::Timeout,
             Event::VerificationComplete { .. } => EventKind::VerificationComplete,
             Event::EffectFailed { .. } => EventKind::EffectFailed,
-            Event::Goal(_) => EventKind::Goal,
+            Event::Goal { .. } => EventKind::Goal,
             Event::Internal(InternalEvent::Entry) => EventKind::Entry,
             Event::Internal(InternalEvent::Exit) => EventKind::Exit,
             Event::Internal(InternalEvent::Init) => EventKind::Init,
