@@ -316,6 +316,9 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 .collect();
             write_stderr(&format!("[sven:todos]\n{}", lines.join("\n")));
         }
+        AgentEvent::GoalUpdated(update) => {
+            write_stderr(&format!("[sven:goal] {}", update.note));
+        }
         AgentEvent::ModeChanged(mode) => {
             write_stderr(&format!("[sven:mode:changed] now in {mode} mode"));
         }

@@ -204,6 +204,16 @@ impl App {
                         return false;
                     }
 
+                    if let Some(ImmediateAction::Goal(ref command)) = result.immediate_action {
+                        self.goal_command(command.clone()).await;
+                        return false;
+                    }
+
+                    if matches!(result.immediate_action, Some(ImmediateAction::ShowGoal)) {
+                        self.show_goal();
+                        return false;
+                    }
+
                     if let Some(ImmediateAction::Notice { ref text }) = result.immediate_action {
                         self.show_notice(text);
                         return false;

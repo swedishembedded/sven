@@ -63,6 +63,7 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
         | SessionEvent::TurnComplete
         | SessionEvent::Error(_)
         | SessionEvent::TodoUpdate(_)
+        | SessionEvent::GoalUpdated(_)
         | SessionEvent::ModeChanged(_)
         | SessionEvent::ModelChanged(_)
         | SessionEvent::Question { .. }

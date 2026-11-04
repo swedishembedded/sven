@@ -21,6 +21,7 @@ pub(crate) mod construct;
 pub(crate) mod dispatch;
 pub(crate) mod dispatch_chat;
 pub(crate) mod dispatch_input;
+pub(crate) mod goal;
 pub(crate) mod hit_test;
 pub(crate) mod input_state;
 pub(crate) mod layout_cache;
@@ -31,6 +32,7 @@ pub(crate) mod run;
 pub(crate) mod session_lifecycle;
 pub(crate) mod session_manager;
 pub(crate) mod session_subagents;
+pub(crate) mod session_trajectory;
 pub(crate) mod term_events;
 #[cfg(test)]
 pub(crate) mod test_support;

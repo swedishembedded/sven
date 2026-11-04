@@ -115,7 +115,9 @@ it: a custom command sends its instructions, and the mode and model ones
 change the session; `/clear` starts the conversation over and `/compact`
 summarises it to free context (the server receives `ContextCompacted` with
 the `summary`, or a notice when there was nothing to compact or a turn was
-running, and then the end of the answer). `sven rc` tells the server which commands it can run
+running, and then the end of the answer). `/goal` sets and steers a standing
+goal ([Goals](goals.md)): its turns are one answer, every change reaches the
+server as `GoalUpdated`, and the goal is kept with the conversation. `sven rc` tells the server which commands it can run
 (when it connects and when asked), so the server's interface can offer
 them as you type.
 

@@ -39,6 +39,7 @@
 pub mod agent;
 pub mod context_usage;
 pub mod controller;
+pub mod goal;
 pub mod markdown;
 pub mod projection;
 pub mod queue;
@@ -59,7 +60,7 @@ pub use sven_commands as commands;
 pub use agent::{kernel_session_task, AgentRequest};
 pub use context_usage::{ContextCategory, ContextInputs, ContextUsage, McpToolsUsage};
 pub use controller::{
-    machine_for, AbortSlot, CompactError, Gates, SessionController, SessionOptions, SessionSpec,
+    machine_for, AbortSlot, Gates, RequestError, SessionController, SessionOptions, SessionSpec,
     SubmitError,
 };
 pub use projection::{

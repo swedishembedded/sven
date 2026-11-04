@@ -283,6 +283,7 @@ impl App {
                     self.agent.total_cost_usd += c;
                 }
             }
+            AgentEvent::GoalUpdated(update) => self.goal_updated(*update),
             AgentEvent::TitleGenerated(title) => {
                 self.sessions.set_title(&session_id, title.clone());
                 if session_id == self.sessions.active_id {

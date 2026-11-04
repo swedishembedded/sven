@@ -97,6 +97,11 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
             Some(SessionUpdate::Plan(Plan::new(entries)))
         }
 
+        // A goal's progress is said to the client like any other message.
+        AgentEvent::GoalUpdated(update) => Some(SessionUpdate::AgentMessageChunk(
+            ContentChunk::new(ContentBlock::from(format!("[goal] {}\n", update.note).as_str())),
+        )),
+
         AgentEvent::ModeChanged(mode) => {
             let mode_id = sven_mode_to_acp_mode_id(*mode);
             Some(SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(

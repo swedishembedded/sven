@@ -12,6 +12,7 @@ use std::path::Path;
 
 use sven_control::SlashCommandInfo;
 use sven_frontend::commands::{try_dispatch, CommandRegistry, ImmediateAction};
+use sven_vocab::goal::GoalCommand;
 use sven_vocab::AgentMode;
 
 /// What a line typed at a session means.
@@ -27,6 +28,10 @@ pub(super) enum Typed {
     Clear,
     /// `/compact`: the session summarises its conversation now.
     Compact,
+    /// `/goal ...`: a command for the session's standing goal.
+    Goal(GoalCommand),
+    /// `/goal` alone: say how the goal stands.
+    ShowGoal,
     /// A command used wrongly: say this back, send nothing.
     Usage(String),
 }
@@ -48,8 +53,12 @@ pub(super) fn interpret(text: &str, project_root: &Path) -> Typed {
     ) {
         return Typed::Clear;
     }
-    if matches!(result.immediate_action, Some(ImmediateAction::Compact)) {
-        return Typed::Compact;
+    match result.immediate_action {
+        Some(ImmediateAction::Compact) => return Typed::Compact,
+        Some(ImmediateAction::Goal(command)) => return Typed::Goal(command),
+        Some(ImmediateAction::ShowGoal) => return Typed::ShowGoal,
+        Some(ImmediateAction::Notice { text }) if name == "goal" => return Typed::Usage(text),
+        _ => {}
     }
     if let Some(message) = result.message_to_send {
         return Typed::Expanded(message);
@@ -119,6 +128,28 @@ mod tests {
         let project = project_with_command();
         assert_eq!(interpret("/clear", project.path()), Typed::Clear);
         assert_eq!(interpret("/compact", project.path()), Typed::Compact);
+    }
+
+    #[test]
+    fn goal_commands_are_run_by_the_host_never_sent_as_messages() {
+        let project = project_with_command();
+        assert_eq!(
+            interpret("/goal make the tests pass", project.path()),
+            Typed::Goal(GoalCommand::Set {
+                objective: "make the tests pass".into(),
+                max_turns: None
+            })
+        );
+        assert_eq!(
+            interpret("/goal pause", project.path()),
+            Typed::Goal(GoalCommand::Pause)
+        );
+        assert_eq!(interpret("/goal", project.path()), Typed::ShowGoal);
+        assert!(matches!(
+            interpret("/goal check", project.path()),
+            Typed::Usage(_)
+        ));
+        assert!(available(project.path()).iter().any(|c| c.name == "goal"));
     }
 
     #[test]

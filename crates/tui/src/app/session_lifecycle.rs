@@ -197,6 +197,11 @@ impl App {
                     }
                 }
             }
+            // Its goal comes back too, paused if it was running.
+            if let (Some(tx), Some(restore)) = (self.agent.tx.clone(), self.restore_goal_request())
+            {
+                let _ = tx.send(restore).await;
+            }
         } else {
             self.agent.tx = target_tx;
             self.agent.cancel = target_cancel;

@@ -19,6 +19,8 @@ navigation:
       - docs/guides/interactive.md
       - source: docs/guides/headless.md
         description: "Run sven without a terminal interface, from scripts and CI pipelines, with exit codes and output a pipeline can act on."
+      - source: docs/guides/goals.md
+        description: "Give a session a goal it keeps working toward on its own, decided by a check you trust, until it is met, blocked or out of turns."
       - docs/guides/workflows.md
       - docs/guides/pipe-composition.md
       - source: docs/guides/teams.md

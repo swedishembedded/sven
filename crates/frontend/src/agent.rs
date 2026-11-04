@@ -16,7 +16,7 @@ use sven_model_drivers::ModelConfig;
 use sven_vocab::{AgentMode, ApprovalMode};
 
 use crate::controller::{
-    CompactError, Gates, ProviderFactory, SessionController, SessionOptions, SessionSpec,
+    Gates, ProviderFactory, RequestError, SessionController, SessionOptions, SessionSpec,
 };
 use sven_machines::AgentEvent;
 use sven_mcp_client::McpEvent;
@@ -62,6 +62,10 @@ pub enum AgentRequest {
     /// Compact the conversation now (`/compact`). The answer is a
     /// `ContextCompacted` event carrying the summary, then `TurnComplete`.
     Compact,
+    /// A `/goal` command for the session's standing goal. The answer is a
+    /// `GoalUpdated` event; at rest it ends with `TurnComplete`, or with the
+    /// goal's own end when it starts work.
+    Goal(sven_vocab::goal::GoalCommand),
 }
 
 /// Lightweight helper to generate a title from a given model configuration.
@@ -291,7 +295,7 @@ pub(crate) async fn run_kernel_session_task(
                     Ok(()) => {}
                     // Nothing in the kernel will answer: say so, and end the
                     // answer the way a compaction would.
-                    Err(e @ CompactError::Unsupported(_)) => {
+                    Err(e @ RequestError::Unsupported { .. }) => {
                         let _ = tx.send(AgentEvent::Warning(e.to_string())).await;
                         let _ = tx.send(AgentEvent::TurnComplete).await;
                     }
@@ -301,6 +305,18 @@ pub(crate) async fn run_kernel_session_task(
                     }
                 }
             }
+
+            AgentRequest::Goal(command) => match session.goal(command).await {
+                Ok(()) => {}
+                Err(e @ RequestError::Unsupported { .. }) => {
+                    let _ = tx.send(AgentEvent::Warning(e.to_string())).await;
+                    let _ = tx.send(AgentEvent::TurnComplete).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                    break;
+                }
+            },
 
             AgentRequest::RefreshMcpTools => {
                 // Hot-swap the live tool registry's MCP tools so tools that
@@ -612,6 +628,68 @@ mod tests {
             t2.contains("REPLY_FROM_B"),
             "model override must switch to provider B, got: {t2:?}"
         );
+    }
+
+    // ── Behaviour 5: a goal is decided by its check command ────────────────────
+
+    /// The goal's check runs as a real command in the session's project:
+    /// one that exits 0 completes the goal, verified; one that fails keeps
+    /// it going until its turns run out - never done. Either way the person
+    /// sees one answer, ended once.
+    #[tokio::test]
+    async fn a_goal_is_decided_by_its_check_command() {
+        use sven_vocab::goal::{Goal, GoalCheck, GoalCommand, GoalStatus};
+        for (program, expected) in [
+            ("true", GoalStatus::Completed),
+            ("false", GoalStatus::BudgetExhausted),
+        ] {
+            let factory: ProviderFactory = Box::new(|_cfg, _mode| {
+                Some(Box::new(ScriptedMockProvider::always_text("working on it")))
+            });
+            let (req_tx, mut ev, _q, _h) = spawn_task(
+                test_config(),
+                model_cfg("mock", "mock-model"),
+                AgentMode::Agent,
+                Some(factory),
+                None,
+            );
+            let mut goal = Goal::new(
+                "goal-1".into(),
+                "make the check pass".into(),
+                2,
+                Some(GoalCheck {
+                    argv: vec![program.into()],
+                    timeout_secs: 30,
+                }),
+            );
+            goal.status = GoalStatus::Paused;
+            req_tx
+                .send(AgentRequest::Goal(GoalCommand::Restore {
+                    goal: Box::new(goal),
+                }))
+                .await
+                .unwrap();
+            req_tx
+                .send(AgentRequest::Goal(GoalCommand::Resume))
+                .await
+                .unwrap();
+            let events = turn_events(&mut ev).await;
+            let last = events
+                .iter()
+                .rev()
+                .find_map(|e| match e {
+                    AgentEvent::GoalUpdated(update) => update.goal.clone(),
+                    _ => None,
+                })
+                .expect("the goal is announced");
+            assert_eq!(last.status, expected, "{program}: {events:?}");
+            assert_eq!(last.verified, expected == GoalStatus::Completed);
+            let ends = events
+                .iter()
+                .filter(|e| matches!(e, AgentEvent::TurnComplete))
+                .count();
+            assert_eq!(ends, 1, "{program}: one answer, ended once");
+        }
     }
 
     // ── Behaviour 4: MCP refresh makes a new tool usable ───────────────────────

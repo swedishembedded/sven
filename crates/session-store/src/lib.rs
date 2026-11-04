@@ -6,6 +6,7 @@ pub mod chat_document;
 mod compaction_details;
 pub mod conversation;
 pub mod frontmatter;
+pub mod goal_record;
 mod markdown;
 pub mod question_ledger;
 mod queue;
@@ -35,6 +36,7 @@ pub use conversation::{
     ConversationRecord, ParsedJsonlConversation, TurnMetadata,
 };
 pub use frontmatter::{parse_frontmatter, WorkflowMetadata};
+pub use goal_record::{read_goal, write_goal};
 pub use markdown::{parse_workflow, ParsedWorkflow};
 pub use question_ledger::{
     QuestionAnsweredRecord, QuestionAskedRecord, QuestionLedger, QuestionLedgerEntry,

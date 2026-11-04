@@ -134,6 +134,11 @@ pub enum ImmediateAction {
     /// every session/subagent in this process starting with the next turn -
     /// no session rebuild needed, unlike `/model`.
     SetThinkingBudget(Option<sven_turn::ThinkingBudget>),
+    /// `/goal ...`: hand this to the session's kernel
+    /// (`SessionController::goal`); its answer arrives as `GoalUpdated`.
+    Goal(sven_vocab::goal::GoalCommand),
+    /// `/goal` alone: show the goal the surface last heard of.
+    ShowGoal,
 }
 
 /// What `/mcp` does to a server.

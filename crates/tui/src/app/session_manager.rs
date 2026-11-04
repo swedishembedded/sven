@@ -27,10 +27,9 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use atif::Trajectory;
 use chrono::{DateTime, Utc};
 use sven_machines::AgentEvent;
-use sven_session_store::{ChatStatus, ChatUsage, SessionId, SvenSessionMeta, UnifiedSessionEntry};
+use sven_session_store::{ChatStatus, SessionId, UnifiedSessionEntry};
 use tokio::sync::{mpsc, Mutex};
 
 use crate::{
@@ -128,78 +127,12 @@ pub(crate) struct SessionEntry {
     pub cache_hit_pct: u8,
     /// What this subagent is doing; `None` for sessions that are not subagents.
     pub activity: Option<sven_frontend::SubagentActivity>,
+    /// The session's standing goal as its agent last reported it; kept with
+    /// the saved session and put back when it is opened again.
+    pub goal: Option<sven_vocab::goal::Goal>,
 }
 
 impl SessionEntry {
-    /// Restore metadata from a `Trajectory` into a pre-existing entry, keeping
-    /// the supplied `id` (so the session manager's `active_id` reference
-    /// stays valid) and file-backing info. Used when continuing a loaded
-    /// session in the TUI, both native (`is_legacy: false`) and freshly
-    /// imported from a legacy YAML chat (`is_legacy: true`).
-    pub fn from_trajectory_into(
-        trajectory: &Trajectory,
-        id: SessionId,
-        session_path: Option<PathBuf>,
-        is_legacy: bool,
-    ) -> Self {
-        let meta = SvenSessionMeta::from_trajectory(trajectory);
-        let usage = trajectory
-            .final_metrics
-            .as_ref()
-            .map(sven_session_store::final_metrics_to_chat_usage);
-        let (total_input_tokens, total_output_tokens, total_cost_usd) = usage
-            .map(|u| {
-                (
-                    u.total_input_tokens,
-                    u.total_output_tokens,
-                    u.total_cost_usd,
-                )
-            })
-            .unwrap_or((0, 0, 0.0));
-        let now = Utc::now();
-        Self {
-            id,
-            parent_id: meta
-                .as_ref()
-                .and_then(|m| m.parent_session_id.clone())
-                .map(SessionId::from_string),
-            title: meta
-                .as_ref()
-                .map(|m| m.title.clone())
-                .unwrap_or_else(|| "Untitled".to_string()),
-            status: meta.as_ref().map(|m| m.status).unwrap_or_default(),
-            session_path: if is_legacy {
-                None
-            } else {
-                session_path.clone()
-            },
-            is_legacy,
-            legacy_path: if is_legacy { session_path } else { None },
-            created_at: meta.as_ref().map(|m| m.created_at).unwrap_or(now),
-            updated_at: meta.as_ref().map(|m| m.updated_at).unwrap_or(now),
-            stored_chat: None,
-            copied_context_steps: sven_session_store::copied_context_steps(trajectory),
-            stored_input_buffer: None,
-            stored_input_cursor: None,
-            stored_input_attachments: None,
-            stored_queue: None,
-            session_state: None,
-            buffer_handle: None,
-            initial_prompt: None,
-            agent_tx: None,
-            agent_cancel: Arc::new(Mutex::new(None)),
-            busy: false,
-            current_tool: None,
-            context_pct: 0,
-            total_context_tokens: total_input_tokens as u32,
-            total_context_pct: 0,
-            total_output_tokens: total_output_tokens as u32,
-            total_cost_usd,
-            cache_hit_pct: 0,
-            activity: None,
-        }
-    }
-
     /// Create a new blank session entry (not yet backed by a file).
     pub fn new_blank(title: impl Into<String>) -> Self {
         let now = Utc::now();
@@ -233,90 +166,8 @@ impl SessionEntry {
             total_cost_usd: 0.0,
             cache_hit_pct: 0,
             activity: None,
+            goal: None,
         }
-    }
-
-    /// Build an ATIF [`Trajectory`] from this entry, the supplied chat state,
-    /// and runtime display metadata.  The entry's `created_at` is preserved
-    /// so repeated saves don't reset the trajectory's creation timestamp.
-    pub fn to_trajectory(
-        &self,
-        chat: &ChatState,
-        model: Option<String>,
-        mode: Option<String>,
-    ) -> Trajectory {
-        use sven_model::Role;
-        use sven_session_store::ConversationRecord;
-
-        let records: Vec<ConversationRecord> = chat
-            .segments()
-            .iter()
-            .filter_map(|seg| match seg {
-                crate::chat::segment::ChatSegment::Message(m) => {
-                    if m.role == Role::System {
-                        None
-                    } else {
-                        Some(ConversationRecord::Message(m.clone()))
-                    }
-                }
-                crate::chat::segment::ChatSegment::Thinking { content } => {
-                    Some(ConversationRecord::Thinking {
-                        content: content.clone(),
-                    })
-                }
-                crate::chat::segment::ChatSegment::ContextCompacted {
-                    tokens_before,
-                    tokens_after,
-                    strategy,
-                    turn,
-                    ..
-                } => Some(ConversationRecord::ContextCompacted {
-                    tokens_before: *tokens_before,
-                    tokens_after: *tokens_after,
-                    strategy: Some(strategy.to_string()),
-                    turn: Some(*turn),
-                }),
-                _ => None,
-            })
-            .collect();
-
-        // Carry the copied-context steps the chat view omitted, or an
-        // open→save round trip would permanently delete them.
-        let steps = sven_session_store::conversation_records_to_steps_with_copied_context(
-            &self.copied_context_steps,
-            &records,
-        );
-
-        let mut agent = sven_session_store::default_agent_profile();
-        if let Some(m) = &model {
-            agent = agent.with_model(m.clone());
-        }
-        let mut trajectory = Trajectory::new(sven_session_store::ATIF_SCHEMA_VERSION, agent);
-        trajectory.session_id = Some(self.id.as_str().to_string());
-        trajectory.steps = steps;
-
-        let usage = ChatUsage {
-            total_input_tokens: self.total_context_tokens as u64,
-            total_output_tokens: self.total_output_tokens as u64,
-            total_cache_read_tokens: 0,
-            total_cache_write_tokens: 0,
-            total_cost_usd: self.total_cost_usd,
-        };
-        if !usage.is_empty() {
-            trajectory.final_metrics =
-                Some(sven_session_store::chat_usage_to_final_metrics(&usage));
-        }
-
-        let meta = SvenSessionMeta {
-            title: self.title.clone(),
-            status: self.status,
-            mode,
-            parent_session_id: self.parent_id.as_ref().map(|p| p.as_str().to_string()),
-            created_at: self.created_at,
-            updated_at: Utc::now(),
-        };
-        meta.apply_to_trajectory(&mut trajectory);
-        trajectory
     }
 
     /// Apply a background agent event to this entry's stored state.
@@ -360,6 +211,10 @@ impl SessionEntry {
                 if let Some(chat) = &mut self.stored_chat {
                     chat.insert_tool_result(call_id, output, *is_error);
                 }
+            }
+            Ev::GoalUpdated(update) => {
+                self.goal = update.goal.clone();
+                self.updated_at = Utc::now();
             }
             Ev::TurnComplete => {
                 self.busy = false;
@@ -519,6 +374,7 @@ fn session_entry_from_unified(
             .unwrap_or(0.0),
         cache_hit_pct: 0,
         activity: None,
+        goal: None,
     }
 }
 
@@ -800,6 +656,7 @@ mod tests {
     use super::*;
     use crate::chat::segment::ChatSegment;
     use sven_model::{FunctionCall, Message, MessageContent, Role};
+    use sven_session_store::SvenSessionMeta;
 
     fn chat_with_multi_turn_tool_call_and_thinking() -> ChatState {
         let mut chat = ChatState::new();
@@ -957,6 +814,29 @@ mod tests {
         for (i, s) in saved.steps.iter().enumerate() {
             assert_eq!(s.step_id, (i + 1) as u64, "contiguous step ids");
         }
+    }
+
+    #[test]
+    fn a_sessions_goal_is_saved_and_comes_back_with_it() {
+        let mut entry = SessionEntry::new_blank("Goal");
+        entry.apply_background_event(&AgentEvent::GoalUpdated(Box::new(
+            sven_vocab::goal::GoalUpdate {
+                goal: Some(sven_vocab::goal::Goal::new(
+                    "goal-1".into(),
+                    "port the parser".into(),
+                    20,
+                    None,
+                )),
+                note: "Goal set.".into(),
+            },
+        )));
+        let chat = chat_with_multi_turn_tool_call_and_thinking();
+        let trajectory = entry.to_trajectory(&chat, None, None);
+        let back = SessionEntry::from_trajectory_into(&trajectory, entry.id.clone(), None, false);
+        assert_eq!(
+            back.goal.map(|g| g.objective).as_deref(),
+            Some("port the parser")
+        );
     }
 
     #[test]

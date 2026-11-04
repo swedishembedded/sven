@@ -14,7 +14,7 @@ use super::SlashCommand;
 /// The built-in commands a session driven from elsewhere (`sven rc`) can
 /// carry out whole: none needs a terminal, and none changes what the
 /// controlling side owns (the model is chosen there).
-pub const REMOTE_BUILTINS: &[&str] = &["clear", "compact", "mode"];
+pub const REMOTE_BUILTINS: &[&str] = &["clear", "compact", "goal", "mode"];
 
 /// Central registry of all available slash commands.
 pub struct CommandRegistry {
@@ -36,6 +36,7 @@ impl CommandRegistry {
         reg.register(Arc::new(builtin::abort::AbortCommand));
         reg.register(Arc::new(builtin::clear::ClearCommand));
         reg.register(Arc::new(builtin::compact::CompactCommand));
+        reg.register(Arc::new(builtin::goal::GoalCommandHandler));
         reg.register(Arc::new(builtin::model::ModelCommand));
         reg.register(Arc::new(builtin::new::NewCommand));
         reg.register(Arc::new(builtin::provider::ProviderCommand));
@@ -152,6 +153,7 @@ mod tests {
         assert!(reg.get("mode").is_some());
         assert!(reg.get("clear").is_some());
         assert!(reg.get("compact").is_some());
+        assert!(reg.get("goal").is_some(), "a goal is steered from anywhere");
         let custom = reg.get("review-pr").expect("the project's own command");
         assert_eq!(custom.description(), "Review a pull request");
         // Nothing that needs a terminal, nor the model, which the

@@ -6,6 +6,7 @@
 pub mod abort;
 pub mod clear;
 pub mod compact;
+pub mod goal;
 pub mod inspect;
 pub mod mode;
 pub mod model;

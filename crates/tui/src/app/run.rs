@@ -133,6 +133,9 @@ impl App {
             if !messages.is_empty() {
                 let _ = submit_tx.send(AgentRequest::LoadHistory(messages)).await;
             }
+            if let Some(restore) = self.restore_goal_request() {
+                let _ = submit_tx.send(restore).await;
+            }
             self.rerender_chat().await;
             if let Ok(size) = terminal.size() {
                 let layout = self.layout_for(Rect::new(0, 0, size.width, size.height));

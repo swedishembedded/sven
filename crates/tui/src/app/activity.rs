@@ -78,6 +78,7 @@ impl SessionEntry {
             total_cost_usd: 0.0,
             cache_hit_pct: 0,
             activity: None,
+            goal: None,
         }
     }
 

@@ -404,6 +404,7 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             );
         }
         UiEvent::TodoUpdate(_) => {}
+        UiEvent::GoalUpdated(update) => write_progress(&format!("[sven:goal] {}", update.note)),
         UiEvent::ModeChanged(m) => write_progress(&format!("[sven:mode] {m}")),
         UiEvent::ModelChanged(m) => write_progress(&format!("[sven:model] {m}")),
         UiEvent::Transition { from, to, event } => {

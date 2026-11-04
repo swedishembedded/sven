@@ -22,6 +22,7 @@
 use std::path::{Path, PathBuf};
 
 use sven_model::{Message, MessageContent, Role};
+use sven_vocab::goal::Goal;
 use uuid::Uuid;
 
 /// Where this user's kept sessions live.
@@ -44,6 +45,35 @@ impl SessionStore {
 
     fn file(&self, session: Uuid) -> PathBuf {
         self.dir.join(format!("{session}.json"))
+    }
+
+    fn goal_file(&self, session: Uuid) -> PathBuf {
+        self.dir.join(format!("{session}.goal.json"))
+    }
+
+    /// The standing goal kept for `session`, if any. A file that cannot be
+    /// read is reported and treated as absent.
+    #[must_use]
+    pub fn load_goal(&self, session: Uuid) -> Option<Goal> {
+        let path = self.goal_file(session);
+        let text = std::fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&text)
+            .map_err(|e| tracing::warn!("{} is not a kept goal ({e})", path.display()))
+            .ok()
+    }
+
+    /// Keeps `goal` as `session`'s standing goal, or forgets it (`None`).
+    ///
+    /// # Errors
+    ///
+    /// The directory cannot be made, or the file written or removed.
+    pub fn save_goal(&self, session: Uuid, goal: Option<&Goal>) -> anyhow::Result<()> {
+        match goal {
+            Some(goal) => {
+                sven_config::write_private(&self.goal_file(session), &serde_json::to_string(goal)?)
+            }
+            None => remove(&self.goal_file(session)),
+        }
     }
 
     /// The conversation kept for `session`, if any. A file that cannot be
@@ -88,15 +118,13 @@ impl SessionStore {
     ///
     /// The file exists but cannot be removed.
     pub fn forget(&self, session: Uuid) -> anyhow::Result<()> {
-        match std::fs::remove_file(self.file(session)) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(anyhow::anyhow!("{}: {e}", self.file(session).display())),
-        }
+        remove(&self.file(session))?;
+        remove(&self.goal_file(session))
     }
 
     /// Forgets every kept session not used for `unused`, and returns how many
-    /// went. Only kept sessions (`<uuid>.json`) are touched.
+    /// went. Only kept sessions (`<uuid>.json`) and their goals
+    /// (`<uuid>.goal.json`) are touched; a goal counts as a file of its own.
     pub fn prune(&self, unused: std::time::Duration) -> usize {
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return 0;
@@ -109,7 +137,9 @@ impl SessionStore {
                 && path
                     .file_stem()
                     .and_then(|stem| stem.to_str())
-                    .is_some_and(|stem| Uuid::parse_str(stem).is_ok());
+                    .is_some_and(|stem| {
+                        Uuid::parse_str(stem.strip_suffix(".goal").unwrap_or(stem)).is_ok()
+                    });
             let stale = entry
                 .metadata()
                 .and_then(|meta| meta.modified())
@@ -125,6 +155,15 @@ impl SessionStore {
     #[must_use]
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+}
+
+/// Removes `path`; a file that is not there is already removed.
+fn remove(path: &Path) -> anyhow::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(anyhow::anyhow!("{}: {e}", path.display())),
     }
 }
 
@@ -250,6 +289,46 @@ mod tests {
         assert!(store.load(stale).is_none());
         assert!(store.load(recent).is_some(), "used recently: kept");
         assert!(other.exists(), "only kept sessions are touched");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_kept_goal_comes_back_and_goes_with_its_session() {
+        let dir = scratch();
+        let store = SessionStore::new(&dir);
+        let session = Uuid::new_v4();
+        assert!(store.load_goal(session).is_none());
+        let goal = Goal::new("goal-1".into(), "ship the release".into(), 20, None);
+        store.save_goal(session, Some(&goal)).unwrap();
+        assert_eq!(store.load_goal(session), Some(goal.clone()));
+        store.save_goal(session, None).unwrap();
+        assert!(store.load_goal(session).is_none());
+        store
+            .save_goal(session, None)
+            .expect("nothing kept is not an error");
+
+        store.save(session, &[Message::user("hi")]).unwrap();
+        store.save_goal(session, Some(&goal)).unwrap();
+        store.forget(session).unwrap();
+        assert!(
+            store.load_goal(session).is_none(),
+            "forgotten with its session"
+        );
+
+        let stale = Uuid::new_v4();
+        store.save_goal(stale, Some(&goal)).unwrap();
+        let month_ago =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(store.goal_file(stale))
+            .unwrap()
+            .set_modified(month_ago)
+            .unwrap();
+        assert_eq!(
+            store.prune(std::time::Duration::from_secs(30 * 24 * 60 * 60)),
+            1
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 

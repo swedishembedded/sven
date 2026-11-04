@@ -204,28 +204,34 @@ impl fmt::Display for SubmitError {
 
 impl std::error::Error for SubmitError {}
 
-/// Why a conversation could not be compacted on request.
+/// Why a request about the conversation (compact it, work toward a goal)
+/// could not be made.
 #[derive(Debug, PartialEq, Eq)]
-pub enum CompactError {
-    /// The session's machine does not compact on request (only the
-    /// conversational machines do); the mode is named.
-    Unsupported(String),
+pub enum RequestError {
+    /// The session's machine does not do this (only the conversational
+    /// machines do); the mode and what was asked are named.
+    Unsupported {
+        /// The machine the session runs.
+        machine: String,
+        /// What was asked, as "cannot <request>" reads.
+        request: &'static str,
+    },
     /// The kernel's event queue is closed: the session is over.
     QueueClosed,
 }
 
-impl fmt::Display for CompactError {
+impl fmt::Display for RequestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported(machine) => {
-                write!(f, "the {machine} mode cannot compact the conversation")
+            Self::Unsupported { machine, request } => {
+                write!(f, "the {machine} mode cannot {request}")
             }
             Self::QueueClosed => f.write_str("kernel queue closed"),
         }
     }
 }
 
-impl std::error::Error for CompactError {}
+impl std::error::Error for RequestError {}
 
 /// A live session and everything needed to rebuild it.
 ///
@@ -241,6 +247,10 @@ pub struct SessionController {
     /// keeps current: swapped on every rebuild, held weakly so following it
     /// never keeps a closed session alive.
     live_registry: Arc<std::sync::Mutex<Weak<sven_tool_registry::ToolRegistry>>>,
+    /// The session's standing goal as its kernel last announced it, so that
+    /// a rebuild (a change of mode or model) puts it back into the new
+    /// kernel instead of losing it.
+    goal: Arc<std::sync::Mutex<Option<sven_vocab::goal::Goal>>>,
 }
 
 impl SessionController {
@@ -262,16 +272,45 @@ impl SessionController {
         let live_registry = Arc::new(std::sync::Mutex::new(Arc::downgrade(
             &session.tool_registry(),
         )));
-        Ok((
-            Self {
-                options,
-                spec,
-                session,
-                mcp,
-                live_registry,
-            },
-            mcp_events,
-        ))
+        let controller = Self {
+            options,
+            spec,
+            session,
+            mcp,
+            live_registry,
+            goal: Arc::default(),
+        };
+        controller.watch_goal();
+        Ok((controller, mcp_events))
+    }
+
+    /// Keeps [`Self::goal`]'s slot current from the session's announcements,
+    /// until the session ends.
+    fn watch_goal(&self) {
+        let mut observed = self.session.handle().subscribe_observations();
+        let slot = Arc::clone(&self.goal);
+        tokio::spawn(async move {
+            loop {
+                match observed.recv().await {
+                    Ok(AgentEvent::GoalUpdated(update)) => {
+                        *slot
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = update.goal;
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+    }
+
+    /// The session's standing goal as it last stood.
+    #[must_use]
+    pub fn current_goal(&self) -> Option<sven_vocab::goal::Goal> {
+        self.goal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Keeps the session's MCP tools current: whenever a server connects,
@@ -348,6 +387,21 @@ impl SessionController {
             Arc::downgrade(&session.tool_registry());
         self.session = session;
         self.spec = spec;
+        // The goal is session state outside the conversation: the new kernel
+        // gets it back (an active one paused, as after any restart).
+        self.watch_goal();
+        if let Some(goal) = self.current_goal() {
+            let restore = sven_vocab::goal::GoalCommand::Restore {
+                goal: Box::new(goal),
+            };
+            if self.conversational("work toward a goal").is_ok() {
+                self.session
+                    .handle()
+                    .sink()
+                    .emit(sven_hsm::Event::Goal(restore))
+                    .await;
+            }
+        }
         Ok(())
     }
 
@@ -424,18 +478,52 @@ impl SessionController {
     ///
     /// # Errors
     ///
-    /// [`CompactError::Unsupported`] when the session's machine does not
+    /// [`RequestError::Unsupported`] when the session's machine does not
     /// compact on request, so nothing would ever answer;
-    /// [`CompactError::QueueClosed`] when the session is over.
-    pub async fn compact(&self) -> Result<(), CompactError> {
-        if self.spec.machine == machine_for(AgentMode::Sdlc) {
-            return Err(CompactError::Unsupported(self.spec.machine.clone()));
-        }
+    /// [`RequestError::QueueClosed`] when the session is over.
+    pub async fn compact(&self) -> Result<(), RequestError> {
+        self.conversational("compact the conversation")?;
         if self.session.compact().await {
             Ok(())
         } else {
-            Err(CompactError::QueueClosed)
+            Err(RequestError::QueueClosed)
         }
+    }
+
+    /// Hands `command` to the session's standing goal. The answer is a
+    /// `GoalUpdated` event; a command that leaves the session at rest also
+    /// ends with `TurnComplete`, and one that starts work ends when the goal
+    /// comes to rest.
+    ///
+    /// # Errors
+    ///
+    /// [`RequestError::Unsupported`] when the session's machine keeps no
+    /// goal, so nothing would ever answer; [`RequestError::QueueClosed`]
+    /// when the session is over.
+    pub async fn goal(&self, command: sven_vocab::goal::GoalCommand) -> Result<(), RequestError> {
+        self.conversational("work toward a goal")?;
+        if self
+            .session
+            .handle()
+            .sink()
+            .emit(sven_hsm::Event::Goal(command))
+            .await
+        {
+            Ok(())
+        } else {
+            Err(RequestError::QueueClosed)
+        }
+    }
+
+    /// Refuses a request only the conversational machines answer.
+    fn conversational(&self, request: &'static str) -> Result<(), RequestError> {
+        if self.spec.machine == machine_for(AgentMode::Sdlc) {
+            return Err(RequestError::Unsupported {
+                machine: self.spec.machine.clone(),
+                request,
+            });
+        }
+        Ok(())
     }
 
     /// Replaces the conversation with `messages`, for the next turn.

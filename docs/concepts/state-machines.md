@@ -85,7 +85,7 @@ but no built-in machine or executor produces them.
 | Event | Payload | Meaning |
 |-------|---------|---------|
 | `CompactRequested` | - | A person asked for the conversation to be compacted now; a machine accepts it at rest and refuses it, with a reason, while busy |
-| `Goal` | a `GoalCommand` | A person set, paused, resumed, cleared or checked the session's standing goal, or a surface put back a goal it kept |
+| `Goal` | a `GoalCommand` | A person set, paused, resumed, cleared or checked the session's standing goal, or a surface put back a goal it kept ([Goals](../guides/goals.md)) |
 | `Timeout` | `timer_id` | A scheduled timer elapsed |
 | `VerificationComplete` | `verdict` | An `Effect::Verify` finished: `Passed`, `Failed`, `NeedsHuman` or `Unknown` |
 | `EffectFailed` | `kind`, `error` | An effect was refused or had no executor and no more specific failure event exists |
@@ -237,7 +237,8 @@ The goal's check runs (`Verify` of a `command` spec) after a goal turn.
 | _(any other)_ | `Session` (super) | - |
 
 The policy that decides between the check, the next turn and the end is
-`crates/machines/src/machines/goal.rs`.
+`crates/machines/src/machines/goal.rs`; the person's side is in
+[Goals](../guides/goals.md).
 
 #### `Compacting`
 

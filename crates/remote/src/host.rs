@@ -25,10 +25,11 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use sven_bootstrap::Config;
 use sven_control::{ControlCommand, ControlEvent, HistoryEntry, SessionState};
-use sven_frontend::{CompactError, SessionController, SessionOptions, SessionSpec};
+use sven_frontend::{RequestError, SessionController, SessionOptions, SessionSpec};
 use sven_machines::AgentEvent;
 use sven_model::Message;
 use sven_model_drivers::ModelConfig;
+use sven_vocab::goal::{Goal, GoalCommand};
 use sven_vocab::AgentMode;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -280,6 +281,9 @@ struct SessionActor {
     /// The request whose answer the host was stopped in the middle of, kept
     /// from before a restart; asked again, it continues that answer.
     unfinished: Option<String>,
+    /// The session's standing goal as it last stood, kept beside the
+    /// conversation so a restarted host gives it back to the session.
+    goal: Option<Goal>,
     controller: Option<SessionController>,
     /// A turn or a compaction is running: the last state told to the server
     /// was `Running`.
@@ -306,6 +310,7 @@ impl SessionActor {
             model: None,
             history: Vec::new(),
             unfinished: None,
+            goal: None,
             controller: None,
             working: false,
             closed: false,
@@ -353,6 +358,7 @@ impl SessionActor {
                     );
                     self.history = opened.history;
                     self.unfinished = opened.unfinished;
+                    self.goal = self.context.sessions.load_goal(self.id);
                 }
             }
             SessionCommand::Model(model) => self.model = Some(model),
@@ -442,6 +448,15 @@ impl SessionActor {
                     self.compact().await;
                     return;
                 }
+                slash::Typed::Goal(command) => {
+                    self.goal_command(command).await;
+                    return;
+                }
+                slash::Typed::ShowGoal => {
+                    let text = sven_frontend::goal::describe(self.goal.as_ref());
+                    self.reply(&text).await;
+                    return;
+                }
             }
         };
         if let Err(e) = self.submit(text).await {
@@ -492,6 +507,16 @@ impl SessionActor {
         let history = std::mem::take(&mut self.history);
         let (controller, _notices) = SessionController::open(options, spec, history).await?;
         controller.follow_mcp_tools();
+        // A goal kept from before the session was let go (a restart, a
+        // replaced conversation) comes back; an active one comes back paused.
+        if let Some(goal) = self.goal.clone() {
+            let restore = GoalCommand::Restore {
+                goal: Box::new(goal),
+            };
+            if let Err(e) = controller.goal(restore).await {
+                tracing::debug!("session {}: its goal is not restored: {e}", self.id);
+            }
+        }
         Ok(controller)
     }
 
@@ -531,17 +556,14 @@ impl SessionActor {
     }
 
     async fn start_compaction(&mut self) -> anyhow::Result<()> {
-        if self.controller.is_none() {
-            let model = self.model_config()?;
-            self.controller = Some(self.open_controller(model).await?);
-        }
+        self.ensure_controller().await?;
         self.state(SessionState::Running).await;
         let Some(controller) = &self.controller else {
             return Ok(());
         };
         match controller.compact().await {
             Ok(()) => Ok(()),
-            Err(e @ CompactError::Unsupported(_)) => {
+            Err(e @ RequestError::Unsupported { .. }) => {
                 self.reply(&format!("{e}.")).await;
                 Ok(())
             }
@@ -549,12 +571,73 @@ impl SessionActor {
         }
     }
 
+    /// Opens the live session if there is none, on the conversation kept.
+    async fn ensure_controller(&mut self) -> anyhow::Result<()> {
+        if self.controller.is_none() {
+            let model = self.model_config()?;
+            self.controller = Some(self.open_controller(model).await?);
+        }
+        Ok(())
+    }
+
+    /// `/goal ...`: hands the command to the session. At rest the answer is
+    /// the session's own (the goal's announcement and its end); a command
+    /// while a turn runs only changes what follows it.
+    async fn goal_command(&mut self, command: GoalCommand) {
+        // The same goal asked for again - the server repeating the request a
+        // stopped host was working on, or the person - continues it instead
+        // of starting it over.
+        let command = match (&command, &self.goal) {
+            (GoalCommand::Set { objective, .. }, Some(kept))
+                if kept.objective == objective.trim()
+                    && (kept.status.is_resumable() || kept.status.is_active()) =>
+            {
+                GoalCommand::Resume
+            }
+            _ => command,
+        };
+        if let Err(e) = self.ensure_controller().await {
+            self.fail(&format!("{e:#}")).await;
+            return;
+        }
+        let at_rest = !self.working;
+        if at_rest {
+            self.state(SessionState::Running).await;
+        }
+        let Some(controller) = &self.controller else {
+            return;
+        };
+        match controller.goal(command).await {
+            Ok(()) => {}
+            Err(e @ RequestError::Unsupported { .. }) if at_rest => {
+                self.reply(&format!("{e}.")).await;
+            }
+            Err(e @ RequestError::Unsupported { .. }) => {
+                self.upload(AgentEvent::Warning(e.to_string())).await;
+            }
+            Err(e) => self.fail(&format!("{e:#}")).await,
+        }
+    }
+
+    /// Keeps the goal the session announced, beside its conversation.
+    fn keep_goal(&mut self, goal: Option<Goal>) {
+        if self.closed {
+            return;
+        }
+        if let Err(e) = self.context.sessions.save_goal(self.id, goal.as_ref()) {
+            tracing::warn!("session {}: could not keep its goal: {e:#}", self.id);
+        }
+        self.goal = goal;
+    }
+
     /// Starts the session over with no conversation: the live one is let go
-    /// and its kept copy emptied, so a restart does not bring it back.
+    /// and its kept copy emptied, so a restart does not bring it back. Its
+    /// goal goes with it.
     fn clear(&mut self) {
         self.controller = None;
         self.history.clear();
         self.unfinished = None;
+        self.keep_goal(None);
         if let Err(e) = self.context.sessions.save(self.id, &[]) {
             tracing::warn!(
                 "session {}: could not clear its kept conversation: {e:#}",
@@ -594,6 +677,10 @@ impl SessionActor {
                 println!("[{}]   {} failed", self.short(), printable(tool_name));
             }
             AgentEvent::Error(message) => println!("[{}] ! {}", self.short(), printable(message)),
+            AgentEvent::GoalUpdated(update) => {
+                println!("[{}]   goal: {}", self.short(), printable(&update.note));
+                self.keep_goal(update.goal.clone());
+            }
             _ => {}
         }
         let finished = matches!(event, AgentEvent::TurnComplete | AgentEvent::Aborted { .. });
@@ -1137,6 +1224,51 @@ mod tests {
             texts(&actor.controller.as_ref().unwrap().history()).len(),
             4
         );
+    }
+
+    /// A goal is one answer to the server: its turns follow each other with
+    /// no end in between, the answer ends when the goal stops, and the goal
+    /// is kept, so a host started again on the same directory has it back.
+    #[tokio::test]
+    async fn a_goal_runs_as_one_answer_and_a_restarted_host_has_it_back() {
+        use sven_vocab::goal::GoalStatus;
+        let dir = tempfile::tempdir().unwrap();
+        let mut actor = running_session(dir.path()).await;
+        actor.answer("/goal tidy the readme".into()).await;
+        assert!(actor.working, "the answer is running");
+
+        let mut ended = 0;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        while ended == 0 {
+            let event = tokio::time::timeout_at(deadline, actor.events_rx.recv())
+                .await
+                .expect("the goal ends in time")
+                .expect("the session is alive");
+            if matches!(event, AgentEvent::TurnComplete) {
+                ended += 1;
+            }
+            actor.forward(event).await;
+        }
+        assert!(!actor.working, "the answer ended with the goal");
+        // The mock model answers without ever acting: the goal took its turns
+        // in that one answer and was blocked by the supervisor.
+        let kept = actor
+            .context
+            .sessions
+            .load_goal(actor.id)
+            .expect("the goal is kept");
+        assert_eq!(kept.status, GoalStatus::Blocked);
+        assert_eq!(kept.turns_used, 3);
+
+        let mut again = SessionActor::new(actor.id, Arc::clone(&actor.context));
+        again
+            .handle(SessionCommand::Open {
+                mode: AgentMode::Agent,
+                history: Vec::new(),
+                replace: false,
+            })
+            .await;
+        assert_eq!(again.goal.map(|g| g.status), Some(GoalStatus::Blocked));
     }
 
     #[test]
