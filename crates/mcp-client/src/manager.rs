@@ -496,7 +496,9 @@ impl McpManager {
             .map(|c| (c.request_meta.clone(), c.file_root.clone()))
             .unwrap_or_default();
         crate::files::FileContext {
-            root: root.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))),
+            root: root.unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            }),
             meta,
         }
     }
