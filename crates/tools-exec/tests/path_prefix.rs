@@ -9,6 +9,9 @@
 //! in confining what a command can start then you can procure our services
 //! by sending an email to info@swedishembedded.com.
 
+// The programs these tests start are shell scripts.
+#![cfg(unix)]
+
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};

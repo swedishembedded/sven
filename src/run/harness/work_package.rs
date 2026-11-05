@@ -209,10 +209,12 @@ pub(super) fn copy_tree(from: &Path, to: &Path) -> Result<()> {
 /// Makes a sealed tree removable again (tests clean up with it).
 #[cfg(test)]
 pub(super) fn restore_write(root: &Path) {
-    use std::os::unix::fs::PermissionsExt;
     if let Ok(meta) = std::fs::symlink_metadata(root) {
         if meta.is_dir() {
-            let _ = std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o755));
+            let mut permissions = meta.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            let _ = std::fs::set_permissions(root, permissions);
             for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
                 restore_write(&entry.path());
             }
@@ -312,6 +314,7 @@ mod tests {
         assert!(message.contains("p/link"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_good_archive_unpacks_read_only_and_resolves_package_inputs() {
         use std::os::unix::fs::PermissionsExt;

@@ -566,7 +566,9 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
     }
 }
 
-#[cfg(test)]
+// A worker confines its agent's commands with Landlock and refuses to run
+// without it, so it runs, and is tested, on Linux alone.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     //! Spec: against a server, a worker commits each publication with its
     //! checkpoint and reports its verdict; when the server answers 409 (a

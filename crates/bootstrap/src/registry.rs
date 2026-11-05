@@ -26,7 +26,6 @@ use crate::Config;
 use sven_chunks::EXPAND_TOOL_NAME;
 use sven_model::ModelProvider;
 use sven_tool_api::events::{TodoItem, ToolEvent};
-#[cfg(feature = "media")]
 use sven_tool_api::PathScope;
 use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{
@@ -36,6 +35,7 @@ use sven_tools_agent::{
 use sven_tools_ctx::{ChunkExpandTool, ChunkExpander, ContextStore};
 #[cfg(feature = "document")]
 use sven_tools_document::{DocumentConvertTool, DocumentLocateTool};
+#[cfg(feature = "media")]
 use sven_tools_fs::AttachFileTool;
 use sven_tools_fs::{EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool};
 #[cfg(all(unix, feature = "gdb"))]
