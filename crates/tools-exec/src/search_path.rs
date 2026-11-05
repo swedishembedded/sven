@@ -16,6 +16,16 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+/// The absolute directories of the `PATH` this process inherited, in order:
+/// where the programs a command finds by name live.
+#[must_use]
+pub fn inherited_dirs() -> Vec<PathBuf> {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&inherited)
+        .filter(|dir| dir.is_absolute())
+        .collect()
+}
+
 /// The `PATH` for a child: `prefix` first, then the `PATH` this process
 /// inherited. `None` when `prefix` is empty, which leaves the child's `PATH`
 /// as inherited.

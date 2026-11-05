@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Command execution: the free-form `shell` tool and the harness-only gate
 //! command tool.
+pub mod confine;
 pub mod gate;
 mod search_path;
 pub mod shell;
 
 pub use gate::{GateCommandTool, TrajectoryHook};
+pub use search_path::inherited_dirs as search_path_dirs;
 pub use shell::ShellTool;
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────

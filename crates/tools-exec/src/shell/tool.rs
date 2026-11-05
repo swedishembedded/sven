@@ -90,6 +90,11 @@ pub struct ShellTool {
     /// program that lives only there is found by its bare name. Set by the
     /// host that brought the programs, never read from a configuration file.
     pub path_prefix: Vec<std::path::PathBuf>,
+    /// When set, every command runs inside a kernel confinement that reaches
+    /// only these directories and no network, and is refused where the
+    /// kernel cannot enforce it. Set by the host that runs untrusted
+    /// commands beside trusted work, never read from a configuration file.
+    pub confine: Option<crate::confine::CommandConfinement>,
 }
 
 impl Default for ShellTool {
@@ -104,6 +109,7 @@ impl Default for ShellTool {
             visible_bytes: DEFAULT_VISIBLE_BYTES,
             buffers_readable: false,
             path_prefix: Vec::new(),
+            confine: None,
         }
     }
 }
@@ -185,6 +191,9 @@ impl ShellTool {
         // a timeout and when the call is dropped (a cancelled turn), so a
         // command's own children do not outlive the call and keep touching the
         // terminal or the workspace.
+        if let Some(confinement) = &self.confine {
+            confinement.restrict(cmd.as_std_mut())?;
+        }
         cmd.stdin(Stdio::null());
         cmd.kill_on_drop(true);
         cmd.envs(NON_INTERACTIVE_ENV);

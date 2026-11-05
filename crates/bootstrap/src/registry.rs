@@ -441,27 +441,31 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     register_ask_question(&mut reg, p.questions);
     register_session_tools(&mut reg, p.todos, p.tool_event_tx.clone());
 
-    reg.register(
-        TaskTool::new(
-            Arc::clone(&p.buffer_store),
-            p.tool_event_tx,
-            Some(model_id),
-            p.runtime.agents.clone(),
-            parent_mode,
-        )
-        .with_scope(p.runtime.path_scope.clone())
-        .with_chunks(p.chunks)
-        .with_near_match(p.near_match)
-        .with_delegation(p.cfg.delegation)
-        .with_wall_clock(p.cfg.agent.child_run_timeout())
-        .with_turn_budgets(
-            Some(p.cfg.agent.max_tool_rounds),
-            p.cfg.model.max_output_tokens,
-        )
-        .with_approver(p.approver, p.approval_mode)
-        .with_disabled_tools(p.cfg.tools.disabled.clone())
-        .with_command_patterns(&p.cfg.tools),
-    );
+    // A delegated child is a whole sven process with its own, unconfined
+    // shell: where commands are confined, delegation is not offered.
+    if p.cfg.tools.confine.is_none() {
+        reg.register(
+            TaskTool::new(
+                Arc::clone(&p.buffer_store),
+                p.tool_event_tx,
+                Some(model_id),
+                p.runtime.agents.clone(),
+                parent_mode,
+            )
+            .with_scope(p.runtime.path_scope.clone())
+            .with_chunks(p.chunks)
+            .with_near_match(p.near_match)
+            .with_delegation(p.cfg.delegation)
+            .with_wall_clock(p.cfg.agent.child_run_timeout())
+            .with_turn_budgets(
+                Some(p.cfg.agent.max_tool_rounds),
+                p.cfg.model.max_output_tokens,
+            )
+            .with_approver(p.approver, p.approval_mode)
+            .with_disabled_tools(p.cfg.tools.disabled.clone())
+            .with_command_patterns(&p.cfg.tools),
+        );
+    }
 
     reg
 }

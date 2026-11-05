@@ -198,6 +198,7 @@ sven-mcp         = { path = "crates/mcp", optional = true }
 sven-acp         = { path = "crates/acp", optional = true }
 sven-remote      = { path = "crates/remote", optional = true }
 sven-control     = { path = "crates/control", optional = true }
+sven-tools-exec  = { path = "crates/tools-exec", optional = true }
 # `sven harness work`: reads a tar package a server distributes. MIT OR
 # Apache-2.0, maintained by the Rust project's long-standing contributors; no
 # default features, so no extended-attribute (xattr) support is built.
@@ -259,6 +260,7 @@ network = [
     "dep:sven-acp",
     "dep:sven-control",
     "dep:sven-remote",
+    "dep:sven-tools-exec",
     "dep:sven-mcp",
     "dep:sven-team",
     "dep:tar",

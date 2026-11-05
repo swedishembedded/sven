@@ -13,6 +13,17 @@
 //! for: once the server answers `409` another worker owns the run, and this
 //! one stops without committing or finishing anything more.
 //!
+//! Two levels of trust share the process. The worker is trusted: it holds the
+//! run's token and model key and runs the plan, the model calls, the gates,
+//! the checkpoints and the run protocol, unconfined. The agent's commands are
+//! not: the `shell` tool starts each of them under a Linux Landlock domain
+//! ([`agent_confinement`]) that reaches only the workspace and a private tmp
+//! for writing, the package's `bin`, the `PATH`'s directories and the system
+//! set for running programs, and no network. The login file, the package's
+//! gate scripts and data, the scratchpad and the worker's scratch are outside
+//! it, and the worker is non-dumpable so a command cannot read its memory.
+//! A kernel that cannot enforce all of it refuses the run before it starts.
+//!
 //! Swedish Embedded AB implements solutions for running agent workflows on
 //! disposable workers without losing work for its clients. If your team
 //! needs expertise in durable agent execution then you can procure our
@@ -36,6 +47,7 @@ use sven_control::work::{
 };
 use sven_model::ModelProvider;
 use sven_sdk::{CancelToken, Engine, HarnessCheckpoint, Publication, RunOptions, Toolset};
+use sven_tools_exec::confine::CommandConfinement;
 
 /// How a worker's run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,8 +303,38 @@ fn install_skills(from: &Path, workspace: &Path) -> Result<()> {
     Ok(())
 }
 
+/// What the agent's commands may reach (see the module docs): the workspace
+/// and a private tmp in `scratch` for writing; the package's `bin` and the
+/// toolchain directories of this process's `PATH` for running programs, and
+/// the system set. The run's login, `scratch` itself (the package, the
+/// scratchpad, the gate scripts) and everything else are out of reach.
+fn agent_confinement(
+    workspace: &Path,
+    scratch: &Path,
+    bin: Option<&Path>,
+) -> Result<CommandConfinement> {
+    let tmpdir = scratch.join("agent-tmp");
+    std::fs::create_dir_all(&tmpdir).with_context(|| tmpdir.display().to_string())?;
+    Ok(CommandConfinement {
+        writable: vec![workspace.to_path_buf(), tmpdir.clone()],
+        read_exec: bin
+            .map(Path::to_path_buf)
+            .into_iter()
+            .chain(sven_tools_exec::search_path_dirs())
+            .collect(),
+        tmpdir: Some(tmpdir),
+    })
+}
+
 /// Runs the run the login names to its end.
 pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
+    // Two levels of trust in this process: it is the trusted worker, and the
+    // commands of the agent's tools are confined by the kernel. Neither may
+    // be skipped: a kernel that cannot confine fully refuses the run, and
+    // this process's memory (the run's token and model key) is kept from the
+    // commands it starts.
+    CommandConfinement::require_kernel_support().map_err(|e| anyhow!(e))?;
+    sven_remote::sandbox::keep_memory_private()?;
     let client = Client {
         http: sven_http::client(),
         login: Arc::new(options.login),
@@ -339,6 +381,11 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
     // The package's tools are found by the run's commands through the tools'
     // own configuration; this process's environment is not touched.
     let mut config = sven_sdk::config::Config::default();
+    config.tools.confine = Some(agent_confinement(
+        &options.workspace,
+        &options.scratch,
+        bin.as_deref(),
+    )?);
     config.tools.path_prefix = bin.into_iter().collect();
     let mut builder = Engine::builder()
         .config(config)
@@ -574,6 +621,9 @@ workflow:
         builder.into_inner().unwrap()
     }
 
+    /// The content of the run's login file in the tests.
+    const SECRET: &str = "bearer-secret-for-the-run";
+
     #[derive(Default)]
     struct Server {
         tar: bool,
@@ -582,6 +632,8 @@ workflow:
         store: BTreeMap<String, Vec<u8>>,
         commits: Vec<Value>,
         finished: Option<Value>,
+        /// What the agent's shell answered when it tried to read the login.
+        agent_saw: Vec<String>,
     }
 
     async fn serve(state: Arc<Mutex<Server>>) -> String {
@@ -737,7 +789,36 @@ workflow:
         let base = serve(Arc::clone(state)).await;
         let workspace = tempfile::tempdir().unwrap();
         let scratch = tempfile::tempdir().unwrap();
-        let provider: Arc<dyn ModelProvider> = Arc::new(CallbackProvider::new(|_| {
+        // The agent's first act is to try to read the run's login (a file
+        // the worker was started with); its shell's answer is recorded.
+        let login_file = scratch.path().join("login.json");
+        std::fs::write(&login_file, SECRET).unwrap();
+        let recorded = Arc::clone(state);
+        let provider: Arc<dyn ModelProvider> = Arc::new(CallbackProvider::new(move |request| {
+            let answers: Vec<String> = request
+                .messages
+                .iter()
+                .filter_map(|m| match &m.content {
+                    sven_model::MessageContent::ToolResult { content, .. } => {
+                        Some(format!("{content:?}"))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if answers.is_empty() {
+                return vec![
+                    ResponseEvent::ToolCall {
+                        index: 0,
+                        id: "peek".into(),
+                        name: "shell".into(),
+                        arguments:
+                            json!({ "shell_command": format!("cat {}", login_file.display()) })
+                                .to_string(),
+                    },
+                    ResponseEvent::Done,
+                ];
+            }
+            recorded.lock().unwrap().agent_saw = answers;
             vec![
                 ResponseEvent::TextDelta("modelled".into()),
                 ResponseEvent::Done,
@@ -809,6 +890,11 @@ workflow:
         );
         let state = state.lock().unwrap();
         assert_eq!(state.finished.as_ref().unwrap()["outcome"]["ok"], true);
+        let saw = state.agent_saw.join("\n");
+        assert!(
+            saw.contains("Permission denied") && !saw.contains(SECRET),
+            "the agent's shell cannot read the run's login: {saw}"
+        );
         assert_eq!(state.commits.len(), 1, "{:?}", state.calls);
         assert_eq!(state.commits[0]["task"], "model");
         assert_eq!(state.commits[0]["files"][0]["path"], "out.txt");

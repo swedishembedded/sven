@@ -29,62 +29,14 @@
 
 use std::path::Path;
 
-/// Keeps this process's memory, which holds its sign-in key, from other
-/// processes of the same user: its tool children (a shell, gdb, an MCP
-/// server) and anything they start. Without it, where the kernel lets a
-/// process trace its parent (`kernel.yama.ptrace_scope` 0), a child can
-/// read the key from `/proc/<parent>/mem`. Children start dumpable again
-/// (execve resets it), so they are unaffected. No-op off Linux.
-///
-/// # Errors
-///
-/// The kernel refused the setting.
-pub fn keep_memory_private() -> anyhow::Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: prctl(PR_SET_DUMPABLE, 0) takes no pointers.
-        if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-    }
-    Ok(())
-}
-
-/// What a confined host may read, besides its sandbox: no one's data, only
-/// what a program needs to run and reach the network. Missing ones are
-/// skipped.
+pub use sven_tools_exec::confine::keep_memory_private;
 #[cfg(target_os = "linux")]
-const SYSTEM_READ_ONLY: &[&str] = &[
-    "/etc/ssl",
-    "/etc/pki",
-    "/etc/ca-certificates",
-    "/usr/share/ca-certificates",
-    "/etc/resolv.conf",
-    "/etc/hosts",
-    "/etc/nsswitch.conf",
-    "/etc/gai.conf",
-    "/etc/host.conf",
-    "/etc/localtime",
-    "/usr/share/zoneinfo",
-    "/lib",
-    "/lib64",
-    "/usr/lib",
-    "/usr/lib64",
-    "/dev/null",
-    "/dev/urandom",
-    "/dev/random",
-];
+use sven_tools_exec::confine::{ABI_REQUIRED, SYSTEM_READ_ONLY};
 
 /// The TCP ports a host always may connect to: HTTPS and HTTP for the web
 /// tools, and DNS (a resolver falls back to TCP for large answers).
 #[cfg(target_os = "linux")]
 const WEB_PORTS: &[u16] = &[443, 80, 53];
-
-/// The Landlock ABI the rule set needs: 6 adds TCP bind/connect control
-/// (4) and signal and abstract unix socket scopes (6) to the file system
-/// rules. A kernel that enforces less fails [`confine`].
-#[cfg(target_os = "linux")]
-const ABI_REQUIRED: landlock::ABI = landlock::ABI::V6;
 
 /// Confines this process, from now on, to `sandbox`: read, write and create
 /// anything inside it; read the system paths in `SYSTEM_READ_ONLY`; connect

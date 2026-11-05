@@ -80,6 +80,12 @@ pub struct ToolsConfig {
     /// file; the process's own `PATH` is not changed.
     #[serde(skip)]
     pub path_prefix: Vec<PathBuf>,
+    /// Confines every command the `shell` tool starts to these directories
+    /// and no network (Linux Landlock), refusing to run where the kernel
+    /// cannot. Gates are not affected. Set by sven itself for a served run,
+    /// never read from a configuration file.
+    #[serde(skip)]
+    pub confine: Option<sven_tools_exec::confine::CommandConfinement>,
 }
 
 impl ToolsConfig {
@@ -112,6 +118,7 @@ impl ToolsConfig {
             scope,
             policy: Arc::new(self.policy()),
             path_prefix: self.path_prefix.clone(),
+            confine: self.confine.clone(),
             ..ShellTool::default()
         }
     }
@@ -146,6 +153,7 @@ impl Default for ToolsConfig {
             asr: AsrConfig::default(),
             disclosure: DisclosureConfig::default(),
             path_prefix: Vec::new(),
+            confine: None,
         }
     }
 }

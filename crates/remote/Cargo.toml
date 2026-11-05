@@ -24,6 +24,7 @@ sven-tools-web     = { path = "../tools-web" }
 sven-session-sync  = { path = "../session-sync" }
 sven-tool-api      = { path = "../tool-api" }
 sven-tools-agent   = { path = "../tools-agent" }
+sven-tools-exec    = { path = "../tools-exec" }
 sven-vocab         = { path = "../vocab" }
 async-trait        = { workspace = true }
 anyhow     = { workspace = true }
