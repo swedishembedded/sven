@@ -17,6 +17,7 @@ mod estimate_calibration;
 mod fork_compaction;
 mod instructions;
 mod kernel_policy_tests;
+mod notices;
 mod overflow_retry;
 mod pinned_state;
 mod pipeline_integration;

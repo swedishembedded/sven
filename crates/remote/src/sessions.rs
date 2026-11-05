@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 use sven_model::{Message, MessageContent, Role};
 use sven_vocab::goal::Goal;
+use sven_vocab::Notice;
 use uuid::Uuid;
 
 /// Where this user's kept sessions live.
@@ -204,6 +205,10 @@ pub struct Reopened {
 /// the request it was answering is named.
 #[must_use]
 pub fn reopen(mut history: Vec<Message>) -> Reopened {
+    // A host notice is no request the person is waiting on: the turn ended
+    // when the last word is the model's, whatever notices came after it, and
+    // a turn a notice started has no request to ask again.
+    let is_notice = |m: &Message| m.as_text().is_some_and(|t| Notice::parse(t).is_some());
     let Some(asked) = history.iter().rposition(|m| m.role == Role::User) else {
         return Reopened {
             history,
@@ -211,7 +216,7 @@ pub fn reopen(mut history: Vec<Message>) -> Reopened {
         };
     };
     let answered = matches!(
-        history.last(),
+        history.iter().rev().find(|m| !is_notice(m)),
         Some(Message { role: Role::Assistant, content, .. })
             if !matches!(content, MessageContent::ToolCall { .. })
     );
@@ -221,7 +226,11 @@ pub fn reopen(mut history: Vec<Message>) -> Reopened {
             unfinished: None,
         };
     }
-    let unfinished = history[asked].as_text().map(str::to_string);
+    let unfinished = if is_notice(&history[asked]) {
+        None
+    } else {
+        history[asked].as_text().map(str::to_string)
+    };
     let results: std::collections::HashSet<String> = history[asked..]
         .iter()
         .filter_map(|m| match &m.content {
@@ -387,6 +396,21 @@ mod tests {
         let kept = vec![Message::user("hi"), Message::assistant("hello")];
         let reopened = reopen(kept);
         assert_eq!(reopened.history.len(), 2);
+        assert_eq!(reopened.unfinished, None);
+    }
+
+    /// A notice filed after the last answer asks nothing of the model, so it
+    /// must not make the answered request look unfinished.
+    #[test]
+    fn a_notice_after_a_finished_turn_does_not_reopen_it() {
+        let notice = Notice::new("job.finished", "done").unwrap();
+        let kept = vec![
+            Message::user("hi"),
+            Message::assistant("hello"),
+            Message::user(notice.frame()),
+        ];
+        let reopened = reopen(kept);
+        assert_eq!(reopened.history.len(), 3);
         assert_eq!(reopened.unfinished, None);
     }
 

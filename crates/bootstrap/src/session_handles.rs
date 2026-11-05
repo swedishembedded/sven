@@ -344,6 +344,15 @@ impl RuntimeHandle {
         self.sink.emit(Event::CompactRequested).await
     }
 
+    /// Tells the conversation something the system hosting it says (see
+    /// [`Notice`](sven_vocab::Notice)): recorded as the host's, shown as a
+    /// notice, and answered by a turn only when `start_turn` is set. A turn
+    /// already running leaves it unrecorded, so a caller posts it at rest.
+    /// Returns `false` if the kernel queue is closed.
+    pub async fn notify(&self, notice: sven_vocab::Notice, start_turn: bool) -> bool {
+        self.sink.emit(Event::Notice { notice, start_turn }).await
+    }
+
     /// The latest published status snapshot.
     #[must_use]
     pub fn status(&self) -> RuntimeStatus {

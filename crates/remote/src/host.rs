@@ -264,6 +264,8 @@ enum SessionCommand {
     },
     Model(String),
     Input(answers::Input),
+    /// The server tells the conversation something (`notify`).
+    Notice(sven_vocab::Notice, bool),
     /// Let go of the session to free what it holds: its record is saved and
     /// the actor ends; the next command for it starts it again from that
     /// record (`router::release_idle`). Sent only while no turn runs.
@@ -312,6 +314,9 @@ struct SessionActor {
     running: HashMap<String, (Instant, describe::Described)>,
     /// The answers waiting for the session's ending (`answers.rs`).
     answers: Answers,
+    /// Notices that arrived while a turn ran, told when it ends
+    /// (`commands.rs`).
+    held_notices: std::collections::VecDeque<(sven_vocab::Notice, bool)>,
     /// The answer of the input being handled, and whether the session was
     /// asked to end it (else the host ends it itself).
     asking: Option<String>,
@@ -339,6 +344,7 @@ impl SessionActor {
             approvals: PendingApprovals::default(),
             running: HashMap::new(),
             answers: Answers::default(),
+            held_notices: std::collections::VecDeque::new(),
             asking: None,
             expecting: false,
             events_tx,
@@ -403,6 +409,7 @@ impl SessionActor {
                     self.take(input).await;
                 }
             }
+            SessionCommand::Notice(notice, start_turn) => self.notice(notice, start_turn).await,
             SessionCommand::Decide { call_id, approved } => {
                 if !self.approvals.decide(&call_id, approved) {
                     tracing::debug!(
@@ -464,6 +471,7 @@ impl SessionActor {
         self.events_tx = events_tx;
         self.events_rx = events_rx;
         self.answers.forget();
+        self.held_notices.clear();
         if self.working {
             self.state(SessionState::Idle).await;
         }
@@ -620,6 +628,7 @@ impl SessionActor {
     /// goal goes with it.
     fn clear(&mut self) {
         self.controller = None;
+        self.held_notices.clear();
         self.history.clear();
         self.unfinished = None;
         self.keep_goal(None);
@@ -705,7 +714,11 @@ impl SessionActor {
         let finished = matches!(event, AgentEvent::TurnComplete | AgentEvent::Aborted { .. });
         // Kept after every finished call too, so a host stopped mid-answer
         // loses none of the work it did.
-        let checkpoint = finished || matches!(event, AgentEvent::ToolCallFinished { .. });
+        let checkpoint = finished
+            || matches!(
+                event,
+                AgentEvent::ToolCallFinished { .. } | AgentEvent::Notice(_)
+            );
         let described = self.describe_call(&event);
         self.upload(event, self.answers.current()).await;
         if let Some(described) = described {
@@ -719,6 +732,7 @@ impl SessionActor {
             self.answers.ended();
             self.state(SessionState::Idle).await;
             self.release_held().await;
+            self.tell_held_notices().await;
         }
     }
 
@@ -1222,6 +1236,63 @@ mod tests {
             texts(&actor.controller.as_ref().unwrap().history()).len(),
             4
         );
+    }
+
+    /// Spec: the server's `notify` is told to the conversation as a notice, not
+    /// as the person's message. It starts no turn unless asked; one that
+    /// arrives while a turn runs is held until the turn ends; and the kept
+    /// conversation holds it as the host's.
+    #[tokio::test]
+    async fn a_notice_is_told_as_a_notice_and_starts_a_turn_only_when_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut actor = running_session(dir.path()).await;
+        let notice = sven_vocab::Notice::new("job.finished", "The render is ready.").unwrap();
+
+        actor.notice(notice.clone(), false).await;
+        assert!(!actor.working, "no turn was asked for");
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(10), actor.events_rx.recv())
+                .await
+                .expect("the notice is announced")
+                .expect("the session is alive");
+            let announced = matches!(&event, AgentEvent::Notice(n) if *n == notice);
+            assert!(
+                !matches!(event, AgentEvent::TurnComplete),
+                "no turn was asked for"
+            );
+            actor.forward(event).await;
+            if announced {
+                break;
+            }
+        }
+        let kept = actor.context.sessions.load(actor.id).expect("kept copy");
+        let last = kept.last().unwrap();
+        assert_eq!(last.role, sven_model::Role::User);
+        assert_eq!(
+            sven_vocab::Notice::parse(last.as_text().unwrap()),
+            Some(notice.clone())
+        );
+
+        // Asked for a turn, the session answers it, and a notice told while
+        // that turn runs waits for the turn's end.
+        actor.notice(notice.clone(), true).await;
+        assert!(actor.working);
+        actor.notice(notice.clone(), false).await;
+        assert_eq!(actor.held_notices.len(), 1);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let event = tokio::time::timeout_at(deadline, actor.events_rx.recv())
+                .await
+                .expect("the turn ends in time")
+                .expect("the session is alive");
+            let over = matches!(event, AgentEvent::TurnComplete);
+            actor.forward(event).await;
+            if over {
+                break;
+            }
+        }
+        assert!(!actor.working);
+        assert!(actor.held_notices.is_empty(), "the held notice was told");
     }
 
     /// A goal is one answer to the server: its turns follow each other with

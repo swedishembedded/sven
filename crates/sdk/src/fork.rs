@@ -217,7 +217,7 @@ impl Fork {
                         reason: format!("a {role} turn holds content a transcript cannot replay"),
                     })
                 }
-                Turn::System { .. } | Turn::User { .. } => {}
+                Turn::System { .. } | Turn::User { .. } | Turn::Notice { .. } => {}
             }
         }
         if let Some((call_id, _)) = waiting.into_iter().next() {
@@ -242,7 +242,10 @@ pub fn message_count(transcript: &[Turn]) -> usize {
         .iter()
         .map(|turn| match turn {
             Turn::System { .. } => 0,
-            Turn::User { .. } | Turn::ToolResult { .. } | Turn::Opaque { .. } => 1,
+            Turn::User { .. }
+            | Turn::Notice { .. }
+            | Turn::ToolResult { .. }
+            | Turn::Opaque { .. } => 1,
             Turn::Assistant { text, tool_calls } => {
                 let words = usize::from(!text.is_empty());
                 let calls = tool_calls.len();
@@ -532,6 +535,7 @@ impl Engine {
             match turn {
                 Turn::System { .. } => {}
                 Turn::User { text } => replayed.push(Message::user(text)),
+                Turn::Notice { kind, text } => replayed.push(notice_message(kind, text)),
                 Turn::Assistant { text, tool_calls } => {
                     if !text.is_empty() {
                         replayed.push(Message::assistant(text));
@@ -686,6 +690,7 @@ fn split_transcript(transcript: &[Turn]) -> Result<(Option<String>, Vec<Message>
                 })
             }
             Turn::User { text } => history.push(Message::user(text)),
+            Turn::Notice { kind, text } => history.push(notice_message(kind, text)),
             Turn::Assistant { text, tool_calls } => {
                 if !text.is_empty() {
                     history.push(Message::assistant(text));
@@ -723,4 +728,15 @@ fn tool_call_message(record: &ToolCallRecord) -> Message {
         },
         reasoning: None,
     }
+}
+
+/// The conversation message a [`Turn::Notice`] was read from.
+fn notice_message(kind: &str, text: &str) -> Message {
+    Message::user(
+        sven_vocab::Notice {
+            kind: kind.to_string(),
+            text: text.to_string(),
+        }
+        .frame(),
+    )
 }

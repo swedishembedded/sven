@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **remote**: a server can tell a session something with `notify` (`session_id`, `event: {kind, text}`, `start_turn`): a job finished, a file arrived. The host files it as the host's word - a `User`-role message whose first line names its sender, never a `System` message (a driver keeps only the last one as the system prompt) and never the person's - and announces it as the new `SessionEvent::Notice`. It starts a turn only when `start_turn` is set, and one that arrives while a turn runs is held until it ends. Traces file it as a `system` step labelled `notice`; `sven_sdk::Turn::Notice` carries it in transcripts. New kernel event `Event::Notice { notice, start_turn }`, effect `Effect::RecordNotice { thread, notice }` and `RuntimeHandle::notify`; the reactive agent takes it at rest, every other machine ignores it. **Migration**: an exhaustive match on `Event`, `EventKind`, `Effect`, `EffectKind` or `sven_sdk::Turn` needs the new variants.
+
 ## [4.4.6] - 2026-11-04
 
 ### Added

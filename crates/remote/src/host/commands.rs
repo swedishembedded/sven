@@ -7,13 +7,20 @@
 // sending an email to info@swedishembedded.com.
 
 //! The requests a session's host carries out on the session itself rather
-//! than sending them as a message: `/compact` and `/goal`.
+//! than sending them as a message: `/compact`, `/goal` and the server's
+//! notices.
 
 use sven_control::SessionState;
 use sven_frontend::RequestError;
+use sven_model::Message;
 use sven_vocab::goal::{Goal, GoalCommand};
+use sven_vocab::Notice;
 
 use super::SessionActor;
+use crate::printable::printable;
+
+/// The most notices held for a session while its turn runs.
+const MAX_HELD_NOTICES: usize = 16;
 
 impl SessionActor {
     /// `/compact`: the session summarises its conversation now. The answer
@@ -48,6 +55,66 @@ impl SessionActor {
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// `notify`: the server tells the conversation something. It joins the
+    /// conversation as the host's, never as the person's, and the session
+    /// answers it only when the server asked for a turn. While a turn runs it
+    /// is held (a message cannot be slipped between a tool call and its
+    /// result) and told when the turn ends.
+    pub(super) async fn notice(&mut self, notice: Notice, start_turn: bool) {
+        if self.working {
+            if self.held_notices.len() >= MAX_HELD_NOTICES {
+                tracing::warn!("session {}: too many notices held; dropped one", self.id);
+                return;
+            }
+            self.held_notices.push_back((notice, start_turn));
+            return;
+        }
+        println!(
+            "[{}]   notice {}: {}",
+            self.short(),
+            printable(&notice.kind),
+            printable(notice.text.lines().next().unwrap_or_default())
+        );
+        if let Err(e) = self.deliver_notice(notice, start_turn).await {
+            tracing::warn!("session {}: a notice was not delivered: {e:#}", self.id);
+            if start_turn {
+                self.fail(&format!("{e:#}")).await;
+            }
+        }
+    }
+
+    /// Tells the notices held during a turn, oldest first, until one starts
+    /// a turn of its own.
+    pub(super) async fn tell_held_notices(&mut self) {
+        while !self.working {
+            let Some((notice, start_turn)) = self.held_notices.pop_front() else {
+                return;
+            };
+            self.notice(notice, start_turn).await;
+        }
+    }
+
+    async fn deliver_notice(&mut self, notice: Notice, start_turn: bool) -> anyhow::Result<()> {
+        // No live session and no turn wanted: the conversation kept gains it,
+        // and the session that opens on it next finds it there.
+        if self.controller.is_none() && !start_turn {
+            self.history.push(Message::user(notice.frame()));
+            self.context.sessions.save(self.id, &self.history)?;
+            return Ok(());
+        }
+        self.ensure_controller().await?;
+        if start_turn {
+            self.state(SessionState::Running).await;
+            self.asking = None;
+            self.expect_ending();
+        }
+        let Some(controller) = &self.controller else {
+            return Ok(());
+        };
+        controller.notify(notice, start_turn).await?;
+        Ok(())
     }
 
     /// Opens the live session if there is none, on the conversation kept.

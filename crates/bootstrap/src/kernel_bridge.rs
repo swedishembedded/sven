@@ -305,6 +305,12 @@ impl KernelAgentSession {
         self.handle.compact().await
     }
 
+    /// Tells the conversation a host notice (see [`RuntimeHandle::notify`]).
+    /// Returns `false` if the kernel queue is closed.
+    pub async fn notify(&self, notice: sven_vocab::Notice, start_turn: bool) -> bool {
+        self.handle.notify(notice, start_turn).await
+    }
+
     /// A cheap clone of the underlying [`RuntimeHandle`] for callers that need
     /// direct access to the event sink, status watch, or observation stream.
     #[must_use]

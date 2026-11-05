@@ -103,6 +103,9 @@ impl App {
             AgentEvent::Warning(text) => {
                 self.agent.notice = Some(format!("warning: {text}"));
             }
+            AgentEvent::Notice(notice) => {
+                self.agent.notice = Some(format!("{}: {}", notice.kind, notice.text));
+            }
             AgentEvent::ContextBudget(budget) => {
                 self.agent.context_budget = Some(budget);
             }

@@ -84,6 +84,7 @@ but no built-in machine or executor produces them.
 
 | Event | Payload | Meaning |
 |-------|---------|---------|
+| `Notice` | `notice`, `start_turn` | The system hosting the session told the conversation something (a `Notice`: `kind` and `text`), which is not the person speaking. A machine that holds a conversation records it at rest with `RecordNotice` and starts a turn only when `start_turn` is set; while a turn runs it is ignored, and a machine with no free-form conversation ignores it ([remote control](../guides/remote-control.md)) |
 | `CompactRequested` | - | A person asked for the conversation to be compacted now; a machine accepts it at rest and refuses it, with a reason, while busy |
 | `Goal` | a `GoalCommand` | A person set, paused, resumed, cleared or checked the session's standing goal, or a surface put back a goal it kept ([Goals](../guides/goals.md)) |
 | `Timeout` | `timer_id` | A scheduled timer elapsed |
@@ -113,6 +114,7 @@ directly; it asks the kernel to do it by returning an effect
 | `EmitInternal` | `name`, `payload` | Re-enter a domain signal into the event queue as `Internal(Custom)` |
 | `InstantiateSubmachine` | `machine`, `descriptor` | Start a child run ([Parallel Submachine Fan-out](../internals/parallel-submachines.md)) |
 | `CompactContext` | `thread`, `refusal?` | Answer a `CompactRequested`: summarise the thread into notes now (`ContextCompacted` carries them, then `TurnComplete`; the machine is told with `Internal(Custom "context.compaction_finished")`), or, with a `refusal`, only tell the person why not |
+| `RecordNotice` | `thread`, `notice` | File a host `Notice` in the thread as a `User`-role message that names its sender, and announce `Notice`; asks no model. Never a `System` message: a driver keeps only the last as the system prompt |
 | `Verify` | `spec` | Evaluate a declarative verifier against the real world; the verdict arrives as `VerificationComplete` |
 | `Announce` | `event` | Tell the surfaces something only the machine knows (that the person's turn has ended, how a goal stands); nothing re-enters the queue |
 
@@ -217,6 +219,8 @@ removed, so the kernel refuses a file write even if the model proposes one (see
 |-------|----------|-----------------|
 | `UserMessage { text }` | `Generating` | `CallLlm` on thread `chat` with `text` as the instruction (every tool the session offers) |
 | `CompactRequested` | `Compacting` | `CompactContext` on thread `chat` |
+| `Notice { start_turn: false }` | _(stay)_ | `RecordNotice` on thread `chat` |
+| `Notice { start_turn: true }` | `Generating` | `RecordNotice`, then `CallLlm` on thread `chat` with no new instruction |
 | `Goal` set or resume | `Generating` | `Announce(GoalUpdated)`, `CallLlm` with the goal turn's instruction |
 | `Goal` (any other) | _(stay)_ | `Announce(GoalUpdated)`, `Announce(TurnComplete)` |
 | _(any other)_ | `Session` (super) | - |

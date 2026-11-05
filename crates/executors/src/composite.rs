@@ -121,8 +121,9 @@ impl EffectExecutor for CompositeExecutor {
                 }
             }
 
-            // The turn executor owns the conversation threads it compacts.
-            EffectKind::CompactContext => {
+            // The turn executor owns the conversation threads it compacts and files
+            // notices in.
+            EffectKind::CompactContext | EffectKind::RecordNotice => {
                 if let Some(exec) = &mut self.turn {
                     exec.execute(effect, sink, obs).await;
                 } else {

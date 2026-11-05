@@ -37,7 +37,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sven_model::{FunctionCall, Message, MessageContent, Role, ToolResultContent};
-use sven_vocab::{RequestBreakdown, RequestRecord};
+use sven_vocab::notice::ORIGIN as NOTICE_ORIGIN;
+use sven_vocab::{Notice, RequestBreakdown, RequestRecord};
 
 use crate::trace_images::{ImageSink, TrajectoryImage};
 
@@ -357,6 +358,12 @@ impl StepAssembler {
     pub fn push_message(&mut self, msg: &Message) {
         match (&msg.role, &msg.content) {
             (Role::System, _) => {}
+            // The host's word, not the person's: a step of source `system`
+            // labelled `notice`, whose text is what the model was shown.
+            (Role::User, MessageContent::Text(text)) if Notice::parse(text).is_some() => {
+                self.push_system(text);
+                self.label_last_step(NOTICE_ORIGIN);
+            }
             (Role::User, MessageContent::Text(text)) => {
                 self.flush_pending();
                 self.push_immediate_step(StepOrigin::User, MessageBody::text(text.clone()));

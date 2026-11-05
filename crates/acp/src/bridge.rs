@@ -141,6 +141,10 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
             *context_window,
         ))),
         AgentEvent::Warning(text) => Some(thought_notice(&format!("warning: {text}"))),
+        AgentEvent::Notice(notice) => Some(thought_notice(&format!(
+            "notice {}: {}",
+            notice.kind, notice.text
+        ))),
         AgentEvent::ContextBudget(budget) => {
             Some(thought_notice(&sven_vocab::context_budget_text(budget)))
         }

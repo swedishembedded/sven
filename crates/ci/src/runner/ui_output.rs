@@ -302,7 +302,10 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
                 phase,
             ));
         }
-        UiEvent::ServedModelChanged { .. } | UiEvent::Warning(_) | UiEvent::ContextBudget(_) => {
+        UiEvent::ServedModelChanged { .. }
+        | UiEvent::Warning(_)
+        | UiEvent::Notice(_)
+        | UiEvent::ContextBudget(_) => {
             write_notice(&ev);
         }
         UiEvent::ToolProgress { message, .. } => {

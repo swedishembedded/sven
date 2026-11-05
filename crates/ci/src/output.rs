@@ -78,6 +78,9 @@ pub fn notice_line(event: &sven_vocab::SessionEvent) -> Option<String> {
             )
         )),
         SessionEvent::Warning(text) => Some(format!("[sven:warn] {text}")),
+        SessionEvent::Notice(notice) => {
+            Some(format!("[sven:notice] {}: {}", notice.kind, notice.text))
+        }
         SessionEvent::ContextBudget(budget) => Some(format!(
             "[sven:info] {}",
             sven_vocab::context_budget_text(budget)

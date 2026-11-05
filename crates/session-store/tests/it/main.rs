@@ -8,4 +8,5 @@
 //! others run beside it.
 
 mod call_records;
+mod host_notice;
 mod step_per_response;

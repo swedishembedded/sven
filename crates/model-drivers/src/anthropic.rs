@@ -1068,6 +1068,25 @@ mod tests {
         assert_eq!(msgs.len(), 1);
     }
 
+    /// A host's notice joins a conversation as a user turn, so the driver's
+    /// "last system message is the system prompt" rule still sees the agent's
+    /// own instructions.
+    #[test]
+    fn a_host_notice_leaves_the_system_prompt_intact() {
+        use sven_model::Message;
+        let notice = sven_vocab::Notice::new("job.finished", "The render is ready.").unwrap();
+        let (sys, msgs) = build_anthropic_messages(&[
+            Message::system("be helpful"),
+            Message::user("hi"),
+            Message::assistant("hello"),
+            Message::user(notice.frame()),
+        ]);
+        assert_eq!(sys, "be helpful");
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[2]["role"], "user");
+        assert_eq!(msgs[2]["content"], notice.frame());
+    }
+
     #[test]
     fn content_parts_image_base64_uses_source_block() {
         use sven_model::{ContentPart, Message};

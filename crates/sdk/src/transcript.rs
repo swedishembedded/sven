@@ -59,6 +59,14 @@ pub enum Turn {
         /// The message text.
         text: String,
     },
+    /// Something the system hosting the session told the conversation: not
+    /// the caller speaking.
+    Notice {
+        /// The sender's own name for the sort of news (`job.finished`).
+        kind: String,
+        /// What the agent was told.
+        text: String,
+    },
     /// An assistant turn: text, a tool call, or both.
     Assistant {
         /// What the model said. Empty when the turn was only a tool call.
@@ -94,7 +102,13 @@ pub(crate) fn from_history(history: &[Message]) -> Vec<Turn> {
 fn turn_of(message: &Message) -> Turn {
     match (&message.role, &message.content) {
         (Role::System, MessageContent::Text(text)) => Turn::System { text: text.clone() },
-        (Role::User, MessageContent::Text(text)) => Turn::User { text: text.clone() },
+        (Role::User, MessageContent::Text(text)) => match sven_vocab::Notice::parse(text) {
+            Some(notice) => Turn::Notice {
+                kind: notice.kind,
+                text: notice.text,
+            },
+            None => Turn::User { text: text.clone() },
+        },
         (Role::Assistant, MessageContent::Text(text)) => Turn::Assistant {
             text: text.clone(),
             tool_calls: Vec::new(),
@@ -155,6 +169,18 @@ mod tests {
                     tool_calls: Vec::new()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn a_host_notice_is_a_notice_turn_never_the_callers() {
+        let notice = sven_vocab::Notice::new("job.finished", "done").unwrap();
+        assert_eq!(
+            from_history(&[Message::user(notice.frame())]),
+            vec![Turn::Notice {
+                kind: "job.finished".into(),
+                text: "done".into()
+            }]
         );
     }
 

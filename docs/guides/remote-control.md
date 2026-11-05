@@ -130,6 +130,21 @@ right after a stop waits until the stopped turn has ended (ten seconds at
 most); one sent while an answer is still running is refused with a note,
 since the session would not see it.
 
+A server also tells a session things that are not the person speaking - a job
+finished, a file arrived - with `notify` (`session_id`, `event: {"kind":
+"job.finished", "text": "..."}`, and `start_turn`). `kind` is the server's own
+word (1 to 64 characters of `a-z`, `0-9`, `.`, `_`, `-`) and `text` at most
+16 KiB; sven gives no kind a meaning. The agent reads the notice as a message
+whose first line says it was sent by the system running the session, not by
+the person; it is never a system message, so the agent's instructions stay as
+they were. Every client of the conversation gets it as a `notice` session
+event (`{"Notice":{"kind":...,"text":...}}`), not as a message of the
+person, and traces and transcripts keep it apart from what the person said.
+No turn starts unless `start_turn` is true; then the session answers the
+notice like a message, ending with `TurnComplete`. A notice that arrives
+while a turn runs is held (up to 16) and told when it ends, and one for a
+conversation not open yet is kept with it.
+
 Files you attach to a message at the server (`attachments` on
 `send_input`: each file's `uri`, `name`, `mimeType` and `size`) are fetched
 from it with MCP's `files/authorizeDownload`, checked against their digest,

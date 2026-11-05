@@ -490,6 +490,29 @@ impl SessionController {
         }
     }
 
+    /// Tells the conversation something the host says: it is recorded as a
+    /// notice, never as the person's message, and a turn answers it only when
+    /// `start_turn` is set. Post it at rest: a turn already running leaves it
+    /// unrecorded.
+    ///
+    /// # Errors
+    ///
+    /// [`RequestError::Unsupported`] when the session's machine holds no
+    /// conversation to put it in; [`RequestError::QueueClosed`] when the
+    /// session is over.
+    pub async fn notify(
+        &self,
+        notice: sven_vocab::Notice,
+        start_turn: bool,
+    ) -> Result<(), RequestError> {
+        self.conversational("take a notice")?;
+        if self.session.notify(notice, start_turn).await {
+            Ok(())
+        } else {
+            Err(RequestError::QueueClosed)
+        }
+    }
+
     /// Hands `command` to the session's standing goal. `awaits_answer`: the
     /// person waits for an answer to it - the surface sent it with no answer
     /// open. The answer is a `GoalUpdated` event, ended with `TurnComplete`

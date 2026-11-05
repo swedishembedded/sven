@@ -60,6 +60,11 @@
 //!    `seq` above `N`, in order; comment lines are keep-alives. A command
 //!    the host has not acknowledged is sent again on the next connection, so
 //!    delivery is at least once and the host drops a `seq` it already took.
+//!    Besides the input commands, a server tells a session something with
+//!    `notify` (`session_id`, `event: {kind, text}`, `start_turn`): the host
+//!    files it as the host's word and shows it as a `Notice` session event,
+//!    and the session answers it only when `start_turn` is true
+//!    ([`ControlCommand::Notify`]).
 //! 5. **Events.** `POST {control_url}/events` with an [`EventBatch`]: the
 //!    host's events in order, numbered from 1 within the host's `run` (a
 //!    fresh id each time the host starts), plus the highest command `seq` it

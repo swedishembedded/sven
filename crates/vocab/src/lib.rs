@@ -27,6 +27,7 @@ pub mod cost;
 pub mod goal;
 pub mod harness;
 pub mod ledger;
+pub mod notice;
 pub mod provenance;
 pub mod request;
 pub mod served;
@@ -45,6 +46,7 @@ pub use ledger::{
 pub use tool_image::{ShownImages, ToolImage, MAX_IMAGES, MAX_IMAGE_BASE64_BYTES};
 
 pub use conclusion::announces_unfinished_work;
+pub use notice::{Notice, NoticeError};
 pub use request::{RequestFold, RequestRecord, Sampled};
 pub use served::{
     context_budget_text, describe_adapter, served_model_changed_text, AdapterRef, ContextBudget,
@@ -765,6 +767,10 @@ pub enum SessionEvent {
     /// so a consumer that must see everything knows to resynchronise from the
     /// stored conversation instead.
     EventsDropped { count: u64 },
+    /// The system hosting the session told the conversation something (see
+    /// [`Notice`]). Shown as a notice, never as the person's message, and
+    /// never a failure.
+    Notice(Notice),
     /// The agent has finished processing the current user turn.
     TurnComplete,
     /// The current run was aborted (via Ctrl+C or /abort). `partial_text`

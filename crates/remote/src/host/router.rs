@@ -165,6 +165,17 @@ async fn route(
                 attachments,
             }),
         ),
+        ControlCommand::Notify {
+            session_id,
+            event,
+            start_turn,
+        } => {
+            if let Err(e) = event.validate() {
+                tracing::warn!("session {session_id}: a notice was refused: {e}");
+                return;
+            }
+            (session_id, SessionCommand::Notice(event, start_turn))
+        }
         ControlCommand::CancelSession { session_id } => (session_id, SessionCommand::Cancel),
         ControlCommand::ReportGoal { session_id } => (session_id, SessionCommand::ReportGoal),
         ControlCommand::ApproveTool {

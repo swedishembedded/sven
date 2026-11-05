@@ -136,6 +136,17 @@ pub enum Effect {
         /// The predicate to check.
         spec: VerifierSpec,
     },
+    /// Put a [`Notice`](sven_vocab::Notice) into a conversation thread as a
+    /// `User`-role message the thread's records recognise as the host's, and
+    /// announce it as `SessionEvent::Notice`. Asks no model: a turn follows
+    /// only if the machine emits one. Requires no capability: it writes to
+    /// the session's own conversation, as compaction does.
+    RecordNotice {
+        /// The conversation thread the notice joins.
+        thread: String,
+        /// What the host said.
+        notice: sven_vocab::Notice,
+    },
     /// Tell the surfaces something only the machine knows, on the outward
     /// observation plane: that the person's turn has ended
     /// (`TurnComplete`), or how a standing goal stands. Never re-enters the
@@ -164,6 +175,7 @@ impl Effect {
             Effect::InstantiateSubmachine { .. } => EffectKind::InstantiateSubmachine,
             Effect::CompactContext { .. } => EffectKind::CompactContext,
             Effect::Verify { .. } => EffectKind::Verify,
+            Effect::RecordNotice { .. } => EffectKind::RecordNotice,
             Effect::Announce { .. } => EffectKind::Announce,
         }
     }
@@ -212,6 +224,8 @@ pub enum EffectKind {
     CompactContext,
     /// See [`Effect::Verify`].
     Verify,
+    /// See [`Effect::RecordNotice`].
+    RecordNotice,
     /// See [`Effect::Announce`].
     Announce,
 }

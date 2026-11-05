@@ -82,6 +82,25 @@ pub enum ControlCommand {
         attachments: Vec<Attachment>,
     },
 
+    /// Tell a session something the system hosting it says: a job finished,
+    /// a file arrived. Not the person speaking, so the host files it as a
+    /// notice (a `User`-role message that names its sender, shown as
+    /// [`SessionEvent::Notice`](sven_vocab::SessionEvent::Notice)) and never as
+    /// a `SendInput`.
+    ///
+    /// The session answers it only when `start_turn` is set, and then the
+    /// turn ends like any other (`TurnComplete`). A notice for a session whose
+    /// turn runs is held until that turn ends. Idempotence is the sender's: a
+    /// notice sent twice is told twice.
+    Notify {
+        session_id: Uuid,
+        /// What the host says; `kind` is the sender's own vocabulary.
+        event: sven_vocab::Notice,
+        /// The host wants the agent to answer now. Absent: it does not.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        start_turn: bool,
+    },
+
     /// Switch the model of an active session.
     ///
     /// `model` is the raw override string an operator types into `/model`
@@ -400,6 +419,7 @@ pub fn ui_event_to_control(ev: sven_hsm::UiEvent, session_id: Uuid) -> ControlEv
 /// protocol:
 ///
 /// * [`ControlCommand::SendInput`] → [`Event::UserMessage`](sven_hsm::Event::UserMessage)
+/// * [`ControlCommand::Notify`] → [`Event::Notice`](sven_hsm::Event::Notice)
 /// * [`ControlCommand::CancelSession`] → [`Event::UserCancelled`](sven_hsm::Event::UserCancelled)
 /// * [`ControlCommand::ApproveTool`] → [`Event::HumanApproved`](sven_hsm::Event::HumanApproved)
 /// * [`ControlCommand::DenyTool`] → [`Event::HumanRejected`](sven_hsm::Event::HumanRejected)
@@ -413,6 +433,12 @@ pub fn control_command_to_kernel_event(cmd: &ControlCommand) -> Option<sven_hsm:
     use sven_hsm::{ApprovalId, Event};
     match cmd {
         ControlCommand::SendInput { text, .. } => Some(Event::UserMessage { text: text.clone() }),
+        ControlCommand::Notify {
+            event, start_turn, ..
+        } => Some(Event::Notice {
+            notice: event.clone(),
+            start_turn: *start_turn,
+        }),
         ControlCommand::CancelSession { .. } => Some(Event::UserCancelled),
         ControlCommand::ApproveTool { call_id, .. } => {
             let uuid = Uuid::parse_str(call_id).unwrap_or_else(|_| Uuid::new_v4());
@@ -443,6 +469,7 @@ pub fn control_command_session_id(cmd: &ControlCommand) -> Option<Uuid> {
     match cmd {
         ControlCommand::NewSession { id, .. } => Some(*id),
         ControlCommand::SendInput { session_id, .. }
+        | ControlCommand::Notify { session_id, .. }
         | ControlCommand::SetModel { session_id, .. }
         | ControlCommand::CancelSession { session_id }
         | ControlCommand::ApproveTool { session_id, .. }
@@ -544,6 +571,37 @@ mod tests {
         })
         .unwrap();
         assert!(plain.get("attachments").is_none());
+    }
+
+    /// Spec: a notice is its own command on the wire, with an optional ask
+    /// for a turn that defaults to none, and it reaches the kernel as a
+    /// notice, never as a user message.
+    #[test]
+    fn notify_carries_a_structured_notice_and_maps_to_a_kernel_notice() {
+        let id = Uuid::nil();
+        let wire = format!(
+            r#"{{"type":"notify","session_id":"{id}","event":{{"kind":"job.finished","text":"done"}}}}"#
+        );
+        let cmd: ControlCommand = serde_json::from_str(&wire).unwrap();
+        match control_command_to_kernel_event(&cmd) {
+            Some(sven_hsm::Event::Notice { notice, start_turn }) => {
+                assert_eq!(notice.kind, "job.finished");
+                assert_eq!(notice.text, "done");
+                assert!(!start_turn, "no turn unless the server says so");
+            }
+            other => panic!("expected a Notice, got {other:?}"),
+        }
+        assert_eq!(control_command_session_id(&cmd), Some(id));
+        let asked: ControlCommand =
+            serde_json::from_str(&wire.replace(r#""event""#, r#""start_turn":true,"event""#))
+                .unwrap();
+        assert!(matches!(
+            control_command_to_kernel_event(&asked),
+            Some(sven_hsm::Event::Notice {
+                start_turn: true,
+                ..
+            })
+        ));
     }
 
     #[test]

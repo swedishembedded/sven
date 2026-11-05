@@ -92,7 +92,7 @@ use sven_kernel::{EffectExecutor, EventSink};
 use sven_model::{Message, ResponseFormat, Role};
 use sven_tool_registry::ToolRegistry;
 use sven_turn::{to_model_schemas, AbortedError, ModelResolver};
-use sven_vocab::TurnRequest;
+use sven_vocab::{Notice, TurnRequest};
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 mod compaction;
 mod conclude;
@@ -252,6 +252,18 @@ impl TurnExecutor {
         resolver(role).map_err(|e| format!("model role `{role}` is not provided by the host: {e}"))
     }
 
+    /// Files a host's notice in `thread` as the `User`-role message
+    /// [`Notice::frame`] makes, and announces it. It is never a `System`
+    /// message: a driver keeps only the last system message as the system
+    /// prompt, so one added mid-conversation would replace the agent's
+    /// instructions.
+    fn record_notice(&self, thread: &str, notice: &Notice, obs: &ObservationSink) {
+        if let Ok(mut store) = self.store.lock() {
+            store.append(thread, Message::user(notice.frame()));
+        }
+        obs.emit(UiEvent::Notice(notice.clone()));
+    }
+
     /// Resolve the model provider, honouring a per-state override when both
     /// an override and a resolver are present.
     fn resolve_model(&self, model: &Option<String>) -> Arc<dyn sven_model::ModelProvider> {
@@ -279,6 +291,9 @@ impl EffectExecutor for TurnExecutor {
             Effect::CallLlm { request } => request,
             Effect::CompactContext { thread, refusal } => {
                 return self.answer_compaction(&thread, refusal, sink, obs).await;
+            }
+            Effect::RecordNotice { thread, notice } => {
+                return self.record_notice(&thread, &notice, obs);
             }
             _ => return,
         };

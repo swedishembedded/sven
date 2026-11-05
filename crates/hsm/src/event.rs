@@ -20,6 +20,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sven_vocab::verify::VerifierVerdict;
+use sven_vocab::Notice;
 
 use crate::effect::EffectKind;
 use crate::ids::{ApprovalId, QuestionId, TimerId, ToolCallId};
@@ -48,6 +49,17 @@ pub enum Event {
     UserMessage {
         /// Free-form user text.
         text: String,
+    },
+    /// The system hosting the session told the conversation something: a
+    /// [`Notice`], which is not the person speaking. A machine that holds a
+    /// conversation records it as such at rest (a turn already running
+    /// ignores it: a message cannot be slipped between a tool call and its
+    /// result) and starts a turn on it only when `start_turn` is set.
+    Notice {
+        /// What the host says.
+        notice: Notice,
+        /// The host wants the agent to answer it now.
+        start_turn: bool,
     },
     /// A human attached an artifact (file, image, blob) referenced opaquely.
     UserProvidedArtifact {
@@ -401,6 +413,7 @@ impl Event {
     pub fn kind(&self) -> EventKind {
         match self {
             Event::UserMessage { .. } => EventKind::UserMessage,
+            Event::Notice { .. } => EventKind::Notice,
             Event::UserProvidedArtifact { .. } => EventKind::UserProvidedArtifact,
             Event::UserCancelled => EventKind::UserCancelled,
             Event::CompactRequested => EventKind::CompactRequested,
@@ -444,6 +457,8 @@ impl Event {
 pub enum EventKind {
     /// See [`Event::UserMessage`].
     UserMessage,
+    /// See [`Event::Notice`].
+    Notice,
     /// See [`Event::UserProvidedArtifact`].
     UserProvidedArtifact,
     /// See [`Event::UserCancelled`].

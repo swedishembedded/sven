@@ -271,6 +271,22 @@ impl ReactiveAgentMachine {
         )
     }
 
+    /// A turn whose model request carries no new instruction, asked on the
+    /// chat thread as it stands.
+    fn continuation_of_thread(max_rounds: u32) -> Effect {
+        build_turn_effect(
+            CHAT_THREAD,
+            &[],
+            AGENT_MODE,
+            None,
+            None,
+            None,
+            max_rounds,
+            None,
+            None,
+        )
+    }
+
     /// The answer to a compaction request: compact the chat thread, or (with
     /// a `refusal`) say why the request was declined.
     fn compact_effect(refusal: Option<&str>) -> Effect {
@@ -525,6 +541,25 @@ impl Machine for ReactiveAgentMachine {
                         "user sent message; starting turn",
                     )
                 }
+                Event::Notice { notice, start_turn } => {
+                    let record = Effect::RecordNotice {
+                        thread: CHAT_THREAD.to_string(),
+                        notice: notice.clone(),
+                    };
+                    if !*start_turn {
+                        return Reaction::effects(vec![record]);
+                    }
+                    goal_flow::begin_person_turn(ctx);
+                    let ls = start_loop(ctx);
+                    Reaction::transition(
+                        Generating,
+                        vec![
+                            record,
+                            ls.stamp(Self::continuation_of_thread(ls.max_rounds)),
+                        ],
+                        "the host asked for an answer to its notice; starting turn",
+                    )
+                }
                 Event::Goal {
                     command,
                     awaits_answer,
@@ -539,17 +574,7 @@ impl Machine for ReactiveAgentMachine {
                     let ls = start_loop(ctx);
                     Reaction::transition(
                         Generating,
-                        vec![ls.stamp(build_turn_effect(
-                            CHAT_THREAD,
-                            &[],
-                            AGENT_MODE,
-                            None,
-                            None,
-                            None,
-                            ls.max_rounds,
-                            None,
-                            None,
-                        ))],
+                        vec![ls.stamp(Self::continuation_of_thread(ls.max_rounds))],
                         "the conversation continues",
                     )
                 }
@@ -848,6 +873,50 @@ mod tests {
     fn initial_state_is_idle() {
         let (hsm, _) = make_hsm();
         assert_eq!(hsm.state(), ReactiveState::Idle);
+    }
+
+    fn a_notice() -> sven_vocab::Notice {
+        sven_vocab::Notice::new("job.finished", "The render is ready.").unwrap()
+    }
+
+    /// Spec: a notice at rest is recorded as the host's and starts no turn
+    /// unless the host asked for one; while a turn runs it is left alone, so
+    /// it cannot land between a tool call and its result.
+    #[test]
+    fn a_notice_is_recorded_and_starts_a_turn_only_when_asked() {
+        let (mut hsm, mut ctx) = make_hsm();
+        let quiet = Event::Notice {
+            notice: a_notice(),
+            start_turn: false,
+        };
+        let out = hsm.dispatch(&quiet, &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Idle);
+        assert!(
+            matches!(&out.effects[..], [Effect::RecordNotice { thread, notice }]
+                if thread == CHAT_THREAD && *notice == a_notice()),
+            "{:?}",
+            out.effects
+        );
+
+        let asked = Event::Notice {
+            notice: a_notice(),
+            start_turn: true,
+        };
+        let out = hsm.dispatch(&asked, &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Generating);
+        match &out.effects[..] {
+            [Effect::RecordNotice { .. }, Effect::CallLlm { request }] => {
+                assert_eq!(
+                    request["instruction"], "",
+                    "the notice is already in the thread"
+                );
+            }
+            other => panic!("expected the notice, then a turn: {other:?}"),
+        }
+
+        let out = hsm.dispatch(&quiet, &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Generating);
+        assert!(out.effects.is_empty(), "{:?}", out.effects);
     }
 
     fn compaction_effect(effects: &[Effect]) -> (&str, Option<&str>) {
