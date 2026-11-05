@@ -285,3 +285,76 @@ fn equal_requests_have_one_name_and_any_difference_another() {
         )
     );
 }
+
+#[tokio::test]
+async fn a_clip_is_also_saved_where_asked_and_never_outside_the_working_directory() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let t = tool(&fake, dir.path());
+    let args = json!({"model": "brain/mock-video", "prompt": "a", "output": "film/shot-01.mp4"});
+    let out = run(&t, args.clone()).await;
+    assert!(
+        out.content.contains("Saved the video to film/shot-01.mp4"),
+        "{}",
+        out.content
+    );
+    assert!(dir.path().join("film/shot-01.mp4").is_file());
+    // The same request saved elsewhere is still one render.
+    let again = run(
+        &t,
+        json!({"model": "brain/mock-video", "prompt": "a", "output": "film/take.mp4"}),
+    )
+    .await;
+    assert!(again.content.contains("film/take.mp4"), "{}", again.content);
+    assert_eq!(fake.created.lock().unwrap().len(), 1);
+    for outside in ["../x.mp4", "/abs/x.mp4", "film/../../x.mp4", ""] {
+        let refused = run(&t, json!({"model": "m", "prompt": "a", "output": outside})).await;
+        assert!(
+            refused.is_error && refused.content.contains("inside the working directory"),
+            "{outside}: {}",
+            refused.content
+        );
+    }
+    assert_eq!(fake.created.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn join_videos_joins_clips_of_the_working_directory_in_order() {
+    use crate::mp4::tests::Clip;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("shots")).unwrap();
+    Clip::new(0, 24).write(&dir.path().join("shots/a.mp4"));
+    Clip::new(1, 48).write(&dir.path().join("shots/b.mp4"));
+    let tool = JoinVideosTool::new(dir.path().to_path_buf());
+    let call = |args: Value| ToolCall {
+        id: "j".into(),
+        name: "join_videos".into(),
+        args,
+    };
+    let out = tool
+        .execute(&call(
+            json!({"clips": ["shots/a.mp4", "shots/b.mp4"], "output": "film.mp4"}),
+        ))
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert_eq!(
+        out.content,
+        "Joined into film.mp4: 3.00 s, 72 frames, 64x48 av01."
+    );
+    let refused = tool
+        .execute(&call(
+            json!({"clips": ["/etc/hostname"], "output": "f.mp4"}),
+        ))
+        .await;
+    assert!(
+        refused.is_error && refused.content.contains("working directory"),
+        "{}",
+        refused.content
+    );
+    let refused = tool
+        .execute(&call(
+            json!({"clips": ["shots/a.mp4"], "output": "../f.mp4"}),
+        ))
+        .await;
+    assert!(refused.is_error, "{}", refused.content);
+}

@@ -669,12 +669,15 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     reg.register(cfg.web_search_tool());
 
     // ── Media (video generation) ─────────────────────────────────────────────
-    // Offered only where its provider has a key; clips land in the session's
-    // working directory.
+    // Generating is offered only where its provider has a key; clips land in
+    // the session's working directory, where they can always be joined.
     let workdir = paths.root().map_or_else(
         || std::path::PathBuf::from("."),
         std::path::Path::to_path_buf,
     );
+    if !confined {
+        reg.register(sven_tools_media::JoinVideosTool::new(workdir.clone()));
+    }
     if let Some((models, run_model)) = cfg.media_tools(workdir) {
         reg.register(models);
         reg.register(run_model);
@@ -1013,6 +1016,12 @@ mod tests {
         }
         if cfg!(all(unix, feature = "gdb")) {
             expected.push("gdb");
+        }
+        // Clips can always be joined; generating them needs a provider with a
+        // key, which a machine signed in to the sven service has.
+        expected.push("join_videos");
+        if Config::default().media_tools(".".into()).is_some() {
+            expected.extend(["models", "run_model"]);
         }
         expected.sort_unstable();
         assert_eq!(got, expected, "the agent's tool set changed");

@@ -63,6 +63,7 @@ the rest ([Core and deferred disclosure](#core-and-deferred-disclosure)).
 | [`web_search`](#web_search) | network | all | deferred |
 | [`models`](#models) | network | all | deferred |
 | [`run_model`](#run_model) | write | `agent` | deferred |
+| [`join_videos`](#join_videos) | write | `agent` | deferred |
 | [`task`](#task) | read | `agent` | deferred |
 | [`memory`](#memory) | read or write, per action | all | deferred |
 | [`semantic_memory`](#semantic_memory) | read or write, per action | all | deferred |
@@ -335,6 +336,7 @@ its path, length and cost. It waits while the video is made, up to
 | `edit` | An edit the model offers (`extend`, `upscale`, ...), with `input_video` |
 | `input_video` | The clip to edit: a path in the working directory |
 | `params` | The edit's own parameters |
+| `output` | Also save the clip at this path in the working directory (a harness names each shot this way) |
 
 The same request (model, arguments and input clip) answers the clip already
 made, in this session or a later one, and is never paid for twice; a request
@@ -342,6 +344,21 @@ the provider failed is asked again once more under a new name. A clip the
 provider also stores is named to it by its file when it is edited, instead
 of being sent again. It asks for approval under `--approval manual`, as every
 write does: a video is paid for.
+
+### `join_videos`
+
+Joins MP4 clips of the working directory, in the order given, into one file,
+answering the film's length, frames and size. The clips are copied as they
+are, never re-encoded, so they must be encoded alike (one model at one size);
+one that is not is refused by name. Each clip's sound is cut or padded to its
+picture, so a film of many shots never drifts out of sync. Clips with and
+without sound join only as pictures (`video_only`). Fragmented MP4 is refused.
+
+| Parameter | Description |
+|-----------|-------------|
+| `clips` (required) | The clips, in the order they play |
+| `output` (required) | The file to write, in the working directory; written whole or not at all |
+| `video_only` | Leave the sound out |
 
 ### `task`
 

@@ -14,6 +14,8 @@
 //! - `run_model` runs one and writes the clip into the working directory, then
 //!   answers its path. An edit (`extend`, `upscale`, ...) names the clip to
 //!   work on by path and gets a new file back.
+//! - `join_videos` puts clips one after another into one film ([`mp4`]),
+//!   copying them as they are: the last step of a multi-shot film.
 //!
 //! Any OpenRouter-compatible video API serves: a local brain, the sven
 //! service, OpenRouter itself (`sven_model_drivers::video`).
@@ -24,6 +26,8 @@
 //! session or after a restart, answers the same job or the file already
 //! written, and never pays for a second render; another take is another
 //! `seed`. A job that failed is asked again under a fresh name.
+
+pub mod mp4;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -139,7 +143,7 @@ impl Tool for ModelsTool {
         "List the models that generate video, what each renders and costs"
     }
     fn description(&self) -> &str {
-        "Lists the generative models available to run_model: each one's id, what it makes (text->video), the lengths and resolutions it renders, whether it makes sound, the edits it can do to an existing clip (extend, upscale, ...) and its price per second. Call it before run_model to choose a model."
+        "Lists the generative video models this session can run: each one's id, what it makes (text->video), the lengths and resolutions it renders, whether it makes sound, the edits it can do to an existing clip (extend, upscale, ...) and its price per second. Use it to choose a model before generating."
     }
     fn parameters_schema(&self) -> Value {
         json!({ "type": "object", "properties": {}, "additionalProperties": false })
@@ -185,11 +189,61 @@ impl RunModelTool {
     }
 }
 
-/// The request a call makes, without the input clip (named by its digest).
+/// The request a call makes, without the input clip (named by its digest),
+/// and where the clip is also to be saved.
 #[derive(Debug, Clone, PartialEq)]
 struct Planned {
     body: Map<String, Value>,
     input: Option<PathBuf>,
+    output: Option<PathBuf>,
+}
+
+/// `path` as a file of `workdir` to write: relative, never above it, and its
+/// directory created; refused when that directory leads outside.
+fn file_to_write(workdir: &Path, path: &str, what: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(path);
+    let inside = !path.is_empty()
+        && relative.components().all(|c| {
+            matches!(
+                c,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        });
+    if !inside || relative.file_name().is_none() {
+        return Err(format!(
+            "`{what}` must be a file path inside the working directory"
+        ));
+    }
+    let target = workdir.join(relative);
+    let parent = target.parent().unwrap_or(workdir);
+    std::fs::create_dir_all(parent).map_err(|e| format!("`{what}` {}: {e}", parent.display()))?;
+    let root = workdir
+        .canonicalize()
+        .map_err(|e| format!("the working directory: {e}"))?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|e| format!("`{what}` {}: {e}", parent.display()))?;
+    if !parent.starts_with(&root) {
+        return Err(format!(
+            "`{what}` must be a file path inside the working directory"
+        ));
+    }
+    Ok(parent.join(relative.file_name().unwrap_or_default()))
+}
+
+/// `path` as an existing file of `workdir` to read.
+fn file_to_read(workdir: &Path, path: &str, what: &str) -> Result<PathBuf, String> {
+    let path = workdir.join(path);
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("`{what}` {}: {e}", path.display()))?;
+    let root = workdir
+        .canonicalize()
+        .map_err(|e| format!("the working directory: {e}"))?;
+    if !canonical.starts_with(&root) {
+        return Err(format!("`{what}` must be a file in the working directory"));
+    }
+    Ok(canonical)
 }
 
 /// Read the call's arguments into the request body; refuses anything the
@@ -207,6 +261,7 @@ fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
         "edit",
         "input_video",
         "params",
+        "output",
     ];
     if let Some(unknown) = args.keys().find(|k| !known.contains(&k.as_str())) {
         return Err(format!("unknown argument `{unknown}`"));
@@ -237,19 +292,12 @@ fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
     }
     let edit = args.get("edit").and_then(Value::as_str);
     let input = match args.get("input_video").and_then(Value::as_str) {
-        Some(path) => {
-            let path = workdir.join(path);
-            let canonical = path
-                .canonicalize()
-                .map_err(|e| format!("`input_video` {}: {e}", path.display()))?;
-            let root = workdir
-                .canonicalize()
-                .map_err(|e| format!("the working directory: {e}"))?;
-            if !canonical.starts_with(&root) {
-                return Err("`input_video` must be a file in the working directory".into());
-            }
-            Some(canonical)
-        }
+        Some(path) => Some(file_to_read(workdir, path, "input_video")?),
+        None => None,
+    };
+    let output = match args.get("output") {
+        Some(Value::String(path)) => Some(file_to_write(workdir, path, "output")?),
+        Some(_) => return Err("`output` must be a path".into()),
         None => None,
     };
     if edit.is_some() != input.is_some() {
@@ -269,7 +317,11 @@ fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
     } else if args.contains_key("params") {
         return Err("`params` belong to an edit".into());
     }
-    Ok(Planned { body, input })
+    Ok(Planned {
+        body,
+        input,
+        output,
+    })
 }
 
 /// The name of a request: the provider, the model and every argument, the
@@ -367,7 +419,8 @@ impl RunModelTool {
             );
             let clip = dir.join(format!("{key}.mp4"));
             if clip.exists() {
-                return Ok(format!("The video is at {} (made earlier for the same request; another seed makes another take).", self.shown(&clip)));
+                let shown = self.save_as(&clip, planned.output.as_deref()).await?;
+                return Ok(format!("The video is at {shown} (made earlier for the same request; another seed makes another take)."));
             }
             let mut status = video
                 .create(&Value::Object(planned.body.clone()), &key)
@@ -407,8 +460,8 @@ impl RunModelTool {
                         serde_json::to_vec_pretty(&sidecar).unwrap_or_default(),
                     )
                     .await;
-                    let mut line =
-                        format!("Saved the video to {} ({bytes} bytes", self.shown(&clip));
+                    let shown = self.save_as(&clip, planned.output.as_deref()).await?;
+                    let mut line = format!("Saved the video to {shown} ({bytes} bytes");
                     if let Some(seconds) = status.seconds {
                         line.push_str(&format!(", {seconds:.1} s"));
                     }
@@ -438,14 +491,32 @@ impl RunModelTool {
         Err("the video could not be made".into())
     }
 
-    /// A path as the model and the person read it: relative to the working
-    /// directory.
-    fn shown(&self, path: &Path) -> String {
-        path.strip_prefix(&self.workdir)
-            .unwrap_or(path)
-            .display()
-            .to_string()
+    /// The clip also written at `output`, when asked (copied whole, then
+    /// renamed into place), and the path to show for it.
+    async fn save_as(&self, clip: &Path, output: Option<&Path>) -> Result<String, String> {
+        let Some(output) = output else {
+            return Ok(shown(&self.workdir, clip));
+        };
+        let partial = output.with_extension("mp4.part");
+        tokio::fs::copy(clip, &partial)
+            .await
+            .and(tokio::fs::rename(&partial, output).await)
+            .map_err(|e| format!("saving the video as {}: {e}", output.display()))?;
+        Ok(shown(&self.workdir, output))
     }
+}
+
+/// A path as the model and the person read it: relative to the working
+/// directory.
+fn shown(workdir: &Path, path: &Path) -> String {
+    let root = workdir
+        .canonicalize()
+        .unwrap_or_else(|_| workdir.to_path_buf());
+    path.strip_prefix(&root)
+        .or_else(|_| path.strip_prefix(workdir))
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 #[async_trait]
@@ -454,25 +525,26 @@ impl Tool for RunModelTool {
         "run_model"
     }
     fn summary(&self) -> &str {
-        "Generate or edit a video with a model from models; writes the clip to a file"
+        "Generate or edit a video with a generative model; writes the clip to a file"
     }
     fn description(&self) -> &str {
-        "Runs a generative model (choose one with models) and writes the result into the working directory, answering its path. Give `model` and `prompt`, and optionally `duration` (seconds), `resolution` (480p, 720p, 1080p, ...), `aspect_ratio` (16:9, 9:16, 1:1, ...), `generate_audio` and `seed`. To edit a clip, name the edit (`edit`, as models lists it, e.g. extend) and the clip (`input_video`, a path in the working directory), with the edit's own `params`. The same request answers the same clip without paying again; change `seed` for another take. A video takes from seconds to many minutes and is charged for the seconds delivered."
+        "Runs a generative video model and writes the result into the working directory, answering its path. Give `model` and `prompt`, and optionally `duration` (seconds), `resolution` (480p, 720p, 1080p, ...), `aspect_ratio` (16:9, 9:16, 1:1, ...), `generate_audio` and `seed`. To edit a clip, name the edit (`edit`, one the model offers, e.g. extend) and the clip (`input_video`, a path in the working directory), with the edit's own `params`. `output` also saves the clip at that path. The same request answers the same clip without paying again; change `seed` for another take. A video takes from seconds to many minutes and is charged for the seconds delivered."
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "model": { "type": "string", "description": "A model id from models" },
+                "model": { "type": "string", "description": "The id of a video model" },
                 "prompt": { "type": "string", "description": "What the video shows" },
                 "duration": { "type": "number", "description": "Seconds" },
                 "resolution": { "type": "string" },
                 "aspect_ratio": { "type": "string" },
                 "generate_audio": { "type": "boolean" },
                 "seed": { "type": "integer" },
-                "edit": { "type": "string", "description": "An edit the model offers (from models), with input_video" },
+                "edit": { "type": "string", "description": "An edit the model offers, with input_video" },
                 "input_video": { "type": "string", "description": "Path of the clip to edit, in the working directory" },
-                "params": { "type": "object", "description": "The edit's own parameters" }
+                "params": { "type": "object", "description": "The edit's own parameters" },
+                "output": { "type": "string", "description": "Also save the clip at this path in the working directory" }
             },
             "required": ["model", "prompt"],
             "additionalProperties": false
@@ -484,6 +556,106 @@ impl Tool for RunModelTool {
     }
     fn kernel_capability(&self) -> ToolCapability {
         // The widest effect of a call: a new file in the working directory.
+        ToolCapability::WriteFile
+    }
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        match self.run(&call.args).await {
+            Ok(text) => ToolOutput::ok(&call.id, text),
+            Err(error) => ToolOutput::err(&call.id, error),
+        }
+    }
+}
+
+// ------------------------------------------------------------------ join_videos
+
+pub struct JoinVideosTool {
+    workdir: PathBuf,
+}
+
+impl JoinVideosTool {
+    #[must_use]
+    pub fn new(workdir: PathBuf) -> Self {
+        Self { workdir }
+    }
+
+    async fn run(&self, args: &Value) -> Result<String, String> {
+        let args = args.as_object().ok_or("the arguments must be an object")?;
+        if let Some(unknown) = args
+            .keys()
+            .find(|k| !["clips", "output", "video_only"].contains(&k.as_str()))
+        {
+            return Err(format!("unknown argument `{unknown}`"));
+        }
+        let clips = args
+            .get("clips")
+            .and_then(Value::as_array)
+            .filter(|c| !c.is_empty())
+            .ok_or("`clips` is required: the clips to join, in order")?
+            .iter()
+            .map(|c| {
+                c.as_str()
+                    .ok_or_else(|| "`clips` holds paths".to_owned())
+                    .and_then(|c| file_to_read(&self.workdir, c, "clips"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let output = args
+            .get("output")
+            .and_then(Value::as_str)
+            .ok_or("`output` is required")?;
+        let output = file_to_write(&self.workdir, output, "output")?;
+        let video_only = args
+            .get("video_only")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let target = output.clone();
+        let probe = tokio::task::spawn_blocking(move || mp4::join(&clips, &target, video_only))
+            .await
+            .map_err(|e| format!("joining stopped: {e}"))?
+            .map_err(|e| format!("{e:#}"))?;
+        Ok(format!(
+            "Joined into {}: {:.2} s, {} frames, {}x{} {}{}.",
+            shown(&self.workdir, &output),
+            probe.duration_seconds,
+            probe.video.frames,
+            probe.video.width,
+            probe.video.height,
+            probe.video.codec,
+            if probe.audio.is_some() {
+                ", with sound"
+            } else {
+                ""
+            },
+        ))
+    }
+}
+
+#[async_trait]
+impl Tool for JoinVideosTool {
+    fn name(&self) -> &str {
+        "join_videos"
+    }
+    fn summary(&self) -> &str {
+        "Join video clips one after another into one file"
+    }
+    fn description(&self) -> &str {
+        "Joins MP4 clips (`clips`, paths in the working directory, in the order they play) into one file (`output`), copying them as they are: nothing is re-encoded, so the clips must come from the same model at the same size. Sound stays in sync with each clip's picture; clips with and without sound join only as pictures (`video_only`). Answers the film's length, frames and size."
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "clips": { "type": "array", "items": { "type": "string" }, "description": "The clips, in order" },
+                "output": { "type": "string", "description": "The file to write" },
+                "video_only": { "type": "boolean", "description": "Leave the sound out" }
+            },
+            "required": ["clips", "output"],
+            "additionalProperties": false
+        })
+    }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
         ToolCapability::WriteFile
     }
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
