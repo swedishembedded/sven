@@ -170,6 +170,32 @@ impl Config {
         })
     }
 
+    /// The media tools (`models`, `run_model`), generating with
+    /// `tools.media.provider` (default: the sven service) and writing under
+    /// `workdir`; none while that provider has no key.
+    #[must_use]
+    pub fn media_tools(
+        &self,
+        workdir: std::path::PathBuf,
+    ) -> Option<(sven_tools_media::ModelsTool, sven_tools_media::RunModelTool)> {
+        let endpoint = self.provider_endpoint_with(
+            self.tools
+                .media
+                .provider
+                .as_deref()
+                .unwrap_or(sven_model_drivers::sven_service::PROVIDER),
+            &ThisMachine,
+        )?;
+        let endpoint = sven_tools_media::MediaEndpoint {
+            base_url: endpoint.base_url,
+            api_key: endpoint.api_key,
+        };
+        Some((
+            sven_tools_media::ModelsTool::new(endpoint.clone()),
+            sven_tools_media::RunModelTool::new(endpoint, self.tools.media.clone(), workdir),
+        ))
+    }
+
     /// The `web_search` tool this configuration gives a session.
     #[must_use]
     pub fn web_search_tool(&self) -> sven_tools_web::WebSearchTool {

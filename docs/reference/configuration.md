@@ -469,6 +469,14 @@ tools:
     # bus_address: unix:path=/run/brain/bus
     timeout_secs: 120
 
+# ── Video generation (models, run_model) ───────────────────────────────────
+
+  media:
+    # The providers.<name> entry to generate with; unset = the sven service.
+    # provider: local-brain
+    dir: .sven/media
+    timeout_secs: 1800
+
 
 # ── MCP servers ────────────────────────────────────────────────────────────
 #
@@ -1101,6 +1109,16 @@ default `sven` build). A build without it - `--no-default-features --features
 minimal`, or an SDK application without the preset - refuses audio for a
 model that cannot take it, naming the model, and its `attach_file` offers no
 `force_transcribe`.
+
+### `tools.media`
+
+Video generation with `models` and `run_model`.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `provider` | the sven service | The `providers.<name>` entry to generate with: its base URL and key |
+| `dir` | `.sven/media` | Where clips are written, relative to the working directory |
+| `timeout_secs` | `1800` | The longest one generation may take |
 
 ---
 

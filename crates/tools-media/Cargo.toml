@@ -1,0 +1,23 @@
+[package]
+name        = "sven-tools-media"
+version.workspace = true
+edition     = "2021"
+description = "Generative media tools: list the models a provider generates video with (models) and run one to a file (run_model), against any OpenRouter-compatible video API. Domain tier."
+license     = "Apache-2.0"
+
+[dependencies]
+sven-tool-api      = { path = "../tool-api" }
+sven-hsm           = { path = "../hsm" }
+sven-config        = { path = "../config" }
+sven-model-drivers = { path = "../model-drivers", default-features = false }
+anyhow        = { workspace = true }
+async-trait   = { workspace = true }
+base64        = { workspace = true }
+hex           = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+sha2          = { workspace = true }
+tokio         = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

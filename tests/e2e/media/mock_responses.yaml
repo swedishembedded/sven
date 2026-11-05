@@ -1,0 +1,46 @@
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# The scripted model of the media suite: asked for a video, it lists the
+# models and runs one; asked to continue a clip, it runs that model's
+# `extend` edit on the clip named.
+
+responses:
+  - match_type: contains
+    pattern: "which video models"
+    tool_calls:
+      - id: tc-models
+        tool: models
+        args: {}
+    after_tool_reply: "Those are the video models."
+
+  - match_type: contains
+    pattern: "make a video of a red ball"
+    tool_calls:
+      - id: tc-video
+        tool: run_model
+        args:
+          model: brain/mock-video
+          prompt: "a red ball rolling across a table"
+          duration: 1
+          generate_audio: true
+          seed: 7
+    after_tool_reply: "Your video is ready."
+
+  - match_type: contains
+    pattern: "continue clip.mp4"
+    tool_calls:
+      - id: tc-extend
+        tool: run_model
+        args:
+          model: brain/mock-video
+          prompt: "the ball keeps rolling"
+          edit: extend
+          input_video: clip.mp4
+          params:
+            frames: 8
+    after_tool_reply: "I continued the clip."
+
+  - match_type: default
+    reply: "media suite: no rule matched"

@@ -47,6 +47,8 @@ pub mod sven_service;
 mod thinking;
 #[cfg(not(target_arch = "wasm32"))]
 mod transcription;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod video;
 
 pub use anthropic::AnthropicProvider;
 pub use api_key::{provider_base_url, provider_key};

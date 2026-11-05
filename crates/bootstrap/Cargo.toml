@@ -16,6 +16,7 @@ sven-tools-exec    = { path = "../tools-exec" }
 sven-tools-ctx     = { path = "../tools-ctx" }
 sven-tools-agent   = { path = "../tools-agent" }
 sven-tools-web     = { path = "../tools-web" }
+sven-tools-media   = { path = "../tools-media" }
 sven-tools-document = { path = "../tools-document", optional = true }
 sven-document      = { path = "../document", optional = true }
 sven-tools-android = { path = "../tools-android", optional = true }

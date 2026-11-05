@@ -668,6 +668,18 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     reg.register(cfg.tools.web.fetch_tool());
     reg.register(cfg.web_search_tool());
 
+    // ── Media (video generation) ─────────────────────────────────────────────
+    // Offered only where its provider has a key; clips land in the session's
+    // working directory.
+    let workdir = paths.root().map_or_else(
+        || std::path::PathBuf::from("."),
+        std::path::Path::to_path_buf,
+    );
+    if let Some((models, run_model)) = cfg.media_tools(workdir) {
+        reg.register(models);
+        reg.register(run_model);
+    }
+
     // ── Memory (KV + project knowledge) ──────────────────────────────────────
     // Compound tool: set|get|delete|list|search_knowledge|list_knowledge
     reg.register(cfg.tools.memory.tool(runtime.knowledge.clone()));

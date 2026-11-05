@@ -61,6 +61,8 @@ the rest ([Core and deferred disclosure](#core-and-deferred-disclosure)).
 | [`document_convert`](#document_convert) | write | `agent` | deferred |
 | [`web_fetch`](#web_fetch) | network | all | deferred |
 | [`web_search`](#web_search) | network | all | deferred |
+| [`models`](#models) | network | all | deferred |
+| [`run_model`](#run_model) | write | `agent` | deferred |
 | [`task`](#task) | read | `agent` | deferred |
 | [`memory`](#memory) | read or write, per action | all | deferred |
 | [`semantic_memory`](#semantic_memory) | read or write, per action | all | deferred |
@@ -304,6 +306,42 @@ With neither, the call returns an error saying how to configure one.
 |-----------|-------------|
 | `query` (required) | Search query |
 | `count` | Results, 1 to 10 (default 5) |
+
+### `models`
+
+Lists the models `run_model` can run, as the provider in `tools.media.provider`
+lists them (default: the sven service, signed in or configured; a local brain
+or any OpenRouter-compatible server with a `providers.<name>` entry works the
+same way): each one's id, what it makes, the lengths and resolutions it
+renders, whether it makes sound, the edits it can do to an existing clip and
+its price per second. Offered only while that provider has a key.
+
+### `run_model`
+
+Generates a video with a model from `models` and writes it under
+`tools.media.dir` (default `.sven/media`) in the working directory, answering
+its path, length and cost. It waits while the video is made, up to
+`tools.media.timeout_secs`.
+
+| Parameter | Description |
+|-----------|-------------|
+| `model` (required) | A model id from `models` |
+| `prompt` (required) | What the video shows |
+| `duration` | Seconds |
+| `resolution` | `480p`, `720p`, `1080p`, ... |
+| `aspect_ratio` | `16:9`, `9:16`, `1:1`, ... |
+| `generate_audio` | With sound |
+| `seed` | Another seed is another take |
+| `edit` | An edit the model offers (`extend`, `upscale`, ...), with `input_video` |
+| `input_video` | The clip to edit: a path in the working directory |
+| `params` | The edit's own parameters |
+
+The same request (model, arguments and input clip) answers the clip already
+made, in this session or a later one, and is never paid for twice; a request
+the provider failed is asked again once more under a new name. A clip the
+provider also stores is named to it by its file when it is edited, instead
+of being sent again. It asks for approval under `--approval manual`, as every
+write does: a video is paid for.
 
 ### `task`
 

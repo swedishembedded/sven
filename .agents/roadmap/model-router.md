@@ -2,8 +2,7 @@
 
 Scope: Routing a request to models beyond the session language model (image, speech, video and other brain-served models).
 
-**Status: research done; video generation (Phase 2v) is the first slice being
-built. TUI dictation shipped separately (`crates/tui/src/voice/`,
+**Status: research done; video generation (Phase 2v) is built. TUI dictation shipped separately (`crates/tui/src/voice/`,
 `sven_model_drivers::transcription`), and `dbus/action.rs` already runs one
 arbitrary `(model, action)`; nothing else here exists yet.**
 
@@ -324,21 +323,37 @@ The standard verb is OpenRouter's `/videos` (submit, poll, download), which a
 local brain, OpenRouter and the signed-in sven server all speak, so one client
 serves every transport.
 
-- `sven_model_drivers::video`: `create`, `status`, `content`, `cancel`,
-  `models`, against `{base}/videos` with the provider's key.
-- `models` and `run_model` (Phase 2's tools) land with video as their first
-  long-running action: `run_model` submits, persists the job in the trajectory
-  (`Trajectory.extra`, as `goal_record.rs` does) so a restart resumes polling
-  instead of paying for a second clip, reports `step/total` progress, and
-  returns the downloaded file's path. An edit names the source clip by path.
-- Signed in, the file is also uploaded to the conversation
-  (`RemoteClient::upload_to_conversation`) so the web chat shows it, and the
-  tools join `HOSTED_TOOLS` (`crates/remote/src/host/hosted.rs`).
+**Built (2026-11-06).**
 
-*Verification:* against a mock brain (`BRAIN_MOCK=1 brain serve`), "make a
-five second video of a red ball" writes a playable MP4; killing sven mid-job
-and resuming downloads the same job without a second submission; the same
-request signed in to a local server lands as a video in the conversation.
+- `sven_model_drivers::video`: `create`, `status`, `download`, `cancel`,
+  `models`, every answer checked (known status words, ids safe in a path, a
+  video media type, a size cap, a download renamed into place whole).
+- `sven-tools-media`: `models` (what each model renders, its edits, its price
+  per second) and `run_model` (generate, or edit a clip by path), configured by
+  `tools.media` (`provider`, `dir`, `timeout_secs`), registered where that
+  provider has a key. Documented in `docs/reference/tools.md` and
+  `configuration.md`.
+- **A changed decision:** a job survives a restart by its name, not by
+  trajectory state. The idempotency key is a digest of the provider, the model,
+  the canonical arguments and the input clip, and the clip is written under
+  that name; the same request in a later session answers the file, or the
+  server answers the same job, and nothing is paid twice. A failed request is
+  asked again under a new name. No `Trajectory.extra` record was needed.
+- An edit names the clip the provider already stores (`file:<id>`, kept in a
+  sidecar beside the clip) instead of uploading it again.
+- Verified: unit tests against a fake server (render once, restart,
+  retry, edit both ways, refusals), and `tests/e2e/media` driving a real mock
+  brain from a scripted model (`BRAIN_BIN=... make test/e2e/media`).
+
+**Left.**
+
+- Progress while a video renders: `run_model` blocks and reports at the end;
+  emit `step/total` as tool progress events.
+- Hosted sessions: `models`/`run_model` are not in `HOSTED_TOOLS`; widening a
+  hosted session is a security decision of its own.
+- The web chat shows a video sven made only once the sven service binds the
+  job to the conversation it was made in (its own ledger, `video.md`).
+- The D-Bus transport and the other modalities (image, speech) of Phase 1-2.
 
 ### Phase 3 - voice, end to end (sven)
 

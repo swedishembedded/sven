@@ -71,6 +71,10 @@ pub struct ToolsConfig {
     /// model cannot accept audio natively.
     #[serde(default)]
     pub asr: AsrConfig,
+    /// Video generation (`models`, `run_model`): which provider, where clips
+    /// are written, how long one may take.
+    #[serde(default)]
+    pub media: sven_tools_media::MediaConfig,
     /// How much of each tool's definition a request carries.
     #[serde(default)]
     pub disclosure: DisclosureConfig,
@@ -103,6 +107,7 @@ impl ToolsConfig {
         .with("lints", LintsConfig::schema())
         .with("gdb", GdbConfig::schema())
         .with("asr", AsrConfig::schema())
+        .with("media", sven_tools_media::MediaConfig::schema())
         .with("context", ContextConfig::schema())
         .with("disclosure", DisclosureConfig::schema())
     }
@@ -151,6 +156,7 @@ impl Default for ToolsConfig {
             gdb: GdbConfig::default(),
             context: ContextConfig::default(),
             asr: AsrConfig::default(),
+            media: sven_tools_media::MediaConfig::default(),
             disclosure: DisclosureConfig::default(),
             path_prefix: Vec::new(),
             confine: None,
