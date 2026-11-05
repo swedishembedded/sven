@@ -119,7 +119,7 @@ fn every_sample_is_a_valid_harness() {
         .filter(|p| p.join("harness.yaml").is_file())
         .collect();
     samples.sort();
-    assert_eq!(samples.len(), 11, "the named samples: {samples:?}");
+    assert_eq!(samples.len(), 12, "the named samples: {samples:?}");
 
     let out = run(sven(tmp.path())
         .arg("validate")

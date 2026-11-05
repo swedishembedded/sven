@@ -278,6 +278,14 @@ pub struct HarnessRunArgs {
     /// read it. Needs `--model`.
     #[arg(long, value_name = "FILE", requires = "model")]
     pub api_key_file: Option<PathBuf>,
+    /// Base URL of an OpenRouter-compatible video API (`.../v1`): gives the
+    /// run's agents the `models` and `run_model` tools, generating with it.
+    #[arg(long, value_name = "URL")]
+    pub media_endpoint: Option<String>,
+    /// A file holding the video API's key, read once; refused inside
+    /// `--workspace`, as `--api-key-file` is.
+    #[arg(long, value_name = "FILE", requires = "media_endpoint")]
+    pub media_key_file: Option<PathBuf>,
     /// Suspend the run (leaving a checkpoint) after this many seconds.
     #[arg(long, value_name = "SECS")]
     pub timeout: Option<u64>,

@@ -19,7 +19,8 @@ use super::DocumentCommands;
 use super::{AcpCommands, McpCommands, TeamCommands};
 use super::{
     AgentCommands, AuthCommands, ConfigCommands, DecisionsCommands, DoctorCommands,
-    HarnessCommands, IndexCommands, QuestionsCommands, ReplayArgs, TaskCommands, ToolCommands,
+    HarnessCommands, IndexCommands, MediaCommands, QuestionsCommands, ReplayArgs, TaskCommands,
+    ToolCommands,
 };
 
 #[derive(Subcommand, Debug)]
@@ -35,6 +36,12 @@ pub enum Commands {
     Tool {
         #[command(subcommand)]
         command: ToolCommands,
+    },
+
+    /// Check and join video clips without decoding them.
+    Media {
+        #[command(subcommand)]
+        command: MediaCommands,
     },
 
     /// Write a starting configuration, `.sven.yaml`, in this directory: an

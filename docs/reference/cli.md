@@ -159,6 +159,8 @@ Everything a subcommand prints on failure goes to stderr and the exit code is
 |---------|-------------|
 | `sven tool list` | List the built-in tools with their descriptions. |
 | `sven tool call [TOOL] [key=value ...] [--json OBJECT]` | Without arguments, print every tool's parameter schema. `sven tool call TOOL` (or `TOOL --help`) prints that tool's schema. With arguments, run the tool: `key=value` pairs are strings, booleans (`true`/`false`) or integers; `--json '{"k":"v"}'` passes a raw object and overrides the pairs. See [Tools](tools.md). |
+| `sven media probe FILE [--seconds N [--tolerance T]] [--min-seconds N] [--max-seconds N] [--require-audio] [--json]` | Read an MP4 clip and check it is whole (every sample it lists is in the file): its length, size, codec, frames and sound. Exit 1 when it is not a usable MP4 or misses a bound; a harness check uses it to refuse a cut-short or wrong-length shot. |
+| `sven media join --output FILE [--list FILE\|-] [--dir DIR] [--video-only] [--json] [CLIP ...]` | Join MP4 clips, in order, into one file without re-encoding (the clips must be encoded alike), each clip's sound kept in sync with its picture. `--list` is a JSON array of paths or of objects whose `id` names `DIR/<id>.mp4`. See [`join_videos`](tools.md#join_videos). |
 | `sven document convert IN.pdf OUT.md [--model SPEC] [--pages SEL] [--ocr auto\|always\|never] [--layout auto\|off\|regions] [--region-dpi N] [--layout-prompt TEXT] [--concurrency N] [--dpi N] [--max-tokens N] [--prompt TEXT] [--max-attempts N] [--page-markers] [--dedupe-headers] [--no-resume] [--json] [-q]` | Convert a PDF to Markdown with an OCR model, resuming from the manifest beside OUT. Exit 2 when pages failed (pages that need OCR fail when no OCR model is available), 3 when no page could convert without one. See [Converting PDFs](../guides/document-conversion.md). |
 | `sven document score REFERENCE HYPOTHESIS` | Character error rate of a text file against a reference, whitespace-normalised. |
 | `sven index build [--quiet]` | Build the repository context index (file tree, public symbols, import graph) into `.sven/index/index.json` under the project root. |
@@ -225,7 +227,9 @@ required: `--workspace DIR`, `--model SPEC`, `--model-endpoint URL` and
 `--approvals auto|deny|ask`; optional: `--model-role ROLE=SPEC` (repeatable: the
 model that answers a role the workflow names, on the same endpoint),
 `--allow-capability NAME` (repeatable),
-`--api-key-file FILE`, `--first-byte-timeout SECS`, `--timeout SECS`,
+`--api-key-file FILE`, `--media-endpoint URL` and `--media-key-file FILE` (an
+OpenRouter-compatible video API the run's agents generate with: `models` and
+`run_model`), `--first-byte-timeout SECS`, `--timeout SECS`,
 `--max-output-tokens N`, `--scratchpad DIR` (the run's private directory; its audit log goes there, never into the workspace), `--trace FILE` (JSONL), `--record FILE`,
 `--trajectory FILE`, `--conversations DIR` (one ATIF file per conversation), `--checkpoint-out FILE`, `--json` (one JSON document on
 stdout and nothing else), `--quiet` (no progress on stderr) and `--progress auto|json|text`

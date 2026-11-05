@@ -62,6 +62,8 @@ pub(super) struct Assembly {
     /// same endpoint.
     roles: Vec<RoleModel>,
     approvals: ApprovalsArg,
+    /// The video API the run's agents generate with, if any.
+    media: Option<sven_tools_media::MediaEndpoint>,
     first_byte_timeout_secs: Option<u64>,
     capabilities: Vec<ToolCapability>,
     /// Where `--checkpoint-out` keeps the latest checkpoint while the run
@@ -118,8 +120,9 @@ impl Assembly {
         let keys = args
             .api_key_file
             .as_deref()
-            .map(|file| ApiKeys::read(file, &workspace))
+            .map(|file| ApiKeys::read("--api-key-file", file, &workspace))
             .transpose()?;
+        let media = media_endpoint(args, &workspace)?;
         let api_key = keys
             .as_ref()
             .map(|k| k.for_provider(provider))
@@ -208,6 +211,7 @@ impl Assembly {
             api_key,
             roles,
             approvals,
+            media,
             first_byte_timeout_secs: args.first_byte_timeout,
             capabilities,
             progress_checkpoint: args.checkpoint_out.clone(),
@@ -272,6 +276,17 @@ impl Assembly {
                     ))
                 })?;
             builder = builder.model_role(role.role, Arc::from(client));
+        }
+        if let Some(endpoint) = self.media {
+            builder = builder
+                .tool(Arc::new(sven_tools_media::ModelsTool::new(
+                    endpoint.clone(),
+                )))
+                .tool(Arc::new(sven_tools_media::RunModelTool::new(
+                    endpoint,
+                    sven_tools_media::MediaConfig::default(),
+                    self.workspace.clone(),
+                )));
         }
         let builder = builder
             .config(config)
@@ -402,28 +417,61 @@ fn capability_named(name: &str) -> Result<ToolCapability, Failure> {
         .ok_or_else(|| usage(format!("unknown capability `{name}`")))
 }
 
-/// The contents of `--api-key-file`, read once: a JSON object of provider
-/// name to key, or the bare key.
+/// `--media-endpoint` with the key `--media-key-file` holds (none without
+/// one: a local server may need none).
+fn media_endpoint(
+    args: &HarnessRunArgs,
+    workspace: &Path,
+) -> Result<Option<sven_tools_media::MediaEndpoint>, Failure> {
+    let Some(base_url) = args.media_endpoint.as_deref().map(str::trim) else {
+        return Ok(None);
+    };
+    if base_url.is_empty() {
+        return Err(usage("--media-endpoint needs the video API's base URL"));
+    }
+    let api_key = args
+        .media_key_file
+        .as_deref()
+        .map(|file| ApiKeys::read("--media-key-file", file, workspace)?.bare())
+        .transpose()?
+        .unwrap_or_default();
+    Ok(Some(sven_tools_media::MediaEndpoint {
+        base_url: base_url.to_string(),
+        api_key,
+    }))
+}
+
+/// The contents of a key file (`--api-key-file`, `--media-key-file`), read
+/// once: a JSON object of provider name to key, or the bare key.
 struct ApiKeys {
     shown: String,
     text: String,
 }
 
 impl ApiKeys {
-    /// Reads `file`, refusing one the agent could read.
-    fn read(file: &Path, workspace: &Path) -> Result<Self, Failure> {
-        let shown = file.display().to_string();
+    /// Reads `file`, given as `flag`, refusing one the agent could read.
+    fn read(flag: &str, file: &Path, workspace: &Path) -> Result<Self, Failure> {
+        let shown = format!("{flag} {}", file.display());
         let inside = file
             .canonicalize()
             .is_ok_and(|real| real.starts_with(workspace));
         if inside {
             return Err(usage(format!(
-                "--api-key-file {shown} is inside the workspace, where the agent could read it: keep it outside"
+                "{shown} is inside the workspace, where the agent could read it: keep it outside"
             )));
         }
         let text = std::fs::read_to_string(file)
-            .map_err(|e| usage(format!("cannot read --api-key-file {shown}: {e}")))?;
+            .map_err(|e| usage(format!("cannot read {shown}: {e}")))?;
         Ok(Self { shown, text })
+    }
+
+    /// The file's one key.
+    fn bare(&self) -> Result<String, Failure> {
+        let key = self.text.trim();
+        if key.is_empty() {
+            return Err(usage(format!("{} holds an empty key", self.shown)));
+        }
+        Ok(key.to_string())
     }
 
     /// The key for `provider`.
@@ -436,18 +484,18 @@ impl ApiKeys {
                 .map(str::to_string)
                 .ok_or_else(|| {
                     usage(format!(
-                        "--api-key-file {shown} has no string key for provider `{provider}`"
+                        "{shown} has no string key for provider `{provider}`"
                     ))
                 })?,
             Ok(_) => {
                 return Err(usage(format!(
-                    "--api-key-file {shown} is JSON but not an object of provider to key"
+                    "{shown} is JSON but not an object of provider to key"
                 )))
             }
             Err(_) => self.text.trim().to_string(),
         };
         if key.is_empty() {
-            return Err(usage(format!("--api-key-file {shown} holds an empty key")));
+            return Err(usage(format!("{shown} holds an empty key")));
         }
         Ok(key)
     }

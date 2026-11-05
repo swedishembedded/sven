@@ -170,6 +170,7 @@ sven harness schema   [<PATH>]
 sven harness run      <PATH> [--input JSON | --input-file FILE] --workspace DIR
                       --model SPEC --model-endpoint URL --approvals auto|deny|ask
                       [--model-role ROLE=SPEC]... [--allow-capability NAME]... [--api-key-file FILE]
+                      [--media-endpoint URL [--media-key-file FILE]]
                       [--first-byte-timeout SECS] [--timeout SECS] [--max-output-tokens N]
                       [--scratchpad DIR] [--trace FILE] [--record FILE]
                       [--trajectory FILE] [--conversations DIR]
@@ -272,6 +273,15 @@ sven harness run ./c-repair --workspace ./repo \
   the bare key. It is handed to the model client only, so no trace,
   recording, checkpoint or audit record carries it. A file inside the
   workspace is refused, because the agent could read it.
+- `--media-endpoint URL` gives the run's agents `models` and `run_model`,
+  generating video with that OpenRouter-compatible API (a local `brain
+  serve`, OpenRouter, the sven service); `--media-key-file` holds its bare
+  key, refused inside the workspace like `--api-key-file`. Clips land in the
+  workspace; `join_videos` and `sven media probe|join` work on them with no
+  endpoint. `models` needs the NetworkAccess capability; `run_model` writes
+  files, so the `coding` profile covers it. The
+  [short-film](../../samples/harnesses/short-film/) sample plans, renders,
+  checks and joins a film this way.
 - `--checkpoint-out FILE` also keeps the latest checkpoint while a `for_each`
   sweep goes (written atomically after each completed item, removed when the
   run ends with a verdict), so a run killed without warning resumes with
@@ -359,7 +369,7 @@ its scratchpad and prints the path. No sven configuration is read.
 
 ## Samples tour
 
-[samples/harnesses](../../samples/harnesses) holds eleven workflows, each a data
+[samples/harnesses](../../samples/harnesses) holds twelve workflows, each a data
 directory with its README:
 
 | Sample | What it shows |
@@ -374,6 +384,7 @@ directory with its README:
 | `module-sweep` | a `for_each` over a frozen backlog and an `until` on a coverage figure; a suspension resumes at the module it was on |
 | `verified-task` | a command gate whose exit status decides, bounded repair, a coverage threshold in the success condition |
 | `embedded-hardening` | the full pipeline on a disposable embedded C repository: bootstrap, plan, a checkpointed `for_each` over modules, coverage `until` 90 percent, architecture, production; real gcov and clang-tidy gates, a pinned check, a live-run recipe |
+| `short-film` | a film from one premise: a planner's shot list as a typed variable, each shot rendered by a video model (`--media-endpoint`) and checked by `sven media probe`, the shots joined in order by `sven media join` |
 | `rust-refactor` | a reusable sweep over any Rust repository: variables published by an exploration task, a `do:` body per file in fresh conversations, trusted gates and a rollback |
 
 ```sh

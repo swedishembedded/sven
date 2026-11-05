@@ -353,6 +353,7 @@ are, never re-encoded, so they must be encoded alike (one model at one size);
 one that is not is refused by name. Each clip's sound is cut or padded to its
 picture, so a film of many shots never drifts out of sync. Clips with and
 without sound join only as pictures (`video_only`). Fragmented MP4 is refused.
+`sven media join` does the same from the command line.
 
 | Parameter | Description |
 |-----------|-------------|

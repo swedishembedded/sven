@@ -2,7 +2,7 @@
 
 Scope: Routing a request to models beyond the session language model (image, speech, video and other brain-served models).
 
-**Status: research done; video generation (Phase 2v) is built. TUI dictation shipped separately (`crates/tui/src/voice/`,
+**Status: research done; video generation (Phase 2v) is built, and harnesses make multi-shot films with it. TUI dictation shipped separately (`crates/tui/src/voice/`,
 `sven_model_drivers::transcription`), and `dbus/action.rs` already runs one
 arbitrary `(model, action)`; nothing else here exists yet.**
 
@@ -345,8 +345,41 @@ serves every transport.
   retry, edit both ways, refusals), and `tests/e2e/media` driving a real mock
   brain from a scripted model (`BRAIN_BIN=... make test/e2e/media`).
 
+**Built: films from a harness (2026-11-05).**
+
+- `sven_tools_media::mp4`: `probe` (length, size, codec, frames, sound; every
+  sample checked to lie in the file) and `join` (clips copied in order into one
+  file, no re-encoding, each clip's edit list carried over and every track cut
+  or padded to its clip's picture, so sound never drifts). No ffmpeg: a case
+  job's image needs only sven. Tool `join_videos`; `run_model` gains `output`.
+- `sven media probe|join` for scripts and harness checks; `sven harness run
+  --media-endpoint URL --media-key-file FILE` gives a run's agents `models` and
+  `run_model` (the harness reads no configuration, so the endpoint is a flag).
+- `samples/harnesses/short-film`: a planner sets the shot list as a typed
+  variable, a checkpointed `for_each` renders each shot to `shots/<id>.mp4` and
+  a `sven media probe --seconds` check refuses a cut-short or wrong-length one
+  (repair: another seed), and a check task joins the planned list in order.
+- Verified: `tests/harness_media.rs` runs the sample end to end with a scripted
+  model and a real mock brain (`BRAIN_BIN`), the film's length and frames the
+  sum of its shots; three brain AV1+Opus clips joined by `sven media join` play
+  to the end in headless Chromium, every frame and audio byte decoded.
+
 **Left.**
 
+- Continuity between shots: each shot's prompt restates what must stay the
+  same; chaining a shot from the previous one's last frame needs an
+  image-to-video input and a last-frame extract (a decode), or a model's own
+  `extend` edit per shot.
+- A judged shot check: a vision model scoring each shot against its prompt as
+  a `verify` gate, beside the trusted `probe`.
+- Shots rendered concurrently: `for_each` is sequential; a bounded `parallel`
+  of children over the shot list, each checkpointed.
+- Joining clips encoded differently (mixed models or sizes) needs re-encoding;
+  transitions, a music or voice-over track (speech + mixing) likewise.
+- The cloud run: `sven harness run` as a case job on the cluster, its
+  `--media-endpoint` the sven service's `/v1/videos` (which resells OpenRouter
+  and serves brain) with a key the runner mints for the job; the sven service's
+  side is in its own ledger (`video.md`).
 - Progress while a video renders: `run_model` blocks and reports at the end;
   emit `step/total` as tool progress events.
 - Hosted sessions: `models`/`run_model` are not in `HOSTED_TOOLS`; widening a

@@ -18,6 +18,7 @@ pub(crate) mod harness;
 pub(crate) mod index;
 pub(crate) mod ledger;
 pub(crate) mod logging;
+pub(crate) mod media;
 pub(crate) mod models;
 pub(crate) mod oauth;
 pub(crate) mod pipeline;

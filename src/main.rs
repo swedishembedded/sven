@@ -22,6 +22,7 @@ use run::harness::run_harness_command;
 use run::index::run_index_command;
 use run::ledger::run_ledger_command;
 use run::logging::init_logging;
+use run::media::run_media_command;
 use run::models::{list_models_cmd, list_providers_cmd};
 use run::provider_doctor::run_doctor_provider;
 use run::questions::run_questions_command;
@@ -116,6 +117,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                 let config = Settings::load(cli.config.as_deref())?.runtime;
                 return run_tool_command(command, &config).await;
             }
+            Commands::Media { command } => return run_media_command(command),
             Commands::Doctor {
                 command: DoctorCommands::Decisions { json },
             } => {

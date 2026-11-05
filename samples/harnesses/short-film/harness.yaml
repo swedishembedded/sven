@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# A short film from one premise, shot by shot. A director plans the shots into
+# a typed variable (frozen once the loop starts, so nothing later can add, drop
+# or reorder a shot); each shot is rendered by a video model and checked by a
+# trusted command before the next begins, with progress that survives a
+# restart (a rendered shot is never paid for twice: the same request answers
+# the clip already made); the shots are then joined, in the planned order, into
+# one film by the executor, not by the model.
+# Swedish Embedded AB implements verifiable, multi-stage generative media
+# pipelines for its clients. If your team needs expertise in turning long
+# agent-driven productions into reviewable, resumable programs then you can
+# procure our services by sending an email to info@swedishembedded.com.
+api_version: "2"
+name: short-film
+description: "Plan a film shot by shot, render and check each shot with a video model, then join them into one film."
+inputs:
+  premise: { type: string, description: "what the film is about" }
+  model: { type: string, description: "the video model every shot is rendered with (`run_model` needs one model for the whole film: shots join only when encoded alike)" }
+  shots: { type: number, description: "at most this many shots" }
+  seconds: { type: number, description: "each shot's length in seconds, one the model renders" }
+variables:
+  shots:
+    type: json
+    description: "the shot list, in the order the film plays"
+    schema:
+      type: array
+      items:
+        type: object
+        required: [id, prompt]
+        properties:
+          id: { type: string }
+          prompt: { type: string }
+agent:
+  profile: coding
+  system: >-
+    You are a film director working with a video model. A shot's prompt is all the model
+    sees: describe the subject, the setting, the light, the camera and the motion in one or
+    two sentences, and repeat in every shot what must stay the same across the film (the
+    characters' looks, the place, the palette), since no shot remembers another.
+execution:
+  limits: { model_turns: 400, tool_calls: 800 }
+gates:
+  shot:
+    description: The shot is a whole MP4 of the length asked for.
+    command: [sven, media, probe, --seconds, "{{ inputs.seconds }}", "shots/{{ item_id }}.mp4"]
+    timeout: 60
+  film:
+    description: Join the shots in the planned order into film.mp4.
+    command: [sven, media, join, --output, film.mp4, --dir, shots, --list, "-"]
+    stdin: "{{ vars.shots }}"
+    timeout: 600
+workflow:
+  - name: plan
+    tools: []
+    vars: { shots: required }
+    task: |
+      Plan a short film about: {{ inputs.premise }}
+
+      Break it into at most {{ inputs.shots }} shots of {{ inputs.seconds }} seconds each that
+      tell it from beginning to end. Set `shots` with harness_vars_set: a JSON array, in
+      playing order, of {"id": "<two-digit number: 01, 02, ...>", "prompt": "<the shot>"}.
+  - name: render
+    for_each: { source: { variable: shots }, id: id, max_items: 200 }
+    checkpoint: each_item
+    tools: [run_model]
+    task: |
+      Render shot {{ item_id }} of the film: call run_model once with model
+      "{{ inputs.model }}", duration {{ inputs.seconds }}, output "shots/{{ item_id }}.mp4" and
+      this prompt, unchanged:
+
+      {{ item.prompt }}
+    verify: [shot]
+    repair:
+      attempts: 2
+      prompt: |
+        The shot was refused: {{ failure.stderr }}
+        Render it again to "shots/{{ item_id }}.mp4" with the same prompt and another seed.
+  - name: film
+    verify: [film]
+success:
+  work_items: { all_completed: true }
+outputs:
+  film: { type: string, value: "film.mp4" }
