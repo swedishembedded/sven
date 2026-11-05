@@ -73,6 +73,7 @@ crates/workspace/src/ci.rs	TRAVIS_PULL_REQUEST
 crates/workspace/src/ci.rs	TRAVIS_REPO_SLUG
 crates/workspace/src/skills.rs	<v>
 crates/workspace/src/skills.rs	PATH
+src/cli/commands.rs	SVEN_MODEL
 src/cli/mod.rs	SVEN_MODEL
 src/run/ci.rs	SVEN_MODE
 src/run/logging.rs	<SUBAGENT_DEPTH_ENV>
