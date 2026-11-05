@@ -12,12 +12,28 @@
 //! generation that is no longer the run's (another worker took it over, or
 //! it was cancelled), and the worker stops at once.
 //!
-//! 1. `GET {run_url}/descriptor` answers the [`RunDescriptor`]: the package
-//!    (a serialized harness bundle, its skills and scripts included), the
-//!    inputs, the files to lay out in the workspace before running (the
+//! 1. `GET {run_url}/descriptor` answers the [`RunDescriptor`]: the package,
+//!    the inputs, the files to lay out in the workspace before running (the
 //!    input files, and on a resume the files published so far), the
 //!    checkpoint to resume from, and the model endpoint. Each file comes with
 //!    a download good for minutes, and is checked against its digest.
+//!
+//!    The package is one of two [`PackageFormat`]s. A `bundle` (the default)
+//!    is a serialized harness bundle, its skills and scripts included. A
+//!    `tar` is a plain tar archive of a package directory: the descriptor's
+//!    `harness` names the main workflow inside it (its imports are read from
+//!    beside it), `skills` the directory of skills and `bin` the directory of
+//!    tools, both optional. The worker unpacks it into the run's private
+//!    package directory (regular files and directories only; an absolute
+//!    path, a `..` component, a link or a device refuses the whole archive;
+//!    at most [`MAX_TAR_ENTRIES`] entries and [`MAX_TAR_BYTES`] bytes), and
+//!    makes it read-only. `bin` goes first on the `PATH` of every program the
+//!    run executes, tools and gates alike. A server cannot know where the
+//!    package is unpacked, so in a tar package any input value that is
+//!    exactly `{"package": "<path>"}` is replaced, before the run starts, by
+//!    the absolute path of that entry of the archive (the run fails when the
+//!    path leaves the package or names nothing). The `package_dir` input
+//!    holds the package's root for both formats.
 //! 2. At every publishing task's boundary the worker asks
 //!    `POST {run_url}/uploads` ([`UploadsRequest`]) for where to put the
 //!    task's files and the run's checkpoint, uploads them, and commits them
@@ -42,6 +58,12 @@ use uuid::Uuid;
 
 /// The protocol revision this build speaks.
 pub const WORK_PROTOCOL_VERSION: u32 = 1;
+
+/// The most entries a `tar` package may hold.
+pub const MAX_TAR_ENTRIES: usize = 10_000;
+
+/// The most bytes of file content a `tar` package may unpack to.
+pub const MAX_TAR_BYTES: u64 = 256 * 1024 * 1024;
 
 /// What a worker is started with, in a file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,15 +120,39 @@ pub struct Models {
     pub roles: BTreeMap<String, String>,
 }
 
+/// What the descriptor's `package` file is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageFormat {
+    /// A serialized harness bundle (the default).
+    #[default]
+    Bundle,
+    /// A tar archive of a package directory; see the module documentation.
+    Tar,
+}
+
 /// Everything a worker needs to run its run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunDescriptor {
     pub protocol_version: u32,
     pub run_id: Uuid,
     pub generation: u64,
-    /// The harness package: a serialized harness bundle.
+    /// The harness package, in [`Self::package_format`].
     pub package: FileRef,
-    /// The run's inputs; a `file` input names a path of [`Self::files`].
+    #[serde(default)]
+    pub package_format: PackageFormat,
+    /// `tar` only, required: the main workflow's path inside the archive.
+    #[serde(default)]
+    pub harness: Option<String>,
+    /// `tar` only: the directory of skills inside the archive.
+    #[serde(default)]
+    pub skills: Option<String>,
+    /// `tar` only: the directory of tools inside the archive, put first on
+    /// the `PATH` of everything the run executes.
+    #[serde(default)]
+    pub bin: Option<String>,
+    /// The run's inputs; a `file` input names a path of [`Self::files`], and
+    /// in a `tar` package `{"package": "<path>"}` names an entry of it.
     pub inputs: Value,
     #[serde(default)]
     pub files: Vec<WorkspaceFile>,
@@ -224,6 +270,8 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(parsed.generation, 3);
+        assert_eq!(parsed.package_format, PackageFormat::Bundle);
+        assert!(parsed.harness.is_none() && parsed.skills.is_none() && parsed.bin.is_none());
         assert_eq!(parsed.files[0].path, "front.png");
         assert!(parsed.checkpoint.is_none());
         assert_eq!(
@@ -233,5 +281,27 @@ mod tests {
             .unwrap(),
             serde_json::json!({ "desired": "paused" })
         );
+    }
+
+    #[test]
+    fn a_tar_descriptor_names_its_workflow_skills_and_tools() {
+        let parsed: RunDescriptor = serde_json::from_value(serde_json::json!({
+            "protocol_version": 1,
+            "run_id": "6f1c1d1e-6c1a-4d43-9a43-6f2a9d3b2a10",
+            "generation": 1,
+            "package": { "uri": "mcp-file://files/p", "name": "cad.tar", "mimeType": "application/x-tar",
+                         "size": 10, "sha256": "x", "download": { "method": "GET", "url": "https://s/p" } },
+            "package_format": "tar",
+            "harness": "package/harness.yaml",
+            "skills": "package/skills",
+            "bin": "package/bin",
+            "inputs": { "printer": { "package": "package/printers/a1" } },
+            "models": { "openai_base_url": "https://s/v1", "default": "m" }
+        }))
+        .unwrap();
+        assert_eq!(parsed.package_format, PackageFormat::Tar);
+        assert_eq!(parsed.harness.as_deref(), Some("package/harness.yaml"));
+        assert_eq!(parsed.skills.as_deref(), Some("package/skills"));
+        assert_eq!(parsed.bin.as_deref(), Some("package/bin"));
     }
 }

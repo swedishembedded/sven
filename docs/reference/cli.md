@@ -200,7 +200,24 @@ or environment is read.
 | `harness run PATH [run options]` | Run a harness once, on a real model with the coding tools. |
 | `harness resume PATH --checkpoint FILE [run options]` | Resume a suspended run from the checkpoint `run --checkpoint-out` wrote. A checkpoint from another program is refused. |
 | `harness replay PATH --recording FILE [--expect-trace FILE] [--json]` | Replay a recording offline; no model, tool or child starts. |
-| `harness work --login-file FILE --workspace DIR --scratch DIR` | Work one served harness run for the server that started this worker (`sven_control::work`): fetch the package and the run's files (each checked against its digest), run or resume, commit each publication with its checkpoint, pause or stop when the heartbeat says so, report the verdict. The login file is JSON (`run_url`, `token`, `generation`). Exit 0 finished, paused or cancelled; 3 when another worker owns the run (the server answered 409), after which nothing more is committed or reported. |
+| `harness work --login-file FILE --workspace DIR --scratch DIR` | Work one served harness run for the server that started this worker (`sven_control::work`): fetch the package and the run's files (each checked against its digest; the package is a serialized bundle or a tar archive of a package directory, below), run or resume, commit each publication with its checkpoint, pause or stop when the heartbeat says so, report the verdict. The login file is JSON (`run_url`, `token`, `generation`). Exit 0 finished, paused or cancelled; 3 when another worker owns the run (the server answered 409), after which nothing more is committed or reported. |
+
+A served run's package is either a serialized harness bundle (the default) or,
+with `package_format: "tar"` in the descriptor, a plain tar archive of a package
+directory. For a tar the descriptor also names `harness` (required: the main
+workflow's path inside the archive; the workflows it imports are read from
+beside it), and optionally `skills` (a directory of skills, copied to where the
+agent finds skills in the workspace) and `bin` (a directory of tools, put first
+on the `PATH` of everything the run executes, gates included). The worker
+unpacks the archive into the run's private package directory and makes it
+read-only; the archive may hold regular files and directories only, so an
+absolute path, a `..` component, a symlink, hard link or device refuses it, as
+do more than 10,000 entries or 256 MiB of content. A server cannot know where
+that directory is, so any input value that is exactly `{"package": "<path>"}`
+is replaced by the absolute path of that entry of the archive (the run fails
+when the path leaves the package or names nothing), and the `package_dir` input
+is the archive's root. Example descriptor fields:
+`"package_format": "tar", "harness": "package/harness.yaml", "skills": "package/skills", "bin": "package/bin", "inputs": {"printer": {"package": "package/printers/a1"}}`.
 
 Run options (`run` and `resume`): `--input JSON` or `--input-file FILE`;
 required: `--workspace DIR`, `--model SPEC`, `--model-endpoint URL` and

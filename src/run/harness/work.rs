@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::work_package;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine as _;
 use serde::de::DeserializeOwned;
@@ -31,7 +32,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sven_control::work::{
     Commit, CommittedFile, Declared, Desired, FileRef, Finish, Heartbeat, HeartbeatAnswer,
-    RunDescriptor, Transfer, UploadsGranted, UploadsRequest, WorkLogin,
+    PackageFormat, RunDescriptor, Transfer, UploadsGranted, UploadsRequest, WorkLogin,
 };
 use sven_model::ModelProvider;
 use sven_sdk::{CancelToken, Engine, HarnessCheckpoint, Publication, RunOptions, Toolset};
@@ -219,6 +220,64 @@ async fn commit(
     Ok(())
 }
 
+/// Lays the run's package out and returns the text the engine loads the
+/// harness from.
+///
+/// A bundle is written to `package_dir`. A tar is unpacked there read-only,
+/// its `bin` goes first on the `PATH` of everything the run executes, and its
+/// main workflow is read from its place in the unpacked tree, so the
+/// workflows it imports are found beside it. In both, the skills are copied
+/// to where the agent finds skills in `workspace`.
+fn lay_out_package(
+    descriptor: &RunDescriptor,
+    package: &[u8],
+    package_dir: &Path,
+    workspace: &Path,
+) -> Result<String> {
+    let skills = match descriptor.package_format {
+        PackageFormat::Bundle => {
+            if descriptor.harness.is_some()
+                || descriptor.skills.is_some()
+                || descriptor.bin.is_some()
+            {
+                bail!("harness, skills and bin name paths of a tar package, not of a bundle");
+            }
+            let bundle: sven_harness_spec::HarnessBundle =
+                serde_json::from_slice(package).context("the package")?;
+            sven_harness_spec::resources::materialize(&bundle.resources, package_dir)?;
+            let text = serde_json::to_string(&bundle)?;
+            install_skills(&package_dir.join("skills"), workspace)?;
+            return Ok(text);
+        }
+        PackageFormat::Tar => descriptor.skills.as_deref(),
+    };
+    let main = descriptor
+        .harness
+        .as_deref()
+        .ok_or_else(|| anyhow!("a tar package names its main workflow in `harness`"))?;
+    work_package::unpack_tar(package, package_dir).context("the package")?;
+    let main = work_package::package_path(package_dir, main).context("harness")?;
+    if let Some(skills) = skills {
+        let skills = work_package::package_path(package_dir, skills).context("skills")?;
+        install_skills(&skills, workspace)?;
+    }
+    if let Some(bin) = &descriptor.bin {
+        work_package::prepend_to_path(
+            &work_package::package_path(package_dir, bin).context("bin")?,
+        )?;
+    }
+    Ok(super::source::Source::open(&main)?.text)
+}
+
+/// Copies the skills in `from`, when it is a directory, to where the agent
+/// finds skills in `workspace`.
+fn install_skills(from: &Path, workspace: &Path) -> Result<()> {
+    if from.is_dir() {
+        work_package::copy_tree(from, &workspace.join(".agents").join("skills"))?;
+    }
+    Ok(())
+}
+
 /// Runs the run the login names to its end.
 pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
     let client = Client {
@@ -233,20 +292,16 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
         return Ok(WorkEnd::Superseded);
     }
 
-    // The package: its skills where the agent finds skills, its scripts in
-    // the run's private directory, which a gate names through `package_dir`.
-    let package: sven_harness_spec::HarnessBundle =
-        serde_json::from_slice(&client.fetch(&descriptor.package).await?).context("the package")?;
+    // The package: its skills where the agent finds skills, its scripts and
+    // data in the run's private directory, which a gate names through
+    // `package_dir`.
     let package_dir = options.scratch.join("package");
-    sven_harness_spec::resources::materialize(&package.resources, &package_dir)?;
-    if package_dir.join("skills").is_dir() {
-        let skills = options.workspace.join(".agents").join("skills");
-        std::fs::create_dir_all(&skills)?;
-        for entry in std::fs::read_dir(package_dir.join("skills"))? {
-            let entry = entry?;
-            std::fs::rename(entry.path(), skills.join(entry.file_name()))?;
-        }
-    }
+    let harness_text = lay_out_package(
+        &descriptor,
+        &client.fetch(&descriptor.package).await?,
+        &package_dir,
+        &options.workspace,
+    )?;
     for placed in &descriptor.files {
         let target = inside(&options.workspace, &placed.path)?;
         if let Some(parent) = target.parent() {
@@ -275,7 +330,7 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
         builder = builder.model_role(role.clone(), model(name)?);
     }
     let engine = builder.build()?;
-    let harness = engine.load_harness_from_str(&serde_json::to_string(&package)?)?;
+    let harness = engine.load_harness_from_str(&harness_text)?;
 
     let mut inputs = descriptor.inputs.clone();
     let declares_package_dir = harness
@@ -285,6 +340,9 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
         .is_some_and(|i| i.contains_key("package_dir"));
     if declares_package_dir {
         inputs["package_dir"] = json!(package_dir.display().to_string());
+    }
+    if descriptor.package_format == PackageFormat::Tar {
+        work_package::resolve_inputs(&mut inputs, &package_dir)?;
     }
     let run = match &descriptor.checkpoint {
         Some(file) => harness.resume(serde_json::from_slice(&client.fetch(file).await?)?)?,
@@ -459,8 +517,48 @@ workflow:
     publish: [drawing.png]
 "#;
 
+    /// A package directory as a server distributes it: the main workflow, a
+    /// skill, a tool its gate runs, and a data directory an input names.
+    const TAR_DOC: &str = r#"
+api_version: "2"
+name: part
+inputs: { profile: string }
+execution: { limits: { model_turns: 4 } }
+gates:
+  render: { command: [probe-tool, "{{ inputs.profile }}"] }
+workflow:
+  - name: model
+    task: "Model it."
+    verify: [render]
+    publish: [out.txt]
+"#;
+
+    /// The tool: fails unless the skill is where the agent finds skills,
+    /// and publishes the profile it was pointed at.
+    const PROBE_TOOL: &str =
+        "#!/bin/sh\nset -e\ntest -f .agents/skills/probe/SKILL.md\ncp \"$1/printer.cfg\" out.txt\n";
+
+    fn tar_package() -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (path, mode, content) in [
+            ("package/harness.yaml", 0o644, TAR_DOC),
+            ("package/skills/probe/SKILL.md", 0o644, "# probe\n"),
+            ("package/bin/probe-tool", 0o755, PROBE_TOOL),
+            ("package/data/printer/printer.cfg", 0o644, "nozzle=0.4\n"),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(mode);
+            builder
+                .append_data(&mut header, path, content.as_bytes())
+                .unwrap();
+        }
+        builder.into_inner().unwrap()
+    }
+
     #[derive(Default)]
     struct Server {
+        tar: bool,
         stale_commit: bool,
         calls: Vec<String>,
         store: BTreeMap<String, Vec<u8>>,
@@ -471,11 +569,16 @@ workflow:
     async fn serve(state: Arc<Mutex<Server>>) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let package = serde_json::to_vec(&sven_harness_spec::HarnessBundle {
-            document: DOC.to_string(),
-            ..Default::default()
-        })
-        .unwrap();
+        let tar = state.lock().unwrap().tar;
+        let package = if tar {
+            tar_package()
+        } else {
+            serde_json::to_vec(&sven_harness_spec::HarnessBundle {
+                document: DOC.to_string(),
+                ..Default::default()
+            })
+            .unwrap()
+        };
         state
             .lock()
             .unwrap()
@@ -533,40 +636,70 @@ workflow:
                             })
                         };
                         let (status, reply): (u16, Vec<u8>) = match (method, path) {
-                        ("GET", "/run/descriptor") => (200, json!({
-                            "protocol_version": 1, "run_id": "6f1c1d1e-6c1a-4d43-9a43-6f2a9d3b2a10", "generation": 2,
-                            "package": file("package", &state.store["package"]),
-                            "inputs": { "drawing": "drawing.png" },
-                            "files": [{ "path": "drawing.png", "file": file("drawing", &state.store["drawing"]) }],
-                            "models": { "openai_base_url": format!("{base}/v1"), "default": "m" },
-                        }).to_string().into_bytes()),
-                        ("POST", "/run/uploads") => {
-                            let request: Value = serde_json::from_slice(&body).unwrap();
-                            let grant = |path: &str, key: &str| json!({ "path": path, "uri": format!("mcp-file://files/{key}"),
-                                "upload": { "method": "PUT", "url": format!("{base}/store/{key}") } });
-                            let files: Vec<Value> = request["files"].as_array().unwrap().iter().enumerate()
-                                .map(|(i, f)| grant(f["path"].as_str().unwrap(), &format!("out{i}"))).collect();
-                            (200, json!({ "files": files, "checkpoint": grant("checkpoint.json", "checkpoint") }).to_string().into_bytes())
-                        }
-                        ("POST", "/run/commit") if state.stale_commit => (409, b"{}".to_vec()),
-                        ("POST", "/run/commit") => {
-                            state.commits.push(serde_json::from_slice(&body).unwrap());
-                            (200, b"{}".to_vec())
-                        }
-                        ("POST", "/run/heartbeat") => (200, br#"{"desired":"running"}"#.to_vec()),
-                        ("POST", "/run/finish") => {
-                            state.finished = Some(serde_json::from_slice(&body).unwrap());
-                            (200, b"{}".to_vec())
-                        }
-                        ("PUT", p) if p.starts_with("/store/") => {
-                            state.store.insert(p.trim_start_matches("/store/").to_string(), body);
-                            (200, Vec::new())
-                        }
-                        ("GET", p) if p.starts_with("/store/") => {
-                            (200, state.store.get(p.trim_start_matches("/store/")).cloned().unwrap_or_default())
-                        }
-                        _ => (404, Vec::new()),
-                    };
+                            ("GET", "/run/descriptor") => {
+                                let mut descriptor = json!({
+                                    "protocol_version": 1, "run_id": "6f1c1d1e-6c1a-4d43-9a43-6f2a9d3b2a10", "generation": 2,
+                                    "package": file("package", &state.store["package"]),
+                                    "inputs": { "drawing": "drawing.png" },
+                                    "files": [{ "path": "drawing.png", "file": file("drawing", &state.store["drawing"]) }],
+                                    "models": { "openai_base_url": format!("{base}/v1"), "default": "m" },
+                                });
+                                if state.tar {
+                                    descriptor["package_format"] = json!("tar");
+                                    descriptor["harness"] = json!("package/harness.yaml");
+                                    descriptor["skills"] = json!("package/skills");
+                                    descriptor["bin"] = json!("package/bin");
+                                    descriptor["inputs"] =
+                                        json!({ "profile": { "package": "package/data/printer" } });
+                                    descriptor["files"] = json!([]);
+                                }
+                                (200, descriptor.to_string().into_bytes())
+                            }
+                            ("POST", "/run/uploads") => {
+                                let request: Value = serde_json::from_slice(&body).unwrap();
+                                let grant = |path: &str, key: &str| {
+                                    json!({ "path": path, "uri": format!("mcp-file://files/{key}"),
+                                "upload": { "method": "PUT", "url": format!("{base}/store/{key}") } })
+                                };
+                                let files: Vec<Value> = request["files"]
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, f)| {
+                                        grant(f["path"].as_str().unwrap(), &format!("out{i}"))
+                                    })
+                                    .collect();
+                                (200, json!({ "files": files, "checkpoint": grant("checkpoint.json", "checkpoint") }).to_string().into_bytes())
+                            }
+                            ("POST", "/run/commit") if state.stale_commit => (409, b"{}".to_vec()),
+                            ("POST", "/run/commit") => {
+                                state.commits.push(serde_json::from_slice(&body).unwrap());
+                                (200, b"{}".to_vec())
+                            }
+                            ("POST", "/run/heartbeat") => {
+                                (200, br#"{"desired":"running"}"#.to_vec())
+                            }
+                            ("POST", "/run/finish") => {
+                                state.finished = Some(serde_json::from_slice(&body).unwrap());
+                                (200, b"{}".to_vec())
+                            }
+                            ("PUT", p) if p.starts_with("/store/") => {
+                                state
+                                    .store
+                                    .insert(p.trim_start_matches("/store/").to_string(), body);
+                                (200, Vec::new())
+                            }
+                            ("GET", p) if p.starts_with("/store/") => (
+                                200,
+                                state
+                                    .store
+                                    .get(p.trim_start_matches("/store/"))
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            ),
+                            _ => (404, Vec::new()),
+                        };
                         (status, reply)
                     };
                     let mut response = format!(
@@ -592,7 +725,7 @@ workflow:
                 ResponseEvent::Done,
             ]
         }));
-        tokio::time::timeout(
+        let end = tokio::time::timeout(
             Duration::from_secs(60),
             work(WorkOptions {
                 login: WorkLogin {
@@ -608,7 +741,10 @@ workflow:
         )
         .await
         .expect("the worker ends")
-        .expect("no error")
+        .expect("no error");
+        // A tar package is read-only; make it removable with its directory.
+        super::super::work_package::restore_write(scratch.path());
+        end
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -630,6 +766,24 @@ workflow:
             "the checkpoint went with it"
         );
         assert_eq!(state.finished.as_ref().unwrap()["outcome"]["ok"], true);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_worker_runs_a_tar_package_with_its_skill_tool_and_data() {
+        let state = Arc::new(Mutex::new(Server {
+            tar: true,
+            ..Server::default()
+        }));
+        assert_eq!(worker(&state).await, WorkEnd::Finished);
+        let state = state.lock().unwrap();
+        assert_eq!(state.finished.as_ref().unwrap()["outcome"]["ok"], true);
+        assert_eq!(state.commits.len(), 1, "{:?}", state.calls);
+        assert_eq!(state.commits[0]["task"], "model");
+        assert_eq!(state.commits[0]["files"][0]["path"], "out.txt");
+        assert_eq!(
+            state.store["out0"], b"nozzle=0.4\n",
+            "the gate ran the package's tool from its bin, on its data, after its skill was laid out"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

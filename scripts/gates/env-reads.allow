@@ -74,6 +74,7 @@ crates/workspace/src/skills.rs	<v>
 crates/workspace/src/skills.rs	PATH
 src/cli/mod.rs	SVEN_MODEL
 src/run/ci.rs	SVEN_MODE
+src/run/harness/work_package.rs	PATH
 src/run/logging.rs	<SUBAGENT_DEPTH_ENV>
 src/run/logging.rs	SVEN_LOG_FILE
 src/run/oauth.rs	SVEN_OAUTH_CALLBACK_PORT
