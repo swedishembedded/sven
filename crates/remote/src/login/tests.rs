@@ -379,6 +379,7 @@ fn signed_in_to(openai_base_url: &str) -> RemoteLogin {
         openai_base_url: openai_base_url.into(),
         mcp_url: Some("https://server/api/mcp".into()),
         mcp_token_url: Some("https://server/api/mcp/token".into()),
+        transfer_origins: Vec::new(),
         token: "minted".into(),
         workspace_id: Uuid::nil(),
         workspace_name: "w".into(),
@@ -407,10 +408,13 @@ fn a_saved_sign_in_is_the_sven_providers_server_and_key() {
 }
 
 #[test]
-fn a_hosted_host_may_connect_to_the_ports_of_its_servers_urls_and_no_others() {
+fn a_hosted_host_may_connect_to_the_ports_of_its_servers_urls_and_file_store_and_no_others() {
     let mut login = signed_in_to("http://127.0.0.1:3000/v1");
     login.control_url = "https://server:8443/api/control".into();
     assert_eq!(login.server_ports().unwrap(), vec![443, 8443, 3000]);
+    // A file store the server's transfers go to, on a port of its own.
+    login.transfer_origins = vec!["http://127.0.0.1:9000".into()];
+    assert_eq!(login.server_ports().unwrap(), vec![443, 8443, 3000, 9000]);
     login.control_url = "not a url".into();
     assert!(login.server_ports().is_err());
 }

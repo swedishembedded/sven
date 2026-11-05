@@ -264,7 +264,9 @@ its own that it never shares. Two walls keep a hosted host to itself:
   host does not start unless the kernel enforces all of it, and on other
   systems a hosted host does not start at all. The same confinement
   refuses every TCP bind and every TCP connect except to the ports the
-  host needs (the web's, name resolution's, and its server's), and refuses
+  host needs (the web's, name resolution's, its server's, and those of
+  the file stores the server's transfers go to, `transfer_origins` in the
+  sign-in), and refuses
   signals to, and abstract unix sockets of, processes outside the host.
   Landlock judges a connection by its port, not its address: keeping the
   machine's own and private addresses out is the next wall's work, and the

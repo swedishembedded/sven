@@ -42,6 +42,11 @@ pub struct RemoteLogin {
     /// endpoint, when the server asks for them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_token_url: Option<String>,
+    /// Where the server's file transfers go (the origins of the presigned
+    /// URLs it hands out for uploads and downloads), when that is not the
+    /// server itself: a confined host may connect to their ports too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transfer_origins: Vec<String>,
     /// The key the server minted when the person approved this host. A secret.
     pub token: String,
     /// What the server calls this host.
@@ -59,6 +64,7 @@ impl std::fmt::Debug for RemoteLogin {
             .field("openai_base_url", &self.openai_base_url)
             .field("mcp_url", &self.mcp_url)
             .field("mcp_token_url", &self.mcp_token_url)
+            .field("transfer_origins", &self.transfer_origins)
             .field("token", &"<redacted>")
             .field("workspace_id", &self.workspace_id)
             .field("workspace_name", &self.workspace_name)
@@ -80,6 +86,7 @@ impl RemoteLogin {
             .into_iter()
             .chain(self.mcp_url.as_ref())
             .chain(self.mcp_token_url.as_ref())
+            .chain(self.transfer_origins.iter())
         {
             let parsed = reqwest::Url::parse(url)
                 .map_err(|e| anyhow::anyhow!("the sign-in's URL {url}: {e}"))?;
@@ -304,6 +311,7 @@ pub async fn sign_in_with(
         openai_base_url: found.openai_base_url,
         mcp_url: found.mcp_url,
         mcp_token_url: found.mcp_token_url,
+        transfer_origins: Vec::new(),
         token: granted.token,
         workspace_id: who.workspace_id,
         workspace_name: who.workspace_name,

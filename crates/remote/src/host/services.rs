@@ -47,6 +47,7 @@ mod tests {
             openai_base_url: "https://sven.example/v1".into(),
             mcp_url: Some("https://sven.example/api/mcp".into()),
             mcp_token_url: Some("https://sven.example/api/mcp/token".into()),
+            transfer_origins: Vec::new(),
             token: "host_key".into(),
             workspace_id: Uuid::nil(),
             workspace_name: "Hosted".into(),
@@ -71,6 +72,7 @@ mod tests {
         let login = RemoteLogin {
             mcp_url: None,
             mcp_token_url: None,
+            transfer_origins: Vec::new(),
             ..login
         };
         use_server_services(&mut without, &login);

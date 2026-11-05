@@ -177,6 +177,7 @@ pub async fn exchange_start_credential_with(
         openai_base_url: found.openai_base_url,
         mcp_url: found.mcp_url,
         mcp_token_url: found.mcp_token_url,
+        transfer_origins: Vec::new(),
         token: started.token,
         workspace_id: started.workspace_id,
         workspace_name: started.workspace_name,
