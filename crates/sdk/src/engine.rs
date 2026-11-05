@@ -70,9 +70,10 @@ impl Toolset {
     }
 
     /// Read, write, edit and attach files, search, run shell commands, fetch
-    /// and search the web, keep a todo list and a memory file, load skills,
-    /// switch mode or model, delegate to sub-agents (`task`) and ask the user
-    /// a question. Attaching images and audio, and transcribing speech, need
+    /// and search the web, join video clips, keep a todo list and a memory
+    /// file, load skills, switch mode or model, delegate to sub-agents
+    /// (`task`) and ask the user a question. Generating video is not in it: it
+    /// spends a key, so a host registers `sven_tools_media`'s tools with one. Attaching images and audio, and transcribing speech, need
     /// the `coding` cargo feature (on by default).
     #[must_use]
     pub fn coding() -> Self {

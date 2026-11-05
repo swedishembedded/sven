@@ -79,6 +79,14 @@ const UNREPLAYABLE: &[(&str, &str)] = &[
         "web_search",
         "reads the network, which the workspace does not record",
     ),
+    (
+        "models",
+        "reads the network, which the workspace does not record",
+    ),
+    (
+        "run_model",
+        "renders on a paid provider; the clip it wrote is not in the transcript",
+    ),
 ];
 
 /// The digests a recording holds: the workspace at the fork step, and the

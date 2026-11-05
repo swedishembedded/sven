@@ -315,7 +315,10 @@ lists them (default: the sven service, signed in or configured; a local brain
 or any OpenRouter-compatible server with a `providers.<name>` entry works the
 same way): each one's id, what it makes, the lengths and resolutions it
 renders, whether it makes sound, the edits it can do to an existing clip and
-its price per second. Offered only while that provider has a key.
+its price per second. Offered in sven's own sessions while that provider has a
+key; a harness run or an embedding host gets it only with a video API and key
+of its own (`sven harness run --media-endpoint`, a served run's descriptor),
+never from this machine's sign-in.
 
 ### `run_model`
 

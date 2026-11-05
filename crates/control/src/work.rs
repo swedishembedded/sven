@@ -15,7 +15,8 @@
 //! 1. `GET {run_url}/descriptor` answers the [`RunDescriptor`]: the package,
 //!    the inputs, the files to lay out in the workspace before running (the
 //!    input files, and on a resume the files published so far), the
-//!    checkpoint to resume from, and the model endpoint. Each file comes with
+//!    checkpoint to resume from, and the model endpoint (and the video API,
+//!    when the run may generate video). Each file comes with
 //!    a download good for minutes, and is checked against its digest.
 //!
 //!    The package is one of two [`PackageFormat`]s. A `bundle` (the default)
@@ -119,6 +120,12 @@ pub struct Models {
     /// The model of each role the plan names.
     #[serde(default)]
     pub roles: BTreeMap<String, String>,
+    /// An OpenRouter-compatible video API, ending in `/v1`, that the run's
+    /// agents generate video with (`models`, `run_model`), with the run's
+    /// token; none when the run may not. A worker that predates it ignores
+    /// it, and a server that predates it sends none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_base_url: Option<String>,
 }
 
 /// What the descriptor's `package` file is.
@@ -267,10 +274,15 @@ mod tests {
             "files": [{ "path": "front.png", "file": { "uri": "mcp-file://files/d", "name": "front.png",
                         "mimeType": "image/png", "size": 4, "sha256": "y",
                         "download": { "method": "GET", "url": "https://s/d", "headers": {} } } }],
-            "models": { "openai_base_url": "https://s/v1", "default": "m", "roles": { "vision": "v" } }
+            "models": { "openai_base_url": "https://s/v1", "default": "m", "roles": { "vision": "v" },
+                        "media_base_url": "https://s/v1" }
         }))
         .unwrap();
         assert_eq!(parsed.generation, 3);
+        assert_eq!(
+            parsed.models.media_base_url.as_deref(),
+            Some("https://s/v1")
+        );
         assert_eq!(parsed.package_format, PackageFormat::Bundle);
         assert!(parsed.harness.is_none() && parsed.skills.is_none() && parsed.bin.is_none());
         assert_eq!(parsed.files[0].path, "front.png");
@@ -301,6 +313,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(parsed.package_format, PackageFormat::Tar);
+        assert_eq!(parsed.models.media_base_url, None);
         assert_eq!(parsed.harness.as_deref(), Some("package/harness.yaml"));
         assert_eq!(parsed.skills.as_deref(), Some("package/skills"));
         assert_eq!(parsed.bin.as_deref(), Some("package/bin"));

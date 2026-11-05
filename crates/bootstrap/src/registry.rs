@@ -587,7 +587,8 @@ struct BaseTools<'a> {
 
 /// Register the lean consolidated tool set shared by agent profiles.
 ///
-/// `include_full` controls whether the GDB and context tools are included.
+/// `include_full` (sven's own sessions) controls whether the GDB and context
+/// tools, and video generation with the configured provider, are included.
 /// SubAgent uses the slimmer set (no GDB, no context) since sub-agents
 /// typically perform focused coding/research tasks.
 fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
@@ -669,8 +670,11 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     reg.register(cfg.web_search_tool());
 
     // ── Media (video generation) ─────────────────────────────────────────────
-    // Generating is offered only where its provider has a key; clips land in
-    // the session's working directory, where they can always be joined.
+    // Clips land in the session's working directory, where they can always be
+    // joined. Generating spends the key of the configured provider (by
+    // default this machine's sven sign-in), so only sven's own sessions get it
+    // that way: an embedding host or a harness run, which may run for someone
+    // else, gets generation only by registering it with a key of its own.
     let workdir = paths.root().map_or_else(
         || std::path::PathBuf::from("."),
         std::path::Path::to_path_buf,
@@ -678,7 +682,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     if !confined {
         reg.register(sven_tools_media::JoinVideosTool::new(workdir.clone()));
     }
-    if let Some((models, run_model)) = cfg.media_tools(workdir) {
+    if let Some((models, run_model)) = include_full.then(|| cfg.media_tools(workdir)).flatten() {
         reg.register(models);
         reg.register(run_model);
     }

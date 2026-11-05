@@ -404,6 +404,23 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
     for (role, name) in &descriptor.models.roles {
         builder = builder.model_role(role.clone(), model(name)?);
     }
+    // Video, when the server lets the run make it: generated with the run's
+    // token, in this trusted process, never by the confined commands.
+    if let Some(base_url) = &descriptor.models.media_base_url {
+        let endpoint = sven_tools_media::MediaEndpoint {
+            base_url: base_url.clone(),
+            api_key: client.login.token.clone(),
+        };
+        builder = builder
+            .tool(Arc::new(sven_tools_media::ModelsTool::new(
+                endpoint.clone(),
+            )))
+            .tool(Arc::new(sven_tools_media::RunModelTool::new(
+                endpoint,
+                sven_tools_media::MediaConfig::default(),
+                options.workspace.clone(),
+            )));
+    }
     let engine = builder.build()?;
     let harness = engine.load_harness_from_str(&harness_text)?;
 
@@ -639,6 +656,8 @@ workflow:
     #[derive(Default)]
     struct Server {
         tar: bool,
+        /// The descriptor names a video API.
+        media: bool,
         stale_commit: bool,
         calls: Vec<String>,
         store: BTreeMap<String, Vec<u8>>,
@@ -646,6 +665,8 @@ workflow:
         finished: Option<Value>,
         /// What the agent's shell answered when it tried to read the login.
         agent_saw: Vec<String>,
+        /// The tools the agent's first request offered.
+        offered: Vec<String>,
     }
 
     async fn serve(state: Arc<Mutex<Server>>) -> String {
@@ -726,6 +747,10 @@ workflow:
                                     "files": [{ "path": "drawing.png", "file": file("drawing", &state.store["drawing"]) }],
                                     "models": { "openai_base_url": format!("{base}/v1"), "default": "m" },
                                 });
+                                if state.media {
+                                    descriptor["models"]["media_base_url"] =
+                                        json!(format!("{base}/v1"));
+                                }
                                 if state.tar {
                                     descriptor["package_format"] = json!("tar");
                                     descriptor["harness"] = json!("package/harness.yaml");
@@ -818,6 +843,8 @@ workflow:
                 })
                 .collect();
             if answers.is_empty() {
+                recorded.lock().unwrap().offered =
+                    request.tools.iter().map(|t| t.name.clone()).collect();
                 return vec![
                     ResponseEvent::ToolCall {
                         index: 0,
@@ -877,6 +904,29 @@ workflow:
             "the checkpoint went with it"
         );
         assert_eq!(state.finished.as_ref().unwrap()["outcome"]["ok"], true);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_worker_offers_video_only_when_the_server_names_a_video_api() {
+        let video = ["models", "run_model"];
+        let state = Arc::new(Mutex::new(Server::default()));
+        assert_eq!(worker(&state).await, WorkEnd::Finished);
+        let offered = state.lock().unwrap().offered.clone();
+        assert!(offered.iter().any(|t| t == "shell"), "{offered:?}");
+        assert!(
+            !offered.iter().any(|t| video.contains(&t.as_str())),
+            "{offered:?}"
+        );
+
+        let state = Arc::new(Mutex::new(Server {
+            media: true,
+            ..Server::default()
+        }));
+        assert_eq!(worker(&state).await, WorkEnd::Finished);
+        let offered = state.lock().unwrap().offered.clone();
+        for tool in video {
+            assert!(offered.iter().any(|t| t == tool), "{tool} in {offered:?}");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
