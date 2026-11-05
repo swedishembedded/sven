@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-11-05
+
 ### Fixed
 - **harness**: in a served run (`tools.confine`) the agent's file tools can no longer be raced into reading or writing outside the workspace. `read_file`, `write_file` and `edit_file` (and the worker's file digests, snapshots and publication reads) open each path with `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` beneath the workspace directory held open, so the kernel resolves the path and a confined background process that swaps a directory for a symlink between a check and a use gains nothing (`PathScope::race_free`, `PathScope::open`); the deny rules judge the descriptor that was opened. A relative symlink that stays inside the workspace keeps working; an absolute one is refused. `find_file`, `grep`, `attach_file`, `document_locate`, `document_convert`, `context` and `gdb` take a path to something that is not this process's own open file and are not offered in a confined run. A command that starts its own session still outlives its call (inside the same Landlock domain). Ordinary `sven` is unchanged. New `sven_image::load_image_bytes`.
 
