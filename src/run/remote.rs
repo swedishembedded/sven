@@ -85,7 +85,7 @@ pub(crate) async fn attach_remote_conversation(conversation: uuid::Uuid) -> anyh
                 if text.trim().is_empty() {
                     continue;
                 }
-                match client.send_to_conversation(conversation, &text).await {
+                match client.send_to_conversation(conversation, &text, &[]).await {
                     Ok(()) => {}
                     Err(e) if e.downcast_ref::<sven_remote::Busy>().is_some() => {
                         println!("({e}; send it when the answer is done)");
