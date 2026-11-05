@@ -20,6 +20,11 @@ use crate::Config;
 /// The server's name, which prefixes its tools (`connectors-<tool>`).
 pub const SERVER: &str = "connectors";
 
+/// The `_meta` field of a request to the signed-in server that names the
+/// session it is for: a server keeps what a session makes (its files, the
+/// records it creates) together under that name.
+pub const SESSION_META: &str = "sven/session";
+
 /// Add the `connectors` server at `mcp_url`, unless the configuration names
 /// one of its own. With `token_url`, every request carries a short-lived
 /// token traded there for `key`, and `key` never travels to `mcp_url`;
@@ -56,7 +61,20 @@ pub fn add_signed_in(config: &mut Config) {
                 signed_in.mcp_token_url.as_deref(),
                 &signed_in.key,
             );
+            name_session(config, uuid::Uuid::new_v4());
         }
+    }
+}
+
+/// Names `id` as the session of this process's requests to the signed-in
+/// server, so what one terminal run makes there stays together. A host that
+/// runs many sessions (`sven rc`) names each one's own instead.
+fn name_session(config: &mut Config, id: uuid::Uuid) {
+    if let Some(server) = config.mcp_servers.get_mut(SERVER) {
+        server
+            .request_meta
+            .entry(SESSION_META)
+            .or_insert_with(|| serde_json::Value::String(id.to_string()));
     }
 }
 
@@ -379,6 +397,23 @@ mod tests {
             "web_fetch",
         ];
         assert_eq!(account_groups(names), vec!["github_me", "linear_me"]);
+    }
+
+    #[test]
+    fn a_terminal_run_names_its_session_to_the_server() {
+        let mut config = Config::default();
+        name_session(&mut config, uuid::Uuid::new_v4());
+        assert!(config.mcp_servers.is_empty(), "no server, nothing named");
+
+        add(&mut config, "https://sven.example/api/mcp", None, "key");
+        let first = uuid::Uuid::new_v4();
+        name_session(&mut config, first);
+        name_session(&mut config, uuid::Uuid::new_v4());
+        assert_eq!(
+            config.mcp_servers[SERVER].request_meta[SESSION_META],
+            serde_json::Value::String(first.to_string()),
+            "the first name stays for the whole run"
+        );
     }
 
     #[test]

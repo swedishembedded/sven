@@ -124,8 +124,10 @@ extension `experimental-ext-file-uploads`; sven follows the PR revision of
 - The model never sees an upload or download URL.
 
 A host can add fields to the `_meta` of every tool call and file request to
-a server (the session they are for); `sven rc` sets `sven/session` to the
-session's id.
+a server (the session they are for). To the signed-in server, `sven rc`
+sets `sven/session` to each session's id, and a sven in a terminal names
+its run as one session (a fresh id each run), so what the run makes there,
+the files it uploads and the records it creates, stays together.
 
 ### Connected accounts
 

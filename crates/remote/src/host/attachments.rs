@@ -33,9 +33,6 @@ use super::SessionActor;
 /// overwrite each other and fetching one again rewrites it in place.
 pub(super) const DIR: &str = ".sven/attachments";
 
-/// The `_meta` key that names a session's conversation in file requests.
-const SESSION_META: &str = "sven/session";
-
 /// `config` for session `id` working in `working_dir`: every MCP server
 /// resolves the session's file arguments there, not in the host's own
 /// directory, and the signed-in server's requests name the session.
@@ -49,7 +46,7 @@ pub(super) fn for_session(config: &Arc<Config>, id: Uuid, working_dir: &Path) ->
     }
     if let Some(server) = own.mcp_servers.get_mut(sven_bootstrap::connectors::SERVER) {
         server.request_meta.insert(
-            SESSION_META.into(),
+            sven_bootstrap::connectors::SESSION_META.into(),
             serde_json::Value::String(id.to_string()),
         );
     }
@@ -286,7 +283,7 @@ mod tests {
         );
         assert!(text.contains("q4.csv: could not be fetched"), "{text}");
         assert_eq!(
-            metas.lock().unwrap()[0][SESSION_META],
+            metas.lock().unwrap()[0][sven_bootstrap::connectors::SESSION_META],
             serde_json::json!(id.to_string())
         );
 
