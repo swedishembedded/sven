@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-11-05
+
 ### Added
 - **media**: video generation and editing as two tools against any OpenRouter-compatible `/videos` API (a local brain, OpenRouter, the sven service): `models` lists what each model renders, its edits and its price per second; `run_model` generates or edits a clip and writes it into the working directory, `output` saving it at a path of the caller's choosing. A request is named by what it asks (provider, model, arguments, input clip), so the same request, now or after a restart, answers the clip already made and is never paid for twice; a failed one is asked again under a new name. Configured by `tools.media` (`provider`, `dir`, `timeout_secs`).
 - **media**: `join_videos` and `sven media join` put MP4 clips one after another into one file by copying their samples (no re-encoding, no ffmpeg); clips encoded differently are refused by name, and each clip's sound is cut or padded to its picture so a film of many shots never drifts. `sven media probe` reads a clip's length, size, codec, frames and sound and checks every sample lies inside the file (`--seconds N --tolerance T`, `--min-seconds`, `--max-seconds`, `--require-audio`), for harness checks.
