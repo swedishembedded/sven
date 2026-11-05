@@ -208,7 +208,8 @@ directory. For a tar the descriptor also names `harness` (required: the main
 workflow's path inside the archive; the workflows it imports are read from
 beside it), and optionally `skills` (a directory of skills, copied to where the
 agent finds skills in the workspace) and `bin` (a directory of tools, put first
-on the `PATH` of everything the run executes, gates included). The worker
+on the `PATH` of the commands the run's shell and gate tools start; the
+worker's own environment is not changed). The worker
 unpacks the archive into the run's private package directory and makes it
 read-only; the archive may hold regular files and directories only, so an
 absolute path, a `..` component, a symlink, hard link or device refuses it, as

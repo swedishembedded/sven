@@ -21,6 +21,7 @@ crates/model-drivers/src/lib.rs	XDG_CONFIG_HOME
 crates/remote/src/login/browser.rs	<name>
 crates/team/src/cli.rs	HOME
 crates/tools-android/src/tool.rs	SVEN_ANDROID_SERIAL
+crates/tools-exec/src/search_path.rs	PATH
 crates/tools-fs/src/file/read_file.rs	SVEN_NO_PATH_ASCENT
 crates/tools-web/src/web_search.rs	BRAVE_API_KEY
 crates/tui-nvim/src/bridge.rs	SVEN_REQUIRE_NVIM
@@ -74,7 +75,6 @@ crates/workspace/src/skills.rs	<v>
 crates/workspace/src/skills.rs	PATH
 src/cli/mod.rs	SVEN_MODEL
 src/run/ci.rs	SVEN_MODE
-src/run/harness/work_package.rs	PATH
 src/run/logging.rs	<SUBAGENT_DEPTH_ENV>
 src/run/logging.rs	SVEN_LOG_FILE
 src/run/oauth.rs	SVEN_OAUTH_CALLBACK_PORT

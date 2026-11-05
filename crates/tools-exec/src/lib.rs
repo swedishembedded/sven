@@ -4,6 +4,7 @@
 //! Command execution: the free-form `shell` tool and the harness-only gate
 //! command tool.
 pub mod gate;
+mod search_path;
 pub mod shell;
 
 pub use gate::{GateCommandTool, TrajectoryHook};

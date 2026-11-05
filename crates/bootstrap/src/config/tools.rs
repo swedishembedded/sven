@@ -15,6 +15,7 @@
 //! agent may run then you can procure our services by sending an email to
 //! info@swedishembedded.com.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -73,6 +74,12 @@ pub struct ToolsConfig {
     /// How much of each tool's definition a request carries.
     #[serde(default)]
     pub disclosure: DisclosureConfig,
+    /// Directories that go first on the `PATH` of the commands the `shell`
+    /// tool and the harness gate runner start: the programs a served run's
+    /// package brought. Set by sven itself, never read from a configuration
+    /// file; the process's own `PATH` is not changed.
+    #[serde(skip)]
+    pub path_prefix: Vec<PathBuf>,
 }
 
 impl ToolsConfig {
@@ -104,6 +111,7 @@ impl ToolsConfig {
             max_timeout_secs: self.max_timeout_secs,
             scope,
             policy: Arc::new(self.policy()),
+            path_prefix: self.path_prefix.clone(),
             ..ShellTool::default()
         }
     }
@@ -137,6 +145,7 @@ impl Default for ToolsConfig {
             context: ContextConfig::default(),
             asr: AsrConfig::default(),
             disclosure: DisclosureConfig::default(),
+            path_prefix: Vec::new(),
         }
     }
 }

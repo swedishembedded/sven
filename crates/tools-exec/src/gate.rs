@@ -254,6 +254,8 @@ fn environment(given: Option<&Value>) -> Result<Vec<(String, String)>, String> {
 /// Runs a harness gate's command inside the workspace.
 pub struct GateCommandTool {
     scope: PathScope,
+    /// Directories that go first on the `PATH` of every step.
+    path_prefix: Vec<std::path::PathBuf>,
     trajectory: Option<TrajectoryHook>,
 }
 
@@ -272,8 +274,17 @@ impl GateCommandTool {
     pub fn new(root: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
         Ok(Self {
             scope: PathScope::confined(root)?,
+            path_prefix: Vec::new(),
             trajectory: None,
         })
+    }
+
+    /// Puts `dirs` first on the `PATH` of every step, so a program that
+    /// lives only there is found by its bare name.
+    #[must_use]
+    pub fn with_path_prefix(mut self, dirs: Vec<std::path::PathBuf>) -> Self {
+        self.path_prefix = dirs;
+        self
     }
 
     /// Lets a gate read the run's trajectory: a call that names a
@@ -366,7 +377,14 @@ impl GateCommandTool {
         keep: usize,
         env: &[(String, String)],
     ) -> Report {
+        let search_path = match crate::search_path::with_prefix(&self.path_prefix) {
+            Ok(path) => path,
+            Err(e) => return Report::failed_to_start(e),
+        };
         let mut command = Command::new(&argv[0]);
+        if let Some(path) = search_path {
+            command.env("PATH", path);
+        }
         command
             .args(&argv[1..])
             .current_dir(dir)

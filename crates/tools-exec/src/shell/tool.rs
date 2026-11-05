@@ -86,6 +86,10 @@ pub struct ShellTool {
     /// `read` and `grep` actions). Only then does a result name its buffer
     /// and say how to read it.
     pub buffers_readable: bool,
+    /// Directories that go first on the `PATH` of every command, so a
+    /// program that lives only there is found by its bare name. Set by the
+    /// host that brought the programs, never read from a configuration file.
+    pub path_prefix: Vec<std::path::PathBuf>,
 }
 
 impl Default for ShellTool {
@@ -99,6 +103,7 @@ impl Default for ShellTool {
             capture_quota_bytes: DEFAULT_CAPTURE_QUOTA_BYTES,
             visible_bytes: DEFAULT_VISIBLE_BYTES,
             buffers_readable: false,
+            path_prefix: Vec::new(),
         }
     }
 }
@@ -183,6 +188,9 @@ impl ShellTool {
         cmd.stdin(Stdio::null());
         cmd.kill_on_drop(true);
         cmd.envs(NON_INTERACTIVE_ENV);
+        if let Some(path) = crate::search_path::with_prefix(&self.path_prefix)? {
+            cmd.env("PATH", path);
+        }
         // setsid() in pre_exec creates a new session for the child, detaching
         // it from the controlling terminal.  Without this, a subprocess can
         // open /dev/tty directly (bypassing our stdin/stdout/stderr redirects)

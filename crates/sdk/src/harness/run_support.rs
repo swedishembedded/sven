@@ -69,13 +69,17 @@ pub(super) fn interrupted_failure(state: &HarnessRunState) -> Option<Event> {
 /// and a gate then fails closed because the tool is missing.
 pub(super) fn harness_tools(
     root: Option<&std::path::Path>,
+    path_prefix: &[std::path::PathBuf],
     host: Vec<Arc<dyn sven_tool_api::Tool>>,
     trajectory: sven_tools_exec::TrajectoryHook,
 ) -> Vec<Arc<dyn sven_tool_api::Tool>> {
     let mut tools: Vec<Arc<dyn sven_tool_api::Tool>> = Vec::new();
     if let Some(root) = root {
         if let Ok(gate) = sven_tools_exec::GateCommandTool::new(root) {
-            tools.push(Arc::new(gate.with_trajectory_hook(trajectory)));
+            let gate = gate
+                .with_path_prefix(path_prefix.to_vec())
+                .with_trajectory_hook(trajectory);
+            tools.push(Arc::new(gate));
         }
         if let Ok(snapshot) = sven_tools_fs::ReadJsonSnapshotTool::new(root) {
             tools.push(Arc::new(snapshot));

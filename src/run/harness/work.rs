@@ -220,12 +220,19 @@ async fn commit(
     Ok(())
 }
 
-/// Lays the run's package out and returns the text the engine loads the
-/// harness from.
+/// What a laid-out package gives the run.
+struct LaidOut {
+    /// The text the engine loads the harness from.
+    harness_text: String,
+    /// The package's `bin`, which goes first on the `PATH` of the commands
+    /// the run's tools start; none for a bundle or a tar without one.
+    bin: Option<PathBuf>,
+}
+
+/// Lays the run's package out.
 ///
 /// A bundle is written to `package_dir`. A tar is unpacked there read-only,
-/// its `bin` goes first on the `PATH` of everything the run executes, and its
-/// main workflow is read from its place in the unpacked tree, so the
+/// and its main workflow is read from its place in the unpacked tree, so the
 /// workflows it imports are found beside it. In both, the skills are copied
 /// to where the agent finds skills in `workspace`.
 fn lay_out_package(
@@ -233,7 +240,7 @@ fn lay_out_package(
     package: &[u8],
     package_dir: &Path,
     workspace: &Path,
-) -> Result<String> {
+) -> Result<LaidOut> {
     let skills = match descriptor.package_format {
         PackageFormat::Bundle => {
             if descriptor.harness.is_some()
@@ -247,7 +254,10 @@ fn lay_out_package(
             sven_harness_spec::resources::materialize(&bundle.resources, package_dir)?;
             let text = serde_json::to_string(&bundle)?;
             install_skills(&package_dir.join("skills"), workspace)?;
-            return Ok(text);
+            return Ok(LaidOut {
+                harness_text: text,
+                bin: None,
+            });
         }
         PackageFormat::Tar => descriptor.skills.as_deref(),
     };
@@ -261,12 +271,15 @@ fn lay_out_package(
         let skills = work_package::package_path(package_dir, skills).context("skills")?;
         install_skills(&skills, workspace)?;
     }
-    if let Some(bin) = &descriptor.bin {
-        work_package::prepend_to_path(
-            &work_package::package_path(package_dir, bin).context("bin")?,
-        )?;
-    }
-    Ok(super::source::Source::open(&main)?.text)
+    let bin = descriptor
+        .bin
+        .as_deref()
+        .map(|bin| work_package::package_path(package_dir, bin).context("bin"))
+        .transpose()?;
+    Ok(LaidOut {
+        harness_text: super::source::Source::open(&main)?.text,
+        bin,
+    })
 }
 
 /// Copies the skills in `from`, when it is a directory, to where the agent
@@ -296,7 +309,7 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
     // data in the run's private directory, which a gate names through
     // `package_dir`.
     let package_dir = options.scratch.join("package");
-    let harness_text = lay_out_package(
+    let LaidOut { harness_text, bin } = lay_out_package(
         &descriptor,
         &client.fetch(&descriptor.package).await?,
         &package_dir,
@@ -323,7 +336,12 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
         };
         Ok(Arc::from(sven_model_drivers::from_config(&config)?))
     };
+    // The package's tools are found by the run's commands through the tools'
+    // own configuration; this process's environment is not touched.
+    let mut config = sven_sdk::config::Config::default();
+    config.tools.path_prefix = bin.into_iter().collect();
     let mut builder = Engine::builder()
+        .config(config)
         .model_provider(model(&descriptor.models.default)?)
         .toolset(Toolset::coding());
     for (role, name) in &descriptor.models.roles {
@@ -774,7 +792,21 @@ workflow:
             tar: true,
             ..Server::default()
         }));
+        // The PATH a program started from here inherits.
+        let process_path = || {
+            std::process::Command::new("sh")
+                .args(["-c", "printf %s \"$PATH\""])
+                .output()
+                .unwrap()
+                .stdout
+        };
+        let path_before = process_path();
         assert_eq!(worker(&state).await, WorkEnd::Finished);
+        assert_eq!(
+            process_path(),
+            path_before,
+            "the package's bin reaches the run's tools without changing this process's PATH"
+        );
         let state = state.lock().unwrap();
         assert_eq!(state.finished.as_ref().unwrap()["outcome"]["ok"], true);
         assert_eq!(state.commits.len(), 1, "{:?}", state.calls);

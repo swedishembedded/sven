@@ -206,19 +206,6 @@ pub(super) fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Puts `dir` first on the `PATH` of every program this process starts.
-///
-/// A worker serves one run, so its environment is the run's. The tools the
-/// run starts (the shell, a gate's command) inherit it.
-pub(super) fn prepend_to_path(dir: &Path) -> Result<()> {
-    let mut paths = vec![dir.to_path_buf()];
-    paths.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
-    std::env::set_var("PATH", std::env::join_paths(paths)?);
-    Ok(())
-}
-
 /// Makes a sealed tree removable again (tests clean up with it).
 #[cfg(test)]
 pub(super) fn restore_write(root: &Path) {

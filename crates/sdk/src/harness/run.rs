@@ -416,6 +416,7 @@ impl HarnessRun {
             .with_builtin_tools(self.engine.toolset().builtin())
             .with_extra_tools(harness_tools(
                 root.as_deref(),
+                &self.engine.config().tools.path_prefix,
                 self.engine.tools(),
                 live_trajectory::hook(&trajectory_slot),
             ))

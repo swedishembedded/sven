@@ -108,6 +108,7 @@ pub fn build_mcp_registry(
         if let Some(gate) = scope
             .root()
             .and_then(|root| sven_tools_exec::GateCommandTool::new(root).ok())
+            .map(|gate| gate.with_path_prefix(tools.path_prefix.clone()))
         {
             reg.register(gate);
         }

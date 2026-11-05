@@ -27,8 +27,9 @@
 //!    package directory (regular files and directories only; an absolute
 //!    path, a `..` component, a link or a device refuses the whole archive;
 //!    at most [`MAX_TAR_ENTRIES`] entries and [`MAX_TAR_BYTES`] bytes), and
-//!    makes it read-only. `bin` goes first on the `PATH` of every program the
-//!    run executes, tools and gates alike. A server cannot know where the
+//!    makes it read-only. `bin` goes first on the `PATH` of every command the
+//!    run's shell and gate tools start; the worker's own environment is not
+//!    changed. A server cannot know where the
 //!    package is unpacked, so in a tar package any input value that is
 //!    exactly `{"package": "<path>"}` is replaced, before the run starts, by
 //!    the absolute path of that entry of the archive (the run fails when the
@@ -148,7 +149,7 @@ pub struct RunDescriptor {
     #[serde(default)]
     pub skills: Option<String>,
     /// `tar` only: the directory of tools inside the archive, put first on
-    /// the `PATH` of everything the run executes.
+    /// the `PATH` of the commands the run's shell and gate tools start.
     #[serde(default)]
     pub bin: Option<String>,
     /// The run's inputs; a `file` input names a path of [`Self::files`], and
