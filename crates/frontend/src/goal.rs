@@ -111,10 +111,16 @@ mod tests {
         assert_eq!(goal_line("fix the tests"), None);
         assert_eq!(goal_line("/goalpost moved"), None);
         assert_eq!(goal_line("/goal"), Some(GoalLine::Show));
-        assert_eq!(goal_line("  /goal pause"), Some(GoalLine::Command(GoalCommand::Pause)));
+        assert_eq!(
+            goal_line("  /goal pause"),
+            Some(GoalLine::Command(GoalCommand::Pause))
+        );
         assert!(matches!(
             goal_line("/goal --turns 5 port the parser"),
-            Some(GoalLine::Command(GoalCommand::Set { max_turns: Some(5), .. }))
+            Some(GoalLine::Command(GoalCommand::Set {
+                max_turns: Some(5),
+                ..
+            }))
         ));
         assert!(matches!(goal_line("/goal check"), Some(GoalLine::Usage(_))));
     }
