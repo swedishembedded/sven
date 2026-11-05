@@ -22,8 +22,9 @@ use sven_harness_spec::SNAPSHOT_TOOL;
 use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
-use sven_tool_api::PathScope;
+use sven_tool_api::{OpenMode, PathScope};
 use sven_vocab::AgentMode;
+use tokio::io::AsyncReadExt;
 
 /// The largest file the tool reads. A backlog of thousands of items is a few
 /// hundred kilobytes; anything near this is not a backlog.
@@ -42,7 +43,9 @@ impl ReadJsonSnapshotTool {
     /// When `root` does not exist or is not a directory.
     pub fn new(root: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
         Ok(Self {
-            scope: PathScope::confined(root)?,
+            // Opened beneath the workspace inside the kernel: the agent's own
+            // processes write it.
+            scope: PathScope::confined(root)?.race_free_where_supported(),
         })
     }
 }
@@ -95,11 +98,11 @@ impl Tool for ReadJsonSnapshotTool {
         ) else {
             return ToolOutput::err(&call.id, "`path` and `pointer` are required strings");
         };
-        let resolved = match self.scope.resolve_for(call, path) {
-            Ok(resolved) => resolved,
-            Err(refused) => return refused,
+        let file = match self.scope.open(path, OpenMode::Read) {
+            Ok(file) => file,
+            Err(e) => return e.into_output(call, &format!("{path} cannot be read")),
         };
-        let size = match tokio::fs::metadata(&resolved).await {
+        let size = match file.metadata() {
             Ok(meta) if meta.is_file() => meta.len(),
             Ok(_) => return ToolOutput::err(&call.id, format!("{path} is not a file")),
             Err(e) => return ToolOutput::err(&call.id, format!("{path} cannot be read: {e}")),
@@ -110,10 +113,13 @@ impl Tool for ReadJsonSnapshotTool {
                 format!("{path} is {size} bytes, more than the {MAX_BYTES} a snapshot may read"),
             );
         }
-        let bytes = match tokio::fs::read(&resolved).await {
-            Ok(bytes) => bytes,
-            Err(e) => return ToolOutput::err(&call.id, format!("{path} cannot be read: {e}")),
-        };
+        let mut bytes = Vec::new();
+        if let Err(e) = tokio::fs::File::from_std(file)
+            .read_to_end(&mut bytes)
+            .await
+        {
+            return ToolOutput::err(&call.id, format!("{path} cannot be read: {e}"));
+        }
         let document: Value = match serde_json::from_slice(&bytes) {
             Ok(document) => document,
             Err(e) => return ToolOutput::err(&call.id, format!("{path} is not valid JSON: {e}")),

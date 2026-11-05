@@ -10,7 +10,7 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::params::{opt_u64, require_str};
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{OutputCategory, Tool, ToolCall, ToolDisplay, ToolOutput};
-use sven_tool_api::PathScope;
+use sven_tool_api::{OpenError, OpenMode, PathScope};
 
 /// Default number of lines returned when the caller does not specify a limit.
 /// Kept small to avoid flooding the model context on the first read; the agent
@@ -112,9 +112,32 @@ impl Tool for ReadFileTool {
 
         debug!(path = %path, offset, limit, "read_file tool");
 
-        let scoped = match self.scope.resolve_for(call, &path) {
-            Ok(p) => p,
-            Err(refused) => return refused,
+        // Opened once, here: every later use is of this descriptor, never of
+        // the name again (see `PathScope::open`).
+        //
+        // When a workflow runs from a project sub-directory but references a
+        // file relative to a workspace root one level up, an unconfined scope
+        // tries ascending the directory tree to find the file automatically.
+        //
+        // Example: <workspace>/<project>/.cursor/knowledge/foo.md fails →
+        //          <workspace>/.cursor/knowledge/foo.md is tried automatically.
+        //
+        // Never under a confined scope: the sibling it finds was not the path
+        // that was checked, and may lie outside the root.
+        let (file, resolved_note) = match self.scope.open(&path, OpenMode::Read) {
+            Ok(f) => (f, None),
+            Err(e) => {
+                let found = match (&e, self.scope.root()) {
+                    (OpenError::Io(_), None) => ascend_to_find(&path),
+                    _ => None,
+                };
+                match found.and_then(|p| std::fs::File::open(&p).ok().map(|f| (f, p))) {
+                    Some((f, found)) => {
+                        (f, Some(format!("note: resolved to {}\n", found.display())))
+                    }
+                    None => return e.into_output(call, "read error"),
+                }
+            }
         };
 
         // ── Image files ───────────────────────────────────────────────────────
@@ -127,7 +150,10 @@ impl Tool for ReadFileTool {
         #[cfg(feature = "media")]
         {
             if sven_image::is_image_extension(ext) {
-                return match sven_image::load_image(&scoped) {
+                let Ok(raw) = read_all(file).await else {
+                    return ToolOutput::err(&call.id, "failed to read image");
+                };
+                return match sven_image::load_image_bytes(&raw, std::path::Path::new(&path)) {
                     Ok(img) => {
                         let data_url = img.into_data_url();
                         ToolOutput::with_parts(
@@ -143,30 +169,8 @@ impl Tool for ReadFileTool {
             }
         }
 
-        // ── Path resolution ───────────────────────────────────────────────────
-        // When a workflow runs from a project sub-directory but references a
-        // file relative to a workspace root one level up, try ascending the
-        // directory tree to find the file automatically.
-        //
-        // Example: <workspace>/<project>/.cursor/knowledge/foo.md fails →
-        //          <workspace>/.cursor/knowledge/foo.md is tried automatically.
-        //
-        // Never under a confined scope: the sibling it finds was not the path
-        // that was checked, and may lie outside the root.
-        let ascended = match self.scope.root() {
-            Some(_) => None,
-            None => ascend_to_find(&path),
-        };
-        let (resolved_path, resolved_note) = match ascended {
-            Some(found) => {
-                let note = format!("note: resolved to {}\n", found.display());
-                (found, Some(note))
-            }
-            None => (scoped, None),
-        };
-
         // ── Read raw bytes ────────────────────────────────────────────────────
-        let bytes = match tokio::fs::read(&resolved_path).await {
+        let bytes = match read_all(file).await {
             Ok(b) => b,
             Err(e) => return ToolOutput::err(&call.id, format!("read error: {e}")),
         };
@@ -252,6 +256,16 @@ impl Tool for ReadFileTool {
 
         ToolOutput::ok(&call.id, content)
     }
+}
+
+/// All of `file`, read without blocking the executor.
+async fn read_all(file: std::fs::File) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    tokio::fs::File::from_std(file)
+        .read_to_end(&mut bytes)
+        .await?;
+    Ok(bytes)
 }
 
 // ── Binary detection ──────────────────────────────────────────────────────────

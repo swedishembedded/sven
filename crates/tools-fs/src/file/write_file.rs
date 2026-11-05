@@ -11,7 +11,7 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
-use sven_tool_api::PathScope;
+use sven_tool_api::{OpenMode, PathScope};
 
 /// The `write_file` tool. Its paths resolve through the [`PathScope`] it is built
 /// with; [`Default`] is unconfined.
@@ -138,48 +138,35 @@ impl Tool for WriteTool {
 
         debug!(path = %path, append = should_append, "write tool");
 
-        let target = match self.scope.resolve_for(call, &path) {
-            Ok(p) => p,
-            Err(refused) => return refused,
-        };
-        if let Some(parent) = target.parent() {
-            if !parent.as_os_str().is_empty() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-        }
-
-        if should_append {
-            use tokio::io::AsyncWriteExt;
-            match tokio::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&target)
-                .await
-            {
-                Ok(mut f) => {
-                    let result = f.write_all(content.as_bytes()).await;
-                    // Explicitly flush + shutdown to ensure all bytes reach the OS before
-                    // the file handle is dropped (tokio::fs::File close is async on drop).
-                    let _ = f.flush().await;
-                    let _ = f.shutdown().await;
-                    match result {
-                        Ok(_) => ToolOutput::ok(
-                            &call.id,
-                            format!("appended {} bytes to {path}{note}", content.len()),
-                        ),
-                        Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
-                    }
-                }
-                Err(e) => ToolOutput::err(&call.id, format!("open error: {e}")),
-            }
+        // Missing parent directories are made and the file opened by the
+        // scope, beneath the root, in one race-free step.
+        let mode = if should_append {
+            OpenMode::Append
         } else {
-            match tokio::fs::write(&target, &content).await {
-                Ok(_) => ToolOutput::ok(
-                    &call.id,
-                    format!("wrote {} bytes to {path}{note}", content.len()),
-                ),
-                Err(e) => ToolOutput::err(&call.id, format!("write error: {e}")),
-            }
+            OpenMode::Truncate
+        };
+        let file = match self.scope.open(&path, mode) {
+            Ok(f) => f,
+            Err(e) => return e.into_output(call, "write error"),
+        };
+        let mut file = tokio::fs::File::from_std(file);
+
+        use tokio::io::AsyncWriteExt;
+        let result = file.write_all(content.as_bytes()).await;
+        // Flush and shut down so every byte reaches the OS before the handle
+        // is dropped (tokio::fs::File close is async on drop).
+        let _ = file.flush().await;
+        let _ = file.shutdown().await;
+        match (result, should_append) {
+            (Ok(()), true) => ToolOutput::ok(
+                &call.id,
+                format!("appended {} bytes to {path}{note}", content.len()),
+            ),
+            (Ok(()), false) => ToolOutput::ok(
+                &call.id,
+                format!("wrote {} bytes to {path}{note}", content.len()),
+            ),
+            (Err(e), _) => ToolOutput::err(&call.id, format!("write error: {e}")),
         }
     }
 }

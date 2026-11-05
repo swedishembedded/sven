@@ -26,10 +26,29 @@
 //! The returned path is the resolved one, so a tool operates on exactly what
 //! was checked rather than re-resolving the caller's string. The check is a
 //! point-in-time one: a process that swaps a directory for a symlink between
-//! the check and the use is not defended against. A root confines the tools
-//! built with it; it is not a sandbox.
+//! the check and the use is not defended against by [`PathScope::resolve`]. A
+//! root confines the tools built with it; it is not a sandbox.
+//!
+//! # Race-free opening
+//!
+//! Where another process writes the tree while tools run (the agent's
+//! confined commands in a served harness run), [`PathScope::race_free`] holds
+//! the root open as a directory and [`PathScope::open`] opens every file
+//! with `openat2(root, relative, RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`:
+//! the kernel resolves the path and refuses (`EXDEV`) anything that leaves
+//! the root, so there is no window between a check and a use. The tool then
+//! works on the returned descriptor only. Relative symlinks that stay inside
+//! the root keep working; absolute ones are refused by the kernel. Missing
+//! parent directories are created one component at a time with `mkdirat`
+//! and the same resolution rules. The deny rules are applied to where the
+//! opened descriptor really is (`/proc/self/fd`), and a file is only
+//! truncated after that check. A tool that must hand a *path* to a walker, a
+//! library or another process cannot be made race-free this way. Without
+//! `race_free` (ordinary sven) `open` is [`PathScope::resolve`] and an
+//! ordinary open.
 
 use std::fmt;
+use std::fs::File;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -48,6 +67,89 @@ pub struct PathScope {
     /// Names refused as any component beneath the root (see
     /// [`PathScope::denying_names`]).
     denied_names: Arc<Vec<std::ffi::OsString>>,
+    /// The root held open for race-free lookups (see [`PathScope::race_free`]).
+    anchor: Anchor,
+}
+
+/// The open root directory of a race-free scope; absent otherwise.
+#[derive(Clone, Debug, Default)]
+struct Anchor(#[cfg(target_os = "linux")] Option<Arc<crate::beneath::Beneath>>);
+
+impl PartialEq for Anchor {
+    fn eq(&self, other: &Self) -> bool {
+        #[cfg(target_os = "linux")]
+        return match (&self.0, &other.0) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        #[cfg(not(target_os = "linux"))]
+        return {
+            let _ = other;
+            true
+        };
+    }
+}
+
+impl Eq for Anchor {}
+
+/// How [`PathScope::open`] opens a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenMode {
+    /// Read an existing file.
+    Read,
+    /// Read and rewrite an existing file in place; never creates.
+    Modify,
+    /// Create the file (and the directories above it) if missing, then
+    /// empty it.
+    Truncate,
+    /// Create the file (and the directories above it) if missing, then
+    /// append to it.
+    Append,
+}
+
+/// Why [`PathScope::open`] failed.
+#[derive(Debug)]
+pub enum OpenError {
+    /// The scope refuses the path (outside the root, denied, unresolvable).
+    Refused(PathScopeError),
+    /// The path is acceptable but the file could not be opened.
+    Io(io::Error),
+}
+
+impl OpenError {
+    /// The error result the model reads: a refusal as the scope words it, any
+    /// other failure as `"{what}: {error}"`.
+    #[must_use]
+    pub fn into_output(self, call: &ToolCall, what: &str) -> ToolOutput {
+        match self {
+            Self::Refused(refused) => ToolOutput::err(&call.id, refused.to_string()),
+            Self::Io(e) => ToolOutput::err(&call.id, format!("{what}: {e}")),
+        }
+    }
+}
+
+impl fmt::Display for OpenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Refused(e) => e.fmt(f),
+            Self::Io(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for OpenError {}
+
+impl From<PathScopeError> for OpenError {
+    fn from(refused: PathScopeError) -> Self {
+        Self::Refused(refused)
+    }
+}
+
+impl From<io::Error> for OpenError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 /// A path a [`PathScope`] refuses.
@@ -138,7 +240,55 @@ impl PathScope {
             root: Some(Arc::new(canonical)),
             denied: Arc::default(),
             denied_names: Arc::default(),
+            anchor: Anchor::default(),
         })
+    }
+
+    /// This scope with its root held open, so that [`Self::open`] resolves
+    /// every path inside the kernel (`openat2` with `RESOLVE_BENEATH`) and
+    /// not in this process: a concurrent process cannot swap a directory for
+    /// a symlink between the check and the use. Meaningful only on a confined
+    /// scope; an unconfined one is returned unchanged.
+    ///
+    /// # Errors
+    ///
+    /// When the root cannot be opened, or the platform has no `openat2`
+    /// (anything but Linux): a scope that was asked to be race-free and cannot
+    /// be must not silently fall back.
+    pub fn race_free(mut self) -> io::Result<Self> {
+        let Some(root) = self.root.as_deref() else {
+            return Ok(self);
+        };
+        #[cfg(target_os = "linux")]
+        {
+            self.anchor = Anchor(Some(Arc::new(crate::beneath::Beneath::new(root)?)));
+            Ok(self)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = root;
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "race-free path resolution needs Linux openat2",
+            ))
+        }
+    }
+
+    /// [`Self::race_free`] where the platform can, else this scope as it was:
+    /// for readers of a tree another process may write, which on a platform
+    /// without `openat2` have no confinement to protect anyway.
+    #[must_use]
+    pub fn race_free_where_supported(self) -> Self {
+        self.clone().race_free().unwrap_or(self)
+    }
+
+    /// Whether [`Self::open`] resolves inside the kernel on this scope.
+    #[must_use]
+    pub fn is_race_free(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        return self.anchor.0.is_some();
+        #[cfg(not(target_os = "linux"))]
+        return false;
     }
 
     /// This scope, also refusing everything at or beneath `location` (a
@@ -198,6 +348,16 @@ impl PathScope {
 
         let resolved =
             follow_existing_prefix(&normalise(&root.join(requested))).map_err(unresolvable)?;
+        self.judge(requested, root, resolved)
+    }
+
+    /// Applies the deny rules and the containment rule to `resolved`.
+    fn judge(
+        &self,
+        requested: &Path,
+        root: &Path,
+        resolved: PathBuf,
+    ) -> Result<PathBuf, PathScopeError> {
         let named = resolved.strip_prefix(root).is_ok_and(|inside| {
             inside.components().any(|part| {
                 self.denied_names
@@ -214,9 +374,93 @@ impl PathScope {
         } else {
             Err(PathScopeError::Outside {
                 requested: requested.to_path_buf(),
-                root: root.clone(),
+                root: root.to_path_buf(),
             })
         }
+    }
+
+    /// Opens the file `requested` names in `mode`.
+    ///
+    /// On a [race-free](Self::race_free) scope the kernel resolves the path
+    /// beneath the open root, so what is opened is beneath the root whatever
+    /// another process does to the tree meanwhile, and the deny rules are then
+    /// applied to where the opened descriptor really is. Otherwise this is
+    /// [`Self::resolve`] followed by an ordinary open, with the window that
+    /// the module documentation describes.
+    ///
+    /// # Errors
+    ///
+    /// [`OpenError::Refused`] when the scope refuses the path;
+    /// [`OpenError::Io`] when the open itself fails. Nothing is assumed about
+    /// what was opened (a directory opens for reading); the caller reads
+    /// the descriptor's own metadata.
+    pub fn open(&self, requested: impl AsRef<Path>, mode: OpenMode) -> Result<File, OpenError> {
+        let requested = requested.as_ref();
+        let resolved = self.resolve(requested)?;
+        #[cfg(target_os = "linux")]
+        if let (Some(anchor), Some(root)) = (self.anchor.0.as_deref(), self.root.as_deref()) {
+            return self.open_beneath(anchor, root, requested, &resolved, mode);
+        }
+        if matches!(mode, OpenMode::Truncate | OpenMode::Append) {
+            if let Some(parent) = resolved.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        let mut options = std::fs::OpenOptions::new();
+        match mode {
+            OpenMode::Read => options.read(true),
+            OpenMode::Modify => options.read(true).write(true),
+            OpenMode::Truncate => options.write(true).create(true).truncate(true),
+            OpenMode::Append => options.append(true).create(true),
+        };
+        Ok(options.open(resolved)?)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_beneath(
+        &self,
+        anchor: &crate::beneath::Beneath,
+        root: &Path,
+        requested: &Path,
+        resolved: &Path,
+        mode: OpenMode,
+    ) -> Result<File, OpenError> {
+        let rel = resolved.strip_prefix(root).unwrap_or(Path::new("."));
+        let rel = if rel.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            rel
+        };
+        let flags = libc::O_NONBLOCK
+            | libc::O_NOCTTY
+            | match mode {
+                OpenMode::Read => libc::O_RDONLY,
+                OpenMode::Modify => libc::O_RDWR,
+                OpenMode::Truncate => libc::O_WRONLY | libc::O_CREAT,
+                OpenMode::Append => libc::O_WRONLY | libc::O_CREAT | libc::O_APPEND,
+            };
+        if matches!(mode, OpenMode::Truncate | OpenMode::Append) {
+            if let Some(parent) = rel.parent() {
+                anchor
+                    .create_dir_all(parent)
+                    .map_err(|e| left(e, requested, root))?;
+            }
+        }
+        let file = anchor
+            .open(rel, flags, 0o666)
+            .map_err(|e| left(e, requested, root))?;
+        // The deny rules judge the object actually opened. Truncation waits
+        // for this: a denied file must not be emptied before it is refused.
+        let actual = crate::beneath::path_of(&file).map_err(|e| PathScopeError::Unresolvable {
+            requested: requested.to_path_buf(),
+            root: root.to_path_buf(),
+            reason: format!("the opened file's location is unknown: {e}"),
+        })?;
+        self.judge(requested, root, actual)?;
+        if mode == OpenMode::Truncate {
+            file.set_len(0)?;
+        }
+        Ok(file)
     }
 
     /// [`Self::resolve`] for a tool answering `call`: a refusal becomes the
@@ -232,6 +476,24 @@ impl PathScope {
     ) -> Result<PathBuf, ToolOutput> {
         self.resolve(requested)
             .map_err(|e| ToolOutput::err(&call.id, e.to_string()))
+    }
+}
+
+/// An `openat2` failure as a refusal when the kernel kept the lookup from
+/// leaving the root (`EXDEV`) or from following a magic link (`ELOOP`).
+#[cfg(target_os = "linux")]
+fn left(e: io::Error, requested: &Path, root: &Path) -> OpenError {
+    match e.raw_os_error() {
+        Some(libc::EXDEV) => OpenError::Refused(PathScopeError::Outside {
+            requested: requested.to_path_buf(),
+            root: root.to_path_buf(),
+        }),
+        Some(libc::ELOOP) => OpenError::Refused(PathScopeError::Unresolvable {
+            requested: requested.to_path_buf(),
+            root: root.to_path_buf(),
+            reason: e.to_string(),
+        }),
+        _ => OpenError::Io(e),
     }
 }
 
@@ -402,6 +664,64 @@ mod tests {
         for path in [".gitignore", "sven.yaml.md", "notes/.git-tips"] {
             assert_eq!(s.resolve(path).unwrap(), canonical.join(path), "{path}");
         }
+    }
+
+    /// A race-free scope opens what the plain one does: it reads and writes
+    /// beneath the root (creating the directories above a new file), follows a
+    /// link that stays inside, and refuses a link out and a denied file, the
+    /// latter without emptying it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_race_free_scope_opens_beneath_the_root_and_refuses_the_rest() {
+        use std::io::{Read, Write};
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(root.join("secrets")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(root.join("secrets/key"), "k").unwrap();
+        std::fs::write(outside.join("f"), "o").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
+        std::os::unix::fs::symlink("a/b.txt", root.join("alias")).unwrap();
+        let s = scope(&root)
+            .denying(root.join("secrets"))
+            .race_free()
+            .unwrap();
+        assert!(s.is_race_free());
+
+        let mut text = String::new();
+        s.open("a/b.txt", OpenMode::Truncate)
+            .unwrap()
+            .write_all(b"one")
+            .unwrap();
+        s.open("a/b.txt", OpenMode::Append)
+            .unwrap()
+            .write_all(b"+two")
+            .unwrap();
+        s.open("alias", OpenMode::Read)
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        assert_eq!(text, "one+two");
+
+        for path in ["out/f", "../outside/f", "/etc/passwd"] {
+            assert!(
+                matches!(s.open(path, OpenMode::Read), Err(OpenError::Refused(_))),
+                "{path}"
+            );
+        }
+        assert!(matches!(
+            s.open("secrets/key", OpenMode::Truncate),
+            Err(OpenError::Refused(PathScopeError::Denied { .. }))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(root.join("secrets/key")).unwrap(),
+            "k"
+        );
+        assert!(matches!(
+            s.open("missing", OpenMode::Modify),
+            Err(OpenError::Io(e)) if e.kind() == io::ErrorKind::NotFound
+        ));
     }
 
     #[test]

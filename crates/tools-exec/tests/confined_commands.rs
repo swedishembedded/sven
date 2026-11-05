@@ -201,3 +201,34 @@ fn a_kernel_without_the_full_rule_set_refuses_to_start_a_confined_run() {
         assert!(error.contains("ABI 6"), "{error}");
     }
 }
+
+/// Documented limit, not a guarantee: a command that leaves its process
+/// group (`setsid`) outlives its call, because the shell tool kills the
+/// group. It stays inside its Landlock domain, so what it can reach does not
+/// grow; the file tools' race-free paths (not this) are what make it
+/// harmless to the worker.
+#[tokio::test]
+async fn a_command_that_starts_its_own_session_outlives_its_call_still_confined() {
+    let l = layout();
+    let tool = shell(&l);
+    let out = sh(
+        &tool,
+        &l.workspace,
+        "setsid sh -c 'echo $$ > bg.pid; sleep 3; cat ../worker/token > bg.out 2>&1' \
+         > /dev/null 2>&1 < /dev/null & sleep 0.5",
+    )
+    .await;
+    assert!(!out.is_error, "{}", out.content);
+    let pid = std::fs::read_to_string(l.workspace.join("bg.pid"))
+        .expect("the background command started")
+        .trim()
+        .to_string();
+    assert!(
+        Path::new(&format!("/proc/{pid}")).exists(),
+        "it survived the call"
+    );
+    // Still confined: its read of the private token is refused.
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    let attempt = std::fs::read_to_string(l.workspace.join("bg.out")).unwrap();
+    assert!(!attempt.contains("secret-token"), "{attempt}");
+}

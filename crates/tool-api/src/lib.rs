@@ -10,6 +10,8 @@
 //! holds the concrete `ToolRegistry` and the config-driven policy engines.
 //! See the `policy` module docs for why `ApprovalPolicy` lives here rather
 //! than there.
+#[cfg(target_os = "linux")]
+mod beneath;
 pub mod call_records;
 pub mod display;
 pub mod events;
@@ -25,7 +27,7 @@ pub mod tool_summary;
 pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};
 pub use grep_match::GrepMatch;
-pub use path_scope::{PathScope, PathScopeError};
+pub use path_scope::{OpenError, OpenMode, PathScope, PathScopeError};
 pub use policy::{ApprovalPolicy, PermissionRequester};
 pub use search_hint::{no_match_hint, MAX_HINT_NAMES};
 pub use summary::{one_line_summary, SUMMARY_MAX_CHARS};

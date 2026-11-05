@@ -17,6 +17,10 @@ async-trait = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 
+# openat2: race-free opening beneath a directory (see `beneath`).
+[target.'cfg(target_os = "linux")'.dependencies]
+libc        = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio    = { workspace = true }

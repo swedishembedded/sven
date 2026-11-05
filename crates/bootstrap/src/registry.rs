@@ -26,6 +26,8 @@ use crate::Config;
 use sven_chunks::EXPAND_TOOL_NAME;
 use sven_model::ModelProvider;
 use sven_tool_api::events::{TodoItem, ToolEvent};
+#[cfg(feature = "media")]
+use sven_tool_api::PathScope;
 use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{
     AskQuestionTool, ModelCatalogEntry, SetGoalTool, SkillTool, SystemTool, TodoTool,
@@ -34,7 +36,6 @@ use sven_tools_agent::{
 use sven_tools_ctx::{ChunkExpandTool, ChunkExpander, ContextStore};
 #[cfg(feature = "document")]
 use sven_tools_document::{DocumentConvertTool, DocumentLocateTool};
-#[cfg(feature = "media")]
 use sven_tools_fs::AttachFileTool;
 use sven_tools_fs::{EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool};
 #[cfg(all(unix, feature = "gdb"))]
@@ -484,10 +485,15 @@ fn build_profile_research(
     let mut reg = ToolRegistry::new();
 
     // Read-only file tools only.
+    let confined = cfg.tools.confine.is_some();
     let paths = &runtime.path_scope;
-    reg.register(ReadFileTool::new(paths.clone()));
-    reg.register(FindFileTool::new(paths.clone()));
-    reg.register(GrepTool::new(paths.clone()));
+    if let Some(scope) = tool_scope(cfg, paths) {
+        reg.register(ReadFileTool::new(scope));
+    }
+    if !confined {
+        reg.register(FindFileTool::new(paths.clone()));
+        reg.register(GrepTool::new(paths.clone()));
+    }
     reg.register(cfg.tools.web.fetch_tool());
     reg.register(cfg.web_search_tool());
     reg.register(cfg.tools.memory.tool(runtime.knowledge.clone()));
@@ -598,37 +604,54 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     // ── File I/O ─────────────────────────────────────────────────────────────
     // read_file already handles images (auto-detected by extension). Every
     // path-taking tool resolves through the session's scope.
+    //
+    // Where the shell's commands are confined (a served run), a confined
+    // process can still rearrange the workspace while these tools run. The
+    // tools that open a file (read, write, edit) do so through a race-free
+    // scope. Those that hand a path to a library, a walker or another
+    // process cannot, so they are not offered there: find_file, grep, the
+    // document tools, attach_file, the context tool and gdb.
+    let confined = cfg.tools.confine.is_some();
     let paths = &runtime.path_scope;
-    reg.register(ReadFileTool::new(paths.clone()));
-    reg.register(FindFileTool::new(paths.clone()));
-    reg.register(WriteTool::new(paths.clone()));
-    reg.register_with_display(EditFileTool::new(paths.clone()));
+    if let Some(scope) = tool_scope(cfg, paths) {
+        reg.register(ReadFileTool::new(scope.clone()));
+        reg.register(WriteTool::new(scope.clone()));
+        reg.register_with_display(EditFileTool::new(scope));
+    }
+    if !confined {
+        reg.register(FindFileTool::new(paths.clone()));
+    }
 
     // ── PDF to Markdown ───────────────────────────────────────────────────────
     // Page text goes from the OCR model to the file; the model gets a record.
     // document_locate finds the pages (outline, text search) to convert.
     #[cfg(feature = "document")]
-    reg.register_with_display(DocumentLocateTool::new(paths.clone()));
-    #[cfg(feature = "document")]
-    reg.register_with_display(DocumentConvertTool::new(
-        paths.clone(),
-        Arc::new(crate::ConfigOcrModels::new(cfg.clone())),
-        crate::convert_options(&cfg.ocr),
-    ));
+    if !confined {
+        reg.register_with_display(DocumentLocateTool::new(paths.clone()));
+        reg.register_with_display(DocumentConvertTool::new(
+            paths.clone(),
+            Arc::new(crate::ConfigOcrModels::new(cfg.clone())),
+            crate::convert_options(&cfg.ocr),
+        ));
+    }
 
     // ── Multimodal attachments ───────────────────────────────────────────────
     // attach_file needs the live model to decide whether audio can be sent
     // natively or must be transcribed, so clone the Arc before `model` is
     // moved into the context tool below. Only in a build that decodes media.
     #[cfg(feature = "media")]
-    reg.register(
-        AttachFileTool::new(Some(Arc::clone(&model)), cfg.tools.asr.clone())
-            .with_scope(paths.clone()),
-    );
+    if !confined {
+        reg.register(
+            AttachFileTool::new(Some(Arc::clone(&model)), cfg.tools.asr.clone())
+                .with_scope(paths.clone()),
+        );
+    }
 
     // ── Search ────────────────────────────────────────────────────────────────
     // grep now supports whole_project=true (replaces search_codebase).
-    reg.register(GrepTool::new(paths.clone()));
+    if !confined {
+        reg.register(GrepTool::new(paths.clone()));
+    }
 
     // ── Shell ─────────────────────────────────────────────────────────────────
     // shell covers: run commands, delete files, list dirs, run linters. The
@@ -653,7 +676,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     reg.register(SkillTool::new(runtime.skills.clone()));
 
     // ── Context and GDB (Full profile only) ──────────────────────────────────
-    if include_full {
+    if include_full && !confined {
         // Compound context tool: open|read|grep|query|reduce
         let context_store = Arc::new(Mutex::new(ContextStore::new()));
         let context = ContextTool::new(
@@ -681,8 +704,25 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
             );
         }
     } else {
-        // Suppress the unused warning for the event channel in the SubAgent path.
-        let _ = tool_event_tx;
+        // Suppress the unused warnings for what only those tools take.
+        let _ = (tool_event_tx, expansion, model);
+    }
+}
+
+/// The scope the file tools that open files are built with. Where the shell's
+/// commands are confined (a served run) the scope is race-free; if it cannot
+/// be made so, `None`: those tools are not offered rather than offered with
+/// a window the confinement exists to close.
+fn tool_scope(cfg: &Config, scope: &PathScope) -> Option<PathScope> {
+    if cfg.tools.confine.is_none() {
+        return Some(scope.clone());
+    }
+    match scope.clone().race_free() {
+        Ok(scope) => Some(scope),
+        Err(e) => {
+            tracing::error!("file tools are not offered: {e}");
+            None
+        }
     }
 }
 
@@ -842,6 +882,58 @@ mod tests {
             .into_iter()
             .map(|s| (s.name, s.description, s.parameters))
             .collect()
+    }
+
+    /// Where the shell's commands are confined (a served run), the tools that
+    /// open a file by name are offered with a race-free scope, and the ones
+    /// that hand a path to a walker, a library or another process are not
+    /// offered at all.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_confined_run_offers_only_the_file_tools_that_open_race_free() {
+        let root = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.tools.confine = Some(sven_tools_exec::confine::CommandConfinement {
+            writable: vec![root.path().to_path_buf()],
+            read_exec: Vec::new(),
+            tmpdir: None,
+        });
+        let (tx, _rx) = mpsc::channel::<ToolEvent>(16);
+        let runtime = AgentRuntimeContext {
+            path_scope: PathScope::confined(root.path()).unwrap(),
+            ..AgentRuntimeContext::default()
+        };
+        let reg = build_tool_registry(
+            &cfg,
+            Arc::new(MockProvider),
+            ToolSetProfile::Full {
+                questions: Questions::Unavailable,
+                todos: Arc::new(Mutex::new(Vec::new())),
+                buffer_store: Arc::new(Mutex::new(OutputBufferStore::default())),
+            },
+            Arc::new(Mutex::new(AgentMode::Agent)),
+            tx,
+            runtime,
+        );
+        let names = reg.names();
+        for offered in ["read_file", "write_file", "edit_file", "shell"] {
+            assert!(names.iter().any(|n| n == offered), "{offered} in {names:?}");
+        }
+        for withheld in [
+            "find_file",
+            "grep",
+            "attach_file",
+            "document_locate",
+            "document_convert",
+            "context",
+            "gdb",
+            "task",
+        ] {
+            assert!(
+                !names.iter().any(|n| n == withheld),
+                "{withheld} in {names:?}"
+            );
+        }
     }
 
     /// The words a tool's own schema already defines: its parameter names and

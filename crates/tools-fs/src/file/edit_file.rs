@@ -13,7 +13,8 @@ use sven_hsm::ToolCapability;
 
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
-use sven_tool_api::PathScope;
+use sven_tool_api::{OpenMode, PathScope};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 /// Minimum similarity ratio (0-1) for a fuzzy window to be accepted.
 const FUZZY_THRESHOLD: f64 = 0.85;
@@ -595,20 +596,23 @@ impl Tool for EditFileTool {
 
         debug!(path = %path, "edit_file tool");
 
-        let target = match self.scope.resolve_for(call, &path) {
-            Ok(p) => p,
-            Err(refused) => return refused,
-        };
-
         let hunks = match parse_hunks(&diff_str) {
             Ok(h) => h,
             Err(e) => return ToolOutput::err(&call.id, e),
         };
 
-        let content = match tokio::fs::read_to_string(&target).await {
-            Ok(c) => c,
-            Err(e) => return ToolOutput::err(&call.id, format!("read error: {e}")),
+        // Opened once for reading and rewriting: the content that is edited
+        // and the file that is written are the same object, and the scope
+        // keeps it beneath the root (see `PathScope::open`).
+        let file = match self.scope.open(&path, OpenMode::Modify) {
+            Ok(f) => f,
+            Err(e) => return e.into_output(call, "read error"),
         };
+        let mut file = tokio::fs::File::from_std(file);
+        let mut content = String::new();
+        if let Err(e) = file.read_to_string(&mut content).await {
+            return ToolOutput::err(&call.id, format!("read error: {e}"));
+        }
 
         let had_trailing_newline = content.ends_with('\n');
         let mut file_lines: Vec<String> = content.lines().map(str::to_string).collect();
@@ -642,14 +646,14 @@ impl Tool for EditFileTool {
             );
         }
 
-        if let Some(parent) = target.parent() {
-            if !parent.as_os_str().is_empty() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-        }
-
-        match tokio::fs::write(&target, &new_content).await {
-            Ok(_) => ToolOutput::ok(&call.id, "Edit successfully applied"),
+        let rewrite = async {
+            file.set_len(0).await?;
+            file.seek(std::io::SeekFrom::Start(0)).await?;
+            file.write_all(new_content.as_bytes()).await?;
+            file.flush().await
+        };
+        match rewrite.await {
+            Ok(()) => ToolOutput::ok(&call.id, "Edit successfully applied"),
             Err(e) => ToolOutput::err(&call.id, format!("Write failed: {e}")),
         }
     }

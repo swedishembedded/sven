@@ -40,6 +40,7 @@ media = ["dep:sven-image", "dep:sven-audio"]
 asr = ["media", "dep:sven-model-drivers", "sven-model-drivers/dbus"]
 
 [dev-dependencies]
+libc = { workspace = true }
 serde_yaml = { workspace = true }
 sven-model-mock = { path = "../model-mock" }
 # A fake `Brain1.Manager` served over a plain `UnixStream` pair, so the

@@ -47,6 +47,7 @@ use sven_control::work::{
 };
 use sven_model::ModelProvider;
 use sven_sdk::{CancelToken, Engine, HarnessCheckpoint, Publication, RunOptions, Toolset};
+use sven_tool_api::{OpenMode, PathScope};
 use sven_tools_exec::confine::CommandConfinement;
 
 /// How a worker's run ended.
@@ -175,11 +176,20 @@ async fn commit(
     checkpoint: &HarnessCheckpoint,
 ) -> Result<()> {
     let generation = client.login.generation;
+    // The workspace is written by the agent's confined processes: each file
+    // is opened beneath it inside the kernel, so a link swapped in cannot make
+    // this unconfined worker upload a file from outside it.
+    let scope = PathScope::confined(workspace)?.race_free()?;
     let mut contents = Vec::new();
     for path in paths {
-        contents.push(
-            std::fs::read(inside(workspace, path)?).with_context(|| format!("reading {path}"))?,
-        );
+        inside(workspace, path)?;
+        let mut bytes = Vec::new();
+        scope
+            .open(path, OpenMode::Read)
+            .map_err(anyhow::Error::from)
+            .and_then(|mut file| Ok(std::io::Read::read_to_end(&mut file, &mut bytes)?))
+            .with_context(|| format!("reading {path}"))?;
+        contents.push(bytes);
     }
     let checkpoint_bytes = serde_json::to_vec(checkpoint)?;
     let declare = |path: &str, bytes: &[u8], mime: &str| Declared {

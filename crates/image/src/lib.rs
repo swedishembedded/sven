@@ -94,16 +94,23 @@ impl EncodedImage {
 /// PNG images are re-encoded as PNG; everything else is re-encoded as JPEG.
 pub fn load_image(path: &Path) -> Result<EncodedImage, ImageError> {
     let raw = std::fs::read(path).map_err(|e| ImageError::Io(path.display().to_string(), e))?;
+    load_image_bytes(&raw, path)
+}
 
+/// [`load_image`] for bytes the caller already holds, so a caller that opened
+/// the file itself decodes exactly what it opened. `hint_path` names the image
+/// in errors and supplies the extension when the bytes do not identify the
+/// format.
+pub fn load_image_bytes(raw: &[u8], hint_path: &Path) -> Result<EncodedImage, ImageError> {
     // Content-addressed cache lookup.
-    let key: CacheKey = sha2::Sha256::digest(&raw).into();
+    let key: CacheKey = sha2::Sha256::digest(raw).into();
     if let Ok(mut cache) = image_cache().lock() {
         if let Some(cached) = cache.get(&key) {
             return Ok(cached.clone());
         }
     }
 
-    let result = encode_image_bytes(&raw, path)?;
+    let result = encode_image_bytes(raw, hint_path)?;
 
     if let Ok(mut cache) = image_cache().lock() {
         cache.put(key, result.clone());

@@ -22,13 +22,23 @@ use sven_harness_spec::{DIGEST_TOOL, MAX_COVERS};
 use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
-use sven_tool_api::PathScope;
+use sven_tool_api::{OpenError, OpenMode, PathScope};
 use sven_vocab::AgentMode;
 
 /// The largest file the tool digests.
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// The most groups one call may ask about.
 const MAX_GROUPS: usize = 10_000;
+
+/// All of `file`, read without blocking the executor.
+async fn read_all(file: std::fs::File) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    tokio::fs::File::from_std(file)
+        .read_to_end(&mut bytes)
+        .await?;
+    Ok(bytes)
+}
 
 /// Digests groups of workspace files.
 pub struct DigestFilesTool {
@@ -43,7 +53,9 @@ impl DigestFilesTool {
     /// When `root` does not exist or is not a directory.
     pub fn new(root: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
         Ok(Self {
-            scope: PathScope::confined(root)?,
+            // The workspace is written by the agent's own processes; the
+            // files this tool reads are opened beneath it inside the kernel.
+            scope: PathScope::confined(root)?.race_free_where_supported(),
         })
     }
 
@@ -60,26 +72,40 @@ impl DigestFilesTool {
             let Some(path) = path.as_str() else {
                 return Err(ToolOutput::err(&call.id, "a path must be a string"));
             };
-            let resolved = self.scope.resolve_for(call, path)?;
-            let content = match tokio::fs::metadata(&resolved).await {
-                Ok(meta) if meta.is_file() && meta.len() <= MAX_BYTES => {
-                    match tokio::fs::read(&resolved).await {
-                        Ok(bytes) => format!("{:x}", Sha256::digest(&bytes)),
-                        Err(e) => return Err(ToolOutput::err(&call.id, format!("{path}: {e}"))),
+            let content = match self.scope.open(path, OpenMode::Read) {
+                Err(OpenError::Refused(refused)) => {
+                    return Err(ToolOutput::err(&call.id, refused.to_string()))
+                }
+                Err(OpenError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    if require {
+                        return Err(ToolOutput::err(&call.id, format!("{path} is not a file")));
                     }
+                    "absent".to_string()
                 }
-                Ok(meta) if meta.is_file() => {
-                    return Err(ToolOutput::err(
-                        &call.id,
-                        format!("{path} is larger than the {MAX_BYTES} bytes a digest reads"),
-                    ))
+                Err(OpenError::Io(e)) => {
+                    return Err(ToolOutput::err(&call.id, format!("{path}: {e}")))
                 }
-                _ if require => {
-                    return Err(ToolOutput::err(&call.id, format!("{path} is not a file")))
-                }
-                Ok(_) => "not-a-file".to_string(),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => "absent".to_string(),
-                Err(e) => return Err(ToolOutput::err(&call.id, format!("{path}: {e}"))),
+                Ok(file) => match file.metadata() {
+                    Ok(meta) if meta.is_file() && meta.len() <= MAX_BYTES => {
+                        match read_all(file).await {
+                            Ok(bytes) => format!("{:x}", Sha256::digest(&bytes)),
+                            Err(e) => {
+                                return Err(ToolOutput::err(&call.id, format!("{path}: {e}")))
+                            }
+                        }
+                    }
+                    Ok(meta) if meta.is_file() => {
+                        return Err(ToolOutput::err(
+                            &call.id,
+                            format!("{path} is larger than the {MAX_BYTES} bytes a digest reads"),
+                        ))
+                    }
+                    Ok(_) if require => {
+                        return Err(ToolOutput::err(&call.id, format!("{path} is not a file")))
+                    }
+                    Ok(_) => "not-a-file".to_string(),
+                    Err(e) => return Err(ToolOutput::err(&call.id, format!("{path}: {e}"))),
+                },
             };
             hasher.update(path.as_bytes());
             hasher.update([0]);
