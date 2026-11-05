@@ -191,6 +191,19 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub no_progress_timeout_secs: Option<u64>,
 
+    /// Times a model call that failed for a reason that may pass (a dropped
+    /// connection, a busy or rate-limited server) is asked again before the
+    /// turn ends with an error. `None` (the default) is 3; `0` ends the turn
+    /// at the first such failure, for an application that retries on its own
+    /// or bounds a run by a deadline shorter than the pauses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transient_retries: Option<u32>,
+
+    /// Pause, in milliseconds, before the first such repeat; each next pause
+    /// is three times longer. `None` (the default) is 5000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transient_retry_delay_ms: Option<u64>,
+
     /// Wall-clock budget, in seconds, of every child agent run this session
     /// starts: a parallel SDLC task, a `task` sub-agent. The child is stopped
     /// when it runs out, and never outlives its parent. 0 = no limit.
@@ -220,6 +233,8 @@ impl AgentConfig {
             "first_byte_timeout_secs",
             "first_token_timeout_secs",
             "no_progress_timeout_secs",
+            "transient_retries",
+            "transient_retry_delay_ms",
             "child_run_timeout_secs",
         ])
         .with(
@@ -292,6 +307,8 @@ impl Default for AgentConfig {
             first_byte_timeout_secs: None,
             first_token_timeout_secs: None,
             no_progress_timeout_secs: None,
+            transient_retries: None,
+            transient_retry_delay_ms: None,
         }
     }
 }

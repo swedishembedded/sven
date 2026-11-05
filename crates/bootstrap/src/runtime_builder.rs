@@ -850,6 +850,18 @@ impl RuntimeBuilder {
             sven_machines::MAX_TOOL_ROUNDS_FACT,
             serde_json::json!(self.config.agent.max_tool_rounds),
         );
+        if let Some(retries) = self.config.agent.transient_retries {
+            init_ctx.set_fact(
+                sven_machines::TRANSIENT_RETRIES_BUDGET_FACT,
+                serde_json::json!(retries),
+            );
+        }
+        if let Some(delay_ms) = self.config.agent.transient_retry_delay_ms {
+            init_ctx.set_fact(
+                sven_machines::TRANSIENT_RETRY_DELAY_FACT,
+                serde_json::json!(delay_ms),
+            );
+        }
         for (key, value) in std::mem::take(&mut self.context_facts) {
             init_ctx.facts.insert(key, value);
         }

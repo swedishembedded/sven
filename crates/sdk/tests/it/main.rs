@@ -75,4 +75,5 @@ mod toolsets;
 mod trajectory;
 mod trajectory_fidelity;
 mod trajectory_metrics;
+mod transient_retries;
 mod typed_methods;

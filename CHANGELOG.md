@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **config**: `agent.transient_retries` (default 3) and `agent.transient_retry_delay_ms` (default 5000) set how often a turn asks the model again after a failure that may pass, and the first pause (later pauses triple). An embedding application that bounds a run by a deadline shorter than the default pauses (5 s, 15 s, 45 s), or retries on its own, sets the budget to 0 and gets the error at once.
+
 ## [4.6.0] - 2026-11-05
 
 ### Added

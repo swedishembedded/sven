@@ -753,11 +753,33 @@ fn cut(ctx: &mut Context) -> Reaction<ReactiveState> {
 }
 
 /// Times a turn that failed for a reason that may not recur (a dropped
-/// connection, a busy server) is asked again before the turn ends.
+/// connection, a busy server) is asked again before the turn ends, unless the
+/// application configures its own.
 const TRANSIENT_RETRIES: u64 = 3;
-/// The pause before the first repeat; each next one is three times longer.
+/// The pause before the first repeat, unless configured; each next one is
+/// three times longer.
 const TRANSIENT_FIRST_DELAY_MS: u64 = 5_000;
+/// The context fact the configured repeat budget arrives under
+/// (`AgentConfig.transient_retries`). Zero ends the turn at the first
+/// transient failure, for an application that retries on its own.
+pub const TRANSIENT_RETRIES_BUDGET_FACT: &str = "agent.transient_retries";
+/// The context fact the configured first pause, in milliseconds, arrives
+/// under (`AgentConfig.transient_retry_delay_ms`).
+pub const TRANSIENT_RETRY_DELAY_FACT: &str = "agent.transient_retry_delay_ms";
+/// The repeats already made in this turn.
 const TRANSIENT_RETRIES_FACT: &str = "transient_retries";
+
+fn transient_budget(ctx: &Context) -> u64 {
+    ctx.fact(TRANSIENT_RETRIES_BUDGET_FACT)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(TRANSIENT_RETRIES)
+}
+
+fn transient_first_delay_ms(ctx: &Context) -> u64 {
+    ctx.fact(TRANSIENT_RETRY_DELAY_FACT)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(TRANSIENT_FIRST_DELAY_MS)
+}
 
 fn transient_retries(ctx: &Context) -> u64 {
     ctx.fact(TRANSIENT_RETRIES_FACT)
@@ -776,15 +798,17 @@ fn reset_transient_retries(ctx: &mut Context) {
 /// the failed request carried, so the repeat is a continuation.
 fn retry_transient(ctx: &mut Context) -> Option<Effect> {
     let done = transient_retries(ctx);
-    if done >= TRANSIENT_RETRIES {
+    if done >= transient_budget(ctx) {
         return None;
     }
+    let first_delay_ms = transient_first_delay_ms(ctx);
     ctx.set_fact(TRANSIENT_RETRIES_FACT, json!(done + 1));
     let mut ls = LoopState::load(ctx);
     let mut effect = ls.continuation_turn();
     ls.store(ctx);
     if let Effect::CallLlm { request } = &mut effect {
-        request["delay_ms"] = json!(TRANSIENT_FIRST_DELAY_MS * 3u64.pow(done as u32));
+        request["delay_ms"] =
+            json!(first_delay_ms.saturating_mul(3u64.saturating_pow(done as u32)));
     }
     Some(effect)
 }
@@ -1104,6 +1128,33 @@ mod tests {
         assert!(delays.windows(2).all(|w| w[0] < w[1]), "{delays:?}");
         hsm.dispatch(&transient, &mut ctx);
         assert_eq!(hsm.state(), ReactiveState::Idle);
+    }
+
+    /// The embedding application owns the repeat budget and the pause: a
+    /// host that bounds a run by a deadline, or retries on its own, must be
+    /// able to shrink or switch off the machine's repeats.
+    #[test]
+    fn the_configured_transient_budget_and_pause_replace_the_defaults() {
+        let transient = Event::LlmFailed {
+            error: format!("{}: connection reset", sven_hsm::TRANSIENT),
+        };
+        let (mut hsm, mut ctx) = make_hsm();
+        ctx.set_fact(TRANSIENT_RETRIES_BUDGET_FACT, json!(0));
+        hsm.dispatch(&Event::user_message("hi"), &mut ctx);
+        hsm.dispatch(&transient, &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Idle, "no repeat is configured");
+
+        let (mut hsm, mut ctx) = make_hsm();
+        ctx.set_fact(TRANSIENT_RETRIES_BUDGET_FACT, json!(1));
+        ctx.set_fact(TRANSIENT_RETRY_DELAY_FACT, json!(7));
+        hsm.dispatch(&Event::user_message("hi"), &mut ctx);
+        let out = hsm.dispatch(&transient, &mut ctx);
+        let Effect::CallLlm { request } = &out.effects[0] else {
+            panic!("expected a model call: {:?}", out.effects);
+        };
+        assert_eq!(request["delay_ms"], json!(7));
+        hsm.dispatch(&transient, &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Idle, "one repeat, then the end");
     }
 
     #[test]

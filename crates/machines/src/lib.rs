@@ -12,6 +12,7 @@ pub use events::{AgentEvent, CompactionStrategyUsed, PeerInfo};
 pub use machines::{
     reactive_agent::{
         ReactiveAgentMachine, ASK_QUESTION_AVAILABLE_FACT, CONTINUE_SIGNAL, MAX_TOOL_ROUNDS_FACT,
+        TRANSIENT_RETRIES_BUDGET_FACT, TRANSIENT_RETRY_DELAY_FACT,
     },
     sdlc::task::TaskMachine,
     sdlc::SdlcMachine,

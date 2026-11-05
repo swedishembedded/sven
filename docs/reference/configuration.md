@@ -363,6 +363,10 @@ agent:
   # first_byte_timeout_secs: 120        # 600
   # first_token_timeout_secs: 300       # 900
   # no_progress_timeout_secs: 600
+  # Repeats of a model call that failed in a way that may pass, and the pause
+  # before the first one (ms; later pauses triple).
+  # transient_retries: 3
+  # transient_retry_delay_ms: 5000
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────
@@ -771,6 +775,8 @@ Controls the agent's autonomy and defaults.
 | `first_byte_timeout_secs` | `120`; `600` for a local server | Seconds to wait for the model server's response headers; see [Stalled model servers](#stalled-model-servers) |
 | `first_token_timeout_secs` | `300`; `900` for a local server | Seconds, from the request, to wait for the first real output (text, reasoning or a tool-call chunk); keepalives do not count |
 | `no_progress_timeout_secs` | `600` | Seconds of silence in real output, once it has started, before the turn fails; keepalives do not count |
+| `transient_retries` | `3` | Times a model call that failed for a reason that may pass (dropped connection, busy or rate-limited server, a generation that hung) is asked again before the turn ends with an error. `0` ends the turn at the first such failure, for an application that retries on its own |
+| `transient_retry_delay_ms` | `5000` | Pause before the first such repeat; each next pause is three times longer |
 | `max_step_timeout_secs` | `0` | Wall-clock limit of one headless workflow step; `0` = no limit. `--step-timeout` overrides it |
 | `max_run_timeout_secs` | `14400` (4 hours) | Wall-clock limit of a whole headless run, covering every wait in it: model, tools, approvals and questions. The run ends with exit code `124`. `0` = no limit. `--run-timeout` overrides it; see [CI pipeline](../guides/headless.md#timeouts). While a limit applies, each model request ends with a line stating the minutes used and left |
 | `child_run_timeout_secs` | `3600` | Wall-clock budget of each child agent run (a parallel SDLC task, a `task` sub-agent); the child is stopped when it runs out. `0` = no limit |
