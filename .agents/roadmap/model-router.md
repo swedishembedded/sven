@@ -2,7 +2,10 @@
 
 Scope: Routing a request to models beyond the session language model (image, speech, video and other brain-served models).
 
-**Status: research done, no implementation started. This document is the plan.**
+**Status: research done; video generation (Phase 2v) is the first slice being
+built. TUI dictation shipped separately (`crates/tui/src/voice/`,
+`sven_model_drivers::transcription`), and `dbus/action.rs` already runs one
+arbitrary `(model, action)`; nothing else here exists yet.**
 
 ## Goal
 
@@ -314,21 +317,36 @@ end to end against real weights; a sub-agent persona pinned to a different
 model demonstrably runs on it; tool payload growth stays within one tool's
 worth of the measured baseline.
 
+### Phase 2v - video, the first long-running action (sven)
+
+Video generation and editing ride the router rather than a tool of their own.
+The standard verb is OpenRouter's `/videos` (submit, poll, download), which a
+local brain, OpenRouter and the signed-in sven server all speak, so one client
+serves every transport.
+
+- `sven_model_drivers::video`: `create`, `status`, `content`, `cancel`,
+  `models`, against `{base}/videos` with the provider's key.
+- `models` and `run_model` (Phase 2's tools) land with video as their first
+  long-running action: `run_model` submits, persists the job in the trajectory
+  (`Trajectory.extra`, as `goal_record.rs` does) so a restart resumes polling
+  instead of paying for a second clip, reports `step/total` progress, and
+  returns the downloaded file's path. An edit names the source clip by path.
+- Signed in, the file is also uploaded to the conversation
+  (`RemoteClient::upload_to_conversation`) so the web chat shows it, and the
+  tools join `HOSTED_TOOLS` (`crates/remote/src/host/hosted.rs`).
+
+*Verification:* against a mock brain (`BRAIN_MOCK=1 brain serve`), "make a
+five second video of a red ball" writes a playable MP4; killing sven mid-job
+and resuming downloads the same job without a second submission; the same
+request signed in to a local server lands as a video in the conversation.
+
 ### Phase 3 - voice, end to end (sven)
 
-Microphone capture in the TUI - net-new, there is no `cpal`/`rodio`/`hound`/
-`symphonia` dependency anywhere in the tree today - push-to-talk, transcription
+Microphone capture and dictation into the input box shipped outside the router
+(`crates/tui/src/voice/`); what is left is push-to-talk transcription
 routed through the router to `qwen3asr`/`nemotronasr`, and the transcript
 landing **editable in the input box** rather than auto-submitted, so the user
 corrects before sending.
-
-The existing `crates/integrations/src/voice/` subsystem is folded in here. It
-is currently dead code: `TtsProvider`, `SttProvider`, `VoiceCallProvider`,
-`VoiceTool`, ElevenLabs, Whisper-STT and Twilio all compile, but
-`IntegrationProviders`' `tts`/`stt`/`calls` fields are never populated by any
-caller. The parallel abstraction is removed; speech becomes roles on the
-router; the ElevenLabs/OpenAI implementations are retained as alternative
-non-brain backends behind the same interface.
 
 *Verification:* speaking into a running sven produces correct editable text in
 the input box; speech synthesis round-trips through a configured role.
