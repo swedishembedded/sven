@@ -10,6 +10,7 @@ use base64::Engine as _;
 use futures::{Stream, StreamExt};
 use sven_control::remote::{
     control_endpoint, conversation_approvals_endpoint, conversation_doc_endpoint,
+    conversation_file_complete_endpoint, conversation_files_endpoint,
     conversation_messages_endpoint, AttachRequest, Attached, CommandEnvelope, EventBatch,
     RemoteDiscovery, WhoAmI, DISCOVERY_PATH, REMOTE_PROTOCOL_VERSION,
 };
@@ -98,6 +99,8 @@ impl std::error::Error for Disconnected {}
 
 /// How long a request that is not the command stream may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long the bytes of one attached file may take to reach the store.
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// How long the command stream may take to open, and to stay silent once
 /// open. A request timeout cannot bound it (it is meant to run for minutes),
@@ -516,8 +519,83 @@ impl RemoteClient {
         Ok(response.bytes().await?.to_vec())
     }
 
-    /// Adds `text` to conversation `id` as the person's next message; the
-    /// server then asks this host to answer it.
+    /// Uploads the file at `path` to conversation `id`'s files, for the
+    /// next message to carry; its id. The bytes go straight to the store the
+    /// server names, which is sent no key.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be read, the token is refused, the conversation does
+    /// not run on this host ([`ConversationNotFound`]), the server refuses the
+    /// file (its reason), or the store does not take it.
+    pub async fn upload_to_conversation(
+        &self,
+        id: Uuid,
+        path: &std::path::Path,
+    ) -> anyhow::Result<String> {
+        use sha2::Digest as _;
+        let bytes = tokio::fs::read(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
+        let name = path
+            .file_name()
+            .map_or_else(|| "file".into(), |name| name.to_string_lossy().into_owned());
+        let declared = self
+            .http
+            .post(self.url(&conversation_files_endpoint(id)))
+            .bearer_auth(&self.token)
+            .timeout(REQUEST_TIMEOUT)
+            .json(&serde_json::json!({
+                "name": name,
+                "mimeType": media_type(path),
+                "size": bytes.len(),
+                "sha256": format!("{:x}", sha2::Sha256::digest(&bytes)),
+            }))
+            .send()
+            .await?;
+        let declared = refused_unless_ok(declared, id, "attaching the file").await?;
+        let answer: serde_json::Value = declared.json().await?;
+        let file_id = answer["file"]["uri"]
+            .as_str()
+            .and_then(|uri| uri.rsplit('/').next())
+            .filter(|file_id| !file_id.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("the server named no file for {name}"))?
+            .to_string();
+        let url = answer["upload"]["url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("the server named no place to upload {name}"))?;
+        let mut put = self.http.put(url).timeout(UPLOAD_TIMEOUT).body(bytes);
+        for (header, value) in answer["upload"]["headers"]
+            .as_object()
+            .into_iter()
+            .flatten()
+        {
+            if let Some(value) = value.as_str() {
+                put = put.header(header.as_str(), value);
+            }
+        }
+        let stored = put.send().await?;
+        anyhow::ensure!(
+            stored.status().is_success(),
+            "uploading {name} answered {}",
+            stored.status()
+        );
+        let completed = self
+            .http
+            .post(self.url(&conversation_file_complete_endpoint(id, &file_id)))
+            .bearer_auth(&self.token)
+            .timeout(REQUEST_TIMEOUT)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        refused_unless_ok(completed, id, "completing the upload").await?;
+        Ok(file_id)
+    }
+
+    /// Adds `text` to conversation `id` as the person's next message, with
+    /// the files `attachments` names (uploaded with
+    /// [`Self::upload_to_conversation`]); the server then asks this host to
+    /// answer it.
     ///
     /// # Errors
     ///
@@ -525,13 +603,24 @@ impl RemoteClient {
     /// ([`ConversationNotFound`]), it is answering already ([`Busy`]), the
     /// machine it runs on is not connected ([`Disconnected`]), or
     /// the server cannot be asked.
-    pub async fn send_to_conversation(&self, id: Uuid, text: &str) -> anyhow::Result<()> {
+    pub async fn send_to_conversation(
+        &self,
+        id: Uuid,
+        text: &str,
+        attachments: &[String],
+    ) -> anyhow::Result<()> {
+        let mut body = serde_json::json!({ "text": text });
+        // Named only when there are some: a server from before files takes
+        // nothing but the text.
+        if !attachments.is_empty() {
+            body["attachments"] = serde_json::json!(attachments);
+        }
         let response = self
             .http
             .post(self.url(&conversation_messages_endpoint(id)))
             .bearer_auth(&self.token)
             .timeout(REQUEST_TIMEOUT)
-            .json(&serde_json::json!({ "text": text }))
+            .json(&body)
             .send()
             .await?;
         match response.status().as_u16() {
@@ -614,6 +703,50 @@ impl RemoteClient {
             response.status()
         );
         Ok(())
+    }
+}
+
+/// `response`, unless the server refused: the token ([`TokenRefused`]), the
+/// conversation ([`ConversationNotFound`]), or `doing` for its own reason.
+async fn refused_unless_ok(
+    response: reqwest::Response,
+    id: Uuid,
+    doing: &str,
+) -> anyhow::Result<reqwest::Response> {
+    match response.status().as_u16() {
+        200..=299 => Ok(response),
+        401 | 403 => Err(TokenRefused.into()),
+        404 => Err(ConversationNotFound(id).into()),
+        status => {
+            let reason = response
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|body| body.get("error")?.as_str().map(str::to_string))
+                .unwrap_or_else(|| format!("the server answered {status}"));
+            Err(anyhow::anyhow!("{doing}: {reason}"))
+        }
+    }
+}
+
+/// The media type a file is uploaded as, from its extension: the picture
+/// types a terminal attaches, anything else as bytes.
+fn media_type(path: &std::path::Path) -> &'static str {
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "tif" | "tiff" => "image/tiff",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
     }
 }
 

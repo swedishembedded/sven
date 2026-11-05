@@ -19,6 +19,12 @@
 //! (`note`, and `goal`: the session's goal as sven announced it) and `error`
 //! (`message`). Any other type is not shown.
 //!
+//! A picture pasted here (the `[Image: <path>]` lines the UI puts first in
+//! the message) is uploaded to the conversation's files and sent with the
+//! message, so every other client of the conversation shows it. A user
+//! message's files (`attachment` parts: `name`, `mediaType`) show the same
+//! way, as `[Image: <name>]` or `[File: <name>]` before its text.
+//!
 //! A `/goal` command typed here is sent to the conversation as the line it
 //! stands for (`slash_text`): the sven that runs the session carries it out,
 //! and the goal it announces comes back in the document.
@@ -134,7 +140,12 @@ impl EventTranslator {
                 if self.own.front().is_some_and(|own| *own == text.trim()) {
                     self.own.pop_front();
                 } else {
-                    events.push(AgentEvent::UserMessage(text));
+                    let files = files(&parts);
+                    events.push(AgentEvent::UserMessage(if files.is_empty() {
+                        text
+                    } else {
+                        format!("{files}\n{text}")
+                    }));
                 }
                 continue;
             }
@@ -161,6 +172,67 @@ fn texts(parts: &[Value]) -> String {
         .filter_map(|part| part.get("text").and_then(Value::as_str))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A message's files, one line each, as this terminal marks its own.
+fn files(parts: &[Value]) -> String {
+    parts
+        .iter()
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("attachment"))
+        .map(|part| {
+            let kind = if field(part, "mediaType").starts_with("image/") {
+                "Image"
+            } else {
+                "File"
+            };
+            format!("[{kind}: {}]", field(part, "name"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The pictures a message typed here carries (the `[Image: <path>]` lines
+/// the UI puts first, each naming a file) and the rest of its text.
+fn pictures(content: &str) -> (Vec<std::path::PathBuf>, String) {
+    let mut paths = Vec::new();
+    let mut rest = content;
+    while let Some(line) = rest.lines().next() {
+        let Some(path) = line
+            .strip_prefix("[Image: ")
+            .and_then(|l| l.strip_suffix(']'))
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_file())
+        else {
+            break;
+        };
+        paths.push(path);
+        rest = rest[line.len()..].strip_prefix('\n').unwrap_or_default();
+    }
+    (paths, rest.trim().to_string())
+}
+
+/// Sends `content` to `conversation` as the person's message, its pictures
+/// uploaded first and carried with it.
+async fn send(
+    client: &RemoteClient,
+    conversation: Uuid,
+    translator: &mut EventTranslator,
+    content: &str,
+) -> anyhow::Result<()> {
+    let (paths, text) = pictures(content);
+    let mut attachments = Vec::with_capacity(paths.len());
+    for path in &paths {
+        attachments.push(client.upload_to_conversation(conversation, path).await?);
+    }
+    translator.sent(&text);
+    if let Err(e) = client
+        .send_to_conversation(conversation, &text, &attachments)
+        .await
+    {
+        translator.own.pop_back();
+        return Err(e);
+    }
+    Ok(())
 }
 
 fn field<'a>(part: &'a Value, name: &str) -> &'a str {
@@ -303,18 +375,14 @@ pub async fn remote_agent_task(
                     AgentRequest::Submit { content: text, .. }
                     | AgentRequest::Resubmit { new_user_content: text, .. },
                 ) => {
-                    translator.sent(&text);
-                    if let Err(e) = client.send_to_conversation(conversation, &text).await {
-                        translator.own.pop_back();
+                    if let Err(e) = send(&client, conversation, &mut translator, &text).await {
                         out.push(AgentEvent::Error(format!("{e:#}")));
                         out.push(AgentEvent::TurnComplete);
                     }
                 }
                 Some(AgentRequest::Goal { command, .. }) => {
                     let Some(line) = goal_line(&command) else { continue };
-                    translator.sent(&line);
-                    if let Err(e) = client.send_to_conversation(conversation, &line).await {
-                        translator.own.pop_back();
+                    if let Err(e) = send(&client, conversation, &mut translator, &line).await {
                         out.push(AgentEvent::Error(format!("{e:#}")));
                         out.push(AgentEvent::TurnComplete);
                     }
@@ -644,11 +712,121 @@ mod tests {
             .lock()
             .unwrap()
             .iter()
-            .map(|body| serde_json::from_str(body).unwrap())
+            .map(|request| {
+                let body = request
+                    .strip_prefix(&format!(
+                        "POST /api/workspace/conversations/{id}/approvals "
+                    ))
+                    .expect("only a decision was sent");
+                serde_json::from_str(body).unwrap()
+            })
             .collect();
         assert_eq!(
             decided,
             vec![serde_json::json!({"callId": "c1", "approve": true})]
+        );
+    }
+
+    /// A picture pasted here goes up to the conversation's files and out with
+    /// the message, without the line the terminal marks it with; the store
+    /// never sees the machine's key.
+    #[tokio::test]
+    async fn a_pasted_picture_is_uploaded_and_sent_with_the_message() {
+        use sha2::Digest as _;
+        use sven_session_sync::ConversationDoc;
+        let id = Uuid::new_v4();
+        let dir = tempfile::tempdir().unwrap();
+        let picture = dir.path().join("shot.png");
+        std::fs::write(&picture, b"PNGDATA").unwrap();
+        let server = std::sync::Arc::new(ConversationDoc::with_client_id(1));
+        let (control, sent) = crate::transcript::over_http::serve_recording(id, server, 64).await;
+        let client = RemoteClient::new(&control, "k").unwrap();
+        let (requests, requests_rx) = mpsc::channel(4);
+        let (events_tx, _events) = mpsc::channel(64);
+        let (questions, _questions_rx) = mpsc::channel(4);
+        let task = tokio::spawn(remote_agent_task(
+            client,
+            id,
+            requests_rx,
+            events_tx,
+            questions,
+        ));
+        requests
+            .send(AgentRequest::Submit {
+                content: format!("[Image: {}]\nWhat is in it?", picture.display()),
+                model_override: None,
+                mode_override: None,
+            })
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if sent
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|r| r.contains("/messages "))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        task.abort();
+        let sent = sent.lock().unwrap().clone();
+        let conversation = format!("/api/workspace/conversations/{id}");
+        let uploaded = crate::transcript::over_http::UPLOADED;
+        assert_eq!(sent.len(), 4, "{sent:#?}");
+        let declared: Value = serde_json::from_str(
+            sent[0]
+                .strip_prefix(&format!("POST {conversation}/files "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            declared,
+            serde_json::json!({
+                "name": "shot.png",
+                "mimeType": "image/png",
+                "size": 7,
+                "sha256": format!("{:x}", sha2::Sha256::digest(b"PNGDATA")),
+            })
+        );
+        assert_eq!(sent[1], "PUT /store/upload PNGDATA");
+        assert_eq!(
+            sent[2],
+            format!("POST {conversation}/files/{uploaded}/complete {{}}")
+        );
+        let message: Value = serde_json::from_str(
+            sent[3]
+                .strip_prefix(&format!("POST {conversation}/messages "))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            message,
+            serde_json::json!({"text": "What is in it?", "attachments": [uploaded]})
+        );
+    }
+
+    /// What another client attached shows here the way this terminal marks
+    /// its own: a picture as `[Image: …]`, any other file as `[File: …]`.
+    #[test]
+    fn files_attached_elsewhere_show_with_the_message() {
+        let mut translator = EventTranslator::default();
+        let events = translator.events(&[message(
+            "u1",
+            "user",
+            "complete",
+            serde_json::json!([
+                {"type": "text", "text": "Sum these."},
+                {"type": "attachment", "fileId": "f1", "name": "chart.webp", "mediaType": "image/webp", "size": 9},
+                {"type": "attachment", "fileId": "f2", "name": "q3.csv", "mediaType": "text/csv", "size": 9},
+            ]),
+        )]);
+        assert_eq!(
+            events,
+            vec![AgentEvent::UserMessage(
+                "[Image: chart.webp]\n[File: q3.csv]\nSum these.".into()
+            )]
         );
     }
 

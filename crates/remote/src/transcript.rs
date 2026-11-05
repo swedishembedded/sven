@@ -260,8 +260,15 @@ pub(crate) mod over_http {
         serve_recording(id, server, requests).await.0
     }
 
-    /// [`serve`], also taking decisions on the conversation's waiting tool
-    /// calls (`204`), whose bodies it returns in order.
+    /// The file id the fake server gives the one file uploaded to it.
+    pub(crate) const UPLOADED: &str = "00000000-0000-4000-8000-000000000001";
+
+    /// [`serve`], also taking what a client sends, each request as
+    /// `"<method> <path> <body>"`, in order: decisions on the conversation's
+    /// waiting tool calls (`204`), messages (`202`), and a file's upload as
+    /// the server declares it (`201`, naming [`UPLOADED`]), puts it in its
+    /// store (which refuses a request carrying the machine's key), and
+    /// completes it.
     pub(crate) async fn serve_recording(
         id: Uuid,
         server: std::sync::Arc<ConversationDoc>,
@@ -305,9 +312,61 @@ pub(crate) mod over_http {
                     .to_ascii_lowercase()
                     .contains("authorization: bearer k\r\n");
                 let (path, query) = target.split_once('?').unwrap_or((&target, ""));
-                let response = if authorized
-                    && path == format!("/api/workspace/conversations/{id}/doc")
+                let method = request.split_whitespace().next().unwrap_or_default();
+                let body = request
+                    .split_once("\r\n\r\n")
+                    .map(|(_, b)| b)
+                    .unwrap_or_default();
+                let conversation = format!("/api/workspace/conversations/{id}");
+                let record = || {
+                    recorded
+                        .lock()
+                        .unwrap()
+                        .push(format!("{method} {path} {body}"));
+                };
+                let json = |status: &str, body: String| {
+                    format!(
+                        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .into_bytes()
+                };
+                let response = if path == "/store/upload" {
+                    if request.to_ascii_lowercase().contains("authorization:") {
+                        b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_vec()
+                    } else {
+                        record();
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                            .to_vec()
+                    }
+                } else if authorized && method == "POST" && path == format!("{conversation}/files")
                 {
+                    record();
+                    json(
+                        "201 Created",
+                        serde_json::json!({
+                            "file": {"uri": format!("mcp-file://files/{UPLOADED}")},
+                            "upload": {
+                                "method": "PUT",
+                                "url": format!("http://{address}/store/upload"),
+                                "headers": {"content-type": "image/png"},
+                            },
+                        })
+                        .to_string(),
+                    )
+                } else if authorized
+                    && method == "POST"
+                    && path == format!("{conversation}/files/{UPLOADED}/complete")
+                {
+                    record();
+                    json("200 OK", "{\"file\":{}}".into())
+                } else if authorized
+                    && method == "POST"
+                    && path == format!("{conversation}/messages")
+                {
+                    record();
+                    json("202 Accepted", "{\"message_id\":\"m\"}".into())
+                } else if authorized && path == format!("/api/workspace/conversations/{id}/doc") {
                     let sv = query.strip_prefix("sv=").unwrap_or_default();
                     let body = server.diff(&URL_SAFE_NO_PAD.decode(sv).unwrap()).unwrap();
                     let mut head = format!(
@@ -320,11 +379,7 @@ pub(crate) mod over_http {
                 } else if authorized
                     && path == format!("/api/workspace/conversations/{id}/approvals")
                 {
-                    let body = request
-                        .split_once("\r\n\r\n")
-                        .map(|(_, b)| b)
-                        .unwrap_or_default();
-                    recorded.lock().unwrap().push(body.to_string());
+                    record();
                     b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n".to_vec()
                 } else {
                     b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"

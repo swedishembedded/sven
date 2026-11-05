@@ -81,7 +81,15 @@
 //!    with `{"text": ...}` adds a message to a conversation that runs on
 //!    this host, exactly as one sent from the server's own interface: the
 //!    server stores it, then asks this host to answer it. `409` while an
-//!    answer is being written ([`conversation_messages_endpoint`]).
+//!    answer is being written ([`conversation_messages_endpoint`]). Files go
+//!    with it as `"attachments": [<file id>]`, each uploaded first:
+//!    `POST {control_url}/conversations/{id}/files` with `{"name",
+//!    "mimeType", "size", "sha256"}` answers `201` with the file (`uri` ends
+//!    in its id) and where to `PUT` its bytes (`upload`: `url`, `headers`,
+//!    a store that is sent no key), then
+//!    `POST {control_url}/conversations/{id}/files/{file id}/complete`
+//!    ([`conversation_files_endpoint`],
+//!    [`conversation_file_complete_endpoint`]).
 //!    `POST {control_url}/conversations/{id}/approvals` with
 //!    `{"callId": ..., "approve": bool}` allows or refuses a tool call that
 //!    waits there, as the server's own interface does; `404` when nothing
@@ -236,6 +244,20 @@ pub fn conversation_approvals_endpoint(id: Uuid) -> String {
 #[must_use]
 pub fn conversation_messages_endpoint(id: Uuid) -> String {
     format!("conversations/{id}/messages")
+}
+
+/// The endpoint, relative to `control_url`, that declares a file about to be
+/// sent to conversation `id` and answers where to upload it.
+#[must_use]
+pub fn conversation_files_endpoint(id: Uuid) -> String {
+    format!("conversations/{id}/files")
+}
+
+/// The endpoint, relative to `control_url`, that marks file `file_id` of
+/// conversation `id` uploaded.
+#[must_use]
+pub fn conversation_file_complete_endpoint(id: Uuid, file_id: &str) -> String {
+    format!("conversations/{id}/files/{file_id}/complete")
 }
 
 /// The endpoint, relative to `control_url`, of conversation `id`'s shared
