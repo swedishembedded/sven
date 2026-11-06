@@ -33,7 +33,7 @@ release:
 	@case "$(PART)" in patch|minor|major) ;; *) echo "release: PART=patch|minor|major" >&2; exit 2 ;; esac
 	@[ -z "$$(git status --porcelain -- .)" ] || { echo "release: the site has uncommitted changes" >&2; git status --short -- .; exit 1; }
 	npm version $(PART) --no-git-tag-version >/dev/null
-	git commit --quiet --only package.json package-lock.json \
+	git commit --quiet --only package.json \
 		-m "site: release $$(node -p "require('./package.json').version")"
 	git tag "site-v$$(node -p "require('./package.json').version")"
 	@echo "Tagged site-v$$(node -p "require('./package.json').version") (push with git push --follow-tags when ready)"
