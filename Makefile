@@ -595,7 +595,7 @@ release/minor: _require-cargo-release $(RELEASE_TESTS)
 release/major: _require-cargo-release $(RELEASE_TESTS)
 	@cargo release major -p sven --execute --no-confirm
 
-## site - lists the site targets; does nothing (the infrastructure repository releases the site)
+## site - lists the site targets; does nothing (released with sven, at sven's version; the infrastructure repository deploys it)
 site:
 	@bash scripts/make-help.sh site
 
@@ -603,23 +603,6 @@ site:
 site/build:
 	$(MAKE) -C site build
 
-## site/release - lists the site's release targets; does nothing
-site/release:
-	@bash scripts/make-help.sh site/release
-
-## site/release/patch - bump the site's patch version, commit it and tag site-v<version> (local only)
-#   The infrastructure repository's release controller builds the image from
-#   that tag and deploys it to staging, then the same image to production.
-site/release/patch:
-	$(MAKE) -C site release PART=patch
-
-## site/release/minor - bump the site's minor version, commit it and tag site-v<version> (local only)
-site/release/minor:
-	$(MAKE) -C site release PART=minor
-
-## site/release/major - bump the site's major version, commit it and tag site-v<version> (local only)
-site/release/major:
-	$(MAKE) -C site release PART=major
 
 ## site/serve - serve the site locally on http://localhost:3000
 site/serve:
@@ -775,5 +758,5 @@ generate/roadmap/index:
         $(SAMPLE_BUILD_TARGETS) $(SAMPLE_RUN_TARGETS) \
         release release/publish release/patch release/minor release/major \
         _require-cargo-release \
-        site site/build site/release site/release/patch site/release/minor site/release/major site/serve \
+        site site/build site/serve \
         benchmark benchmark/build benchmark/terminal-bench benchmark/report benchmark/ledger benchmark/ablation

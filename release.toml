@@ -27,11 +27,15 @@ sign-commit  = false
 consolidate-commits = true
 
 # What a release changes besides the version: the changelog's Unreleased
-# section becomes the release's, dated, under a new empty Unreleased; and
-# .bumpversion.cfg keeps the version bump2version would find.
+# section becomes the release's, dated, under a new empty Unreleased;
+# .bumpversion.cfg keeps the version bump2version would find; and the site
+# takes the same version.
 pre-release-replacements = [
   { file = "CHANGELOG.md", search = "## \\[Unreleased\\]", replace = "## [Unreleased]\n\n## [{{version}}] - {{date}}", exactly = 1 },
   { file = ".bumpversion.cfg", search = "current_version = .*", replace = "current_version = {{version}}", exactly = 1 },
+  # The site (agentsven.com) is released with sven and carries its version:
+  # its image is swedishembedded/sven-site:v<sven's version>.
+  { file = "site/package.json", search = "\"version\": \"[^\"]*\"", replace = "\"version\": \"{{version}}\"", exactly = 1 },
 ]
 
 pre-release-commit-message = "chore: release v{{version}}"
