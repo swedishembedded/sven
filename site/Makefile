@@ -4,8 +4,6 @@ IMAGE     := swedishembedded/sven-site
 VERSION   := $(shell node -p "require('./package.json').version")
 PORT      := 3000
 DOCKER    ?= sudo docker
-# The edge host that serves agentsven.com, by the name SSH knows it as.
-TARGET    ?= swedishembedded.com
 NO_CACHE  ?= 0
 
 DOCKER_BUILD_FLAGS :=
@@ -13,23 +11,32 @@ ifeq ($(NO_CACHE),1)
 DOCKER_BUILD_FLAGS += --no-cache
 endif
 
-.PHONY: build serve publish install
+.PHONY: build serve release install
 
 ## build          - build the Docker image (swedishembedded/sven-site:v<package.json version>)
 ##                  use NO_CACHE=1 to rebuild without layer cache
 build: install
 	npm run build
-	$(DOCKER) build $(DOCKER_BUILD_FLAGS) -t $(IMAGE):v$(VERSION) .
+	$(DOCKER) build $(DOCKER_BUILD_FLAGS) \
+		--label org.opencontainers.image.version=$(VERSION) \
+		--label org.opencontainers.image.revision=$$(git rev-parse HEAD) \
+		-t $(IMAGE):v$(VERSION) .
 
 ## serve          - run the Vite dev server locally on http://localhost:$(PORT)
 serve: install
 	npm run dev -- --port $(PORT)
 
-## publish        - upload the Docker image to the edge host ($(TARGET)) via SSH
-publish: build
-	@echo "Publishing $(IMAGE):v$(VERSION) to $(TARGET)..."
-	$(DOCKER) save $(IMAGE):v$(VERSION) | ssh $(TARGET) sudo -n docker load
-	@echo "Done. Release it with portal_agentsven_version: v$(VERSION) in the infrastructure repository."
+## release        - bump the version (PART=patch|minor|major), commit it and tag
+##                  site-v<version>, locally; the infrastructure repository's
+##                  release controller builds, deploys and promotes the image
+release:
+	@case "$(PART)" in patch|minor|major) ;; *) echo "release: PART=patch|minor|major" >&2; exit 2 ;; esac
+	@[ -z "$$(git status --porcelain -- .)" ] || { echo "release: the site has uncommitted changes" >&2; git status --short -- .; exit 1; }
+	npm version $(PART) --no-git-tag-version >/dev/null
+	git commit --quiet --only package.json package-lock.json \
+		-m "site: release $$(node -p "require('./package.json').version")"
+	git tag "site-v$$(node -p "require('./package.json').version")"
+	@echo "Tagged site-v$$(node -p "require('./package.json').version") (push with git push --follow-tags when ready)"
 
 ## install        - install npm dependencies
 install:
