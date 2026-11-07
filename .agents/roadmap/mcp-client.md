@@ -66,7 +66,10 @@ asking for a new one, a changed tool list reaching the TUI session, headless
 `[sven:mcp]` notices; checked by `tests/sign_in.rs`, `tests/conformance.rs`
 and the callback tests; `sven mcp add|remove` and `/mcp add|remove` (one
 `config_edit` module), checked end to end by `tests/mcp_cli.rs` (sven adds
-itself as a stdio server). Left: an inspector you act from.
+itself as a stdio server); `sven mcp list --watch` shows the tool list as a
+running session sees it, change by change (whale's
+`tests/integration/connectors-sven.test.ts` drives it). Left: an inspector
+you act from.
 
 **M5 Gateway as a server: done 2026-11-02.** A server's discovery document
 may name `mcp_url`; the sign-in keeps it (same-origin checked), and every

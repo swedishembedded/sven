@@ -129,7 +129,13 @@ pub enum McpCommands {
     /// List the MCP servers sven is configured to use (`mcp_servers:`), each
     /// with whether it connects, how many tools it offers, and whether it
     /// needs a sign-in.
-    List,
+    List {
+        /// Stay connected and print the tool list again each time a server
+        /// changes it (an app connected to your account, a server's update),
+        /// until Ctrl+C: what a running session would see.
+        #[arg(long)]
+        watch: bool,
+    },
 
     /// Sign in to an OAuth-protected MCP server, from any terminal.
     ///
@@ -225,7 +231,7 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             }
         }
         McpCommands::Remove { name, scope } => remove(name, *scope),
-        McpCommands::List => list().await,
+        McpCommands::List { watch } => list(*watch).await,
         McpCommands::Auth { server } => auth(server).await,
         McpCommands::Logout { server } => {
             let manager = manager(false)?;
@@ -348,6 +354,28 @@ fn remove(name: &str, scope: sven_config::scope::Scope) -> anyhow::Result<()> {
 
 /// A manager over the configured servers. The events it emits are not
 /// needed here: each command reports what it did.
+/// Prints every tool on each change of the servers' tool lists, until Ctrl+C.
+async fn watch_tools(manager: &std::sync::Arc<sven_mcp_client::McpManager>) -> anyhow::Result<()> {
+    use sven_tool_api::Tool as _;
+    manager.start_background_tasks();
+    let mut changes = manager.tool_changes();
+    println!("\nWatching for changes to the tools (Ctrl+C to stop).");
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => return Ok(()),
+            changed = changes.changed() => if changed.is_err() { return Ok(()) },
+        }
+        let mut names: Vec<String> = manager
+            .tools()
+            .await
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
+        names.sort();
+        println!("tools now ({}): {}", names.len(), names.join(", "));
+    }
+}
+
 fn manager(interactive: bool) -> anyhow::Result<std::sync::Arc<sven_mcp_client::McpManager>> {
     let mut config = sven_bootstrap::Config::load(None)?;
     sven_bootstrap::connectors::add_signed_in(&mut config);
@@ -359,7 +387,7 @@ fn manager(interactive: bool) -> anyhow::Result<std::sync::Arc<sven_mcp_client::
     ))
 }
 
-async fn list() -> anyhow::Result<()> {
+async fn list(watch: bool) -> anyhow::Result<()> {
     use sven_bootstrap::connectors;
     use sven_tool_api::Tool as _;
     let manager = manager(false)?;
@@ -403,6 +431,9 @@ async fn list() -> anyhow::Result<()> {
             format!("; connected services: {}", groups.join(", "))
         };
         println!("{name:<20} {:<14} {detail}{from}", status.label());
+    }
+    if watch {
+        watch_tools(&manager).await?;
     }
     Ok(())
 }

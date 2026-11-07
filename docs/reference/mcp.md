@@ -148,6 +148,7 @@ there, reached with this machine's key. See
 | shell | `sven mcp add <name> <url>` (`--header`, `--oauth`, `--client-id`, `--local`), `sven mcp add <name> [--env NAME=VALUE] -- <command> [args...]` | the same, from a shell (`--scope user`, the default, `project` or `workspace`, picks the file of a local server) |
 | shell | `sven mcp remove <name>` | remove it from that file |
 | shell | `sven mcp list` | the servers on this machine, then your account's `connectors` with the services connected there; each with whether it connects, its tool count, or what it needs |
+| shell | `sven mcp list --watch` | the same, then stays connected and prints the tools again each time a server changes them (an app connected to your account, for one), until Ctrl+C: what a running session sees |
 | shell | `sven mcp auth <name>`, `sven mcp logout <name>` | sign in, forget the sign-in |
 
 #### What `add` does
