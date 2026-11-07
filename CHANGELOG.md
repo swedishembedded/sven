@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.1] - 2026-11-07
+
 ### Fixed
 - **rc**: an image a person attaches to a message (PNG, JPEG, GIF or WebP) reaches a model that takes images as an image in their message, so it sees the picture without a tool to open the file (the hosted agent has none). The file is still saved in the working directory and listed for the agent's tools; for a model that takes no images it is only the file, as before.
 
