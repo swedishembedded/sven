@@ -87,7 +87,7 @@ applied in `McpManager::tools` and in manual approval's preapproval for the
 session's own registry. Child sessions still ask for an allowed MCP tool
 (their preapproval has no registry): conservative, left as is.
 
-**M6 Live tool lists (agreed 2026-11-08).** The client follows a server's
+**M6 Live tool lists (agreed 2026-11-08): done 2026-11-08.** The client follows a server's
 tool-list changes for as long as a session runs: for a server advertising
 `tools.listChanged`, a `subscriptions/listen` stream (2026-07-28) reopened
 with backoff and followed by a re-list on every reopen, so a missed change is
@@ -99,6 +99,10 @@ conformance case where a server adds a tool after the session started and
 the session lists it without a restart, one where the stream drops and the
 change is still seen, and the deferred request's tool definitions are
 byte-identical across the change. whale's side: `connectors.md` C8.
+Checked by `tests/conformance.rs` (a tool added mid-session, a change made
+while the stream was down, a listing that changed nothing announcing
+nothing), `tool-registry/tests/it/disclosure.rs` (definitions byte-identical
+across a connector added) and the hosted host test.
 
 ## Not planned
 

@@ -222,3 +222,52 @@ fn a_call_held_back_is_reported_once() {
     assert!(reg.take_held_back(call));
     assert!(!reg.take_held_back(call));
 }
+
+/// A connector added while a session runs changes nothing a model request
+/// carries until the model loads one of its tools: the definitions are
+/// byte-identical, so the provider's cached prefix holds.
+#[test]
+fn a_connector_added_mid_session_leaves_the_requests_definitions_byte_identical() {
+    let reg = registry(Disclosure::Deferred);
+    let mcp = |name: &'static str| -> std::sync::Arc<dyn Tool> {
+        std::sync::Arc::new(Stub {
+            mcp: true,
+            capability: ToolCapability::NetworkAccess,
+            ..stub(name)
+        })
+    };
+    reg.replace_mcp_tools(vec![mcp("connectors-github__list_issues")]);
+    let loaded = vec!["connectors-github__list_issues".to_string()];
+    // What a provider is sent of each definition, in order.
+    let bytes = |active: &[String]| {
+        let sent: Vec<Value> = reg
+            .offer(&offer(active))
+            .schemas
+            .iter()
+            .map(|s| json!([s.name, s.description, s.parameters, s.is_mcp]))
+            .collect();
+        serde_json::to_vec(&sent).unwrap()
+    };
+    let (before_none, before_loaded) = (bytes(&[]), bytes(&loaded));
+
+    reg.replace_mcp_tools(vec![
+        mcp("connectors-github__list_issues"),
+        mcp("connectors-cloudflare__list_buckets"),
+        mcp("connectors-cloudflare__create_bucket"),
+    ]);
+    assert_eq!(
+        bytes(&[]),
+        before_none,
+        "nothing loaded: the core tools alone, as before"
+    );
+    assert_eq!(
+        bytes(&loaded),
+        before_loaded,
+        "a loaded tool's definition is sent as before"
+    );
+    // The new tools are found by searching, not sent.
+    let withheld = reg.offer(&offer(&loaded)).withheld;
+    assert!(withheld
+        .iter()
+        .any(|n| n == "connectors-cloudflare__list_buckets"));
+}

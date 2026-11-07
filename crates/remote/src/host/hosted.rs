@@ -118,7 +118,8 @@ pub fn restrict_to_working_dir(config: &mut Config) {
 /// never the server's own network (its services, its database, a cloud
 /// metadata service). No configured MCP server is started or reached: an
 /// allow list hides a server's tools, but a stdio server would still run on
-/// the host and an HTTP one still be called.
+/// the host and an HTTP one still be called. Tools are disclosed on demand
+/// (the discovery tool), whatever the configuration says.
 pub fn restrict_to_hosted(config: &mut Config) {
     config.mcp_servers.clear();
     config.tools.only = Some(
@@ -128,11 +129,32 @@ pub fn restrict_to_hosted(config: &mut Config) {
             .collect(),
     );
     config.tools.web.public_only = true;
+    // Connector tools change while sessions run: disclosed on demand, a
+    // change leaves what each request carries, and the cached prefix, alone.
+    config.tools.disclosure.mode = sven_bootstrap::Disclosure::Deferred;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hosted session's connectors may grow to hundreds of tools and change
+    /// while it runs: it always discloses them on demand, so a change leaves
+    /// what each request carries alone, even where a configuration says Full.
+    #[test]
+    fn a_hosted_host_discloses_tools_on_demand_whatever_its_configuration_says() {
+        let mut config: Config =
+            serde_yaml::from_str("tools:\n  disclosure:\n    mode: full\n").unwrap();
+        assert_eq!(
+            config.tools.disclosure.mode,
+            sven_bootstrap::Disclosure::Full
+        );
+        restrict_to_hosted(&mut config);
+        assert_eq!(
+            config.tools.disclosure.mode,
+            sven_bootstrap::Disclosure::Deferred
+        );
+    }
 
     /// A configured MCP server would run (stdio) or be reached (HTTP) from
     /// the hosted host even with its tools hidden by the allow list.

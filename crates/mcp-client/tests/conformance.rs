@@ -196,6 +196,156 @@ async fn serve_http() -> String {
     url
 }
 
+/// A server of the current revision whose tools change while sessions run:
+/// it announces each change on its listen streams, and can end them.
+mod growing_server {
+    use rmcp::handler::server::ServerHandler;
+    use rmcp::model::{
+        CallToolRequestParams, CallToolResponse, ErrorData, ListToolsResult,
+        PaginatedRequestParams, ServerCapabilities, ServerConfig, ServerNotification,
+        SubscriptionFilter, Tool, ToolListChangedNotification,
+    };
+    use rmcp::service::{RequestContext, RoleServer, SubscriptionContext};
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::broadcast;
+
+    /// What the test changes, shared with every session's handler.
+    pub struct Shared {
+        pub tools: Mutex<Vec<String>>,
+        /// `true` announces a change; `false` ends every open stream.
+        pub events: broadcast::Sender<bool>,
+        pub listens: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Shared {
+        pub fn new(tools: &[&str]) -> Arc<Self> {
+            Arc::new(Self {
+                tools: Mutex::new(tools.iter().map(|t| t.to_string()).collect()),
+                events: broadcast::channel(16).0,
+                listens: Default::default(),
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    pub struct Server(pub Arc<Shared>);
+
+    impl ServerHandler for Server {
+        fn get_info(&self) -> ServerConfig {
+            ServerConfig::new(
+                ServerCapabilities::builder()
+                    .enable_tools()
+                    .enable_tool_list_changed()
+                    .build(),
+            )
+        }
+
+        fn accepted_subscription_filter(
+            &self,
+            requested: &SubscriptionFilter,
+        ) -> Option<SubscriptionFilter> {
+            let mut accepted = SubscriptionFilter::new();
+            accepted.tools_list_changed = requested.tools_list_changed;
+            Some(accepted)
+        }
+
+        async fn listen(&self, context: SubscriptionContext) -> Result<(), ErrorData> {
+            self.0
+                .listens
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut events = self.0.events.subscribe();
+            loop {
+                tokio::select! {
+                    () = context.cancelled() => return Ok(()),
+                    event = events.recv() => match event {
+                        Ok(true) => {
+                            let changed = ServerNotification::ToolListChangedNotification(ToolListChangedNotification::default());
+                            let _ = context.sink().send(changed).await;
+                        }
+                        // The stream ends, as a server's does at a restart
+                        // or when its credential expires.
+                        _ => return Ok(()),
+                    },
+                }
+            }
+        }
+
+        async fn list_tools(
+            &self,
+            _: Option<PaginatedRequestParams>,
+            _: RequestContext<RoleServer>,
+        ) -> Result<ListToolsResult, ErrorData> {
+            let schema = Arc::new(serde_json::Map::from_iter([(
+                "type".to_string(),
+                serde_json::json!("object"),
+            )]));
+            let names = self.0.tools.lock().unwrap().clone();
+            Ok(ListToolsResult::with_all_items(
+                names
+                    .into_iter()
+                    .map(|n| Tool::new(n, "a tool", schema.clone()))
+                    .collect(),
+            ))
+        }
+
+        async fn call_tool(
+            &self,
+            request: CallToolRequestParams,
+            _: RequestContext<RoleServer>,
+        ) -> Result<CallToolResponse, ErrorData> {
+            Err(ErrorData::invalid_params(
+                format!("no call to {}", request.name),
+                None,
+            ))
+        }
+    }
+}
+
+/// The growing server over Streamable HTTP.
+async fn serve_growing(shared: Arc<growing_server::Shared>) -> String {
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::service::TowerToHyperService;
+    use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+    use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+
+    let service = StreamableHttpService::new(
+        move || Ok(growing_server::Server(shared.clone())),
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                return;
+            };
+            let service = TowerToHyperService::new(service.clone());
+            tokio::spawn(async move {
+                let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await;
+            });
+        }
+    });
+    url
+}
+
+/// Waits up to `secs` for `done`, checking every 50 ms.
+async fn eventually<F: std::future::Future<Output = bool>>(
+    secs: u64,
+    mut done: impl FnMut() -> F,
+) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    while std::time::Instant::now() < deadline {
+        if done().await {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    false
+}
+
 /// What the token-protected server saw.
 #[derive(Default)]
 struct Trades {
@@ -729,6 +879,79 @@ async fn a_401_in_a_headless_run_asks_for_a_sign_in_and_never_waits() {
     );
 }
 
+async fn a_tool_the_server_adds_while_the_session_runs_reaches_it_without_a_restart() {
+    let shared = growing_server::Shared::new(&["first"]);
+    let url = serve_growing(shared.clone()).await;
+    let c = client(vec![("live", http(&url, 10))]);
+    c.manager.connect("live").await.unwrap();
+    c.manager.start_background_tasks();
+    assert_eq!(c.manager.tools().await.len(), 1);
+    let generation = c.manager.tool_changes();
+    let seen = *generation.borrow();
+    // The session's listen stream is open before the change is made.
+    assert!(
+        eventually(5, || async {
+            shared.listens.load(std::sync::atomic::Ordering::SeqCst) >= 1
+        })
+        .await
+    );
+    shared.tools.lock().unwrap().push("second".into());
+    let _ = shared.events.send(true);
+    assert!(
+        eventually(5, || async { c.manager.tools().await.len() == 2 }).await,
+        "the added tool reached the running session"
+    );
+    assert!(
+        *generation.borrow() > seen,
+        "the change was announced to the session"
+    );
+}
+
+async fn a_change_made_while_the_stream_was_down_is_still_seen() {
+    let shared = growing_server::Shared::new(&["first"]);
+    let url = serve_growing(shared.clone()).await;
+    let c = client(vec![("live", http(&url, 10))]);
+    c.manager.connect("live").await.unwrap();
+    c.manager.start_background_tasks();
+    assert!(
+        eventually(5, || async {
+            shared.listens.load(std::sync::atomic::Ordering::SeqCst) >= 1
+        })
+        .await
+    );
+    // The stream ends, and the tool is added with nobody listening.
+    let _ = shared.events.send(false);
+    shared.tools.lock().unwrap().push("second".into());
+    assert!(
+        eventually(10, || async { c.manager.tools().await.len() == 2 }).await,
+        "listening again lists again, so the missed change is seen"
+    );
+    assert!(shared.listens.load(std::sync::atomic::Ordering::SeqCst) >= 2);
+}
+
+async fn a_list_that_did_not_change_is_not_announced() {
+    let shared = growing_server::Shared::new(&["first"]);
+    let url = serve_growing(shared.clone()).await;
+    let c = client(vec![("live", http(&url, 10))]);
+    c.manager.connect("live").await.unwrap();
+    c.manager.start_background_tasks();
+    assert!(
+        eventually(5, || async {
+            shared.listens.load(std::sync::atomic::Ordering::SeqCst) >= 1
+        })
+        .await
+    );
+    let generation = c.manager.tool_changes();
+    let seen = *generation.borrow();
+    let _ = shared.events.send(true);
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert_eq!(
+        *generation.borrow(),
+        seen,
+        "an announcement with nothing new leaves the session's tools alone"
+    );
+}
+
 // ── The runner ──────────────────────────────────────────────────────────────
 
 macro_rules! cases {
@@ -760,6 +983,9 @@ fn main() {
             a_call_the_server_never_answers_ends_at_the_timeout,
             a_server_that_dies_mid_call_fails_the_call_at_once,
             a_streamable_http_server_of_the_current_revision_lists_and_calls,
+            a_tool_the_server_adds_while_the_session_runs_reaches_it_without_a_restart,
+            a_change_made_while_the_stream_was_down_is_still_seen,
+            a_list_that_did_not_change_is_not_announced,
             a_servers_tool_policy_decides_what_is_offered_and_what_asks,
             a_server_behind_short_lived_tokens_never_sees_the_key_and_is_traded_again_when_refused,
             a_401_in_a_headless_run_asks_for_a_sign_in_and_never_waits,

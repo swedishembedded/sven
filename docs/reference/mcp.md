@@ -205,8 +205,16 @@ whose connector has the name of an enabled local server, or the URL of an
 enabled local HTTP server (compared by scheme, host and path, ignoring case
 and a trailing slash), is dropped.
 
-A server's tool list that changes while a TUI session runs reaches the agent at
-once, held to `tools.only` and `tools.disabled`.
+A server's tool list that changes while a session runs (the TUI, a headless
+run, `sven rc`) reaches the agent without a restart, held to `tools.only` and
+`tools.disabled`. A server that announces changes is followed on a listen
+stream, opened again whenever it ends and followed by a fresh listing, so a
+change made while the stream was down is still seen; any other server is
+listed again every ten minutes. A listing that says what it said before
+changes nothing. With `tools.disclosure.mode: deferred` (the default for a
+configuration file, and always for a hosted session) a new tool is found
+through the `tools` search and sent to the model only once it is loaded, so a
+change leaves every request's tool definitions as they were.
 
 A connected server that drops is reconnected with exponential backoff; after
 ten consecutive failures its status becomes `failed` and sven stops trying.

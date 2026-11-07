@@ -17,6 +17,14 @@
 //!
 //! A [`Connection`] is cheap to clone (it holds the peer handle only), so the
 //! manager hands out clones and never holds its own lock across a call.
+//!
+//! A server's tool list is followed for as long as its connection lives
+//! ([`follow`]): one that announces changes (`tools.listChanged`) gets a
+//! `subscriptions/listen` stream, opened again with backoff whenever it ends
+//! and followed by a re-list each time, so a change made while it was down
+//! is still seen; one that refuses a stream (an older revision delivers its
+//! notifications unsolicited) or announces nothing is listed again every
+//! [`RELIST_EVERY`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,6 +44,14 @@ use rmcp::transport::TokioChildProcess;
 use rmcp::{ClientHandler, ClientLifecycleMode, ClientServiceExt, Peer, RoleClient};
 use tokio::sync::mpsc;
 use tracing::debug;
+
+/// How often a server that offers no listen stream is listed again.
+pub const RELIST_EVERY: Duration = Duration::from_secs(10 * 60);
+/// The first and the longest wait before listening again.
+const LISTEN_BACKOFF: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(5 * 60));
+/// A stream that lasted this long ended in the ordinary way (a credential's
+/// expiry, a server's restart): listen again at once.
+const LISTEN_LASTED: Duration = Duration::from_secs(30);
 
 /// What a server asked to be refetched, by its `list_changed` notification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +87,88 @@ impl Handler {
         // A full channel means a refresh is already queued; dropping this one
         // loses nothing.
         let _ = self.changed.try_send((self.server.clone(), what));
+    }
+}
+
+fn handler_for(server: &str, changed: &mpsc::Sender<(String, ListChanged)>) -> Handler {
+    Handler {
+        server: server.to_string(),
+        changed: changed.clone(),
+    }
+}
+
+/// Follows a connection's tool list until it is dropped (module docs).
+async fn follow(service: std::sync::Weak<Service>, tell: Handler) {
+    let mut filter = rmcp::model::SubscriptionFilter::new();
+    filter.tools_list_changed = Some(true);
+    filter.prompts_list_changed = Some(true);
+    let mut wait = LISTEN_BACKOFF.0;
+    let mut first = true;
+    loop {
+        let listened = {
+            let Some(service) = service.upgrade() else {
+                return;
+            };
+            let announces = service.peer().peer_info().and_then(|info| {
+                info.capabilities
+                    .tools
+                    .as_ref()
+                    .and_then(|t| t.list_changed)
+            }) == Some(true);
+            if announces {
+                Some(service.peer().listen(filter.clone()).await)
+            } else {
+                None
+            }
+        };
+        match listened {
+            Some(Ok(mut stream)) => {
+                // A change made while no stream was open is caught by listing again.
+                if !first {
+                    tell.notify(ListChanged::Tools);
+                    tell.notify(ListChanged::Prompts);
+                }
+                first = false;
+                let opened = std::time::Instant::now();
+                while let Ok(Some(notification)) = stream.next().await {
+                    match notification {
+                        rmcp::model::ServerNotification::ToolListChangedNotification(_) => {
+                            tell.notify(ListChanged::Tools)
+                        }
+                        rmcp::model::ServerNotification::PromptListChangedNotification(_) => {
+                            tell.notify(ListChanged::Prompts)
+                        }
+                        _ => {}
+                    }
+                }
+                debug!(server = %tell.server, end = ?stream.end(), "the listen stream ended");
+                if opened.elapsed() >= LISTEN_LASTED {
+                    wait = LISTEN_BACKOFF.0;
+                }
+            }
+            Some(Err(e)) => {
+                debug!(server = %tell.server, error = %e, "the server refused a listen stream; listing it again now and then");
+                relist_until_dropped(&service, &tell).await;
+                return;
+            }
+            None => {
+                relist_until_dropped(&service, &tell).await;
+                return;
+            }
+        }
+        tokio::time::sleep(wait).await;
+        wait = (wait * 2).min(LISTEN_BACKOFF.1);
+    }
+}
+
+/// Lists the server again every [`RELIST_EVERY`] while its connection lives.
+async fn relist_until_dropped(service: &std::sync::Weak<Service>, tell: &Handler) {
+    loop {
+        tokio::time::sleep(RELIST_EVERY).await;
+        if service.strong_count() == 0 {
+            return;
+        }
+        tell.notify(ListChanged::Tools);
     }
 }
 
@@ -136,10 +234,7 @@ impl Connection {
         timeout: Duration,
         changed: mpsc::Sender<(String, ListChanged)>,
     ) -> Result<Self> {
-        let handler = Handler {
-            server: server.to_string(),
-            changed,
-        };
+        let handler = handler_for(server, &changed);
         let service = match endpoint {
             Endpoint::Stdio { command, args, env } => {
                 let first = within(
@@ -211,10 +306,12 @@ impl Connection {
                 })?
             }
         };
-        Ok(Self {
-            service: Arc::new(service),
-            timeout,
-        })
+        let service = Arc::new(service);
+        tokio::spawn(follow(
+            Arc::downgrade(&service),
+            handler_for(server, &changed),
+        ));
+        Ok(Self { service, timeout })
     }
 
     fn peer(&self) -> &Peer<RoleClient> {

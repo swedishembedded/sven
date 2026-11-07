@@ -676,22 +676,30 @@ impl McpManager {
             ListChanged::Tools => (Some(connection.list_tools().await?), None),
             ListChanged::Prompts => (None, Some(connection.list_prompts().await?)),
         };
-        let (tc, pc) = {
+        let (tc, pc, changed) = {
             let mut servers = self.servers.write().await;
             let state = servers
                 .get_mut(server)
                 .with_context(|| format!("no MCP server state for {server}"))?;
+            let mut changed = false;
             if let Some(tools) = tools {
+                changed |= tools != state.tools;
                 state.tools = tools;
             }
             if let Some(prompts) = prompts {
+                changed |= prompts != state.prompts;
                 state.prompts = prompts;
             }
             state
                 .health
                 .report_ok(state.tools.len(), state.prompts.len());
-            (state.tools.len(), state.prompts.len())
+            (state.tools.len(), state.prompts.len(), changed)
         };
+        // A list read again that says what it said before changes nothing
+        // the session holds: its tools, and the definitions sent, stay.
+        if !changed {
+            return Ok(());
+        }
         info!(server = %server, tools = tc, prompts = pc, "refreshed after list_changed");
         self.emit(McpEvent::ToolsChanged);
         Ok(())
