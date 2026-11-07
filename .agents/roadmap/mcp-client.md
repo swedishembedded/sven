@@ -87,6 +87,19 @@ applied in `McpManager::tools` and in manual approval's preapproval for the
 session's own registry. Child sessions still ask for an allowed MCP tool
 (their preapproval has no registry): conservative, left as is.
 
+**M6 Live tool lists (agreed 2026-11-08).** The client follows a server's
+tool-list changes for as long as a session runs: for a server advertising
+`tools.listChanged`, a `subscriptions/listen` stream (2026-07-28) reopened
+with backoff and followed by a re-list on every reopen, so a missed change is
+recovered; for one that does not, a slow periodic re-list. A changed list
+reaches the registry through the existing `tool_generation` path; under
+deferred disclosure the definitions sent to the model change only when the
+model loads a tool. Hosted sessions always run deferred. Done when: a
+conformance case where a server adds a tool after the session started and
+the session lists it without a restart, one where the stream drops and the
+change is still seen, and the deferred request's tool definitions are
+byte-identical across the change. whale's side: `connectors.md` C8.
+
 ## Not planned
 
 Running MCP servers on behalf of other people; sven stays a client of what
