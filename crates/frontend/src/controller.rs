@@ -33,7 +33,7 @@ use sven_bootstrap::session_handles::{HumanGateResponder, RuntimeHandle};
 use sven_bootstrap::{Config, KernelAgentSession, McpManager, RuntimeBuilder, RuntimeContext};
 use sven_machines::AgentEvent;
 use sven_mcp_client::McpEvent;
-use sven_model::Message;
+use sven_model::{ContentPart, Message};
 use sven_model_drivers::ModelConfig;
 use sven_tool_api::PermissionRequester;
 use sven_tools_agent::QuestionRequest;
@@ -452,6 +452,26 @@ impl SessionController {
             self.session.seed_history(messages);
         }
         self.post(text).await
+    }
+
+    /// [`Self::submit`] of a message with content beyond text (an image the
+    /// person attached): `parts` become the user's next message, after the
+    /// conversation so far. The kernel's user message carries text alone, so
+    /// the message is seeded into the conversation and an empty text drives
+    /// the turn, which appends no second message for it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::submit`].
+    pub async fn submit_parts(
+        &mut self,
+        parts: Vec<ContentPart>,
+        mode: Option<AgentMode>,
+        model: Option<ModelConfig>,
+    ) -> Result<(), SubmitError> {
+        let mut messages = self.history();
+        messages.push(Message::user_with_parts(parts));
+        self.resubmit(messages, String::new(), mode, model).await
     }
 
     /// Posts `text` as the user's next message to the session as it is.

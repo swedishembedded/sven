@@ -9,7 +9,10 @@
 //! Files a person attached to an input. The server holds them; the host
 //! fetches each through the server's MCP endpoint (`files/authorizeDownload`,
 //! checked against its digest) into the working directory, where the agent's
-//! file tools reach it, and the input tells the agent where each one is.
+//! file tools reach it, and the input tells the agent where each one is. An
+//! attached image the model takes is also given to it as an image in the
+//! person's message, so it sees the picture without a tool to open the file
+//! (the hosted agent has none).
 //!
 //! A machine runs many conversations, so every tool call and file request of
 //! a session names its conversation in `_meta["sven/session"]`
@@ -24,6 +27,8 @@ use sven_bootstrap::Config;
 use sven_control::Attachment;
 use sven_frontend::SessionController;
 use sven_mcp_client::McpManager;
+use sven_model::ContentPart;
+use sven_tools_fs::AttachOptions;
 use uuid::Uuid;
 
 use super::SessionActor;
@@ -53,21 +58,59 @@ pub(super) fn for_session(config: &Arc<Config>, id: Uuid, working_dir: &Path) ->
     Arc::new(own)
 }
 
+/// The person's input with its attachments: the text, with every file listed
+/// after it, and the images among them as the model's own input.
+#[derive(Debug, Default)]
+pub(super) struct Attached {
+    pub(super) text: String,
+    /// Empty when nothing attached is an image the model takes.
+    pub(super) images: Vec<ContentPart>,
+}
+
+/// The image types the server's gateway takes as input
+/// (`/v1/chat/completions` image parts).
+const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
 /// `text` with `attachments` fetched into `working_dir` and listed after it.
 /// A file that cannot be fetched is listed as such, so the agent can say so.
+/// With `images` (what the conversation's model takes), an attached image it
+/// takes is also loaded as an image part; one it does not take, or that will
+/// not load, stays a file the agent's tools can reach.
 pub(super) async fn attach(
     mcp: &McpManager,
     working_dir: &Path,
     text: String,
     attachments: &[Attachment],
-) -> String {
+    images: Option<&AttachOptions>,
+) -> Attached {
     if attachments.is_empty() {
-        return text;
+        return Attached {
+            text,
+            images: Vec::new(),
+        };
     }
+    let mut shown = Vec::new();
     let mut note = String::from("\n\n(Files I attached, saved in the working directory:");
     for file in attachments {
         let line = match fetch(mcp, working_dir, file).await {
-            Ok(path) => format!("\n- `{path}` ({}, {} bytes)", file.mime_type, file.size),
+            Ok(path) => {
+                let parts = match images {
+                    Some(opts) if IMAGE_TYPES.contains(&file.mime_type.as_str()) => {
+                        image(&working_dir.join(&path), opts).await
+                    }
+                    _ => None,
+                };
+                let seen = if parts.is_some() {
+                    "; it is also in this message as an image"
+                } else {
+                    ""
+                };
+                shown.extend(parts.unwrap_or_default());
+                format!(
+                    "\n- `{path}` ({}, {} bytes{seen})",
+                    file.mime_type, file.size
+                )
+            }
             Err(e) => {
                 tracing::warn!("attachment {}: {e:#}", file.uri);
                 format!("\n- {}: could not be fetched ({e:#})", file.name)
@@ -76,27 +119,71 @@ pub(super) async fn attach(
         note.push_str(&line);
     }
     note.push(')');
-    text + &note
+    Attached {
+        text: text + &note,
+        images: shown,
+    }
+}
+
+/// The image at `path` as the model's input, or `None` when the model does
+/// not take images or the file is not one (it stays a file).
+async fn image(path: &Path, opts: &AttachOptions) -> Option<Vec<ContentPart>> {
+    match sven_tools_fs::load_attachment(path, opts, "the conversation's model").await {
+        Ok(loaded @ sven_tools_fs::LoadedAttachment::Image { .. }) => {
+            Some(loaded.into_content_parts())
+        }
+        Ok(_) => None,
+        Err(e) => {
+            tracing::debug!(
+                "attachment {} is not shown as an image: {e}",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 impl SessionActor {
-    /// `text` with the files attached to it fetched and listed; the live
+    /// `text` with the files attached to it fetched and listed, and the
+    /// images among them that the conversation's model takes; the live
     /// session is opened first, for its connection to the server.
     pub(super) async fn with_attachments(
         &mut self,
         text: String,
         attached: &[Attachment],
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<Attached> {
         if attached.is_empty() {
-            return Ok(text);
+            return Ok(Attached {
+                text,
+                images: Vec::new(),
+            });
         }
+        let model = self.model_config()?;
         if self.controller.is_none() {
-            let model = self.model_config()?;
-            self.controller = Some(self.open_controller(model).await?);
+            self.controller = Some(self.open_controller(model.clone()).await?);
         }
         let mcp = self.controller.as_ref().map(SessionController::mcp_manager);
         let mcp = mcp.expect("opened above");
-        Ok(attach(&mcp, &self.context.working_dir, text, attached).await)
+        // What the model takes, as its server lists it: an image goes to a
+        // model that sees images, and stays a file for one that does not.
+        let opts = match sven_model_drivers::from_config_probed(&model).await {
+            Ok(provider) => Some(AttachOptions::for_model(&*provider)),
+            Err(e) => {
+                tracing::warn!(
+                    "session {}: the model's inputs are unknown, images stay files: {e:#}",
+                    self.id
+                );
+                None
+            }
+        };
+        Ok(attach(
+            &mcp,
+            &self.context.working_dir,
+            text,
+            attached,
+            opts.as_ref(),
+        )
+        .await)
     }
 }
 
@@ -134,10 +221,45 @@ mod tests {
 
     const BYTES: &[u8] = b"quarter,revenue\nQ3,12\n";
 
+    /// A 1x1 PNG.
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8,
+        0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    /// What the fake server holds as `mcp-file://files/f1`.
+    #[derive(Clone, Copy)]
+    struct Held {
+        name: &'static str,
+        mime: &'static str,
+        bytes: &'static [u8],
+    }
+
+    const CSV: Held = Held {
+        name: "q3.csv",
+        mime: "text/csv",
+        bytes: BYTES,
+    };
+
+    fn digest_of(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(bytes))
+    }
+
     /// A server holding one file, `mcp-file://files/f1`, with `digest`: it
     /// answers `files/authorizeDownload` with a GET of its own, and keeps the
     /// `_meta` each request named.
     async fn server(digest: String, metas: Arc<Mutex<Vec<serde_json::Value>>>) -> String {
+        server_of(CSV, digest, metas).await
+    }
+
+    async fn server_of(
+        held: Held,
+        digest: String,
+        metas: Arc<Mutex<Vec<serde_json::Value>>>,
+    ) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let blob = format!("{base}/blob");
@@ -161,10 +283,10 @@ mod tests {
                     if head.starts_with("get /blob") {
                         let reply = format!(
                             "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                            BYTES.len()
+                            held.bytes.len()
                         );
                         let _ = socket.write_all(reply.as_bytes()).await;
-                        let _ = socket.write_all(BYTES).await;
+                        let _ = socket.write_all(held.bytes).await;
                         return;
                     }
                     let length: usize = head
@@ -197,8 +319,8 @@ mod tests {
                                 .unwrap()
                                 .push(request["params"]["_meta"].clone());
                             Some(serde_json::json!({
-                                "file": { "uri": "mcp-file://files/f1", "name": "q3.csv", "mimeType": "text/csv",
-                                          "size": BYTES.len(), "digest": { "algorithm": "sha-256", "value": digest } },
+                                "file": { "uri": "mcp-file://files/f1", "name": held.name, "mimeType": held.mime,
+                                          "size": held.bytes.len(), "digest": { "algorithm": "sha-256", "value": digest } },
                                 "download": { "transport": "https", "method": "GET", "url": blob },
                             }))
                         }
@@ -264,7 +386,7 @@ mod tests {
         let id = Uuid::new_v4();
         let mcp = manager(&url, id, work.path()).await;
 
-        let text = attach(
+        let attached = attach(
             &mcp,
             work.path(),
             "Sum the revenue.".into(),
@@ -272,8 +394,15 @@ mod tests {
                 attachment("mcp-file://files/f1", "q3.csv"),
                 attachment("mcp-file://files/gone", "q4.csv"),
             ],
+            Some(&AttachOptions {
+                supports_images: true,
+                ..AttachOptions::default()
+            }),
         )
         .await;
+        // A file that is no image is no image part, whatever the model takes.
+        assert!(attached.images.is_empty());
+        let text = attached.text;
         let kept = work.path().join(DIR).join("f1/q3.csv");
         assert_eq!(std::fs::read(&kept).unwrap(), BYTES);
         assert!(text.starts_with("Sum the revenue."));
@@ -295,10 +424,95 @@ mod tests {
             elsewhere.path(),
             String::new(),
             &[attachment("mcp-file://files/f1", "q3.csv")],
+            None,
         )
-        .await;
+        .await
+        .text;
         assert!(text.contains("did not match its digest"), "{text}");
         assert!(!elsewhere.path().join(DIR).join("f1/q3.csv").exists());
+    }
+
+    /// An attached image goes to a model that takes images as an image in the
+    /// person's message, so it is seen without a tool to open the file; for a
+    /// model that does not, it is only the file. Either way the file is kept
+    /// and listed, for the agent's tools.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_attached_image_is_the_models_own_input_when_it_takes_images() {
+        let png = Held {
+            name: "shot.png",
+            mime: "image/png",
+            bytes: PNG,
+        };
+        let url = server_of(png, digest_of(PNG), Arc::new(Mutex::new(Vec::new()))).await;
+        let image = Attachment {
+            uri: "mcp-file://files/f1".into(),
+            name: "shot.png".into(),
+            mime_type: "image/png".into(),
+            size: PNG.len() as u64,
+        };
+
+        let work = tempfile::tempdir().unwrap();
+        let mcp = manager(&url, Uuid::new_v4(), work.path()).await;
+        let sees = AttachOptions {
+            supports_images: true,
+            ..AttachOptions::default()
+        };
+        let attached = attach(
+            &mcp,
+            work.path(),
+            "What do you see?".into(),
+            std::slice::from_ref(&image),
+            Some(&sees),
+        )
+        .await;
+        assert!(
+            attached.text.starts_with("What do you see?"),
+            "{}",
+            attached.text
+        );
+        assert!(
+            attached.text.contains("`.sven/attachments/f1/shot.png`"),
+            "{}",
+            attached.text
+        );
+        assert!(
+            attached.text.contains("also in this message as an image"),
+            "{}",
+            attached.text
+        );
+        let urls: Vec<_> = attached
+            .images
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Image { image_url, .. } => Some(image_url.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(urls.len(), 1);
+        assert!(urls[0].starts_with("data:image/png;base64,"), "{}", urls[0]);
+        assert!(work.path().join(DIR).join("f1/shot.png").exists());
+
+        let blind = tempfile::tempdir().unwrap();
+        let mcp = manager(&url, Uuid::new_v4(), blind.path()).await;
+        let text_only = AttachOptions {
+            supports_images: false,
+            ..AttachOptions::default()
+        };
+        let attached = attach(
+            &mcp,
+            blind.path(),
+            "What do you see?".into(),
+            &[image],
+            Some(&text_only),
+        )
+        .await;
+        assert!(attached.images.is_empty());
+        assert!(
+            attached.text.contains("`.sven/attachments/f1/shot.png`"),
+            "{}",
+            attached.text
+        );
+        assert!(!attached.text.contains("as an image"), "{}", attached.text);
     }
 
     /// Only the signed-in server's file requests name the session; a host

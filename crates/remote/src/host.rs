@@ -493,14 +493,17 @@ impl SessionActor {
         println!("[{}] > {}", self.short(), printable(first_line(&text)));
         // The server asking again for the answer this host was stopped in
         // the middle of: continue it, rather than start it over.
-        let text = if self.unfinished.take().as_deref() == Some(text.as_str()) {
+        let input = if self.unfinished.take().as_deref() == Some(text.as_str()) {
             println!("[{}]   continuing the interrupted answer", self.short());
-            CONTINUE_INTERRUPTED.to_string()
+            attachments::Attached {
+                text: CONTINUE_INTERRUPTED.to_string(),
+                images: Vec::new(),
+            }
         } else {
             match slash::interpret(&text, &self.context.working_dir) {
                 slash::Typed::Message(text) | slash::Typed::Expanded(text) => {
                     match self.with_attachments(text, attached).await {
-                        Ok(text) => text,
+                        Ok(input) => input,
                         Err(e) => {
                             self.fail(&format!("{e:#}")).await;
                             return;
@@ -543,7 +546,7 @@ impl SessionActor {
                 .await;
             return;
         }
-        if let Err(e) = self.submit(text).await {
+        if let Err(e) = self.submit(input).await {
             self.fail(&format!("{e:#}")).await;
         }
     }
@@ -604,19 +607,31 @@ impl SessionActor {
         Ok(controller)
     }
 
-    async fn submit(&mut self, text: String) -> anyhow::Result<()> {
+    /// Posts the person's input: its text, and with it the images the model
+    /// takes, as one message.
+    async fn submit(&mut self, input: attachments::Attached) -> anyhow::Result<()> {
         let model = self.model_config()?;
         self.state(SessionState::Running).await;
         self.expect_ending();
+        if self.controller.is_none() && !input.images.is_empty() {
+            self.controller = Some(self.open_controller(model.clone()).await?);
+        }
         match &mut self.controller {
+            Some(controller) if !input.images.is_empty() => {
+                let mut parts = vec![sven_model::ContentPart::text(input.text)];
+                parts.extend(input.images);
+                controller
+                    .submit_parts(parts, Some(self.mode), Some(model))
+                    .await?
+            }
             Some(controller) => {
                 controller
-                    .submit(text, Some(self.mode), Some(model))
+                    .submit(input.text, Some(self.mode), Some(model))
                     .await?
             }
             None => {
                 let controller = self.open_controller(model).await?;
-                controller.post(text).await?;
+                controller.post(input.text).await?;
                 self.controller = Some(controller);
             }
         }

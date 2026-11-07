@@ -25,6 +25,8 @@ sven-session-sync  = { path = "../session-sync" }
 sven-tool-api      = { path = "../tool-api" }
 sven-tools-agent   = { path = "../tools-agent" }
 sven-tools-exec    = { path = "../tools-exec" }
+# Loading an attached image as the model's own input (the `media` feature).
+sven-tools-fs      = { path = "../tools-fs" }
 sven-vocab         = { path = "../vocab" }
 async-trait        = { workspace = true }
 anyhow     = { workspace = true }
