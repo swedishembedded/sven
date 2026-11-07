@@ -94,6 +94,14 @@ pub struct LoopState {
     /// failure if the model did not change its behavior.
     #[serde(default)]
     pub stall_nudge: Option<String>,
+    /// What the person sent while the turn was running, to steer it:
+    /// delivered as the instruction of the turn's next model request (after
+    /// the tool results in flight, before the model's next step) and
+    /// consumed there. Left over when the turn ends without another request,
+    /// it goes with the loop: no `Steered` was said for it, so the host
+    /// sends it as the next message instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steering: Vec<Steering>,
     /// Consecutive empty turns seen so far. Reset by any turn that produced
     /// text or tool calls; past [`EMPTY_TURN_NUDGE_BUDGET`] the loop stops
     /// nudging and fires the wrap-up instead. `#[serde(default)]` because it
@@ -119,6 +127,32 @@ pub struct LoopState {
     /// ([`TurnRequest::machine_ends_turn`]).
     #[serde(default)]
     pub machine_ends_turn: bool,
+}
+
+/// The name of the internal signal that carries a [`Steering`] to a running
+/// loop (`Event::Internal(Custom { name: STEER_SIGNAL, payload })`).
+pub const STEER_SIGNAL: &str = "steer";
+
+/// What a trace labels the user turn a steering message becomes.
+pub use sven_vocab::turn::STEER_ORIGIN;
+
+/// A message the person sent while the turn was running.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Steering {
+    pub text: String,
+    /// Files to load into the message, as `TurnRequest::attachments`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<String>,
+}
+
+impl Steering {
+    /// The steering a `STEER_SIGNAL`'s payload carries, if it is one.
+    #[must_use]
+    pub fn from_payload(payload: &Value) -> Option<Self> {
+        serde_json::from_value::<Self>(payload.clone())
+            .ok()
+            .filter(|s| !s.text.trim().is_empty() || !s.attachments.is_empty())
+    }
 }
 
 impl LoopState {
@@ -165,6 +199,9 @@ impl LoopState {
     /// the turn's instruction; otherwise the budget-progress guidance rides
     /// along when the round counter crosses one of its thresholds.
     pub fn continuation_turn(&mut self) -> Effect {
+        if !self.steering.is_empty() {
+            return self.steered_turn(None);
+        }
         let instruction = self
             .stall_nudge
             .take()
@@ -172,11 +209,35 @@ impl LoopState {
         self.turn(instruction, None)
     }
 
+    /// The continuation that delivers what the person sent while the turn ran:
+    /// their messages, in order, as one user turn labelled [`STEER_ORIGIN`]
+    /// with every file they attached.
+    fn steered_turn(&mut self, schema: Option<(Value, &str)>) -> Effect {
+        let steering = std::mem::take(&mut self.steering);
+        let text = steering
+            .iter()
+            .map(|s| s.text.trim())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let attachments = steering.into_iter().flat_map(|s| s.attachments).collect();
+        let mut effect = self.turn(Some(text), schema);
+        if let Effect::CallLlm { request } = &mut effect {
+            request["origin"] = Value::String(STEER_ORIGIN.to_string());
+            request["attachments"] =
+                serde_json::to_value::<Vec<String>>(attachments).unwrap_or(Value::Null);
+        }
+        effect
+    }
+
     /// Build a continuation turn that also enforces a JSON response schema.
     ///
     /// Consumes [`LoopState::stall_nudge`] like [`LoopState::continuation_turn`];
     /// when both are armed the redirect rides along with the schema demand.
     pub fn continuation_turn_with_schema(&mut self, schema: Value, schema_name: &str) -> Effect {
+        if !self.steering.is_empty() {
+            return self.steered_turn(Some((schema, schema_name)));
+        }
         let instruction = self
             .stall_nudge
             .take()
@@ -389,6 +450,8 @@ pub fn init_loop(
         refusals: std::collections::BTreeMap::new(),
         failure_streaks: HashMap::new(),
         stall_nudge: None,
+        // A new turn starts with nothing to steer: what was left over is the host's to send.
+        steering: Vec::new(),
         empty_turns: 0,
         truncated: false,
         machine_ends_turn: false,

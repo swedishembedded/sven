@@ -35,6 +35,8 @@ pub(super) struct Input {
     pub answer_id: Option<String>,
     /// Files the person attached ([`super::attachments`]).
     pub attachments: Vec<sven_control::Attachment>,
+    /// Steers the running turn instead of waiting for it to end.
+    pub steer: bool,
 }
 
 #[derive(Debug)]
@@ -157,6 +159,7 @@ mod tests {
             text: format!("text of {id}"),
             answer_id: Some(id.into()),
             attachments: Vec::new(),
+            steer: false,
         }
     }
 

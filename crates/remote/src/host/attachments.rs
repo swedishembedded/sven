@@ -65,6 +65,21 @@ pub(super) struct Attached {
     pub(super) text: String,
     /// Empty when nothing attached is an image the model takes.
     pub(super) images: Vec<ContentPart>,
+    /// Where each of `images` was saved, for a message the turn loads
+    /// itself (a steering message).
+    pub(super) image_paths: Vec<std::path::PathBuf>,
+}
+
+impl Attached {
+    /// `next` said after this one: one message of both.
+    pub(super) fn join(&mut self, next: Attached) {
+        if !self.text.is_empty() && !next.text.is_empty() {
+            self.text.push_str("\n\n");
+        }
+        self.text.push_str(&next.text);
+        self.images.extend(next.images);
+        self.image_paths.extend(next.image_paths);
+    }
 }
 
 /// The image types the server's gateway takes as input
@@ -86,10 +101,11 @@ pub(super) async fn attach(
     if attachments.is_empty() {
         return Attached {
             text,
-            images: Vec::new(),
+            ..Attached::default()
         };
     }
     let mut shown = Vec::new();
+    let mut image_paths = Vec::new();
     let mut note = String::from("\n\n(Files I attached, saved in the working directory:");
     for file in attachments {
         let line = match fetch(mcp, working_dir, file).await {
@@ -101,6 +117,7 @@ pub(super) async fn attach(
                     _ => None,
                 };
                 let seen = if parts.is_some() {
+                    image_paths.push(working_dir.join(&path));
                     "; it is also in this message as an image"
                 } else {
                     ""
@@ -122,6 +139,7 @@ pub(super) async fn attach(
     Attached {
         text: text + &note,
         images: shown,
+        image_paths,
     }
 }
 
@@ -155,7 +173,7 @@ impl SessionActor {
         if attached.is_empty() {
             return Ok(Attached {
                 text,
-                images: Vec::new(),
+                ..Attached::default()
             });
         }
         let model = self.model_config()?;

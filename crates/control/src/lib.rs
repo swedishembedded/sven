@@ -80,6 +80,16 @@ pub enum ControlCommand {
         /// fetched from it by their `uri` (MCP's `files/authorizeDownload`).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<Attachment>,
+        /// Sent while the session's turn runs, to steer it: the turn takes
+        /// it at its next safe point (after the tool calls in flight, before
+        /// the model's next step) and from there answers it as this input's
+        /// answer, after ending the one it was writing
+        /// ([`SessionEvent::Steered`](sven_vocab::SessionEvent::Steered)). One
+        /// the turn did not take before it ended is answered next, as a
+        /// message. Unset, an input sent while a turn runs is refused. An
+        /// older host ignores the field and refuses it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        steer: bool,
     },
 
     /// Tell a session something the system hosting it says: a job finished,
@@ -539,6 +549,7 @@ mod tests {
             text: "do the thing".into(),
             answer_id: None,
             attachments: Vec::new(),
+            steer: false,
         };
         match control_command_to_kernel_event(&cmd) {
             Some(sven_hsm::Event::UserMessage { text }) => assert_eq!(text, "do the thing"),
@@ -568,9 +579,25 @@ mod tests {
             text: "x".into(),
             answer_id: None,
             attachments: Vec::new(),
+            steer: false,
         })
         .unwrap();
         assert!(plain.get("attachments").is_none());
+        assert!(
+            plain.get("steer").is_none(),
+            "an input that does not steer says nothing"
+        );
+        let steering: ControlCommand = serde_json::from_value(serde_json::json!({
+            "type": "send_input",
+            "session_id": "6f1c1d1e-6c1a-4d43-9a43-6f2a9d3b2a10",
+            "text": "use the new lexer",
+            "steer": true,
+        }))
+        .unwrap();
+        assert!(matches!(
+            steering,
+            ControlCommand::SendInput { steer: true, .. }
+        ));
     }
 
     /// Spec: a notice is its own command on the wire, with an optional ask
@@ -711,6 +738,7 @@ mod tests {
                 text: "x".into(),
                 answer_id: None,
                 attachments: Vec::new(),
+                steer: false,
             }),
             Some(sid)
         );

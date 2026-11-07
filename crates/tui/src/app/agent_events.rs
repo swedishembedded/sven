@@ -10,8 +10,8 @@ use sven_model::{FunctionCall, Message, MessageContent, Role};
 use sven_tool_api::events::SubagentUpdate;
 
 use crate::{
-    app::{chat_state::ChatState, App, FocusPane},
-    chat::segment::{messages_for_resubmit, ChatSegment},
+    app::{chat_state::ChatState, App},
+    chat::segment::ChatSegment,
 };
 
 impl App {
@@ -351,28 +351,9 @@ impl App {
                 }
                 // Move this chat to top of list when the model finishes a response (not on click).
                 self.sessions.promote_to_top(&session_id);
-                // Only dequeue the next message if no queue item is being edited
-                // and an abort did not explicitly suppress auto-advance.
-                if self.edit.queue_index.is_none() && !self.queue.abort_pending {
-                    if let Some(next) = self.queue.messages.pop_front() {
-                        self.queue.selected = self
-                            .queue
-                            .selected
-                            .map(|s| s.saturating_sub(1))
-                            .filter(|_| !self.queue.messages.is_empty());
-                        if self.queue.messages.is_empty() && self.ui.focus == FocusPane::Queue {
-                            self.ui.focus = FocusPane::Input;
-                        }
-                        self.chat
-                            .push_segment(ChatSegment::Message(Message::user(&next.content)));
-                        self.save_history_async();
-                        self.rerender_chat().await;
-                        self.chat.auto_scroll = true;
-                        self.scroll_to_bottom();
-                        self.send_to_agent(next).await;
-                    }
-                }
+                self.after_turn(false).await;
             }
+            AgentEvent::Steered { text } => self.steered(text).await,
             AgentEvent::Aborted { partial_text } => {
                 self.chat.streaming_buffer.clear();
                 self.chat.streaming_is_thinking = false;
@@ -402,29 +383,9 @@ impl App {
                 if let Some(pager) = &mut self.ui.pager {
                     pager.set_lines(self.chat.lines.clone());
                 }
-                // If abort_pending is set, the user did a plain /abort - keep
-                // the queue as-is and wait for manual submit.
-                // If abort_pending is false (force-submit path), auto-dequeue.
-                if !self.queue.abort_pending && self.edit.queue_index.is_none() {
-                    if let Some(next) = self.queue.messages.pop_front() {
-                        self.queue.selected = self
-                            .queue
-                            .selected
-                            .map(|s| s.saturating_sub(1))
-                            .filter(|_| !self.queue.messages.is_empty());
-                        if self.queue.messages.is_empty() && self.ui.focus == FocusPane::Queue {
-                            self.ui.focus = FocusPane::Input;
-                        }
-                        let history = messages_for_resubmit(self.chat.segments());
-                        self.chat
-                            .push_segment(ChatSegment::Message(Message::user(&next.content)));
-                        self.save_history_async();
-                        self.rerender_chat().await;
-                        self.chat.auto_scroll = true;
-                        self.scroll_to_bottom();
-                        self.send_resubmit_to_agent(history, next).await;
-                    }
-                }
+                // After a plain stop (`abort_pending`) the queue is held until
+                // the person sends; a forced message goes on at once.
+                self.after_turn(true).await;
             }
             AgentEvent::ToolProgress { call_id, message } => {
                 // Messages prefixed "[stream_buf:<handle>]\n" carry live sub-agent

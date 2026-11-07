@@ -771,6 +771,12 @@ pub enum SessionEvent {
     /// [`Notice`]). Shown as a notice, never as the person's message, and
     /// never a failure.
     Notice(Notice),
+    /// What the person sent while the turn ran was given to it at a safe
+    /// point (after the tool results in flight, before the model's next
+    /// step): from here on the turn answers it too. `text` is what was
+    /// delivered. A host that shows one answer per message ends the answer so
+    /// far here and starts the steering message's.
+    Steered { text: String },
     /// The agent has finished processing the current user turn.
     TurnComplete,
     /// The current run was aborted (via Ctrl+C or /abort). `partial_text`

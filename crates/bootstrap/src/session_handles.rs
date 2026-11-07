@@ -325,6 +325,21 @@ impl RuntimeHandle {
         self.sink.emit(Event::UserMessage { text }).await
     }
 
+    /// Steers the turn in flight with what the person sent while it ran: the
+    /// machine delivers `text` (and the files at `attachments`) as the user
+    /// turn of its next model request, after the tool results in flight and
+    /// before the model's next step, announced as `SessionEvent::Steered`. At
+    /// rest it starts a turn like a message. Returns `false` if the kernel
+    /// queue is closed.
+    pub async fn steer(&self, text: String, attachments: Vec<String>) -> bool {
+        self.sink
+            .emit(Event::Internal(sven_hsm::InternalEvent::Custom {
+                name: sven_machines::machines::loop_core::STEER_SIGNAL.to_string(),
+                payload: serde_json::json!({ "text": text, "attachments": attachments }),
+            }))
+            .await
+    }
+
     /// Stops the turn in flight: what it started (a running tool, the model
     /// stream) ends at once, then `Event::UserCancelled` tells the machine.
     /// The session goes on; the next turn starts with nothing cancelled.

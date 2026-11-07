@@ -373,6 +373,12 @@ impl EffectExecutor for TurnExecutor {
                 }
             }
         }
+        // A steering message is in the thread now: said, before the model sees it.
+        if req.origin.as_deref() == Some(sven_vocab::turn::STEER_ORIGIN) {
+            obs.emit(UiEvent::Steered {
+                text: req.instruction.clone(),
+            });
+        }
 
         // Snapshot the thread before any async I/O (guard is dropped immediately
         // by the helper so it is never held across an await boundary).

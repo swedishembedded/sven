@@ -55,8 +55,8 @@ walk through the history of messages you sent.
 running · 1 done · 1m 14s · 12.3k tok`; open it for a row per agent. See [the
 agents panel](#the-agents-panel).
 
-**Queue panel** - a message sent while the agent is working is queued and sent
-when the turn ends. See [the queue panel](#the-queue-panel).
+**Queue panel** - messages sent while the agent is working are queued and sent
+together, as one message, when the turn ends. See [the queue panel](#the-queue-panel).
 
 Press `F1` for an overlay that lists the key bindings.
 
@@ -167,13 +167,15 @@ and runs the agent from the edited message.
 ### The queue panel
 
 A message you send while the agent is working appears in a panel above the input
-box and is sent when the turn ends. Press `q` in the chat pane to focus the panel.
+box. When the turn ends, everything queued is sent together as one message (a
+message that switches the model or mode starts a message of its own). Press `q`
+in the chat pane to focus the panel.
 
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` or `k` / `j` | Select a queued message |
 | `e` | Edit the selected message |
-| `Enter` or `f` | Send it now, aborting the running turn |
+| `Enter` or `f` | Send it now: the running turn takes it after the tool call in flight, before its next step, without stopping. If the turn ends first it is sent next. A message that switches the model or mode stops the turn instead |
 | `s` | Send it when the agent is idle |
 | `d` or `Delete` | Delete it |
 | `Esc` or `q` | Return to the input box |

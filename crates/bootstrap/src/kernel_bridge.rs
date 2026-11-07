@@ -293,6 +293,12 @@ impl KernelAgentSession {
         self.handle.send_user_message(text).await
     }
 
+    /// Steer the in-flight turn (see [`RuntimeHandle::steer`]). Returns
+    /// `false` if the kernel queue is closed.
+    pub async fn steer(&self, text: String, attachments: Vec<String>) -> bool {
+        self.handle.steer(text, attachments).await
+    }
+
     /// Cancel the in-flight turn (`Event::UserCancelled`). Returns `false` if
     /// the kernel queue is closed.
     pub async fn cancel(&self) -> bool {

@@ -76,6 +76,10 @@ pub(crate) struct AgentConn {
     /// (which is event-driven and reflects streaming speed), `anim_frame`
     /// advances at a steady rate regardless of how fast events arrive.
     pub anim_frame: u8,
+    /// Messages sent to steer the running turn that it has not taken yet:
+    /// shown in the chat once it takes them (`Steered`), queued first again
+    /// when the turn ends without them.
+    pub steering: Vec<crate::app::QueuedMessage>,
 }
 
 impl AgentConn {
@@ -103,6 +107,7 @@ impl AgentConn {
             tx: None,
             tool_start_times: HashMap::new(),
             anim_frame: 0,
+            steering: Vec::new(),
         }
     }
 }

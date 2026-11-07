@@ -321,8 +321,24 @@ struct SessionActor {
     /// asked to end it (else the host ends it itself).
     asking: Option<String>,
     expecting: bool,
+    /// Whether the input being handled steers the running turn.
+    steering_input: bool,
+    /// Messages sent to steer the running turn that it has not taken yet,
+    /// oldest first: a `Steered` takes them all; the turn's end leaves them
+    /// to be answered next.
+    steering: std::collections::VecDeque<Steer>,
+    /// The model a test scripts in place of the server's.
+    #[cfg(test)]
+    scripted_model: Option<ModelConfig>,
     events_tx: mpsc::Sender<AgentEvent>,
     events_rx: mpsc::Receiver<AgentEvent>,
+}
+
+/// A message sent to steer the running turn, and the answer it is shown as.
+#[derive(Debug)]
+struct Steer {
+    answer_id: Option<String>,
+    input: attachments::Attached,
 }
 
 impl SessionActor {
@@ -347,6 +363,10 @@ impl SessionActor {
             held_notices: std::collections::VecDeque::new(),
             asking: None,
             expecting: false,
+            steering_input: false,
+            steering: std::collections::VecDeque::new(),
+            #[cfg(test)]
+            scripted_model: None,
             events_tx,
             events_rx,
         }
@@ -497,7 +517,7 @@ impl SessionActor {
             println!("[{}]   continuing the interrupted answer", self.short());
             attachments::Attached {
                 text: CONTINUE_INTERRUPTED.to_string(),
-                images: Vec::new(),
+                ..attachments::Attached::default()
             }
         } else {
             match slash::interpret(&text, &self.context.working_dir) {
@@ -539,9 +559,17 @@ impl SessionActor {
                 }
             }
         };
-        // The session ignores a message while its turn runs, and the answer
-        // would never end: refused, not lost.
         if self.working {
+            if self.steering_input && self.steer(&input).await {
+                println!("[{}]   steering the running turn", self.short());
+                self.steering.push_back(Steer {
+                    answer_id: self.asking.clone(),
+                    input,
+                });
+                return;
+            }
+            // The session ignores a message while its turn runs, and the
+            // answer would never end: refused, not lost.
             self.reply("A turn is running. Stop it or wait for it to finish, then send again.")
                 .await;
             return;
@@ -553,6 +581,10 @@ impl SessionActor {
 
     /// The model this conversation talks to, through the server.
     fn model_config(&self) -> anyhow::Result<ModelConfig> {
+        #[cfg(test)]
+        if let Some(model) = &self.scripted_model {
+            return Ok(model.clone());
+        }
         let name = self
             .model
             .clone()
@@ -659,7 +691,70 @@ impl SessionActor {
     async fn take(&mut self, input: answers::Input) {
         self.asking = input.answer_id;
         self.expecting = false;
+        self.steering_input = input.steer;
         self.answer(input.text, &input.attachments).await;
+        self.steering_input = false;
+        self.asking = None;
+    }
+
+    /// Hands `input` to the running turn, to take at its next safe point.
+    /// False when there is no live session to take it.
+    async fn steer(&self, input: &attachments::Attached) -> bool {
+        let Some(controller) = &self.controller else {
+            return false;
+        };
+        let paths = input
+            .image_paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        controller.steer(input.text.clone(), paths).await
+    }
+
+    /// The turn took every steering message sent so far: the answer it was
+    /// writing ends here, and from now on it writes the last steering
+    /// message's answer. Ones sent before that are answered together with
+    /// it, so theirs end empty.
+    async fn steered(&mut self) {
+        let Some(last) = self.steering.pop_back() else {
+            return;
+        };
+        let ended = self.answers.current();
+        self.upload(AgentEvent::TurnComplete, ended).await;
+        self.answers.ended();
+        for earlier in std::mem::take(&mut self.steering) {
+            self.upload(AgentEvent::TurnComplete, earlier.answer_id)
+                .await;
+        }
+        self.answers.expect(last.answer_id);
+    }
+
+    /// The turn ended without taking the steering messages sent to it: they
+    /// are the next message, as one, answered as the last one's answer. After
+    /// a stop they are not: the person stopped the work, so theirs end.
+    async fn steer_left_over(&mut self, stopped: bool) {
+        let Some(last) = self.steering.pop_back() else {
+            return;
+        };
+        let mut earlier = std::mem::take(&mut self.steering);
+        if stopped {
+            earlier.push_back(last);
+            for steer in earlier {
+                self.upload(AgentEvent::TurnComplete, steer.answer_id).await;
+            }
+            return;
+        }
+        let mut input = attachments::Attached::default();
+        for steer in earlier {
+            self.upload(AgentEvent::TurnComplete, steer.answer_id).await;
+            input.join(steer.input);
+        }
+        input.join(last.input);
+        self.asking = last.answer_id;
+        self.expecting = false;
+        if let Err(e) = self.submit(input).await {
+            self.fail(&format!("{e:#}")).await;
+        }
         self.asking = None;
     }
 
@@ -734,6 +829,10 @@ impl SessionActor {
                 event,
                 AgentEvent::ToolCallFinished { .. } | AgentEvent::Notice(_)
             );
+        if matches!(event, AgentEvent::Steered { .. }) {
+            self.steered().await;
+        }
+        let stopped = matches!(event, AgentEvent::Aborted { .. });
         let described = self.describe_call(&event);
         self.upload(event, self.answers.current()).await;
         if let Some(described) = described {
@@ -746,6 +845,7 @@ impl SessionActor {
             println!("[{}] done", self.short());
             self.answers.ended();
             self.state(SessionState::Idle).await;
+            self.steer_left_over(stopped).await;
             self.release_held().await;
             self.tell_held_notices().await;
         }
@@ -1431,6 +1531,7 @@ mod tests {
                 text: text.into(),
                 answer_id: Some(id.into()),
                 attachments: Vec::new(),
+                steer: false,
             })
         };
         commands
@@ -1488,6 +1589,221 @@ mod tests {
             1,
             "the next answer ends once: {tagged:?}"
         );
+    }
+
+    /// A session on the scripted model of `responses`, opened, with what it
+    /// uploads and the permission it asks for.
+    async fn scripted_session(
+        dir: &std::path::Path,
+        responses: &str,
+    ) -> (
+        SessionActor,
+        mpsc::Receiver<Upload>,
+        mpsc::Receiver<ControlEvent>,
+    ) {
+        let script = dir.join("responses.yaml");
+        std::fs::write(&script, responses).unwrap();
+        let (uploads, sent) = mpsc::channel(UPLOAD_QUEUE);
+        let (asks, asked) = mpsc::channel(8);
+        let context = Arc::new(SessionContext {
+            config: Arc::new(mock_config()),
+            working_dir: dir.to_path_buf(),
+            hosted: false,
+            wide_access: true,
+            openai_base_url: String::new(),
+            token: String::new(),
+            uploads,
+            sessions: SessionStore::new(dir.join("kept")),
+            asks,
+            mcp_tools_wait_ms: 0,
+        });
+        let mut actor = SessionActor::new(Uuid::new_v4(), context, Arc::default());
+        let model = ModelConfig {
+            provider: "mock".into(),
+            name: "mock-model".into(),
+            mock_responses_file: Some(script.to_string_lossy().into_owned()),
+            ..ModelConfig::default()
+        };
+        actor.model = Some(model.name.clone());
+        actor.scripted_model = Some(model.clone());
+        actor.controller = Some(actor.open_controller(model).await.expect("opens"));
+        (actor, sent, asked)
+    }
+
+    fn typed(text: &str, id: &str, steer: bool) -> SessionCommand {
+        SessionCommand::Input(answers::Input {
+            text: text.into(),
+            answer_id: Some(id.into()),
+            attachments: Vec::new(),
+            steer,
+        })
+    }
+
+    /// The session's events as (answer, event), until `last` ends; each
+    /// permission asked for is given.
+    async fn events_until_ended(
+        sent: &mut mpsc::Receiver<Upload>,
+        asked: &mut mpsc::Receiver<ControlEvent>,
+        commands: &mpsc::Sender<SessionCommand>,
+        mut on_event: impl FnMut(&AgentEvent) -> Option<SessionCommand>,
+        last: &str,
+    ) -> Vec<(Option<String>, AgentEvent)> {
+        let mut seen = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let upload = tokio::select! {
+                upload = sent.recv() => upload.expect("the session is alive"),
+                Some(ask) = asked.recv() => {
+                    if let ControlEvent::ToolNeedsApproval { call_id, .. } = ask {
+                        commands.send(SessionCommand::Decide { call_id, approved: true }).await.unwrap();
+                    }
+                    continue;
+                }
+                () = tokio::time::sleep_until(deadline) => panic!("{last} did not end in time: {seen:?}"),
+            };
+            let Upload::Event(event) = upload else {
+                continue;
+            };
+            let ControlEvent::Session {
+                event, answer_id, ..
+            } = *event
+            else {
+                continue;
+            };
+            if let Some(command) = on_event(&event) {
+                commands.send(command).await.unwrap();
+            }
+            let ending = matches!(event, AgentEvent::TurnComplete | AgentEvent::Aborted { .. });
+            let done = ending && answer_id.as_deref() == Some(last);
+            seen.push((answer_id, event));
+            if done {
+                return seen;
+            }
+        }
+    }
+
+    fn endings(seen: &[(Option<String>, AgentEvent)]) -> Vec<&str> {
+        seen.iter()
+            .filter(|(_, event)| matches!(event, AgentEvent::TurnComplete))
+            .map(|(id, _)| id.as_deref().unwrap_or("-"))
+            .collect()
+    }
+
+    fn text_of(seen: &[(Option<String>, AgentEvent)], id: &str) -> String {
+        seen.iter()
+            .filter(|(answer, _)| answer.as_deref() == Some(id))
+            .filter_map(|(_, event)| match event {
+                AgentEvent::TextDelta(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The person sends a message while a tool runs, to steer the turn. The
+    /// turn is not stopped: it takes the message after the tool's result,
+    /// the answer it was writing ends there, and what it writes next is the
+    /// steering message's answer, which ends once with the turn.
+    #[tokio::test]
+    async fn a_steering_message_is_answered_by_the_running_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let (actor, mut sent, mut asked) = scripted_session(
+            dir.path(),
+            r#"
+responses:
+  - match_type: contains
+    pattern: "use the new lexer"
+    reply: "lexer answer"
+  - match_type: contains
+    pattern: "fix the parser"
+    tool_calls:
+      - id: slow
+        tool: shell
+        args:
+          shell_command: "sleep 2"
+    after_tool_reply: "parser answer"
+"#,
+        )
+        .await;
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        commands
+            .send(typed("fix the parser", "a", false))
+            .await
+            .unwrap();
+        let mut steered = false;
+        let seen = events_until_ended(
+            &mut sent,
+            &mut asked,
+            &commands,
+            |event| match event {
+                AgentEvent::ToolCallStarted(_) if !std::mem::replace(&mut steered, true) => {
+                    Some(typed("use the new lexer", "b", true))
+                }
+                _ => None,
+            },
+            "b",
+        )
+        .await;
+        task.abort();
+
+        assert_eq!(
+            endings(&seen),
+            ["a", "b"],
+            "each answer ends once, in order: {seen:?}"
+        );
+        let at = seen
+            .iter()
+            .position(|(_, event)| matches!(event, AgentEvent::Steered { .. }))
+            .expect("the turn says it took the message");
+        assert_eq!(seen[at].0.as_deref(), Some("b"));
+        assert!(
+            seen[..at].iter().all(|(id, _)| id.as_deref() == Some("a")),
+            "everything before it is the first answer's: {seen:?}"
+        );
+        assert_eq!(text_of(&seen, "b"), "lexer answer");
+        assert!(
+            !seen.iter().any(
+                |(_, e)| matches!(e, AgentEvent::TextDelta(t) if t.contains("A turn is running"))
+            ),
+            "never refused: {seen:?}"
+        );
+    }
+
+    /// A steering message the turn ends without taking (it was past its last
+    /// step) is not lost: it is answered next, as a message of its own.
+    #[tokio::test]
+    async fn a_steering_message_the_turn_missed_is_answered_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut actor, mut sent, mut asked) = scripted_session(
+            dir.path(),
+            r#"
+responses:
+  - match_type: contains
+    pattern: "use the new lexer"
+    reply: "lexer answer"
+"#,
+        )
+        .await;
+        // A turn the host is still writing answer "a" of, whose session has
+        // already come to rest: the steering message reaches nothing.
+        actor.asking = Some("a".into());
+        actor.expect_ending();
+        actor.asking = None;
+        actor.state(SessionState::Running).await;
+        let events = actor.events_tx.clone();
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        commands
+            .send(typed("use the new lexer", "b", true))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        events.send(AgentEvent::TurnComplete).await.unwrap();
+        let seen = events_until_ended(&mut sent, &mut asked, &commands, |_| None, "b").await;
+        task.abort();
+
+        assert_eq!(endings(&seen), ["a", "b"], "{seen:?}");
+        assert_eq!(text_of(&seen, "b"), "lexer answer");
     }
 
     #[test]

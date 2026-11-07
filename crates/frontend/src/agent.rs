@@ -43,6 +43,11 @@ pub enum AgentRequest {
         model_override: Option<ModelConfig>,
         mode_override: Option<AgentMode>,
     },
+    /// Steer the running turn with a message the person sent while it runs:
+    /// the turn takes it at its next safe point and says so with
+    /// `AgentEvent::Steered`. A turn that ends first never takes it, and the
+    /// frontend sends it as the next message.
+    Steer { content: String },
     /// Replace conversation history and submit (edit-and-resubmit flow).
     Resubmit {
         messages: Vec<Message>,
@@ -260,6 +265,15 @@ pub(crate) async fn run_kernel_session_task(
                     .await
                 {
                     let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                    break;
+                }
+            }
+
+            AgentRequest::Steer { content } => {
+                if !session.steer(content, Vec::new()).await {
+                    let _ = tx
+                        .send(AgentEvent::Error("the agent session has stopped".into()))
+                        .await;
                     break;
                 }
             }

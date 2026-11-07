@@ -23,6 +23,11 @@ pub const ACTIVE_INSTRUCTIONS_KEY: &str = "active_instructions";
 /// emitted in; the serialised name of [`TurnRequest::state`].
 pub const STATE_KEY: &str = "state";
 
+/// The origin a steering message's user turn carries
+/// ([`TurnRequest::origin`]): what the person sent while the turn ran,
+/// delivered at its next model request.
+pub const STEER_ORIGIN: &str = "steer";
+
 /// A request for the HSM to run a **single streaming turn**: stream the model
 /// against a conversation thread, collect proposed tool calls, and post
 /// `sven_hsm::Event::LlmTurnComplete` back to the machine.

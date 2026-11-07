@@ -586,26 +586,75 @@ impl App {
     }
 
     /// If the agent is currently idle and there are queued messages waiting,
-    /// dequeue the first one and send it.
+    /// send them as its next turn.
     pub(crate) async fn try_dequeue_next(&mut self) {
-        if !self.agent.busy && self.edit.queue_index.is_none() && !self.queue.abort_pending {
-            if let Some(next) = self.queue.messages.pop_front() {
-                self.queue.selected = self
-                    .queue
-                    .selected
-                    .map(|s| s.saturating_sub(1))
-                    .filter(|_| !self.queue.messages.is_empty());
-                if self.queue.messages.is_empty() && self.ui.focus == FocusPane::Queue {
-                    self.ui.focus = FocusPane::Input;
-                }
-                self.chat
-                    .push_segment(ChatSegment::Message(Message::user(&next.content)));
-                self.rerender_chat().await;
-                self.chat.auto_scroll = true;
-                self.scroll_to_bottom();
-                self.send_to_agent(next).await;
-            }
+        if !self.agent.busy {
+            self.deliver_queued(false).await;
         }
+    }
+
+    /// The turn just ended: what it never took of the steering sent to it
+    /// goes first in the queue (held with the rest after a stop), and unless
+    /// the person stopped it, the queue is the next turn, as one message.
+    /// `resubmit` sends it with the chat's history (after an abort the
+    /// session's own may lack the partial answer).
+    pub(crate) async fn after_turn(&mut self, resubmit: bool) {
+        let untaken = std::mem::take(&mut self.agent.steering);
+        for message in untaken.into_iter().rev() {
+            self.queue.messages.push_front(message);
+        }
+        self.deliver_queued(resubmit).await;
+    }
+
+    /// Sends the queue's next turn: everything waiting, as one message
+    /// ([`sven_frontend::queue::QueueState::take_turn`]). Nothing while a queued
+    /// message is being edited or after the person stopped the agent.
+    async fn deliver_queued(&mut self, resubmit: bool) {
+        if self.edit.queue_index.is_some() || self.queue.abort_pending {
+            return;
+        }
+        let Some(next) = self.queue.take_turn() else {
+            return;
+        };
+        if self.queue.messages.is_empty() && self.ui.focus == FocusPane::Queue {
+            self.ui.focus = FocusPane::Input;
+        }
+        let history = resubmit.then(|| messages_for_resubmit(self.chat.segments()));
+        self.chat
+            .push_segment(ChatSegment::Message(Message::user(&next.content)));
+        self.save_history_async();
+        self.rerender_chat().await;
+        self.chat.auto_scroll = true;
+        self.scroll_to_bottom();
+        match history {
+            Some(history) => self.send_resubmit_to_agent(history, next).await,
+            None => self.send_to_agent(next).await,
+        }
+    }
+
+    /// The running turn took the steering messages sent to it: they are in
+    /// the conversation from here, after what it said so far.
+    pub(crate) async fn steered(&mut self, delivered: String) {
+        if !self.chat.streaming_buffer.is_empty() && !self.chat.streaming_is_thinking {
+            let said = std::mem::take(&mut self.chat.streaming_buffer);
+            self.chat
+                .push_segment(ChatSegment::Message(Message::assistant(&said)));
+        }
+        self.chat.streaming_buffer.clear();
+        let taken = std::mem::take(&mut self.agent.steering);
+        let content = if taken.is_empty() {
+            delivered
+        } else {
+            taken.iter().fold(String::new(), |all, m| {
+                sven_frontend::queue::join_messages(&all, &m.content)
+            })
+        };
+        self.chat
+            .push_segment(ChatSegment::Message(Message::user(&content)));
+        self.save_history_async();
+        self.rerender_chat().await;
+        self.chat.auto_scroll = true;
+        self.scroll_to_bottom();
     }
 
     /// Signal the currently running agent turn to abort.
@@ -642,7 +691,18 @@ impl App {
             self.ui.focus = FocusPane::Input;
         }
 
-        if self.agent.busy {
+        if self.agent.busy && qm.model_transition.is_none() && qm.mode_transition.is_none() {
+            // Steers the running turn at its next safe point instead of
+            // stopping it.
+            self.queue.abort_pending = false;
+            let content = qm.content.clone();
+            self.agent.steering.push(qm);
+            if let Some(tx) = &self.agent.tx {
+                let _ = tx.send(AgentRequest::Steer { content }).await;
+            }
+        } else if self.agent.busy {
+            // A switch of model or mode cannot join a running turn: the turn
+            // is stopped and the message is sent as the next one.
             self.queue.messages.push_front(qm);
             self.queue.selected = Some(0);
             self.queue.abort_pending = false;
@@ -1082,6 +1142,103 @@ mod submit_integration_tests {
             0,
             "queue should be empty after force-submit"
         );
+    }
+
+    fn user_texts(app: &App) -> Vec<String> {
+        app.chat
+            .segments()
+            .iter()
+            .filter_map(|segment| match segment {
+                crate::chat::segment::ChatSegment::Message(m)
+                    if m.role == sven_model::Role::User =>
+                {
+                    m.as_text().map(str::to_string)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    async fn event(app: &mut App, event: sven_vocab::SessionEvent) {
+        let active = app.sessions.active_id.clone();
+        app.handle_agent_event(active, event).await;
+    }
+
+    /// Sending a queued message now steers the running turn instead of
+    /// stopping it: it joins the conversation where the turn takes it, and
+    /// one the turn ends without is the next message.
+    #[tokio::test]
+    async fn send_now_steers_the_running_turn_and_is_never_lost() {
+        let (mut app, mut rx) = App::for_testing();
+        app.inject_input("fix the parser");
+        app.dispatch_action(Action::Submit).await;
+        let _first = recv_resubmit_for_test(&mut rx);
+        assert!(app.is_agent_busy());
+
+        app.inject_input("use the new lexer");
+        app.dispatch_action(Action::Submit).await;
+        app.dispatch_action(Action::FocusQueue).await;
+        app.dispatch_action(Action::ForceSubmitQueuedMessage).await;
+        match rx.try_recv() {
+            Ok(AgentRequest::Steer { content }) => assert_eq!(content, "use the new lexer"),
+            other => panic!("expected Steer, got {other:?}"),
+        }
+        assert!(!app.is_abort_pending(), "the turn is not stopped");
+        assert_eq!(app.queued_len(), 0);
+        assert_eq!(
+            user_texts(&app),
+            ["fix the parser"],
+            "shown once the turn takes it"
+        );
+
+        event(
+            &mut app,
+            sven_vocab::SessionEvent::Steered {
+                text: "use the new lexer".into(),
+            },
+        )
+        .await;
+        assert_eq!(user_texts(&app), ["fix the parser", "use the new lexer"]);
+        event(&mut app, sven_vocab::SessionEvent::TurnComplete).await;
+        assert!(rx.try_recv().is_err(), "a taken message is not sent again");
+
+        // One the turn ends without is sent next.
+        app.inject_input("now the docs");
+        app.dispatch_action(Action::Submit).await;
+        let _second = rx.try_recv();
+        app.inject_input("and the changelog");
+        app.dispatch_action(Action::Submit).await;
+        app.dispatch_action(Action::FocusQueue).await;
+        app.dispatch_action(Action::ForceSubmitQueuedMessage).await;
+        assert!(matches!(rx.try_recv(), Ok(AgentRequest::Steer { .. })));
+        event(&mut app, sven_vocab::SessionEvent::TurnComplete).await;
+        match rx.try_recv() {
+            Ok(AgentRequest::Submit { content, .. }) => assert_eq!(content, "and the changelog"),
+            other => panic!("expected the missed message as the next turn, got {other:?}"),
+        }
+    }
+
+    /// Everything queued while the agent works is its next turn, together.
+    #[tokio::test]
+    async fn the_queue_is_sent_together_when_the_turn_ends() {
+        let (mut app, mut rx) = App::for_testing();
+        app.inject_input("fix the parser");
+        app.dispatch_action(Action::Submit).await;
+        let _first = recv_resubmit_for_test(&mut rx);
+        for text in ["keep the tests", "then commit"] {
+            app.inject_input(text);
+            app.dispatch_action(Action::Submit).await;
+        }
+        assert_eq!(app.queued_len(), 2);
+        event(&mut app, sven_vocab::SessionEvent::TurnComplete).await;
+        match rx.try_recv() {
+            Ok(AgentRequest::Submit { content, .. }) => {
+                assert_eq!(content, "keep the tests\n\nthen commit")
+            }
+            other => panic!("expected one Submit, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err(), "one turn, not two");
+        assert_eq!(app.queued_len(), 0);
     }
 
     // ── /resume ───────────────────────────────────────────────────────────────

@@ -487,6 +487,13 @@ impl SessionController {
         }
     }
 
+    /// Steers the turn in flight with the person's `text` (and the files at
+    /// `attachments`): delivered at its next safe point, between steps,
+    /// never cutting it off. `false` when the session is over.
+    pub async fn steer(&self, text: String, attachments: Vec<String>) -> bool {
+        self.session.steer(text, attachments).await
+    }
+
     /// Interrupts the turn in flight. `false` when the session is over.
     pub async fn cancel(&self) -> bool {
         self.session.cancel().await

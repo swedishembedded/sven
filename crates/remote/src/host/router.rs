@@ -157,12 +157,14 @@ async fn route(
             text,
             answer_id,
             attachments,
+            steer,
         } => (
             session_id,
             SessionCommand::Input(Input {
                 text,
                 answer_id,
                 attachments,
+                steer,
             }),
         ),
         ControlCommand::Notify {

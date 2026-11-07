@@ -98,7 +98,7 @@ use sven_hsm::{
 use super::goal_flow;
 use super::loop_core::{
     build_turn_effect, handle_tool_event, init_loop, on_llm_turn_complete, GeneratingAction,
-    LoopState,
+    LoopState, Steering, STEER_SIGNAL,
 };
 use super::reactive_goal::{checked, failed, goal_step, goal_turn, person_turn_ended};
 
@@ -514,6 +514,18 @@ impl Machine for ReactiveAgentMachine {
                         .collect();
                     Reaction::transition(Idle, effects, "user cancelled; returning to Idle")
                 }
+                // A message sent while the turn runs steers it: kept for the
+                // turn's next model request, which carries it.
+                Event::Internal(InternalEvent::Custom { name, payload })
+                    if name == STEER_SIGNAL =>
+                {
+                    if let Some(steering) = Steering::from_payload(payload) {
+                        let mut ls = LoopState::load(ctx);
+                        ls.steering.push(steering);
+                        ls.store(ctx);
+                    }
+                    Reaction::effects(vec![])
+                }
                 Event::Goal {
                     command,
                     awaits_answer,
@@ -540,6 +552,12 @@ impl Machine for ReactiveAgentMachine {
                         vec![ls.stamp(Self::first_turn_effect(text))],
                         "user sent message; starting turn",
                     )
+                }
+                // Steering that arrives at rest (the turn ended first) was
+                // never delivered: the host sees no `Steered` before the
+                // turn's end and sends it as the next message itself.
+                Event::Internal(InternalEvent::Custom { name, .. }) if name == STEER_SIGNAL => {
+                    Reaction::effects(vec![])
                 }
                 Event::Notice { notice, start_turn } => {
                     let record = Effect::RecordNotice {
@@ -1155,6 +1173,86 @@ mod tests {
         assert_eq!(request["delay_ms"], json!(7));
         hsm.dispatch(&transient, &mut ctx);
         assert_eq!(hsm.state(), ReactiveState::Idle, "one repeat, then the end");
+    }
+
+    fn steer(text: &str, attachments: &[&str]) -> Event {
+        Event::Internal(InternalEvent::Custom {
+            name: STEER_SIGNAL.to_string(),
+            payload: json!({ "text": text, "attachments": attachments }),
+        })
+    }
+
+    fn llm_request(effects: &[Effect]) -> Option<serde_json::Value> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::CallLlm { request } => Some(request.clone()),
+            _ => None,
+        })
+    }
+
+    /// A message sent while the turn runs is delivered to it at its next
+    /// safe point: the model request after the tool results, as the person's
+    /// own words with their files, never dropped and never sent twice.
+    #[test]
+    fn a_steering_message_rides_the_next_model_request_of_the_running_turn() {
+        let (mut hsm, mut ctx) = make_hsm();
+        hsm.dispatch(&Event::user_message("fix the parser"), &mut ctx);
+        let call_id = ToolCallId::new();
+        hsm.dispatch(
+            &Event::LlmTurnComplete {
+                thread: CHAT_THREAD.to_string(),
+                text: String::new(),
+                tool_calls: vec![sven_hsm::ProposedToolCall {
+                    call_id,
+                    name: "shell".to_string(),
+                    args: json!({}),
+                    capability: ToolCapability::ExecuteShell,
+                }],
+            },
+            &mut ctx,
+        );
+        // While the tool runs, the person sends two messages.
+        assert!(hsm
+            .dispatch(&steer("use the new lexer", &["/w/lexer.png"]), &mut ctx)
+            .effects
+            .is_empty());
+        hsm.dispatch(&steer("and keep the tests", &[]), &mut ctx);
+        assert_eq!(
+            hsm.state(),
+            ReactiveState::Generating,
+            "the turn is not stopped"
+        );
+
+        let out = hsm.dispatch(
+            &Event::ToolSucceeded {
+                call_id,
+                observation: json!("ok"),
+            },
+            &mut ctx,
+        );
+        let request = llm_request(&out.effects).expect("the next model request");
+        assert_eq!(
+            request["instruction"],
+            json!("use the new lexer\n\nand keep the tests")
+        );
+        assert_eq!(
+            request["origin"],
+            json!(super::super::loop_core::STEER_ORIGIN)
+        );
+        assert_eq!(request["attachments"], json!(["/w/lexer.png"]));
+        assert!(
+            LoopState::load(&ctx).steering.is_empty(),
+            "consumed, so never delivered twice"
+        );
+    }
+
+    /// One that arrives once the turn has ended is not delivered (the host
+    /// sends it as the next message), so it is never answered twice.
+    #[test]
+    fn a_steering_message_at_rest_starts_nothing() {
+        let (mut hsm, mut ctx) = make_hsm();
+        let out = hsm.dispatch(&steer("look at this", &["/w/chip.png"]), &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Idle);
+        assert!(out.effects.is_empty());
     }
 
     #[test]
