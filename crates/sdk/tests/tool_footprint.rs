@@ -27,8 +27,10 @@ use sven_turn::ledger::schema_tokens;
 /// Estimated tokens of every definition `Toolset::coding()` offers. Raised
 /// from 3 195 when the coding set gained PDF search (`document_locate`,
 /// ~300 tokens beside `document_convert`'s ~170), and from 3 520 when every
-/// session gained standing goals (`update_goal` ~190, `set_goal` ~120).
-const CODING_CEILING: u32 = 3_810;
+/// session gained standing goals (`update_goal` ~190, `set_goal` ~120), and
+/// from 3 810 when the coding set gained joining clips into a film
+/// (`join_videos` ~175).
+const CODING_CEILING: u32 = 3_990;
 /// Estimated tokens of every definition `Toolset::research()` offers. Raised
 /// from 2 390 for the same two goal tools.
 const RESEARCH_CEILING: u32 = 2_680;
