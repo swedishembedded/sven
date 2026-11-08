@@ -47,9 +47,12 @@ VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1
 TAG     := v$(VERSION)
 DIST    ?= dist
 DEB_OUT := target/debian
-# The git remote whose GitHub repository receives a release (release/publish,
-# package/deb/publish).
-RELEASE_REMOTE ?= origin
+# The GitHub repository releases are built and published from, and the git
+# remote that points there, found by its URL whatever it is called (a
+# checkout may name it anything, and have private mirrors beside it).
+# RELEASE_REMOTE=<name> on the command line overrides it.
+RELEASE_REPO   ?= swedishembedded/sven
+RELEASE_REMOTE ?= $(shell git remote -v | awk '$$3 == "(push)" && $$2 ~ /github\.com[:\/]$(subst /,\/,$(RELEASE_REPO))(\.git)?$$/ { print $$1; exit }')
 # What a release bump runs first. Empty (`make release/patch RELEASE_TESTS=`)
 # bumps and tags without them, for a tree whose tests already passed: the
 # suites need a lot of memory and the bump itself changes only the version.
@@ -157,7 +160,7 @@ package/deb/release: build/release
 # Earlier packages of this version are removed first: cargo-deb names its file
 # with a Debian revision and build-deb.sh without, and package/deb/debug writes
 # the release name, so only a fresh build may be the one that is published.
-## package/deb/publish - sign the release package and attach it to the GitHub release of v<version> (created if missing; an earlier upload is replaced); needs gh, a GnuPG key and the tag on GitHub (RELEASE_REMOTE, default origin)
+## package/deb/publish - sign the release package and attach it to the GitHub release of v<version> (created if missing; an earlier upload is replaced); needs gh, a GnuPG key and the tag on GitHub (RELEASE_REMOTE, default the remote of RELEASE_REPO)
 package/deb/publish:
 	@bash scripts/publish-deb.sh --check --version $(VERSION) --remote $(RELEASE_REMOTE)
 	rm -f $(DEB_OUT)/sven_$(VERSION)[-_]*
@@ -587,6 +590,7 @@ release:
 ##   The pushed tag starts the GitHub Actions release workflow, which attaches
 ##   the dist/ artifacts to the same release.
 release/publish:
+	@test -n "$(RELEASE_REMOTE)" || { echo "release/publish: no git remote points at github.com/$(RELEASE_REPO); add one, or name it with RELEASE_REMOTE=<remote>" >&2; exit 2; }
 	git push $(RELEASE_REMOTE) HEAD "$(TAG)"
 	$(MAKE) package/deb/publish
 
