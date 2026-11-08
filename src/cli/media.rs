@@ -31,6 +31,19 @@ pub enum MediaCommands {
         /// Refuse a clip longer than this many seconds.
         #[arg(long, value_name = "SECS")]
         max_seconds: Option<f64>,
+        /// Refuse a clip whose picture is not this many pixels wide.
+        #[arg(long, value_name = "PIXELS")]
+        width: Option<u32>,
+        /// Refuse a clip whose picture is not this many pixels high.
+        #[arg(long, value_name = "PIXELS")]
+        height: Option<u32>,
+        /// Refuse a clip that does not hold exactly this many frames.
+        #[arg(long, value_name = "COUNT")]
+        frames: Option<u64>,
+        /// Refuse a clip whose frame rate is not this many frames per second,
+        /// give or take 0.01.
+        #[arg(long, value_name = "FPS")]
+        fps: Option<f64>,
         /// Refuse a clip without sound.
         #[arg(long)]
         require_audio: bool,
