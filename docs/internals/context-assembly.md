@@ -128,11 +128,15 @@ chance to act on it.
 | `min_demote_tokens` | 64 | a smaller result is not worth a reference |
 | `resident_bytes` | 16 MiB | bytes of evidence the chunk store keeps in memory; the rest is read back from disk |
 
-Only results of `read_file`, `shell`, `grep`, `find_file`, `web_fetch`,
-`web_search`, `read_lints` and `task` have a representation. Results of the
-expansion tool, of the editing tools and of every other tool are always sent
-as they are. A pinned chunk is never demoted, and a result that reports a
-failure is never demoted below `long`.
+`read_file`, `shell`, `grep`, `find_file`, `web_fetch`, `web_search`,
+`read_lints` and `task` have representations of their own. Every other tool's
+result, an MCP server's included, is `tool_output` and shown like command
+output (ends, signal lines, each line capped at 240 characters), so a toolkit's
+analysis of tens of kilobytes leaves the history like a long build log does.
+The results that are what the model works from are always sent as they are:
+an expansion, a skill, a tool's definition (`tools`), its plan (`todo`) and a
+person's answer (`ask_question`). A pinned chunk is never demoted, and a result
+that reports a failure is never demoted below `long`.
 
 The form of a result depends only on the result, its call, what the conversation
 had pointed at when the result left the recent rounds and how far it was asked

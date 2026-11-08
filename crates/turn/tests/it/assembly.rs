@@ -179,7 +179,7 @@ fn a_pinned_result_is_always_full() {
 }
 
 #[test]
-fn expansions_and_tools_without_a_representation_are_never_demoted() {
+fn expansions_and_skills_are_never_demoted_and_any_other_tool_is() {
     let mut m = vec![Message::user("go")];
     m.push(call(
         "e1",
@@ -187,8 +187,14 @@ fn expansions_and_tools_without_a_representation_are_never_demoted() {
         r#"{"chunk":"c-0123456789abcdef"}"#,
     ));
     m.push(Message::tool_result("e1", log("expanded", 400)));
-    m.push(call("w1", "edit_file", r#"{"path":"a"}"#));
-    m.push(Message::tool_result("w1", log("edit", 400)));
+    m.push(call("w1", "skill", r#"{"name":"a"}"#));
+    m.push(Message::tool_result("w1", log("skill", 400)));
+    m.push(call(
+        "m1",
+        "rea-analyze_function",
+        r#"{"procedure":"main"}"#,
+    ));
+    m.push(Message::tool_result("m1", log("mcp", 400)));
     m.push(call("s1", "shell", "{}"));
     m.push(Message::tool_result("s1", log("sh", 400)));
     m.push(Message::assistant("done"));
@@ -201,6 +207,7 @@ fn expansions_and_tools_without_a_representation_are_never_demoted() {
     assert_eq!(now[0], original[0]);
     assert_eq!(now[1], original[1]);
     assert_ne!(now[2], original[2]);
+    assert_ne!(now[3], original[3]);
 }
 
 #[test]
@@ -496,4 +503,59 @@ fn a_result_that_is_the_only_copy_is_demoted_by_age_when_nothing_else_will_do() 
         .demotions
         .iter()
         .all(|d| d.reason == DemotionReason::Age));
+}
+
+/// An MCP server's result, one long line of JSON as a toolkit returns it.
+fn toolkit_result(r: usize) -> String {
+    let functions: Vec<String> = (0..400)
+        .map(|n| format!(r#"{{"name":"fn_{r}_{n}","address":"0x{n:06x}"}}"#))
+        .collect();
+    format!(r#"{{"result":{{"functions":[{}]}}}}"#, functions.join(","))
+}
+
+#[test]
+fn a_toolkit_result_is_demoted_like_command_output_and_each_line_is_capped() {
+    let mut messages = vec![Message::user("analyse the binary")];
+    for r in 0..4 {
+        let id = format!("call{r}");
+        messages.push(call(&id, "rea-list_functions", r#"{"limit":400}"#));
+        messages.push(Message::tool_result(&id, toolkit_result(r)));
+        messages.push(Message::assistant(format!("looked at round {r}")));
+    }
+    let original = toolkit_result(0);
+    let view = assemble(&policy(6_000, 1), messages);
+    let now = results(&view.messages);
+    assert!(
+        now[0].len() < original.len() / 10,
+        "the oldest result shrinks to a reference: {} bytes",
+        now[0].len()
+    );
+    assert!(
+        now[0].contains("fn_0_0"),
+        "the start of the result is still shown"
+    );
+    assert_eq!(now[3], toolkit_result(3), "the newest round stays full");
+    assert!(
+        view.spill.iter().any(|evidence| evidence.raw == original),
+        "the raw result is kept for expansion"
+    );
+}
+
+#[test]
+fn a_skill_a_tool_definition_and_a_plan_are_never_demoted() {
+    for tool in ["skill", "tools", "todo", "ask_question"] {
+        let mut messages = vec![Message::user("work")];
+        for r in 0..4 {
+            let id = format!("call{r}");
+            messages.push(call(&id, tool, "{}"));
+            messages.push(Message::tool_result(&id, log(&format!("{tool}{r}"), 300)));
+            messages.push(Message::assistant("ok"));
+        }
+        let original = results(&messages)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let view = assemble(&policy(1_000, 1), messages);
+        assert_eq!(results(&view.messages), original, "{tool}");
+    }
 }

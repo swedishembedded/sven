@@ -103,6 +103,9 @@ pub enum ChunkKind {
     Instruction,
     SubagentFinding,
     Conversation,
+    /// What any other tool returned: an MCP server's result, a toolkit's
+    /// analysis. Shown like command output, each line capped.
+    ToolOutput,
 }
 
 /// How carefully a chunk's text must be kept out of logs. Ordered: a chunk

@@ -22,9 +22,10 @@
 //! - A pinned result is always full; a result that reports a failure is never
 //!   below `long`. The policy computes the set of forms a result may take and
 //!   only ever picks from it, whoever advises.
-//! - Results of the expansion tool ([`sven_chunks::EXPAND_TOOL_NAME`]) and of tools without a
-//!   representation are never demoted. An expansion is what the model asked
-//!   for; demoting it would undo the request.
+//! - Results of the expansion tool ([`sven_chunks::EXPAND_TOOL_NAME`]) and of the tools whose
+//!   result is what the model works from (a skill, a tool definition, its plan, a person's
+//!   answer) are never demoted. An expansion is what the model asked for; demoting it would
+//!   undo the request. Every other tool's result, an MCP server's included, is.
 //! - The form of a result depends only on the result, its call and its age
 //!   class, so a result demoted for one request has the same text in the next.
 //!   The provider's prompt cache is therefore invalidated only from the first
@@ -500,11 +501,26 @@ pub fn evidence(tool: &str, arguments: &str, turn: u32, kind: ChunkKind, raw: St
     }
 }
 
+/// Tools whose results are always sent as they are: what they return is
+/// what the model works from (a skill's instructions, a tool's definition,
+/// its own plan or a person's answer), and an expansion is never demoted.
+const NEVER_DEMOTED: &[&str] = &[
+    sven_chunks::EXPAND_TOOL_NAME,
+    "skill",
+    "tools",
+    "todo",
+    "ask_question",
+];
+
 /// What kind of evidence a tool's result is, or `None` when the result has no
-/// representation and is always sent as it is.
+/// representation and is always sent as it is. A tool not named here (an MCP
+/// server's, a toolkit's) is [`ChunkKind::ToolOutput`]: its results can be as
+/// large as any command's, and are demoted the same way.
 #[must_use]
 pub fn classify(tool: &str, arguments: &str) -> Option<ChunkKind> {
-    // `EXPAND_TOOL_NAME` is deliberately absent: an expansion is never demoted.
+    if NEVER_DEMOTED.contains(&tool) {
+        return None;
+    }
     match tool {
         "read_file" => Some(ChunkKind::File),
         "shell" => Some(if is_test_command(arguments) {
@@ -516,7 +532,7 @@ pub fn classify(tool: &str, arguments: &str) -> Option<ChunkKind> {
             Some(ChunkKind::CommandOutput)
         }
         "task" => Some(ChunkKind::SubagentFinding),
-        _ => None,
+        _ => Some(ChunkKind::ToolOutput),
     }
 }
 
