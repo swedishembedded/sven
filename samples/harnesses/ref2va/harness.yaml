@@ -24,7 +24,7 @@ inputs:
   seconds: { type: number, description: "the length frames make at the model's frame rate, to within half a second (e.g. 5.0417)" }
   steps: { type: number, description: "denoising steps" }
   seed: { type: number, description: "another seed is another take" }
-  adapter: { type: string, description: "a server-side adapter path, passed as the action's `adapter` parameter; \"\" for none" }
+  preset: { type: string, description: "what the model runs with, by the server's own name for it: for brain/minimaxh3, base, turbo-4step (a 4-step adapter: steps 4) or turbo-4step-vsa (that adapter and sparse attention)" }
   licence_confirmed: { type: boolean, description: "true confirms you hold the model's licence; the model refuses every request without it" }
   output: { type: string, description: "workspace-relative path of the clip to write, e.g. result.mp4" }
 agent:
@@ -74,18 +74,16 @@ gates:
       FRAMES: "{{ inputs.frames }}"
       STEPS: "{{ inputs.steps }}"
       SEED: "{{ inputs.seed }}"
-      ADAPTER: "{{ inputs.adapter }}"
+      PRESET: "{{ inputs.preset }}"
       LICENCE: "{{ inputs.licence_confirmed }}"
     run: |
-      adapter=()
-      if [ -n "$ADAPTER" ]; then adapter=(--param "adapter=$ADAPTER"); fi
       # No --duration: the length is the frame count, and the model refuses a
       # request that sets it twice.
       sven media generate --model "$MODEL" --action ref2va \
         --prompt "$PROMPT" --reference "image:$REFERENCE" \
         --size "${WIDTH}x${HEIGHT}" --seed "$SEED" \
         --param "steps=$STEPS" --param "num_frames=$FRAMES" \
-        --param "allow_community=$LICENCE" "${adapter[@]}" \
+        --param "allow_community=$LICENCE" --param "preset=$PRESET" \
         --output "$OUTPUT"
     # A video takes many minutes; the gate's own cap.
     timeout: 3600

@@ -20,7 +20,7 @@ What it shows:
   clip already written answers; if the run was killed while the server was
   still rendering, the rerun asks under the same name and reattaches to the job
   the server still has (a server that restarted forgot its jobs and renders
-  again). A different seed, prompt, size, step count, adapter or image is
+  again). A different seed, prompt, size, step count, preset or image is
   another request.
 - **The result is checked exactly, not trusted.** `sven media probe` refuses a
   clip that is not a whole MP4, whose picture is not the width and height
@@ -64,7 +64,7 @@ sven harness run samples/harnesses/ref2va --workspace DIR --approvals auto \
     --input '{"prompt": "<Picture 1> turns toward the camera and says hello",
               "reference": "character.png", "model": "brain/minimaxh3",
               "width": 768, "height": 448, "frames": 121, "seconds": 5.0417,
-              "steps": 8, "seed": 1, "adapter": "",
+              "steps": 4, "seed": 1, "preset": "turbo-4step-vsa",
               "licence_confirmed": true, "output": "result.mp4"}'
 ```
 
@@ -91,7 +91,7 @@ The inputs:
 | `frames` | The exact frame count, on the model's frame grid: the model snaps any other count up, and the probe then refuses the clip. |
 | `seconds` | The length those frames make at the model's rate (121 frames at 24 fps is 5.0417 s). It is checked, not requested: the request sets the length by `frames`, and the model refuses one that sets it twice. |
 | `steps`, `seed` | Denoising steps; another seed is another take. |
-| `adapter` | A server-side adapter path, passed as the action's `adapter` parameter. An input must be given, so pass `""` for none; no parameter is sent then. |
+| `preset` | What the model runs with, by the server's own name: a request never names a file on the server. For `brain/minimaxh3`, `base` (the release alone), `turbo-4step` (a 4-step distillation adapter; set `steps` to 4) or `turbo-4step-vsa` (that adapter with sparse attention and its trained gates). The server must hold the files the preset names. |
 | `licence_confirmed` | `true`, as above. |
 | `output` | Workspace-relative path of the clip to write. |
 

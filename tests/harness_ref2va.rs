@@ -55,7 +55,7 @@ impl Run {
         let mut all = json!({
             "prompt": "<Picture 1> turns and waves", "reference": "face.png",
             "model": "brain/mock-video", "width": 64, "height": 48, "frames": 9,
-            "seconds": 0.375, "steps": 4, "seed": 3, "adapter": "",
+            "seconds": 0.375, "steps": 4, "seed": 3, "preset": "base",
             "licence_confirmed": true, "output": "result.mp4",
         });
         all.as_object_mut()
@@ -150,7 +150,7 @@ fn bodies(fake: &Fake) -> Vec<Value> {
 fn the_clip_is_rendered_from_the_reference_checked_exactly_and_published_with_no_model() {
     let fake = serve_in_background(0, rendered_clip);
     let run = Run::new(&fake);
-    // `adapter` left empty: the action gets none.
+    // The base preset: the release alone.
     let out = run.sven(json!({}));
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let report = stdout_json(&out);
@@ -177,7 +177,7 @@ fn the_clip_is_rendered_from_the_reference_checked_exactly_and_published_with_no
     assert_eq!(body["input_references"][0]["type"], "image_url");
     assert_eq!(
         body["provider"]["options"]["brain"],
-        json!({"action": "ref2va", "params": {"steps": 4, "num_frames": 9, "allow_community": true}})
+        json!({"action": "ref2va", "params": {"steps": 4, "num_frames": 9, "allow_community": true, "preset": "base"}})
     );
 
     // The trace records the clip's digest where a host can read it.
@@ -206,22 +206,24 @@ fn published_digest(path: &str, bytes: &[u8]) -> String {
 }
 
 #[test]
-fn running_it_again_submits_nothing_and_an_adapter_is_another_request() {
+fn running_it_again_submits_nothing_and_another_preset_is_another_request() {
     let fake = serve_in_background(0, rendered_clip);
     let run = Run::new(&fake);
     assert_eq!(code(&run.sven(json!({}))), 0);
     let again = run.sven(json!({}));
     assert_eq!(code(&again), 0, "{}", stderr(&again));
     assert_eq!(bodies(&fake).len(), 1);
+    assert_eq!(bodies(&fake)[0]["provider"]["options"]["brain"]["params"]["preset"], "base");
 
-    let adapted = run.sven(json!({"adapter": "/models/lora/fast"}));
-    assert_eq!(code(&adapted), 0, "{}", stderr(&adapted));
+    // A preset names the server's own adapter and gates: the request never
+    // carries a path on the server.
+    let fast = run.sven(json!({"preset": "turbo-4step-vsa"}));
+    assert_eq!(code(&fast), 0, "{}", stderr(&fast));
     let sent = bodies(&fake);
     assert_eq!(sent.len(), 2);
-    assert_eq!(
-        sent[1]["provider"]["options"]["brain"]["params"]["adapter"],
-        "/models/lora/fast"
-    );
+    let params = &sent[1]["provider"]["options"]["brain"]["params"];
+    assert_eq!(params["preset"], "turbo-4step-vsa");
+    assert!(params.get("adapter").is_none(), "{params}");
 }
 
 #[test]
