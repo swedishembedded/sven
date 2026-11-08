@@ -170,14 +170,16 @@ impl Config {
         })
     }
 
-    /// The media tools (`models`, `run_model`), generating with
-    /// `tools.media.provider` (default: the sven service) and writing under
-    /// `workdir`; none while that provider has no key.
+    /// Where video is generated and how: `tools.media.provider` (default: the
+    /// sven service) with its base URL and key, and the `tools.media`
+    /// section. None while that provider has no key.
     #[must_use]
-    pub fn media_tools(
+    pub fn media_endpoint(
         &self,
-        workdir: std::path::PathBuf,
-    ) -> Option<(sven_tools_media::ModelsTool, sven_tools_media::RunModelTool)> {
+    ) -> Option<(
+        sven_tools_media::MediaEndpoint,
+        sven_tools_media::MediaConfig,
+    )> {
         let endpoint = self.provider_endpoint_with(
             self.tools
                 .media
@@ -186,13 +188,26 @@ impl Config {
                 .unwrap_or(sven_model_drivers::sven_service::PROVIDER),
             &ThisMachine,
         )?;
-        let endpoint = sven_tools_media::MediaEndpoint {
-            base_url: endpoint.base_url,
-            api_key: endpoint.api_key,
-        };
+        Some((
+            sven_tools_media::MediaEndpoint {
+                base_url: endpoint.base_url,
+                api_key: endpoint.api_key,
+            },
+            self.tools.media.clone(),
+        ))
+    }
+
+    /// The media tools (`models`, `run_model`), generating where
+    /// [`Self::media_endpoint`] says and writing under `workdir`.
+    #[must_use]
+    pub fn media_tools(
+        &self,
+        workdir: std::path::PathBuf,
+    ) -> Option<(sven_tools_media::ModelsTool, sven_tools_media::RunModelTool)> {
+        let (endpoint, config) = self.media_endpoint()?;
         Some((
             sven_tools_media::ModelsTool::new(endpoint.clone()),
-            sven_tools_media::RunModelTool::new(endpoint, self.tools.media.clone(), workdir),
+            sven_tools_media::RunModelTool::new(endpoint, config, workdir),
         ))
     }
 

@@ -50,7 +50,7 @@ pub use decisions::{DecisionsCommands, DoctorCommands};
 pub use document::{ConvertArgs, DocumentCommands};
 pub use harness::{ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, PlanFormatArg};
 pub use index::IndexCommands;
-pub use media::MediaCommands;
+pub use media::{GenerateArgs, MediaCommands};
 pub use output_format::OutputFormatArg;
 pub use questions::QuestionsCommands;
 pub use replay::ReplayArgs;

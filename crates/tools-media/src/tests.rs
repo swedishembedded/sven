@@ -7,117 +7,13 @@
 //! an edit sends the provider's own file, or the clip inline; and every
 //! argument the schema does not name is refused before anything is sent.
 
-use std::sync::{Arc, Mutex};
-
+use super::*;
 use base64::Engine as _;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpListener;
+use std::time::Duration;
 
-use super::*;
-
-/// What the fake server was asked to start: idempotency key and body.
-type Created = Arc<Mutex<Vec<(String, Value)>>>;
-
-struct Fake {
-    base_url: String,
-    created: Created,
-}
-
-/// A video server that fails the first `fail_first` jobs it starts, answers a
-/// repeated key with the same job, and completes every job on its second poll.
-async fn serve(fail_first: usize) -> Fake {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
-    let created: Created = Arc::default();
-    let jobs: Arc<Mutex<Vec<(String, u32)>>> = Arc::default();
-    let seen = Arc::clone(&created);
-    tokio::spawn(async move {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else {
-                return;
-            };
-            let (seen, jobs) = (Arc::clone(&seen), Arc::clone(&jobs));
-            tokio::spawn(async move {
-                let (read, mut write) = stream.into_split();
-                let mut reader = BufReader::new(read);
-                let mut line = String::new();
-                reader.read_line(&mut line).await.unwrap();
-                let mut words = line.split_whitespace();
-                let (method, path) = (
-                    words.next().unwrap_or("").to_owned(),
-                    words.next().unwrap_or("").to_owned(),
-                );
-                let (mut length, mut key) = (0usize, String::new());
-                loop {
-                    let mut header = String::new();
-                    reader.read_line(&mut header).await.unwrap();
-                    let header = header.trim();
-                    if header.is_empty() {
-                        break;
-                    }
-                    if let Some((k, v)) = header.split_once(": ") {
-                        match k.to_ascii_lowercase().as_str() {
-                            "content-length" => length = v.parse().unwrap_or(0),
-                            "idempotency-key" => key = v.to_owned(),
-                            _ => {}
-                        }
-                    }
-                }
-                let mut body = vec![0u8; length];
-                reader.read_exact(&mut body).await.unwrap();
-                let (status, kind, reply): (u16, &str, Vec<u8>) = if method == "POST"
-                    && path == "/v1/videos"
-                {
-                    let mut jobs = jobs.lock().unwrap();
-                    let index = match jobs.iter().position(|(k, _)| *k == key) {
-                        Some(index) => index,
-                        None => {
-                            seen.lock()
-                                .unwrap()
-                                .push((key.clone(), serde_json::from_slice(&body).unwrap()));
-                            jobs.push((key.clone(), 0));
-                            jobs.len() - 1
-                        }
-                    };
-                    (
-                        202,
-                        "application/json",
-                        json!({"id": format!("job{index}"), "status": "pending"})
-                            .to_string()
-                            .into_bytes(),
-                    )
-                } else if method == "GET" && path == "/v1/videos/models" {
-                    let models = json!({"data": [{"id": "brain/mock-video", "supported_durations": [1, 2, 3], "supported_resolutions": ["480p"],
-                        "generate_audio": false, "seed": true, "actions": [{"action": "extend", "edits": true}], "pricing_skus": {"duration_seconds": "0.01"}}]});
-                    (200, "application/json", models.to_string().into_bytes())
-                } else if let Some(rest) = path.strip_prefix("/v1/videos/job") {
-                    let index: usize = rest.split(['/', '?']).next().unwrap().parse().unwrap();
-                    if rest.contains("/content") {
-                        (200, "video/mp4", b"\0\0\0\x18ftypisom-mock-clip".to_vec())
-                    } else {
-                        let mut jobs = jobs.lock().unwrap();
-                        jobs[index].1 += 1;
-                        let answer = if jobs[index].1 < 2 {
-                            json!({"id": format!("job{index}"), "status": "in_progress", "progress": {"step": 1, "total": 2}})
-                        } else if index < fail_first {
-                            json!({"id": format!("job{index}"), "status": "failed", "error": "the model ran out of memory"})
-                        } else {
-                            json!({"id": format!("job{index}"), "status": "completed", "usage": {"seconds": 1.125, "cost": 0.01}, "file_id": format!("file-{index}")})
-                        };
-                        (200, "application/json", answer.to_string().into_bytes())
-                    }
-                } else {
-                    (404, "application/json", b"{}".to_vec())
-                };
-                let head = format!("HTTP/1.1 {status} X\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reply.len());
-                let _ = write.write_all(head.as_bytes()).await;
-                let _ = write.write_all(&reply).await;
-            });
-        }
-    });
-    Fake { base_url, created }
-}
+use crate::fake::{serve, Fake};
+use crate::request::{plan, request_key};
 
 fn tool(fake: &Fake, workdir: &Path) -> RunModelTool {
     let endpoint = MediaEndpoint {
@@ -451,4 +347,49 @@ async fn join_videos_joins_clips_of_the_working_directory_in_order() {
         ))
         .await;
     assert!(refused.is_error, "{}", refused.content);
+}
+
+fn endpoint(fake: &Fake) -> MediaEndpoint {
+    MediaEndpoint {
+        base_url: fake.base_url.clone(),
+        api_key: "k".into(),
+    }
+}
+
+#[tokio::test]
+async fn a_generation_killed_while_polling_resumes_the_job_it_started() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let args = json!({"model": "brain/mock-video", "prompt": "a red ball", "seed": 3});
+    let config = MediaConfig::default();
+    let mut lines = Vec::new();
+    // The process dies after submitting, while it waits for the job.
+    let killed = tokio::time::timeout(
+        Duration::from_millis(600),
+        generate(&endpoint(&fake), &config, dir.path(), &args, &mut |line| {
+            lines.push(line.to_owned())
+        }),
+    )
+    .await;
+    assert!(killed.is_err(), "the job takes two polls");
+    assert!(lines.iter().any(|l| l.contains("job0")), "{lines:?}");
+    assert!(!dir.path().join(".sven/media").exists());
+
+    let done = generate(&endpoint(&fake), &config, dir.path(), &args, &mut |_| {})
+        .await
+        .unwrap();
+    assert!(!done.reused);
+    // The same idempotency key answered the job already running.
+    assert_eq!(fake.created.lock().unwrap().len(), 1);
+    assert_eq!(done.seconds, Some(1.125));
+    assert_eq!(done.digest().unwrap().len(), 64);
+
+    // Once written, the file answers: nothing is submitted, the sidecar's length is kept.
+    let again = generate(&endpoint(&fake), &config, dir.path(), &args, &mut |_| {})
+        .await
+        .unwrap();
+    assert!(again.reused);
+    assert_eq!(again.seconds, Some(1.125));
+    assert_eq!(again.path, done.path);
+    assert_eq!(fake.created.lock().unwrap().len(), 1);
 }

@@ -352,9 +352,11 @@ serves every transport.
   file, no re-encoding, each clip's edit list carried over and every track cut
   or padded to its clip's picture, so sound never drifts). No ffmpeg: a case
   job's image needs only sven. Tool `join_videos`; `run_model` gains `output`.
-- `sven media probe|join` for scripts and harness checks; `sven harness run
-  --media-endpoint URL --media-key-file FILE` gives a run's agents `models` and
-  `run_model` (the harness reads no configuration, so the endpoint is a flag).
+- `sven media generate|probe|join` for scripts and harness checks (`generate`
+  is `run_model`'s request as a command, with the endpoint of the sven
+  configuration); `sven harness run --media-endpoint URL --media-key-file FILE`
+  gives a run's agents `models` and `run_model` (the harness reads no
+  configuration, so the endpoint is a flag).
 - `samples/harnesses/short-film`: a planner sets the shot list as a typed
   variable, a checkpointed `for_each` renders each shot to `shots/<id>.mp4` and
   a `sven media probe --seconds` check refuses a cut-short or wrong-length one

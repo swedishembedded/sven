@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::path::PathBuf;
 
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 
-/// `sven media` subcommands: check and join video clips without decoding
-/// them, for scripts and harness checks.
+/// `sven media` subcommands: make, check and join video clips, for scripts and
+/// harness checks.
 #[derive(Subcommand, Debug)]
 pub enum MediaCommands {
     /// Read an MP4 clip and check it is whole: its length, size, codec,
@@ -51,6 +51,21 @@ pub enum MediaCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Make a clip with a video model: the request the `run_model` tool makes,
+    /// as a command a script or a harness gate can run without a model turn.
+    /// The provider is the one `tools.media.provider` names (default: the
+    /// sven service), with its key from `providers.<name>` or `sven auth`.
+    ///
+    /// The same request twice delivers the clip made the first time and
+    /// submits nothing; a run killed while the server renders asks again
+    /// under the same name and picks the job up where the server has it.
+    /// Progress goes to stderr; stdout holds the path written (one JSON
+    /// object with `--json`).
+    ///
+    ///   sven media generate --model brain/minimaxh3 --action ref2va \
+    ///     --prompt "<Picture 1> waves" --reference image:face.png \
+    ///     --size 768x448 --param num_frames=121 --output shot.mp4
+    Generate(GenerateArgs),
     /// Join MP4 clips one after another into one file, copying them as they
     /// are (no re-encoding: the clips must come from the same model at the
     /// same size). Sound stays in sync with each clip's picture.
@@ -78,4 +93,66 @@ pub enum MediaCommands {
         /// The clips, in order.
         clips: Vec<PathBuf>,
     },
+}
+
+/// The request of `sven media generate`: the arguments of `run_model`.
+#[derive(Args, Debug)]
+pub struct GenerateArgs {
+    /// The id of a video model (`brain/minimaxh3`).
+    #[arg(long, value_name = "ID")]
+    pub model: String,
+    /// What the video shows. Names the references by their order within their
+    /// kind: `<Picture 1>`, `<Video 1>`, `<Audio 1>`.
+    #[arg(long, value_name = "TEXT")]
+    pub prompt: String,
+    /// Seconds.
+    #[arg(long, value_name = "SECS", value_parser = number)]
+    pub duration: Option<serde_json::Number>,
+    /// 480p, 720p, 1080p, ...
+    #[arg(long, value_name = "NAME")]
+    pub resolution: Option<String>,
+    /// 16:9, 9:16, 1:1, ...
+    #[arg(long, value_name = "W:H")]
+    pub aspect_ratio: Option<String>,
+    /// Exact pixels, WIDTHxHEIGHT.
+    #[arg(long, value_name = "WxH")]
+    pub size: Option<String>,
+    /// The seed: another seed is another take.
+    #[arg(long, value_name = "N", value_parser = number)]
+    pub seed: Option<serde_json::Number>,
+    /// Ask for sound.
+    #[arg(long)]
+    pub generate_audio: bool,
+    /// An action the model offers for its references (`ref2va`), not an edit.
+    #[arg(long, value_name = "NAME", conflicts_with = "edit")]
+    pub action: Option<String>,
+    /// One of the action's or edit's own parameters (repeatable). VALUE is
+    /// read as JSON when it is JSON (`steps=30`, `allow_community=true`),
+    /// else it is a string (`adapter=/models/lora`).
+    #[arg(long = "param", value_name = "KEY=VALUE")]
+    pub params: Vec<String>,
+    /// A file the prompt refers to (repeatable, in the order the prompt
+    /// counts them): `image|video|audio:PATH`, inside the current directory.
+    #[arg(long = "reference", value_name = "KIND:PATH")]
+    pub references: Vec<String>,
+    /// An edit the model offers (`extend`, `upscale`), with `--input-video`.
+    #[arg(long, value_name = "NAME", requires = "input_video")]
+    pub edit: Option<String>,
+    /// The clip to edit, inside the current directory.
+    #[arg(long, value_name = "FILE", requires = "edit")]
+    pub input_video: Option<PathBuf>,
+    /// The file to write (a path inside the current directory; replaced whole,
+    /// or left untouched on failure).
+    #[arg(long, value_name = "FILE")]
+    pub output: PathBuf,
+    /// Print the clip as one JSON object: its path, SHA-256 digest, seconds,
+    /// width, height and frames.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// A JSON number, so `5` and `5.0` stay what the person wrote: the request is
+/// named by its canonical arguments.
+fn number(text: &str) -> Result<serde_json::Number, String> {
+    serde_json::from_str(text).map_err(|_| format!("`{text}` is not a number"))
 }

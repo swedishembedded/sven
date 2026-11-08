@@ -281,6 +281,7 @@ uuid             = { workspace = true }
 sven-bootstrap   = { path = "crates/bootstrap" }
 sven-tools-exec  = { path = "crates/tools-exec" }
 sven-tools-fs    = { path = "crates/tools-fs" }
+sven-tools-media = { path = "crates/tools-media", features = ["fake-server"] }
 sven-tools-ctx   = { path = "crates/tools-ctx" }
 sven-model       = { path = "crates/model" }
 sven-vocab       = { path = "crates/vocab" }

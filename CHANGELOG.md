@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **media**: `sven media generate` makes a clip with a video model: the request `run_model` makes (references, an action and its parameters, an exact size, a seed), as a command a script or a harness check runs with no model turn. The same request twice delivers the clip made the first time and submits nothing; a run killed while the server renders asks again under the same name and picks up the job the server still has.
+
 ## [4.7.0] - 2026-11-08
 
 ### Added

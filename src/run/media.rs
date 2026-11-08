@@ -6,20 +6,25 @@
 // finished films for its clients. If your team needs expertise in generative
 // media pipelines then you can procure our services by sending an email to
 // info@swedishembedded.com.
-//! `sven media`: the clip checks and the join of `sven_tools_media::mp4`, for
-//! scripts and harness checks.
+//! `sven media`: the generation of `sven_tools_media::generate` and the clip
+//! checks and join of `sven_tools_media::mp4`, for scripts and harness
+//! checks.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use sven_tools_media::mp4::{self, Probe, VideoInfo};
 
-use crate::cli::MediaCommands;
+use crate::cli::{GenerateArgs, MediaCommands};
 
-pub(crate) fn run_media_command(command: &MediaCommands) -> Result<()> {
+pub(crate) async fn run_media_command(
+    command: &MediaCommands,
+    config: Option<&Path>,
+) -> Result<()> {
     match command {
+        MediaCommands::Generate(args) => generate(args, config).await,
         MediaCommands::Probe {
             file,
             seconds: expected,
@@ -78,6 +83,118 @@ pub(crate) fn run_media_command(command: &MediaCommands) -> Result<()> {
             print(&probe, *json)
         }
     }
+}
+
+/// `sven media generate`: the request `run_model` makes, for the current
+/// directory, against the provider the configuration names for media.
+async fn generate(args: &GenerateArgs, config: Option<&Path>) -> Result<()> {
+    // The request is read before the configuration or the network is.
+    let request = generate_request(args)?;
+    let config = sven_frontend::Settings::load(config)?.runtime;
+    let provider = config
+        .tools
+        .media
+        .provider
+        .clone()
+        .unwrap_or_else(|| sven_model_drivers::sven_service::PROVIDER.to_owned());
+    let (endpoint, media) = config.media_endpoint().with_context(|| {
+        format!(
+            "no key for the media provider `{provider}` (`tools.media.provider`): \
+             store one with `sven auth set {provider}` or give `providers.{provider}.api_key_file`"
+        )
+    })?;
+    let workdir = std::env::current_dir().context("the current directory")?;
+    let done = sven_tools_media::generate(&endpoint, &media, &workdir, &request, &mut |line| {
+        eprintln!("[sven:media] {line}");
+    })
+    .await
+    .map_err(anyhow::Error::msg)?;
+    if !args.json {
+        println!("{}", done.shown);
+        return Ok(());
+    }
+    let digest = done.digest()?;
+    let clip =
+        mp4::probe(&done.path).with_context(|| format!("{} is not a usable MP4", done.shown))?;
+    println!(
+        "{}",
+        json!({
+            "path": done.shown,
+            "digest": digest,
+            "seconds": clip.duration_seconds,
+            "width": clip.video.width,
+            "height": clip.video.height,
+            "frames": clip.video.frames,
+            "reused": done.reused,
+        })
+    );
+    Ok(())
+}
+
+/// The arguments `run_model` takes for the flags given.
+fn generate_request(args: &GenerateArgs) -> Result<Value> {
+    let mut request = Map::new();
+    request.insert("model".into(), json!(args.model));
+    request.insert("prompt".into(), json!(args.prompt));
+    for (key, value) in [
+        ("duration", args.duration.as_ref().map(|n| json!(n))),
+        ("resolution", args.resolution.as_ref().map(|v| json!(v))),
+        ("aspect_ratio", args.aspect_ratio.as_ref().map(|v| json!(v))),
+        ("size", args.size.as_ref().map(|v| json!(v))),
+        ("seed", args.seed.as_ref().map(|n| json!(n))),
+        ("generate_audio", args.generate_audio.then_some(json!(true))),
+        ("action", args.action.as_ref().map(|v| json!(v))),
+        ("edit", args.edit.as_ref().map(|v| json!(v))),
+        (
+            "input_video",
+            args.input_video.as_deref().map(path_text).transpose()?,
+        ),
+    ] {
+        if let Some(value) = value {
+            request.insert(key.into(), value);
+        }
+    }
+    if !args.params.is_empty() {
+        request.insert("params".into(), Value::Object(params(&args.params)?));
+    }
+    if !args.references.is_empty() {
+        let references = args
+            .references
+            .iter()
+            .map(|reference| {
+                let (kind, path) = reference.split_once(':').with_context(|| {
+                    format!("--reference {reference} must be KIND:PATH, e.g. image:face.png")
+                })?;
+                Ok(json!({"kind": kind, "path": path}))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        request.insert("references".into(), Value::Array(references));
+    }
+    request.insert("output".into(), path_text(&args.output)?);
+    Ok(Value::Object(request))
+}
+
+fn path_text(path: &Path) -> Result<Value> {
+    path.to_str()
+        .map(|text| json!(text))
+        .with_context(|| format!("{} is not valid UTF-8", path.display()))
+}
+
+/// `KEY=VALUE` parameters: the value is JSON when it parses as JSON, else a
+/// string; a key given twice is an error, not a silent override.
+fn params(pairs: &[String]) -> Result<Map<String, Value>> {
+    let mut params = Map::new();
+    for pair in pairs {
+        let (key, value) = pair
+            .split_once('=')
+            .filter(|(key, _)| !key.is_empty())
+            .with_context(|| format!("--param {pair} must be KEY=VALUE"))?;
+        let value = serde_json::from_str(value).unwrap_or_else(|_| json!(value));
+        if params.insert(key.to_owned(), value).is_some() {
+            bail!("--param {key} is given twice");
+        }
+    }
+    Ok(params)
 }
 
 /// How far a clip's frame rate may be from `--fps`: the rate is averaged over
@@ -169,6 +286,31 @@ fn print(probe: &Probe, json: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn params_are_json_when_they_parse_and_text_otherwise() {
+        let read =
+            |pairs: &[&str]| params(&pairs.iter().map(|p| (*p).to_owned()).collect::<Vec<_>>());
+        assert_eq!(
+            Value::Object(
+                read(&[
+                    "steps=30",
+                    "allow_community=true",
+                    "adapter=/m/lora",
+                    "cfg=1.5",
+                    "n=\"7\""
+                ])
+                .unwrap()
+            ),
+            json!({"steps": 30, "allow_community": true, "adapter": "/m/lora", "cfg": 1.5, "n": "7"})
+        );
+        assert!(read(&["steps"]).is_err());
+        assert!(read(&["=1"]).is_err());
+        assert!(read(&["a=1", "a=2"])
+            .unwrap_err()
+            .to_string()
+            .contains("twice"));
+    }
 
     fn video() -> VideoInfo {
         VideoInfo {

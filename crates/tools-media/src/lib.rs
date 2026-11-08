@@ -29,29 +29,28 @@
 //! written, and never pays for a second render; another take is another
 //! `seed`. A job that failed is asked again under a fresh name.
 
+mod generate;
 pub mod mp4;
 mod request;
 
-use request::{plan, request_key};
+#[cfg(any(test, feature = "fake-server"))]
+pub mod fake;
+
+pub use generate::{generate, Generated};
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use sven_hsm::ToolCapability;
-use sven_model_drivers::video::{VideoClient, VideoModel, VideoState};
+use sven_model_drivers::video::{VideoClient, VideoModel};
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
 
 /// The largest clip sent inline as an edit's input.
 const MAX_INPUT_BYTES: u64 = 40 * 1024 * 1024;
-/// How often a running job is asked about.
-const POLL_EVERY: Duration = Duration::from_secs(2);
-/// Failed attempts at the same request before the tool gives up.
-const MAX_ATTEMPTS: u32 = 3;
 
 /// The `tools.media` section.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -264,99 +263,30 @@ fn sidecar_path(clip: &Path) -> PathBuf {
 
 impl RunModelTool {
     async fn run(&self, args: &Value) -> Result<String, String> {
-        let planned = plan(args, &self.workdir)?;
-        let (body, digests) = planned.with_media().await?;
-        let video = client(&self.endpoint);
-        let dir = self.workdir.join(&self.config.dir);
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(self.config.timeout_secs);
-        for attempt in 0..MAX_ATTEMPTS {
-            let key = request_key(&self.endpoint.base_url, &planned, &digests, attempt);
-            let clip = dir.join(format!("{key}.mp4"));
-            if clip.exists() {
-                let shown = self.save_as(&clip, planned.output.as_deref()).await?;
-                return Ok(format!("The video is at {shown} (made earlier for the same request; another seed makes another take)."));
-            }
-            let mut status = video
-                .create(&Value::Object(body.clone()), &key)
-                .await
-                .map_err(|e| format!("{e:#}"))?;
-            while !status.state.finished() {
-                if tokio::time::Instant::now() > deadline {
-                    let _ = video.cancel(&status.id).await;
-                    return Err(format!(
-                        "the video was not ready within {} s; it was asked to stop",
-                        self.config.timeout_secs
-                    ));
-                }
-                tokio::time::sleep(POLL_EVERY).await;
-                status = video
-                    .status(&status.id)
-                    .await
-                    .map_err(|e| format!("{e:#}"))?;
-            }
-            match status.state {
-                VideoState::Completed => {
-                    let bytes = video
-                        .download(&status.id, &clip)
-                        .await
-                        .map_err(|e| format!("{e:#}"))?;
-                    let model = planned.body["model"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned();
-                    let sidecar = Sidecar {
-                        model,
-                        file_id: status.file_id.clone(),
-                        seconds: status.seconds,
-                    };
-                    let _ = tokio::fs::write(
-                        sidecar_path(&clip),
-                        serde_json::to_vec_pretty(&sidecar).unwrap_or_default(),
-                    )
-                    .await;
-                    let shown = self.save_as(&clip, planned.output.as_deref()).await?;
-                    let mut line = format!("Saved the video to {shown} ({bytes} bytes");
-                    if let Some(seconds) = status.seconds {
-                        line.push_str(&format!(", {seconds:.1} s"));
-                    }
-                    if let Some(cost) = status.cost {
-                        line.push_str(&format!(", ${cost:.4}"));
-                    }
-                    line.push_str(").");
-                    return Ok(line);
-                }
-                // A failed request is asked again under a fresh name: the
-                // same name would only answer the same failure.
-                VideoState::Failed(_) if attempt + 1 < MAX_ATTEMPTS => {}
-                VideoState::Failed(reason) => {
-                    return Err(format!("the video could not be made: {reason}"))
-                }
-                VideoState::Cancelled => {
-                    return Err("the video was stopped before it was ready".into())
-                }
-                VideoState::Expired => {
-                    return Err("the video expired before it was downloaded; ask again".into())
-                }
-                VideoState::Pending | VideoState::InProgress => {
-                    unreachable!("the loop above waits for a finished state")
-                }
-            }
+        let done = generate(
+            &self.endpoint,
+            &self.config,
+            &self.workdir,
+            args,
+            &mut |_| {},
+        )
+        .await?;
+        if done.reused {
+            return Ok(format!("The video is at {} (made earlier for the same request; another seed makes another take).", done.shown));
         }
-        Err("the video could not be made".into())
-    }
-
-    /// The clip also written at `output`, when asked (copied whole, then
-    /// renamed into place), and the path to show for it.
-    async fn save_as(&self, clip: &Path, output: Option<&Path>) -> Result<String, String> {
-        let Some(output) = output else {
-            return Ok(shown(&self.workdir, clip));
-        };
-        let partial = output.with_extension("mp4.part");
-        tokio::fs::copy(clip, &partial)
-            .await
-            .and(tokio::fs::rename(&partial, output).await)
-            .map_err(|e| format!("saving the video as {}: {e}", output.display()))?;
-        Ok(shown(&self.workdir, output))
+        let mut line = format!(
+            "Saved the video to {} ({} bytes",
+            done.shown,
+            done.bytes.unwrap_or_default()
+        );
+        if let Some(seconds) = done.seconds {
+            line.push_str(&format!(", {seconds:.1} s"));
+        }
+        if let Some(cost) = done.cost {
+            line.push_str(&format!(", ${cost:.4}"));
+        }
+        line.push_str(").");
+        Ok(line)
     }
 }
 

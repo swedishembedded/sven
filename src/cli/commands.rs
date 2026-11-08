@@ -38,7 +38,7 @@ pub enum Commands {
         command: ToolCommands,
     },
 
-    /// Check and join video clips without decoding them.
+    /// Make video clips with a model; check and join them without decoding.
     Media {
         #[command(subcommand)]
         command: MediaCommands,

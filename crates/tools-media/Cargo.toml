@@ -5,6 +5,11 @@ edition     = "2021"
 description = "Generative media tools: list the models a provider generates video with (models) and run one to a file (run_model), against any OpenRouter-compatible video API. Domain tier."
 license     = "Apache-2.0"
 
+[features]
+# A fake video server and fixture MP4 clips, for tests of this crate and of
+# the binary that drives it.
+fake-server = []
+
 [dependencies]
 sven-tool-api      = { path = "../tool-api" }
 sven-hsm           = { path = "../hsm" }

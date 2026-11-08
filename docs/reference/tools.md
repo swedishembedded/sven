@@ -350,7 +350,7 @@ the provider failed is asked again once more under a new name. A changed referen
 provider also stores is named to it by its file when it is edited, instead
 of being sent again; references are always sent inline. Whether the model takes a
 reference kind is the server's to say: its refusal is returned as it is. It asks for approval under `--approval manual`, as every
-write does: a video is paid for.
+write does: a video is paid for. `sven media generate` makes the same request from the command line, for scripts and harness checks.
 
 ### `join_videos`
 

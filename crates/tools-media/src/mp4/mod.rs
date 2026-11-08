@@ -146,5 +146,7 @@ pub fn join(clips: &[PathBuf], output: &Path, video_only: bool) -> Result<Probe>
     probe(output)
 }
 
+#[cfg(any(test, feature = "fake-server"))]
+pub mod fixture;
 #[cfg(test)]
 pub(crate) mod tests;

@@ -117,7 +117,9 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                 let config = Settings::load(cli.config.as_deref())?.runtime;
                 return run_tool_command(command, &config).await;
             }
-            Commands::Media { command } => return run_media_command(command),
+            Commands::Media { command } => {
+                return run_media_command(command, cli.config.as_deref()).await
+            }
             Commands::Doctor {
                 command: DoctorCommands::Decisions { json },
             } => {
