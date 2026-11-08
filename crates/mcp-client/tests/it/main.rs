@@ -14,3 +14,4 @@ mod observers;
 mod served_skills;
 mod sign_in;
 mod slow_startup;
+mod spawn_restriction;

@@ -34,7 +34,14 @@ pub(crate) struct McpSetup<'a> {
 /// The manager and its event stream. A reused manager yields a closed
 /// receiver stub: the caller keeps consuming from the original manager's
 /// stream.
-pub(crate) async fn connect(setup: McpSetup<'_>) -> (Arc<McpManager>, mpsc::Receiver<McpEvent>) {
+///
+/// # Errors
+///
+/// A server the configuration marks required did not connect and offer a
+/// tool within its timeout: the session must not start without it.
+pub(crate) async fn connect(
+    setup: McpSetup<'_>,
+) -> anyhow::Result<(Arc<McpManager>, mpsc::Receiver<McpEvent>)> {
     // Reuse a caller-supplied manager (session rebuild) instead of building
     // and connecting a fresh one, so the frontend's manager handle and MCP
     // connections survive a mid-session mode/model change. A reused manager
@@ -43,14 +50,14 @@ pub(crate) async fn connect(setup: McpSetup<'_>) -> (Arc<McpManager>, mpsc::Rece
     match setup.shared {
         Some(existing) => {
             let (_tx, rx) = tokio::sync::mpsc::channel(1);
-            (existing, rx)
+            Ok((existing, rx))
         }
         // No built-in tools means no configured MCP servers either: the
         // caller asked for exactly the tools it registers.
         None if setup.no_builtin_tools => {
             let (mcp_event_tx, mcp_event_rx) = tokio::sync::mpsc::channel(1);
             let manager = McpManager::new(Default::default(), mcp_event_tx, false);
-            (manager, mcp_event_rx)
+            Ok((manager, mcp_event_rx))
         }
         None => {
             let (mcp_event_tx, mcp_event_rx) = tokio::sync::mpsc::channel(64);
@@ -84,7 +91,85 @@ pub(crate) async fn connect(setup: McpSetup<'_>) -> (Arc<McpManager>, mpsc::Rece
                     }
                 }
             }
-            (mcp_manager, mcp_event_rx)
+            require_servers(&mcp_manager, setup.servers).await?;
+            Ok((mcp_manager, mcp_event_rx))
         }
+    }
+}
+
+/// Waits for every server marked required to connect and offer a tool,
+/// each within its own timeout, and fails naming the first that did not.
+async fn require_servers(
+    manager: &Arc<McpManager>,
+    servers: &HashMap<String, sven_mcp_client::McpServerConfig>,
+) -> anyhow::Result<()> {
+    for (name, config) in servers.iter().filter(|(_, c)| c.enabled && c.required) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(config.timeout_secs);
+        loop {
+            let ready = manager
+                .server_statuses()
+                .await
+                .into_iter()
+                .find(|s| &s.name == name)
+                .is_some_and(|s| {
+                    matches!(s.status, sven_mcp_client::ServerStatus::Connected) && s.tool_count > 0
+                });
+            if ready {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "the required MCP server `{name}` did not start and offer a tool within {}s",
+                    config.timeout_secs
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sven_mcp_client::{McpServerConfig, McpTransport};
+
+    fn servers(required: bool) -> HashMap<String, McpServerConfig> {
+        let config = McpServerConfig {
+            transport: McpTransport::Stdio {
+                command: "true".into(),
+                args: Vec::new(),
+            },
+            timeout_secs: 2,
+            required,
+            ..McpServerConfig::default()
+        };
+        [("toolkit".to_string(), config)].into_iter().collect()
+    }
+
+    fn setup(servers: &HashMap<String, McpServerConfig>) -> McpSetup<'_> {
+        McpSetup {
+            shared: None,
+            no_builtin_tools: false,
+            servers,
+            allow_interactive_oauth: false,
+            wait_for_tools_ms: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_does_not_start_without_a_required_server() {
+        let required = servers(true);
+        let error = connect(setup(&required)).await.err().expect("refused");
+        assert!(
+            format!("{error:#}").contains("required MCP server `toolkit`"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_that_is_not_required_never_stops_a_session() {
+        let optional = servers(false);
+        assert!(connect(setup(&optional)).await.is_ok());
     }
 }

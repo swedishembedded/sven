@@ -230,6 +230,7 @@ impl McpManager {
                     command,
                     args,
                     env: &cfg.env,
+                    restrict: cfg.restrict_spawn.as_ref(),
                 },
                 false,
             ),

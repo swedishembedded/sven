@@ -206,6 +206,7 @@ pub enum Endpoint<'a> {
         command: &'a str,
         args: &'a [String],
         env: &'a HashMap<String, String>,
+        restrict: Option<&'a crate::config::SpawnRestriction>,
     },
     Http {
         url: &'a str,
@@ -236,12 +237,18 @@ impl Connection {
     ) -> Result<Self> {
         let handler = handler_for(server, &changed);
         let service = match endpoint {
-            Endpoint::Stdio { command, args, env } => {
+            Endpoint::Stdio {
+                command,
+                args,
+                env,
+                restrict,
+            } => {
                 let first = within(
                     timeout,
-                    handler
-                        .clone()
-                        .serve_with_lifecycle(spawn(server, command, args, env)?, lifecycle()),
+                    handler.clone().serve_with_lifecycle(
+                        spawn(server, command, args, env, restrict)?,
+                        lifecycle(),
+                    ),
                 )
                 .await;
                 match first {
@@ -251,7 +258,7 @@ impl Connection {
                         within(
                             timeout,
                             handler.serve_with_lifecycle(
-                                spawn(server, command, args, env)?,
+                                spawn(server, command, args, env, restrict)?,
                                 ClientLifecycleMode::Initialize,
                             ),
                         )
@@ -471,14 +478,16 @@ where
 }
 
 /// The server process, with a clean environment: only `PATH` and the
-/// variables its configuration names, so sven's own secrets never reach it.
-/// What it writes to stderr goes to sven's log as that server's, never to
-/// the terminal, where it would draw over a TUI.
+/// variables its configuration names, so sven's own secrets never reach it,
+/// restricted by `restrict` when its host confines it. What it writes to
+/// stderr goes to sven's log as that server's, never to the terminal, where
+/// it would draw over a TUI.
 fn spawn(
     server: &str,
     command: &str,
     args: &[String],
     env: &HashMap<String, String>,
+    restrict: Option<&crate::config::SpawnRestriction>,
 ) -> Result<TokioChildProcess> {
     let mut cmd = tokio::process::Command::new(command);
     cmd.args(args).env_clear().kill_on_drop(true);
@@ -486,6 +495,10 @@ fn spawn(
         cmd.env("PATH", path);
     }
     cmd.envs(env);
+    if let Some(restrict) = restrict {
+        (restrict.0)(cmd.as_std_mut())
+            .map_err(|e| anyhow!("MCP server {server} cannot be confined: {e}"))?;
+    }
     let (process, stderr) = TokioChildProcess::builder(cmd)
         .stderr(std::process::Stdio::piped())
         .spawn()

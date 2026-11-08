@@ -576,7 +576,7 @@ impl RuntimeBuilder {
             allow_interactive_oauth: self.allow_interactive_oauth,
             wait_for_tools_ms: self.wait_for_mcp_tools_ms,
         })
-        .await;
+        .await?;
         // The skills the signed-in server offers join the session's, below
         // the person's own. A session rebuild keeps those it already has.
         if !reused_mcp {

@@ -44,6 +44,7 @@ pub use callback::{
 };
 pub use config::{
     mcp_servers_schema, McpOAuthConfig, McpServerConfig, McpServers, McpToolPolicy, McpTransport,
+    SpawnRestriction,
 };
 pub use events::{McpEvent, NoticeLevel};
 pub use exchange::{connect_account, AccountConnection, AccountConnector, TokenExchange};

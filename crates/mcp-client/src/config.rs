@@ -174,6 +174,22 @@ pub fn tool_policy(
     }
 }
 
+/// What a stdio server's process is restricted by before it runs: called
+/// on its command between building and spawning it, typically to confine it
+/// with the kernel (`pre_exec`). An error refuses the start, so a server
+/// whose restriction cannot be applied never runs unrestricted.
+#[derive(Clone)]
+pub struct SpawnRestriction(pub std::sync::Arc<RestrictFn>);
+
+/// What restricts one command: `Err` names why it could not be done.
+pub type RestrictFn = dyn Fn(&mut std::process::Command) -> Result<(), String> + Send + Sync;
+
+impl std::fmt::Debug for SpawnRestriction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SpawnRestriction")
+    }
+}
+
 /// Configuration for a single external MCP server.
 ///
 /// MCP servers extend sven with additional tools, prompts, and resources.
@@ -239,6 +255,18 @@ pub struct McpServerConfig {
     /// one's), never read from a configuration file.
     #[serde(skip)]
     pub file_root: Option<std::path::PathBuf>,
+    /// What a stdio server's process is restricted by ([`SpawnRestriction`]):
+    /// a host that runs untrusted tools beside its own secrets confines the
+    /// server as it confines the agent's commands. Set by sven itself, never
+    /// read from a configuration file.
+    #[serde(skip)]
+    pub restrict_spawn: Option<SpawnRestriction>,
+    /// A session does not start without it: it waits up to `timeout_secs`
+    /// for the server to connect and offer a tool, and fails otherwise (a
+    /// served run brought a toolkit it cannot go on without). Set by sven
+    /// itself, never read from a configuration file.
+    #[serde(skip)]
+    pub required: bool,
 }
 
 impl McpServerConfig {
@@ -312,6 +340,8 @@ impl Default for McpServerConfig {
             token_exchange: None,
             request_meta: serde_json::Map::new(),
             file_root: None,
+            restrict_spawn: None,
+            required: false,
         }
     }
 }
