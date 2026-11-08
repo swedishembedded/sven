@@ -301,6 +301,13 @@ test/harness/sdk:
 test/harness/cli:
 	$(HARNESS_TEST) -p sven --test harness_cli --test harness_production --test harness_suspension --test harness_views --test harness_cli_outputs --test harness_isolation --test harness_model_roles -- --test-threads=4
 
+## test/harness/toolkit - OPT-IN: a package's MCP server under the worker's confinement: REA with Ghidra decompiles a binary
+##   and reaches nothing outside the run's workspace. Fetches its pinned kit (about 1 GB: Node, REA by its
+##   lockfile, Ghidra, a JDK) into target/kits/rea once. Linux x86_64 with Landlock; not part of test/harness.
+test/harness/toolkit:
+	bash tests/kits/rea/fetch.sh --dest target/kits/rea
+	$(HARNESS_TEST) -p sven --features network --bin sven -- --ignored --exact run::harness::work_mcp::tests::a_confined_toolkit_decompiles_a_binary_in_the_workspace
+
 ## test/e2e/delegation - lists the delegation checks; runs nothing
 test/e2e/delegation:
 	@bash scripts/make-help.sh test/e2e/delegation

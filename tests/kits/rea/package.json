@@ -1,0 +1,9 @@
+{
+  "name": "sven-test-kit-rea",
+  "private": true,
+  "description": "REA pinned for sven's confined-toolkit test; installed by fetch.sh with npm ci",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "rea-agents": "6.8.0"
+  }
+}

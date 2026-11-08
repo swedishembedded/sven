@@ -23,6 +23,9 @@
 //! gate scripts and data, the scratchpad and the worker's scratch are outside
 //! it, and the worker is non-dumpable so a command cannot read its memory.
 //! A kernel that cannot enforce all of it refuses the run before it starts.
+//! The MCP servers a package declares beside its workflow run under the same
+//! confinement ([`super::work_mcp`]), and a run whose servers do not start
+//! fails before its first step.
 //!
 //! Swedish Embedded AB implements solutions for running agent workflows on
 //! disposable workers without losing work for its clients. If your team
@@ -249,6 +252,9 @@ struct LaidOut {
     /// The package's `bin`, which goes first on the `PATH` of the commands
     /// the run's tools start; none for a bundle or a tar without one.
     bin: Option<PathBuf>,
+    /// The directory of the main workflow, where the package declares its
+    /// MCP servers; none for a bundle.
+    harness_dir: Option<PathBuf>,
 }
 
 /// Lays the run's package out.
@@ -279,6 +285,7 @@ fn lay_out_package(
             return Ok(LaidOut {
                 harness_text: text,
                 bin: None,
+                harness_dir: None,
             });
         }
         PackageFormat::Tar => descriptor.skills.as_deref(),
@@ -301,6 +308,7 @@ fn lay_out_package(
     Ok(LaidOut {
         harness_text: super::source::Source::open(&main)?.text,
         bin,
+        harness_dir: main.parent().map(Path::to_path_buf),
     })
 }
 
@@ -318,7 +326,7 @@ fn install_skills(from: &Path, workspace: &Path) -> Result<()> {
 /// toolchain directories of this process's `PATH` for running programs, and
 /// the system set. The run's login, `scratch` itself (the package, the
 /// scratchpad, the gate scripts) and everything else are out of reach.
-fn agent_confinement(
+pub(super) fn agent_confinement(
     workspace: &Path,
     scratch: &Path,
     bin: Option<&Path>,
@@ -361,7 +369,11 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
     // data in the run's private directory, which a gate names through
     // `package_dir`.
     let package_dir = options.scratch.join("package");
-    let LaidOut { harness_text, bin } = lay_out_package(
+    let LaidOut {
+        harness_text,
+        bin,
+        harness_dir,
+    } = lay_out_package(
         &descriptor,
         &client.fetch(&descriptor.package).await?,
         &package_dir,
@@ -396,6 +408,27 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
         &options.scratch,
         bin.as_deref(),
     )?);
+    // The toolkits the package brings as MCP servers, confined like the
+    // agent's commands; the run's session does not start without them.
+    let servers = match &harness_dir {
+        Some(dir) => super::work_mcp::declared_servers(
+            dir,
+            &super::work_mcp::Place {
+                workspace: &options.workspace,
+                scratch: &options.scratch,
+                bin: bin.as_deref(),
+            },
+        )?,
+        None => Default::default(),
+    };
+    if !servers.is_empty() {
+        // A toolkit offers hundreds of tools and large results: the agent
+        // loads the definitions it needs, and older results shrink to a
+        // reference it can expand.
+        config.tools.disclosure.mode = sven_tool_registry::Disclosure::Deferred;
+        config.context.assembly.mode = sven_bootstrap::AssemblyMode::Demote;
+    }
+    config.mcp_servers = servers;
     config.tools.path_prefix = bin.into_iter().collect();
     let mut builder = Engine::builder()
         .config(config)

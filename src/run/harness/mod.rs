@@ -36,6 +36,8 @@ mod views;
 #[cfg(feature = "network")]
 pub(crate) mod work;
 #[cfg(feature = "network")]
+mod work_mcp;
+#[cfg(feature = "network")]
 mod work_package;
 
 use error::HarnessError;
