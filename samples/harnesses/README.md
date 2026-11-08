@@ -3,7 +3,7 @@
 
 # Harness samples
 
-Twelve programmable harnesses, each a data directory: a workflow document
+Thirteen programmable harnesses, each a data directory: a workflow document
 (`api_version: "2"`) and its README, with nothing to compile. The table lists
 them from the simplest to the most involved. They are judged by running them:
 `sven harness validate` checks that each one compiles (the repository's
@@ -25,6 +25,7 @@ repair, loops, resume, replay) is tested in `sven-harness-spec`,
 | [planner-worker](planner-worker/) | three roles: a planner answering in a schema, a worker with tools, a supervisor checked by a gate; each decoded its own way, in conversations of their own |
 | [verified-task](verified-task/) | a task, a command gate whose exit status decides, bounded repair, a success condition with a coverage threshold |
 | [short-film](short-film/) | a film from one premise: a planner's shot list as a typed variable, each shot rendered by a video model and checked by a trusted command, progress that survives a restart without paying twice, and the shots joined in order by the executor |
+| [ref2va](ref2va/) | a clip rendered from a character image by a video model with no model turn at all: check tasks only, the render a trusted `sven media generate` that reattaches to its job or answers the clip already made, the result checked exactly by `sven media probe` and published |
 | [rust-refactor](rust-refactor/) | a reusable sweep over any Rust repository: an exploration agent publishes the context and the project's own check commands as variables, then per file an auditor, a fixer and a reviewer each in a fresh conversation, the executor commits after trusted gates, and a failed file is rolled back |
 
 ## Layout of a sample

@@ -284,7 +284,10 @@ sven harness run ./c-repair --workspace ./repo \
   endpoint. `models` needs the NetworkAccess capability; `run_model` writes
   files, so the `coding` profile covers it. The
   [short-film](../../samples/harnesses/short-film/) sample plans, renders,
-  checks and joins a film this way.
+  checks and joins a film this way. A check task can render with no model turn
+  at all: `sven media generate` is `run_model`'s request as a trusted command,
+  reading the media provider from sven's configuration, as in the
+  [ref2va](../../samples/harnesses/ref2va/) sample.
 - `--checkpoint-out FILE` also keeps the latest checkpoint while a `for_each`
   sweep goes (written atomically after each completed item, removed when the
   run ends with a verdict), so a run killed without warning resumes with
@@ -388,6 +391,7 @@ directory with its README:
 | `verified-task` | a command gate whose exit status decides, bounded repair, a coverage threshold in the success condition |
 | `embedded-hardening` | the full pipeline on a disposable embedded C repository: bootstrap, plan, a checkpointed `for_each` over modules, coverage `until` 90 percent, architecture, production; real gcov and clang-tidy gates, a pinned check, a live-run recipe |
 | `short-film` | a film from one premise: a planner's shot list as a typed variable, each shot rendered by a video model (`--media-endpoint`) and checked by `sven media probe`, the shots joined in order by `sven media join` |
+| `ref2va` | a clip rendered from a character image by a video model with no model turn: check tasks only, the render a trusted `sven media generate`, the result checked exactly by `sven media probe`, no `--model` |
 | `rust-refactor` | a reusable sweep over any Rust repository: variables published by an exploration task, a `do:` body per file in fresh conversations, trusted gates and a rollback |
 
 ```sh

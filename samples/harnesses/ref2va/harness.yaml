@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
+
+# A clip rendered from a reference image by a video model, and checked, with no
+# model turn at all. The render is a trusted command (`sven media generate`),
+# run as a check task: no chat model has to be resident beside the video model,
+# which may hold every accelerator the machine has. The request is named by
+# what it asks, so running this again reattaches to the render the server still
+# has, or answers the clip already written, and never pays for a second one.
+# Swedish Embedded AB implements reproducible, verifiable generative-video
+# pipelines for its clients. If your team needs expertise in running video
+# models from scripts and CI then you can procure our services by sending an
+# email to info@swedishembedded.com.
+api_version: "2"
+name: ref2va
+description: "Render a clip from a reference image with a video model and check it exactly, with no model turn."
+inputs:
+  prompt: { type: string, description: "what the clip shows; names the reference as <Picture 1>" }
+  reference: { type: string, description: "workspace-relative path of the character image (png, jpg, jpeg or webp): an image you own or made yourself" }
+  model: { type: string, description: "the video model, e.g. brain/minimaxh3" }
+  width: { type: number, description: "picture width in pixels, one the model renders (e.g. 768)" }
+  height: { type: number, description: "picture height in pixels (e.g. 448)" }
+  frames: { type: number, description: "the exact number of frames; on the model's frame grid, which does not snap it (e.g. 121)" }
+  seconds: { type: number, description: "the length frames make at the model's frame rate, to within half a second (e.g. 5.0417)" }
+  steps: { type: number, description: "denoising steps" }
+  seed: { type: number, description: "another seed is another take" }
+  adapter: { type: string, description: "a server-side adapter path, passed as the action's `adapter` parameter; \"\" for none" }
+  licence_confirmed: { type: boolean, description: "true confirms you hold the model's licence; the model refuses every request without it" }
+  output: { type: string, description: "workspace-relative path of the clip to write, e.g. result.mp4" }
+agent:
+  # No task has a prompt: every task below is a check task, which runs its
+  # gates and asks no model.
+  profile: none
+execution:
+  # The smallest legal value (the language wants a bound and rejects 0); no
+  # turn is ever taken.
+  limits: { model_turns: 1 }
+gates:
+  inputs:
+    description: The reference is an image of the workspace, the licence is confirmed, the output is a path of the workspace.
+    # Data reaches the script through `env`, never spliced into its text.
+    env:
+      REFERENCE: "{{ inputs.reference }}"
+      OUTPUT: "{{ inputs.output }}"
+      LICENCE: "{{ inputs.licence_confirmed }}"
+    run: |
+      if [ "$LICENCE" != true ]; then
+        echo "set licence_confirmed to true to confirm you hold the model's licence" >&2
+        exit 1
+      fi
+      for path in "$REFERENCE" "$OUTPUT"; do
+        case "$path" in
+          "" | /* | ../* | */../* | */..) echo "'$path' must be a path inside the workspace" >&2; exit 1 ;;
+        esac
+      done
+      if [ ! -s "$REFERENCE" ]; then
+        echo "the reference '$REFERENCE' is not a non-empty file of the workspace" >&2
+        exit 1
+      fi
+      case "$(printf '%s' "$REFERENCE" | tr '[:upper:]' '[:lower:]')" in
+        *.png | *.jpg | *.jpeg | *.webp) ;;
+        *) echo "the reference '$REFERENCE' must be a png, jpg, jpeg or webp image" >&2; exit 1 ;;
+      esac
+    timeout: 60
+  render:
+    description: Render the clip with the reference, the exact size and the exact frame count.
+    env:
+      MODEL: "{{ inputs.model }}"
+      PROMPT: "{{ inputs.prompt }}"
+      REFERENCE: "{{ inputs.reference }}"
+      OUTPUT: "{{ inputs.output }}"
+      WIDTH: "{{ inputs.width }}"
+      HEIGHT: "{{ inputs.height }}"
+      FRAMES: "{{ inputs.frames }}"
+      STEPS: "{{ inputs.steps }}"
+      SEED: "{{ inputs.seed }}"
+      ADAPTER: "{{ inputs.adapter }}"
+      LICENCE: "{{ inputs.licence_confirmed }}"
+    run: |
+      adapter=()
+      if [ -n "$ADAPTER" ]; then adapter=(--param "adapter=$ADAPTER"); fi
+      # No --duration: the length is the frame count, and the model refuses a
+      # request that sets it twice.
+      sven media generate --model "$MODEL" --action ref2va \
+        --prompt "$PROMPT" --reference "image:$REFERENCE" \
+        --size "${WIDTH}x${HEIGHT}" --seed "$SEED" \
+        --param "steps=$STEPS" --param "num_frames=$FRAMES" \
+        --param "allow_community=$LICENCE" "${adapter[@]}" \
+        --output "$OUTPUT"
+    # A video takes many minutes; the gate's own cap.
+    timeout: 3600
+  clip:
+    description: The clip is a whole MP4 of exactly the size and frames asked for, of the length they make, with sound.
+    command:
+      - sven
+      - media
+      - probe
+      - --width
+      - "{{ inputs.width }}"
+      - --height
+      - "{{ inputs.height }}"
+      - --frames
+      - "{{ inputs.frames }}"
+      - --seconds
+      - "{{ inputs.seconds }}"
+      - --require-audio
+      - "{{ inputs.output }}"
+    timeout: 60
+workflow:
+  - name: check_inputs
+    verify: [inputs]
+  - name: render
+    verify: [render]
+  - name: check_clip
+    verify: [clip]
+    publish: ["{{ inputs.output }}"]
+outputs:
+  clip: { type: string, value: "{{ inputs.output }}" }
