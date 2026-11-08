@@ -245,8 +245,14 @@ impl Assembly {
 
     /// The engine of the run: the real model, the coding toolset confined to
     /// the workspace, the approval mode and the host ceiling.
-    async fn engine(self) -> Result<(Engine, EngineRun, Option<PathBuf>), Failure> {
+    async fn engine(self, harness: &Path) -> Result<(Engine, EngineRun, Option<PathBuf>), Failure> {
         let mut config = Config::default();
+        // The toolkits the package declares beside its workflow, started as
+        // the person running it; the run does not start without them.
+        let servers =
+            super::package_mcp::local_servers(harness, &self.workspace.join(".sven").join("mcp"))
+                .map_err(|e| usage(format!("{e:#}")))?;
+        super::package_mcp::apply(&mut config, servers);
         let model = &mut config.model;
         model.provider = self.provider;
         model.name = self.model;
@@ -312,7 +318,7 @@ impl Assembly {
 
 /// Starts the harness at `path` under `assembly`.
 pub(super) async fn run(path: &Path, assembly: Assembly) -> Result<RunResult, Failure> {
-    let (engine, request, progress_checkpoint) = assembly.engine().await?;
+    let (engine, request, progress_checkpoint) = assembly.engine(path).await?;
     let result = run_on_engine(&engine, path, request).await.map_err(kit)?;
     Ok(settled(result, progress_checkpoint))
 }
@@ -323,7 +329,7 @@ pub(super) async fn resume(
     checkpoint: HarnessCheckpoint,
     assembly: Assembly,
 ) -> Result<RunResult, Failure> {
-    let (engine, request, progress_checkpoint) = assembly.engine().await?;
+    let (engine, request, progress_checkpoint) = assembly.engine(path).await?;
     let result = resume_on_engine(&engine, path, checkpoint, request)
         .await
         .map_err(kit)?;

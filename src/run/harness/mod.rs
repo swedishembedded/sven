@@ -25,6 +25,7 @@ mod error;
 mod exec;
 mod inspect;
 mod live_files;
+mod package_mcp;
 mod plan_view;
 mod progress;
 mod render;

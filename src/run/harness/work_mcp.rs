@@ -1,10 +1,8 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The MCP servers a served harness's package declares: `mcp.yaml` beside
-//! its main workflow. A package that needs a toolkit (a decompiler, a CAD
-//! kernel) offers it to the run's agents as an MCP server of its own instead
-//! of a command line the model must drive through the shell.
+//! The MCP servers a served run's package declares
+//! ([`super::package_mcp`]), confined.
 //!
 //! The worker is trusted and the server is not: whatever a server does, it
 //! does on the agent's behalf with input the run was given. So each server
@@ -13,10 +11,8 @@
 //! home in the agent's tmp for writing, its declared read-only directories,
 //! the package's `bin`, the `PATH` and the system set for reading, and no
 //! network; it gets a clean environment (only what it declares, its `PATH`,
-//! `HOME` and `TMPDIR`), never the worker's. The declaration can only narrow
-//! that: it cannot name a writable directory, an HTTP server, a variable
-//! read from the worker's environment, or a policy that waits for a person
-//! nobody is there to be.
+//! `HOME` and `TMPDIR`), never the worker's. A read-only directory that
+//! would reach the run's private directory is refused.
 //!
 //! A package may open `/proc` to its server for reading (`read_only:
 //! [/proc]`; a toolkit that checks which processes it started needs `ps`):
@@ -24,69 +20,19 @@
 //! memory, environment or open files, which its non-dumpable state keeps
 //! from every process of the same user.
 //!
-//! Each server is `required`: the run's session waits for it, and a run
-//! whose server does not start or offers no tool fails before its first
-//! step instead of going on without the toolkit it was built for.
-//!
-//! ```yaml
-//! servers:
-//!   rea:
-//!     command: rea                 # a program in the package's bin or on PATH
-//!     args: [mcp]
-//!     env: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }
-//!     read_only: [/proc]          # absolute; besides the system set
-//!     timeout_secs: 900            # the longest one call may take
-//!     tools: { "*": allow, gdb_console: deny }
-//! ```
-//!
 //! Swedish Embedded AB implements solutions for giving agents whole software
 //! toolkits without giving them the host for its clients. If your team needs
 //! expertise in agent sandboxing then you can procure our services by
 //! sending an email to info@swedishembedded.com.
 
-use std::collections::{BTreeMap, HashMap};
-use std::path::{Component, Path, PathBuf};
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Deserialize;
-use sven_mcp_client::{McpServerConfig, McpToolPolicy, McpTransport, SpawnRestriction};
+use sven_mcp_client::{McpServerConfig, SpawnRestriction};
 
-/// The file a package declares its servers in, beside its main workflow.
-pub(crate) const DECLARATION: &str = "mcp.yaml";
-const MAX_SERVERS: usize = 4;
-const MAX_ARGS: usize = 64;
-const MAX_ENV: usize = 64;
-const MAX_READ_ONLY: usize = 16;
-const MAX_TIMEOUT_SECS: u64 = 3600;
-/// Variables the worker sets itself for every server.
-const RESERVED_ENV: &[&str] = &["PATH", "HOME", "TMPDIR"];
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Declaration {
-    servers: BTreeMap<String, Declared>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Declared {
-    command: String,
-    #[serde(default)]
-    args: Vec<String>,
-    #[serde(default)]
-    env: BTreeMap<String, String>,
-    #[serde(default)]
-    read_only: Vec<PathBuf>,
-    #[serde(default = "default_timeout")]
-    timeout_secs: u64,
-    #[serde(default)]
-    tools: HashMap<String, McpToolPolicy>,
-}
-
-fn default_timeout() -> u64 {
-    300
-}
+use super::package_mcp::{self, Home};
 
 /// What the worker knows when it starts a package's servers.
 pub(crate) struct Place<'a> {
@@ -98,161 +44,80 @@ pub(crate) struct Place<'a> {
     pub bin: Option<&'a Path>,
 }
 
-/// The servers declared in `dir/mcp.yaml`, ready to put in the engine's
-/// configuration; none when the package declares none.
+/// The servers declared in `dir/mcp.yaml`, confined, ready to put in the
+/// engine's configuration; none when the package declares none.
 ///
 /// # Errors
 ///
-/// The declaration is malformed, asks for more than a package may, or a
+/// The declaration is malformed, asks for more than a package may (a
+/// read-only directory reaching the run's private directory included), or a
 /// confinement cannot be built on this kernel.
 pub(crate) fn declared_servers(
     dir: &Path,
     place: &Place<'_>,
 ) -> Result<HashMap<String, McpServerConfig>> {
-    let path = dir.join(DECLARATION);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
-        Err(e) => return Err(e).with_context(|| path.display().to_string()),
-    };
-    let declaration: Declaration =
-        serde_yaml::from_str(&text).with_context(|| format!("the package's {DECLARATION}"))?;
-    if declaration.servers.len() > MAX_SERVERS {
-        bail!("a package declares at most {MAX_SERVERS} MCP servers");
-    }
-    declaration
-        .servers
+    package_mcp::read(dir)?
         .into_iter()
         .map(|(name, declared)| {
-            let config = server(&name, declared, place)
+            let config = confined(&name, declared, place)
                 .with_context(|| format!("MCP server `{name}` of the package"))?;
             Ok((name, config))
         })
         .collect()
 }
 
-fn server(name: &str, declared: Declared, place: &Place<'_>) -> Result<McpServerConfig> {
-    // A server's tools are named `<server>-<tool>`: its name holds no dash.
-    let name_ok = !name.is_empty()
-        && name.len() <= 32
-        && name.starts_with(|c: char| c.is_ascii_lowercase())
-        && name
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
-    if !name_ok {
-        bail!("a server's name is 1-32 lowercase letters, digits and underscores");
-    }
-    let command_ok = !declared.command.is_empty()
-        && declared.command.len() <= 128
-        && declared
-            .command
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'));
-    if !command_ok {
-        bail!("`command` is the name of a program in the package's bin or on PATH, not a path");
-    }
-    if declared.args.len() > MAX_ARGS
-        || declared
-            .args
-            .iter()
-            .any(|a| a.len() > 1024 || a.contains('\0'))
-    {
-        bail!("at most {MAX_ARGS} arguments of at most 1024 bytes");
-    }
-    if declared.env.len() > MAX_ENV {
-        bail!("at most {MAX_ENV} environment variables");
-    }
-    for (key, value) in &declared.env {
-        let key_ok = key.starts_with(|c: char| c.is_ascii_uppercase() || c == '_')
-            && key
-                .chars()
-                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-        if !key_ok || RESERVED_ENV.contains(&key.as_str()) || key.starts_with("LD_") {
-            bail!("`{key}` is not a variable a package may set");
-        }
-        // Nothing is read from the worker's own environment: no expansion.
-        if value.contains('$') || value.contains('\0') || value.len() > 4096 {
-            bail!("`{key}` must be a literal value of at most 4096 bytes");
-        }
-    }
-    if declared.read_only.len() > MAX_READ_ONLY {
-        bail!("at most {MAX_READ_ONLY} read-only directories");
-    }
+fn confined(
+    name: &str,
+    declared: package_mcp::Declared,
+    place: &Place<'_>,
+) -> Result<McpServerConfig> {
     for dir in &declared.read_only {
-        read_only_ok(dir, place.scratch)?;
+        if dir.starts_with(place.scratch) || place.scratch.starts_with(dir) {
+            bail!(
+                "`{}` would reach the run's private directory",
+                dir.display()
+            );
+        }
     }
-    if !(1..=MAX_TIMEOUT_SECS).contains(&declared.timeout_secs) {
-        bail!("`timeout_secs` is 1 to {MAX_TIMEOUT_SECS}");
-    }
-    if declared.tools.values().any(|p| *p == McpToolPolicy::Ask) {
-        bail!("a served run has nobody to ask: a tool is `allow` or `deny`");
-    }
-
     let tmp = place.scratch.join("agent-tmp");
     let home = tmp.join(format!("mcp-{name}"));
-    std::fs::create_dir_all(&home).with_context(|| home.display().to_string())?;
     let mut confinement =
         super::work::agent_confinement(place.workspace, place.scratch, place.bin)?;
-    confinement.read_exec.extend(declared.read_only);
+    confinement
+        .read_exec
+        .extend(declared.read_only.iter().cloned());
     // Built once here, where a failure can refuse the run; applied in the
     // child of every start.
     confinement.prepare().map_err(|e| anyhow!(e))?;
-    let restrict = SpawnRestriction(Arc::new(move |command| confinement.restrict(command)));
-
+    let mut config = package_mcp::config(
+        declared,
+        &Home {
+            bin: place.bin,
+            home: &home,
+            tmp: &tmp,
+        },
+    )?;
+    // As for the agent's commands: the package's `bin` first on `PATH`.
     let path = place
         .bin
         .map(Path::to_path_buf)
         .into_iter()
-        .chain(sven_tools_exec::search_path_dirs())
-        .collect::<Vec<_>>();
-    let mut env: HashMap<String, String> = declared.env.into_iter().collect();
-    env.insert(
-        "PATH".into(),
-        std::env::join_paths(path)
-            .context("the server's PATH")?
-            .to_string_lossy()
-            .into_owned(),
-    );
-    env.insert("HOME".into(), home.display().to_string());
-    env.insert("TMPDIR".into(), tmp.display().to_string());
-    Ok(McpServerConfig {
-        transport: McpTransport::Stdio {
-            command: declared.command,
-            args: declared.args,
-        },
-        env,
-        timeout_secs: declared.timeout_secs,
-        tools: declared.tools,
-        restrict_spawn: Some(restrict),
-        // Started once, by the run's own session, which refuses to begin
-        // without it: a second instance would only race the first.
-        required: true,
-        ..McpServerConfig::default()
-    })
-}
-
-/// A read-only directory a package may add: absolute, plain, not the root
-/// and nothing of the run's private directory.
-fn read_only_ok(dir: &Path, scratch: &Path) -> Result<()> {
-    let plain = dir.is_absolute()
-        && dir
-            .components()
-            .all(|c| matches!(c, Component::RootDir | Component::Normal(_)));
-    if !plain || dir == Path::new("/") {
-        bail!("`{}` is not an absolute directory below /", dir.display());
-    }
-    if dir.starts_with(scratch) || scratch.starts_with(dir) {
-        bail!(
-            "`{}` would reach the run's private directory",
-            dir.display()
-        );
-    }
-    Ok(())
+        .chain(sven_tools_exec::search_path_dirs());
+    let path = std::env::join_paths(path).context("the server's PATH")?;
+    config
+        .env
+        .insert("PATH".into(), path.to_string_lossy().into_owned());
+    config.restrict_spawn = Some(SpawnRestriction(Arc::new(move |command| {
+        confinement.restrict(command)
+    })));
+    Ok(config)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use sven_mcp_client::McpTransport;
     use sven_tools_exec::confine::CommandConfinement;
 
     fn place(dir: &Path) -> (PathBuf, PathBuf) {
@@ -267,7 +132,7 @@ mod tests {
         let (workspace, scratch) = place(dir);
         let package = dir.join("package");
         std::fs::create_dir_all(&package).unwrap();
-        std::fs::write(package.join(DECLARATION), yaml).unwrap();
+        std::fs::write(package.join(package_mcp::DECLARATION), yaml).unwrap();
         declared_servers(
             &package,
             &Place {
@@ -279,74 +144,14 @@ mod tests {
     }
 
     #[test]
-    fn a_package_without_a_declaration_has_no_servers() {
-        let dir = tempfile::tempdir().unwrap();
-        let (workspace, scratch) = place(dir.path());
-        let none = declared_servers(
-            dir.path(),
-            &Place {
-                workspace: &workspace,
-                scratch: &scratch,
-                bin: None,
-            },
-        )
-        .unwrap();
-        assert!(none.is_empty());
-    }
-
-    #[test]
-    fn a_declaration_can_only_narrow_what_a_server_reaches() {
+    fn a_read_only_directory_never_reaches_the_runs_private_directory() {
         let dir = tempfile::tempdir().unwrap();
         let scratch = dir.path().join("scratch");
-        let refused = [
-            ("servers: {Rea: {command: rea}}", "name"),
-            ("servers: {rea: {command: /usr/bin/rea}}", "not a path"),
-            (
-                "servers: {rea: {command: rea, env: {TOKEN: '${WHALE_TOKEN}'}}}",
-                "literal",
-            ),
-            (
-                "servers: {rea: {command: rea, env: {PATH: /evil}}}",
-                "may set",
-            ),
-            (
-                "servers: {rea: {command: rea, env: {LD_PRELOAD: x.so}}}",
-                "may set",
-            ),
-            (
-                "servers: {rea: {command: rea, read_only: [relative]}}",
-                "absolute",
-            ),
-            (
-                "servers: {rea: {command: rea, read_only: ['/usr/../etc']}}",
-                "absolute",
-            ),
-            (
-                "servers: {rea: {command: rea, read_only: ['/']}}",
-                "absolute",
-            ),
-            (
-                "servers: {rea: {command: rea, tools: {'*': ask}}}",
-                "nobody to ask",
-            ),
-            (
-                "servers: {rea: {command: rea, timeout_secs: 0}}",
-                "timeout_secs",
-            ),
-            (
-                "servers: {rea: {transport: {type: http, url: 'https://x'}}}",
-                "unknown field",
-            ),
-        ];
-        for (yaml, why) in refused {
-            let error = format!("{:#}", declared(dir.path(), yaml).unwrap_err());
-            assert!(error.contains(why), "{yaml}: {error}");
-        }
-        let scratch_dir = format!(
+        let yaml = format!(
             "servers: {{rea: {{command: rea, read_only: ['{}']}}}}",
             scratch.join("package").display()
         );
-        let error = format!("{:#}", declared(dir.path(), &scratch_dir).unwrap_err());
+        let error = format!("{:#}", declared(dir.path(), &yaml).unwrap_err());
         assert!(error.contains("private directory"), "{error}");
     }
 
@@ -413,7 +218,7 @@ mod tests {
             })
             .collect();
         std::fs::write(
-            package.join(DECLARATION),
+            package.join(package_mcp::DECLARATION),
             format!(
                 "servers: {{rea: {{command: rea, args: [mcp], timeout_secs: 900, tools: {{'*': allow}}, read_only: [{}], env: {{REA_MCP_OUTPUT_SCHEMA_PROFILE: 'off', GHIDRA_INSTALL_DIR: '{}', JAVA_HOME: '{}'}}}}}}",
                 read_only.join(", ") + ", /proc",

@@ -421,7 +421,11 @@ impl HarnessRun {
                 live_trajectory::hook(&trajectory_slot),
             ))
             .with_approval_mode(self.engine.approvals().into())
-            .with_harnesses(self.engine.harness_registry());
+            .with_harnesses(self.engine.harness_registry())
+            .with_required_mcp_servers(&super::run_support::named_mcp_servers(
+                &self.plan,
+                &self.engine.config(),
+            ));
         if let Some(roles) = self.engine.model_roles() {
             builder = builder.with_model_roles(roles);
         }

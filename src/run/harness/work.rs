@@ -421,14 +421,7 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
         )?,
         None => Default::default(),
     };
-    if !servers.is_empty() {
-        // A toolkit offers hundreds of tools and large results: the agent
-        // loads the definitions it needs, and older results shrink to a
-        // reference it can expand.
-        config.tools.disclosure.mode = sven_tool_registry::Disclosure::Deferred;
-        config.context.assembly.mode = sven_bootstrap::AssemblyMode::Demote;
-    }
-    config.mcp_servers = servers;
+    super::package_mcp::apply(&mut config, servers);
     config.tools.path_prefix = bin.into_iter().collect();
     let mut builder = Engine::builder()
         .config(config)

@@ -217,3 +217,67 @@ pub(super) fn finished_item_loop(record: &sven_harness_runtime::TraceRecord) -> 
         _ => None,
     }
 }
+
+/// The configured MCP servers a plan's agent steps name tools of
+/// (`<server>-<tool>` in a step's `tools`): the run needs them, so its
+/// session waits for them and does not start without them.
+pub(super) fn named_mcp_servers(
+    plan: &sven_harness_spec::HarnessPlan,
+    config: &sven_bootstrap::Config,
+) -> Vec<String> {
+    let named = plan
+        .steps
+        .values()
+        .filter_map(|step| match &step.primitive {
+            sven_harness_spec::PlanPrimitive::Agent {
+                tools: Some(tools), ..
+            } => Some(tools),
+            _ => None,
+        });
+    let tools: Vec<&String> = named.flatten().collect();
+    config
+        .mcp_servers
+        .keys()
+        .filter(|server| {
+            tools.iter().any(|tool| {
+                tool.strip_prefix(server.as_str())
+                    .is_some_and(|rest| rest.starts_with('-'))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::named_mcp_servers;
+
+    #[test]
+    fn a_harness_needs_the_servers_whose_tools_its_steps_name_and_no_other() {
+        let plan = sven_harness_spec::compile_str(
+            r#"
+api_version: "2"
+name: toolkit
+agent:
+  profile: coding
+  tools: [read_file, rea-open_binary, rea-analyze_function, rea2-x]
+execution:
+  limits: { model_turns: 4 }
+workflow:
+  - name: look
+    task: "Look."
+"#,
+        )
+        .unwrap();
+        let mut config = sven_bootstrap::Config::default();
+        for name in ["rea", "re", "atlassian"] {
+            config.mcp_servers.insert(name.into(), Default::default());
+        }
+        assert_eq!(named_mcp_servers(&plan, &config), ["rea"]);
+        let open = sven_harness_spec::compile_str(
+            "api_version: \"2\"\nname: open\nagent: { profile: coding }\nexecution: { limits: { model_turns: 4 } }\nworkflow:\n  - name: look\n    task: Look.\n",
+        )
+        .unwrap();
+        assert!(named_mcp_servers(&open, &config).is_empty());
+    }
+}

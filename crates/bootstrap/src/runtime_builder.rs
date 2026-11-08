@@ -264,6 +264,26 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Marks the configured MCP servers `names` required: the session does
+    /// not start until each has connected and offers a tool (within its
+    /// timeout), and fails otherwise. For a harness whose steps name their
+    /// tools. A name that is not a configured server is ignored.
+    #[must_use]
+    pub fn with_required_mcp_servers(mut self, names: &[String]) -> Self {
+        if names
+            .iter()
+            .any(|n| self.config.mcp_servers.contains_key(n))
+        {
+            let config = Arc::make_mut(&mut self.config);
+            for name in names {
+                if let Some(server) = config.mcp_servers.get_mut(name) {
+                    server.required = true;
+                }
+            }
+        }
+        self
+    }
+
     /// Wait up to `timeout_ms` ms for MCP tools before building.
     pub fn with_wait_for_mcp_tools(mut self, timeout_ms: u64) -> Self {
         self.wait_for_mcp_tools_ms = if timeout_ms > 0 {

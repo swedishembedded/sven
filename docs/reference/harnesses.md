@@ -626,6 +626,35 @@ reason, and does not count as a tool call. A turn of only refused calls
 continues at once. A tool that fails reports the failure to the model; it does
 not fail the run.
 
+### Toolkits as MCP servers
+
+A package brings a toolkit (a decompiler, a CAD kernel) as an MCP server:
+`mcp.yaml` beside its main workflow names each server, and both
+`sven harness run` and a served run (`sven harness work`) start them.
+
+```yaml
+servers:
+  rea:
+    command: rea                 # a program in the package's bin or on PATH
+    args: [mcp]
+    env: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }   # literal values only
+    read_only: [/proc]           # served runs: directories it may read
+    timeout_secs: 1800           # the longest one call may take
+    tools: { "*": allow, gdb_console: deny }        # allow or deny, never ask
+```
+
+Each server starts with a clean environment (its declared variables, the
+host's `PATH`, `HOME` and `TMPDIR` of its own; a program in the package's
+`bin` is started from there) and is
+required: the run's session waits for it and fails before its first step if
+it does not start and offer a tool. A step names the tools it may call
+(`rea-open_binary`); a step's list that names a server's tools also makes
+that server required in a run configured some other way. MCP tools have the
+`NetworkAccess` capability, so a harness that uses them declares it, and
+`sven harness run` grants it only with `--allow-capability NetworkAccess`.
+In a served run the server runs under the agent's confinement, never as the
+worker (see `harness work` in [the CLI reference](cli.md)).
+
 ### Children
 
 `delegate` starts a child run through the kernel's child spawner (a `use` task
