@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-11-08
+
 ### Added
 - **harness**: a package brings its toolkits as MCP servers, declared in `mcp.yaml` beside a served run's main workflow (a program in the package's `bin` or on PATH, literal environment, extra read-only directories, a timeout, allow or deny per tool). Each runs under the agent's confinement with a clean environment and no network, and the run's session requires it; the declaration can only narrow what a server reaches. `sven harness run` reads the same declaration, so an author runs it locally (unconfined there, like the rest of a local run).
 - **mcp**: a host can confine a stdio server's command as it confines the agent's (`restrict_spawn`; a restriction that cannot be applied refuses the start), and can require a server (`required`), so a session waits up to the server's timeout for it to connect and offer a tool, and fails otherwise. Both are set by sven itself, never read from a configuration file.
