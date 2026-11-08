@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.2] - 2026-11-08
+
+### Added
+- **rc, TUI**: a message sent while the agent works can steer the running turn instead of stopping it: the turn takes it after the tool call in flight, before its next step, and answers it from there. A steering message the turn ended without taking is answered next; after a stop it is not run. In the TUI, sending a queued message now steers (`Enter` or `f` in the queue panel); one that switches the model or mode still stops the turn. A server sends it as `send_input` with `steer: true`, and the session says `steered` when the turn took it.
+- **mcp**: `sven mcp list --watch` stays connected and prints the tools again each time a server changes them, until Ctrl+C: what a running session sees.
+
+### Changed
+- **TUI**: messages queued while the agent works are sent together, as one message, when its turn ends (a message that switches the model or mode starts its own).
+- **mcp**: a server's tool list is followed for as long as a session runs: a server that announces changes is followed on a `subscriptions/listen` stream, opened again whenever it ends and followed by a fresh listing, so a change made while it was down is still seen; any other server is listed again every ten minutes. A listing that says what it said before changes nothing the session holds.
+- **rc**: a hosted session always discloses tools on demand, so connector tools that change leave what each request carries, and the provider's cached prefix, as they were.
+
 ## [4.6.1] - 2026-11-07
 
 ### Fixed
