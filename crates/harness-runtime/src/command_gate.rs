@@ -256,6 +256,11 @@ impl GateResult {
             Some(step) if kind != "passed" => format!("{detail} (step `{step}`)"),
             _ => detail,
         };
+        let stderr = text("stderr");
+        let detail = match last_line(&stderr) {
+            Some(line) if kind != "passed" => format!("{detail}: {line}"),
+            _ => detail,
+        };
         let stdout = text("stdout");
         let json = serde_json::from_str::<Value>(stdout.trim())
             .ok()
@@ -268,7 +273,7 @@ impl GateResult {
             exit_code,
             timed_out,
             stdout,
-            stderr: text("stderr"),
+            stderr,
             duration_ms: report
                 .get("duration_ms")
                 .and_then(Value::as_u64)
@@ -526,4 +531,24 @@ fn captured(
         IOType::String | IOType::File => Value::String(text.to_string()),
     };
     sven_harness_spec::vars::admit(decl, value)
+}
+
+/// The most that a failed gate's message repeats of what its command wrote.
+const MESSAGE_STDERR_CHARS: usize = 300;
+
+/// The last non-empty line of `stderr`, cut to [`MESSAGE_STDERR_CHARS`]: what
+/// a command says last is what it failed for.
+fn last_line(stderr: &str) -> Option<String> {
+    let line = stderr
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())?;
+    let mut chars = line.chars();
+    let head: String = chars.by_ref().take(MESSAGE_STDERR_CHARS).collect();
+    Some(if chars.next().is_some() {
+        format!("{head}...")
+    } else {
+        head
+    })
 }

@@ -363,7 +363,9 @@ an `artifact` check with `sha256`, or keep it outside the workspace.
 remain (at most 16 per task) and then the checks run again from the first;
 when the attempts are spent the run fails with `gate_failed` (a failed success
 condition: `success_check_failed`), whose message names the task, the check and
-the reason. Nothing advances past an unsatisfied check.
+the reason; for a command that failed, the reason ends with the last line the
+command wrote to standard error (at most 300 characters), so a gate script says
+what to fix by printing it last. Nothing advances past an unsatisfied check.
 
 **Capabilities.** The profile `coding` needs `ReadFile`, `WriteFile`,
 `DeleteFile` and `ExecuteShell`; every command gate needs `ExecuteShell`;

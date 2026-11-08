@@ -110,6 +110,48 @@ fn the_failed_step_is_stored_and_read_by_the_repair_prompt() {
     );
 }
 
+/// What a person needs to fix a failed gate is what the command said last, so
+/// the failure that ends a run (and the repair prompt) ends with it.
+#[test]
+fn a_failed_gate_says_the_last_line_its_command_wrote_to_stderr() {
+    let (mut m, mut ctx, mut state) = start(DOC, json!({ "target": "all" }));
+    let fx = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        turn("harness.scripted", "done"),
+    );
+    let (call, _) = gate_call(&fx);
+    let wrote = "compiling\nwarning: slow\nerror: set licence_confirmed to true\n\n";
+    let mut failed: Value =
+        serde_json::from_str(report(json!("test"), 2).as_str().unwrap()).unwrap();
+    failed["stderr"] = json!(wrote);
+    let fx = drive(
+        &mut m,
+        &mut ctx,
+        &mut state,
+        Event::ToolSucceeded {
+            call_id: call,
+            observation: failed.to_string().into(),
+        },
+    );
+    let prompt = fx
+        .iter()
+        .find_map(|e| match e {
+            Effect::CallLlm { request } => Some(request.to_string()),
+            _ => None,
+        })
+        .expect("a repair turn");
+    assert!(
+        prompt.contains("(step `test`): error: set licence_confirmed to true"),
+        "{prompt}"
+    );
+    assert!(
+        !prompt.contains("warning: slow\\nerror"),
+        "only the last line: {prompt}"
+    );
+}
+
 #[test]
 fn a_gate_that_passed_has_no_failed_step() {
     let (mut m, mut ctx, mut state) = start(DOC, json!({ "target": "all" }));
