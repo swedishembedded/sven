@@ -360,6 +360,21 @@ impl HarnessPlan {
         self.steps.get(id)
     }
 
+    /// Whether a run of this plan can ask a model: it has an agent or predict
+    /// step, or delegates to a child run, which may. A plan that does not
+    /// needs no model to run.
+    #[must_use]
+    pub fn takes_model_turns(&self) -> bool {
+        self.steps.values().any(|step| {
+            matches!(
+                step.primitive,
+                PlanPrimitive::Predict { .. }
+                    | PlanPrimitive::Agent { .. }
+                    | PlanPrimitive::Delegate { .. }
+            )
+        })
+    }
+
     /// The model roles this plan's turns name: what a host must map to a
     /// provider before the plan can run. A turn without a role uses the
     /// host's default model and adds nothing here. Imported workflows are

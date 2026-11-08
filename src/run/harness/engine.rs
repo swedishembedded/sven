@@ -51,13 +51,9 @@ const DEFAULT_CAPABILITIES: [ToolCapability; 6] = [
 /// from the environment or the user's configuration.
 pub(super) struct Assembly {
     workspace: PathBuf,
-    provider: String,
-    model: String,
-    endpoint: String,
-    /// The model server's key. Held here only until the client is built; it
-    /// is never part of the engine's configuration, so no trace, recording,
-    /// checkpoint or audit record can carry it.
-    api_key: Option<String>,
+    /// The model server the run's turns go to; none for a plan that takes no
+    /// model turn, which has nothing to ask one.
+    server: Option<ModelServer>,
     /// The models that answer the roles the workflow names, served by the
     /// same endpoint.
     roles: Vec<RoleModel>,
@@ -74,6 +70,17 @@ pub(super) struct Assembly {
     /// the run when it did not stream them.
     sink: Arc<Progress>,
     run: EngineRun,
+}
+
+/// The model a run's turns go to, as `--model` and `--model-endpoint` name it.
+struct ModelServer {
+    provider: String,
+    model: String,
+    endpoint: String,
+    /// The model server's key. Held here only until the client is built; it
+    /// is never part of the engine's configuration, so no trace, recording,
+    /// checkpoint or audit record can carry it.
+    api_key: Option<String>,
 }
 
 impl Assembly {
@@ -97,21 +104,15 @@ impl Assembly {
                     workspace.display()
                 ))
             })?;
-        let spec = args.model.as_deref().ok_or_else(|| {
-            usage("--model <provider/name> and --model-endpoint <url> are required")
-        })?;
-        let endpoint = args
-            .model_endpoint
-            .as_deref()
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
-            .ok_or_else(|| {
-                usage("--model-endpoint <url> of a server you already run is required")
-            })?;
-        let (provider, model) = spec
-            .split_once('/')
-            .filter(|(provider, model)| !provider.is_empty() && !model.is_empty())
-            .ok_or_else(|| usage(format!("--model {spec} must be <provider>/<name>")))?;
+        let model = match args.model.as_deref() {
+            Some(spec) => Some(model_flag(spec, args.model_endpoint.as_deref())?),
+            None if plan.takes_model_turns() => {
+                return Err(usage(
+                    "--model <provider/name> and --model-endpoint <url> are required",
+                ))
+            }
+            None => None,
+        };
         let approvals = args.approvals.ok_or_else(|| {
             usage("--approvals auto|deny|ask is required: a run never inherits an approval mode")
         })?;
@@ -123,9 +124,19 @@ impl Assembly {
             .map(|file| ApiKeys::read("--api-key-file", file, &workspace))
             .transpose()?;
         let media = media_endpoint(args, &workspace)?;
-        let api_key = keys
-            .as_ref()
-            .map(|k| k.for_provider(provider))
+        let server = model
+            .map(|(provider, model, endpoint)| {
+                let api_key = keys
+                    .as_ref()
+                    .map(|k| k.for_provider(&provider))
+                    .transpose()?;
+                Ok::<_, Failure>(ModelServer {
+                    provider,
+                    model,
+                    endpoint,
+                    api_key,
+                })
+            })
             .transpose()?;
         let roles = role_models(&args.model_roles, &plan.model_roles())?
             .into_iter()
@@ -205,10 +216,7 @@ impl Assembly {
         });
         Ok(Self {
             workspace,
-            provider: provider.to_string(),
-            model: model.to_string(),
-            endpoint: endpoint.to_string(),
-            api_key,
+            server,
             roles,
             approvals,
             media,
@@ -253,21 +261,29 @@ impl Assembly {
             super::package_mcp::local_servers(harness, &self.workspace.join(".sven").join("mcp"))
                 .map_err(|e| usage(format!("{e:#}")))?;
         super::package_mcp::apply(&mut config, servers);
-        let model = &mut config.model;
-        model.provider = self.provider;
-        model.name = self.model;
-        model.base_url = Some(self.endpoint);
-        model.api_key = self.api_key;
         config.agent.first_byte_timeout_secs = self.first_byte_timeout_secs;
-        // Probed: the server's own context window is learned up front, so a
-        // conversation is summarised before it outgrows the window rather
-        // than trimmed when the server refuses it.
-        let client = sven_sdk::drivers::from_config_probed(model)
-            .await
-            .map_err(|e| usage(format!("cannot build the model client: {e:#}")))?;
-        // The client holds the key; the engine's configuration does not.
-        model.api_key = None;
         let mut builder = Engine::builder();
+        if let Some(server) = self.server {
+            let model = &mut config.model;
+            model.provider = server.provider;
+            model.name = server.model;
+            model.base_url = Some(server.endpoint);
+            model.api_key = server.api_key;
+            // Probed: the server's own context window is learned up front, so
+            // a conversation is summarised before it outgrows the window
+            // rather than trimmed when the server refuses it.
+            let client = sven_sdk::drivers::from_config_probed(model)
+                .await
+                .map_err(|e| usage(format!("cannot build the model client: {e:#}")))?;
+            // The client holds the key; the engine's configuration does not.
+            model.api_key = None;
+            builder = builder.model_provider(Arc::from(client));
+        } else {
+            // No agent step exists to ask it; without one the run would
+            // build a model from the default configuration, and fail for
+            // want of its key.
+            builder = builder.model_provider(Arc::new(super::no_model::NoModel));
+        }
         for role in self.roles {
             let mut role_config = config.model.clone();
             role_config.provider = role.provider;
@@ -296,7 +312,6 @@ impl Assembly {
         }
         let builder = builder
             .config(config)
-            .model_provider(Arc::from(client))
             .toolset(Toolset::coding())
             .project_root(&self.workspace)
             .host_capabilities(self.capabilities);
@@ -354,6 +369,20 @@ fn write_atomically(file: &Path, checkpoint: &HarnessCheckpoint) -> std::io::Res
     let staging = PathBuf::from(staging);
     std::fs::write(&staging, serde_json::to_vec_pretty(checkpoint)?)?;
     std::fs::rename(&staging, file)
+}
+
+/// `--model PROVIDER/NAME` with the `--model-endpoint` it is served from, as
+/// provider, name and endpoint.
+fn model_flag(spec: &str, endpoint: Option<&str>) -> Result<(String, String, String), Failure> {
+    let endpoint = endpoint
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| usage("--model-endpoint <url> of a server you already run is required"))?;
+    let (provider, model) = spec
+        .split_once('/')
+        .filter(|(provider, model)| !provider.is_empty() && !model.is_empty())
+        .ok_or_else(|| usage(format!("--model {spec} must be <provider>/<name>")))?;
+    Ok((provider.into(), model.into(), endpoint.into()))
 }
 
 /// One `--model-role`: the model that answers `role`.

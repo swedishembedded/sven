@@ -257,3 +257,23 @@ workflow:
         .as_ref()
         .is_some_and(|s| s["judge"]["properties"]["decision"]["enum"][0] == "keep"));
 }
+
+/// A plan of check tasks only asks no model; one with an agent task does.
+#[test]
+fn a_plan_takes_model_turns_only_when_a_task_asks_a_model() {
+    let checks = compile(
+        r#"
+api_version: "2"
+name: checks
+agent: { profile: none }
+execution: { limits: { model_turns: 1 } }
+gates:
+  ok: { command: ["true"], timeout: 30 }
+workflow:
+  - name: check
+    verify: [ok]
+"#,
+    );
+    assert!(!checks.takes_model_turns());
+    assert!(compile(ROLES).takes_model_turns());
+}

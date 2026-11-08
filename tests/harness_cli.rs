@@ -353,6 +353,36 @@ fn record_then_replay_matches_and_a_tampered_trace_exits_1() {
 }
 
 #[test]
+fn a_harness_with_no_model_turn_runs_without_a_model_and_one_with_a_turn_still_needs_one() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let setup = setup();
+    let workspace = setup.repo.path();
+    let without_model = |harness: &std::path::Path| {
+        run(sven(tmp.path())
+            .arg("run")
+            .arg(harness)
+            .arg("--workspace")
+            .arg(workspace)
+            .args([
+                "--approvals",
+                "auto",
+                "--json",
+                "--input",
+                r#"{"plan": "pro"}"#,
+            ]))
+    };
+    // `decide` asks no model: nothing to name, nothing to reach.
+    let out = without_model(&fixtures().join("decide"));
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(report(&out)["output"]["tier"], "paid");
+
+    // A harness with a model turn is refused before it starts.
+    let out = without_model(&sample("verified-task"));
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    assert!(stderr(&out).contains("--model"), "{}", stderr(&out));
+}
+
+#[test]
 fn the_environment_supplies_no_model_endpoint() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let setup = setup();

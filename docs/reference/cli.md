@@ -224,7 +224,8 @@ is the archive's root. Example descriptor fields:
 `"package_format": "tar", "harness": "package/harness.yaml", "skills": "package/skills", "bin": "package/bin", "inputs": {"printer": {"package": "package/printers/a1"}}`.
 
 Run options (`run` and `resume`): `--input JSON` or `--input-file FILE`;
-required: `--workspace DIR`, `--model SPEC`, `--model-endpoint URL` and
+required: `--workspace DIR`, `--model SPEC`, `--model-endpoint URL` (both left
+out by a harness whose plan asks no model) and
 `--approvals auto|deny|ask`; optional: `--model-role ROLE=SPEC` (repeatable: the
 model that answers a role the workflow names, on the same endpoint),
 `--allow-capability NAME` (repeatable),

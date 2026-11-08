@@ -190,7 +190,10 @@ sven harness replay   <PATH> --recording FILE [--expect-trace FILE] [--json]
   inputs. `--workspace` is an existing directory used as the project root,
   `--model` and `--model-endpoint` name the model server you already run, and
   `--approvals` says who is asked before a call that is not read-only runs.
-  All four are required: nothing that widens a run is implied.
+  All four are required: nothing that widens a run is implied. The one
+  exception is a harness that asks no model (check tasks only, `agent.profile:
+  none`): it runs with neither `--model` nor `--model-endpoint`, and a model
+  turn it somehow reached would fail instead of reaching any server.
 - **resume** continues a suspended run from the checkpoint `run
   --checkpoint-out` wrote. The checkpoint carries the inputs; a checkpoint
   taken under another program, or a changed import, is refused.

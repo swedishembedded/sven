@@ -239,10 +239,11 @@ pub struct HarnessRunArgs {
     /// the run; its path is printed.
     #[arg(long, value_name = "DIR")]
     pub scratchpad: Option<PathBuf>,
-    /// The model, `provider/name`. Required, with `--model-endpoint`.
+    /// The model, `provider/name`. Required, with `--model-endpoint`, unless
+    /// the harness asks no model (check tasks only).
     #[arg(long, value_name = "SPEC")]
     pub model: Option<String>,
-    /// Base URL of the model server you already run. Required.
+    /// Base URL of the model server you already run. Required with `--model`.
     #[arg(long, value_name = "URL", requires = "model")]
     pub model_endpoint: Option<String>,
     /// The model that answers a role the harness names (`agent.model` or a
