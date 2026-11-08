@@ -67,8 +67,8 @@ asking for a new one, a changed tool list reaching the TUI session, headless
 and the callback tests; `sven mcp add|remove` and `/mcp add|remove` (one
 `config_edit` module), checked end to end by `tests/mcp_cli.rs` (sven adds
 itself as a stdio server); `sven mcp list --watch` shows the tool list as a
-running session sees it, change by change (whale's
-`tests/integration/connectors-sven.test.ts` drives it). Left: an inspector
+running session sees it, change by change (a server's own integration
+tests can drive it). Left: an inspector
 you act from.
 
 **M5 Gateway as a server: done 2026-11-02.** A server's discovery document
@@ -101,7 +101,7 @@ model loads a tool. Hosted sessions always run deferred. Done when: a
 conformance case where a server adds a tool after the session started and
 the session lists it without a restart, one where the stream drops and the
 change is still seen, and the deferred request's tool definitions are
-byte-identical across the change. whale's side: `connectors.md` C8.
+byte-identical across the change. The server's side is the server's own.
 Checked by `tests/conformance.rs` (a tool added mid-session, a change made
 while the stream was down, a listing that changed nothing announcing
 nothing), `tool-registry/tests/it/disclosure.rs` (definitions byte-identical
