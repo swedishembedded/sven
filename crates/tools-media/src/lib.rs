@@ -13,7 +13,9 @@
 //!   its price per second.
 //! - `run_model` runs one and writes the clip into the working directory, then
 //!   answers its path. An edit (`extend`, `upscale`, ...) names the clip to
-//!   work on by path and gets a new file back.
+//!   work on by path and gets a new file back. References (images, clips,
+//!   sounds of the working directory) and an `action` drive generation from
+//!   them.
 //! - `join_videos` puts clips one after another into one film ([`mp4`]),
 //!   copying them as they are: the last step of a multi-shot film.
 //!
@@ -28,15 +30,16 @@
 //! `seed`. A job that failed is asked again under a fresh name.
 
 pub mod mp4;
+mod request;
+
+use request::{plan, request_key};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
-use sha2::{Digest, Sha256};
+use serde_json::{json, Value};
 
 use sven_hsm::ToolCapability;
 use sven_model_drivers::video::{VideoClient, VideoModel, VideoState};
@@ -112,6 +115,15 @@ fn describe(model: &VideoModel) -> String {
     if model.generate_audio == Some(true) {
         parts.push("sound".into());
     }
+    if !model.supported_reference_types.is_empty() {
+        parts.push(format!(
+            "references: {}",
+            model.supported_reference_types.join("/")
+        ));
+    }
+    if !model.actions.is_empty() {
+        parts.push(format!("actions: {}", model.actions.join(", ")));
+    }
     if !model.edits.is_empty() {
         parts.push(format!("edits: {}", model.edits.join(", ")));
     }
@@ -143,7 +155,7 @@ impl Tool for ModelsTool {
         "List the models that generate video, what each renders and costs"
     }
     fn description(&self) -> &str {
-        "Lists the generative video models this session can run: each one's id, what it makes (text->video), the lengths and resolutions it renders, whether it makes sound, the edits it can do to an existing clip (extend, upscale, ...) and its price per second. Use it to choose a model before generating."
+        "Lists the generative video models this session can run: each one's id, what it makes (text->video), the lengths and resolutions it renders, whether it makes sound, the references it takes (image, video, audio), its other actions (e.g. ref2va, generation from references), the edits it can do to an existing clip (extend, upscale, ...) and its price per second. Use it to choose a model before generating."
     }
     fn parameters_schema(&self) -> Value {
         json!({ "type": "object", "properties": {}, "additionalProperties": false })
@@ -187,15 +199,6 @@ impl RunModelTool {
             workdir,
         }
     }
-}
-
-/// The request a call makes, without the input clip (named by its digest),
-/// and where the clip is also to be saved.
-#[derive(Debug, Clone, PartialEq)]
-struct Planned {
-    body: Map<String, Value>,
-    input: Option<PathBuf>,
-    output: Option<PathBuf>,
 }
 
 /// `path` as a file of `workdir` to write: relative, never above it, and its
@@ -246,105 +249,6 @@ fn file_to_read(workdir: &Path, path: &str, what: &str) -> Result<PathBuf, Strin
     Ok(canonical)
 }
 
-/// Read the call's arguments into the request body; refuses anything the
-/// schema does not name.
-fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
-    let args = args.as_object().ok_or("the arguments must be an object")?;
-    let known = [
-        "model",
-        "prompt",
-        "duration",
-        "resolution",
-        "aspect_ratio",
-        "generate_audio",
-        "seed",
-        "edit",
-        "input_video",
-        "params",
-        "output",
-    ];
-    if let Some(unknown) = args.keys().find(|k| !known.contains(&k.as_str())) {
-        return Err(format!("unknown argument `{unknown}`"));
-    }
-    let model = args
-        .get("model")
-        .and_then(Value::as_str)
-        .filter(|m| !m.is_empty())
-        .ok_or("`model` is required: call models to choose one")?;
-    let prompt = args
-        .get("prompt")
-        .and_then(Value::as_str)
-        .filter(|p| !p.trim().is_empty())
-        .ok_or("`prompt` is required")?;
-    let mut body = Map::new();
-    body.insert("model".into(), json!(model));
-    body.insert("prompt".into(), json!(prompt));
-    for key in [
-        "duration",
-        "resolution",
-        "aspect_ratio",
-        "generate_audio",
-        "seed",
-    ] {
-        if let Some(value) = args.get(key) {
-            body.insert(key.into(), value.clone());
-        }
-    }
-    let edit = args.get("edit").and_then(Value::as_str);
-    let input = match args.get("input_video").and_then(Value::as_str) {
-        Some(path) => Some(file_to_read(workdir, path, "input_video")?),
-        None => None,
-    };
-    let output = match args.get("output") {
-        Some(Value::String(path)) => Some(file_to_write(workdir, path, "output")?),
-        Some(_) => return Err("`output` must be a path".into()),
-        None => None,
-    };
-    if edit.is_some() != input.is_some() {
-        return Err(
-            "an edit names both `edit` (from models) and the clip to edit as `input_video`".into(),
-        );
-    }
-    if let Some(edit) = edit {
-        let params = args.get("params").cloned().unwrap_or_else(|| json!({}));
-        if !params.is_object() {
-            return Err("`params` must be an object".into());
-        }
-        body.insert(
-            "provider".into(),
-            json!({ "options": { "brain": { "action": edit, "params": params } } }),
-        );
-    } else if args.contains_key("params") {
-        return Err("`params` belong to an edit".into());
-    }
-    Ok(Planned {
-        body,
-        input,
-        output,
-    })
-}
-
-/// The name of a request: the provider, the model and every argument, the
-/// input clip by its content, and the attempt.
-fn request_key(
-    base_url: &str,
-    planned: &Planned,
-    input_digest: Option<&str>,
-    attempt: u32,
-) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(base_url.as_bytes());
-    hasher.update([0]);
-    // serde_json's map is ordered by key, so equal requests serialize equally.
-    hasher.update(serde_json::to_vec(&planned.body).unwrap_or_default());
-    hasher.update([0]);
-    hasher.update(input_digest.unwrap_or("").as_bytes());
-    if attempt > 0 {
-        hasher.update(format!("\0retry {attempt}").as_bytes());
-    }
-    format!("sven-{}", &hex::encode(hasher.finalize())[..32])
-}
-
 /// What the tool keeps beside a clip: the provider's file of it, when the
 /// provider stores one, so an edit can name it there instead of uploading.
 #[derive(Debug, Serialize, Deserialize)]
@@ -358,72 +262,22 @@ fn sidecar_path(clip: &Path) -> PathBuf {
     clip.with_extension("json")
 }
 
-/// The clip an edit sends: the provider's own file when it has one, else the
-/// bytes inline.
-async fn input_reference(path: &Path) -> Result<(Value, String), String> {
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|e| format!("reading {}: {e}", path.display()))?;
-    if bytes.len() as u64 > MAX_INPUT_BYTES {
-        return Err(format!(
-            "{} is larger than {MAX_INPUT_BYTES} bytes",
-            path.display()
-        ));
-    }
-    let digest = hex::encode(Sha256::digest(&bytes));
-    let stored = tokio::fs::read(sidecar_path(path))
-        .await
-        .ok()
-        .and_then(|raw| serde_json::from_slice::<Sidecar>(&raw).ok())
-        .and_then(|s| s.file_id);
-    let url = match stored {
-        Some(id) => format!("file:{id}"),
-        None => {
-            let media = if path.extension().and_then(|e| e.to_str()) == Some("webm") {
-                "video/webm"
-            } else {
-                "video/mp4"
-            };
-            format!(
-                "data:{media};base64,{}",
-                base64::engine::general_purpose::STANDARD.encode(&bytes)
-            )
-        }
-    };
-    Ok((
-        json!({ "type": "video_url", "video_url": { "url": url } }),
-        digest,
-    ))
-}
-
 impl RunModelTool {
     async fn run(&self, args: &Value) -> Result<String, String> {
-        let mut planned = plan(args, &self.workdir)?;
-        let input = match &planned.input {
-            Some(path) => Some(input_reference(path).await?),
-            None => None,
-        };
-        let digest = input.as_ref().map(|(_, digest)| digest.clone());
-        if let Some((reference, _)) = input {
-            planned.body.insert("input_video".into(), reference);
-        }
+        let planned = plan(args, &self.workdir)?;
+        let (body, digests) = planned.with_media().await?;
         let video = client(&self.endpoint);
         let dir = self.workdir.join(&self.config.dir);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.config.timeout_secs);
         for attempt in 0..MAX_ATTEMPTS {
-            let key = request_key(
-                &self.endpoint.base_url,
-                &planned,
-                digest.as_deref(),
-                attempt,
-            );
+            let key = request_key(&self.endpoint.base_url, &planned, &digests, attempt);
             let clip = dir.join(format!("{key}.mp4"));
             if clip.exists() {
                 let shown = self.save_as(&clip, planned.output.as_deref()).await?;
                 return Ok(format!("The video is at {shown} (made earlier for the same request; another seed makes another take)."));
             }
             let mut status = video
-                .create(&Value::Object(planned.body.clone()), &key)
+                .create(&Value::Object(body.clone()), &key)
                 .await
                 .map_err(|e| format!("{e:#}"))?;
             while !status.state.finished() {
@@ -528,7 +382,7 @@ impl Tool for RunModelTool {
         "Generate or edit a video with a generative model; writes the clip to a file"
     }
     fn description(&self) -> &str {
-        "Runs a generative video model and writes the result into the working directory, answering its path. Give `model` and `prompt`, and optionally `duration` (seconds), `resolution` (480p, 720p, 1080p, ...), `aspect_ratio` (16:9, 9:16, 1:1, ...), `generate_audio` and `seed`. To edit a clip, name the edit (`edit`, one the model offers, e.g. extend) and the clip (`input_video`, a path in the working directory), with the edit's own `params`. `output` also saves the clip at that path. The same request answers the same clip without paying again; change `seed` for another take. A video takes from seconds to many minutes and is charged for the seconds delivered."
+        "Runs a generative video model and writes the result into the working directory, answering its path. Give `model` and `prompt`, and optionally `duration` (seconds), `resolution` (480p, 720p, 1080p, ...), `aspect_ratio` (16:9, 9:16, 1:1, ...), `generate_audio` and `seed`. `size` (WIDTHxHEIGHT) asks for exact pixels. `references` (a list of `{path, kind}`, kind image, video or audio; png/jpg/jpeg/webp, mp4/mov/webm/mkv, wav) are files of the working directory the prompt names by order within their kind (<Picture 1>, <Video 1>, <Audio 1>); `action` names the model's action for them (e.g. ref2va). To edit a clip, name the edit (`edit`, one the model offers, e.g. extend) and the clip (`input_video`, a path in the working directory). `params` are the action's or edit's own parameters. `output` also saves the clip at that path. The same request answers the same clip without paying again; change `seed` for another take. A video takes from seconds to many minutes and is charged for the seconds delivered."
     }
     fn parameters_schema(&self) -> Value {
         json!({
@@ -541,9 +395,24 @@ impl Tool for RunModelTool {
                 "aspect_ratio": { "type": "string" },
                 "generate_audio": { "type": "boolean" },
                 "seed": { "type": "integer" },
+                "size": { "type": "string", "description": "Exact size, WIDTHxHEIGHT (e.g. 832x480)" },
+                "action": { "type": "string", "description": "An action the model offers (e.g. ref2va), not an edit" },
+                "references": {
+                    "type": "array",
+                    "description": "Reference files in the working directory, in the order the prompt names them",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string" },
+                            "kind": { "type": "string", "enum": ["image", "video", "audio"] }
+                        },
+                        "required": ["path", "kind"],
+                        "additionalProperties": false
+                    }
+                },
                 "edit": { "type": "string", "description": "An edit the model offers, with input_video" },
                 "input_video": { "type": "string", "description": "Path of the clip to edit, in the working directory" },
-                "params": { "type": "object", "description": "The edit's own parameters" },
+                "params": { "type": "object", "description": "The action's or edit's own parameters" },
                 "output": { "type": "string", "description": "Also save the clip at this path in the working directory" }
             },
             "required": ["model", "prompt"],

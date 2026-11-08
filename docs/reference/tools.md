@@ -314,7 +314,7 @@ Lists the models `run_model` can run, as the provider in `tools.media.provider`
 lists them (default: the sven service, signed in or configured; a local brain
 or any OpenRouter-compatible server with a `providers.<name>` entry works the
 same way): each one's id, what it makes, the lengths and resolutions it
-renders, whether it makes sound, the edits it can do to an existing clip and
+renders, whether it makes sound, the reference kinds it takes, its other actions, the edits it can do to an existing clip and
 its price per second. Offered in sven's own sessions while that provider has a
 key; a harness run or an embedding host gets it only with a video API and key
 of its own (`sven harness run --media-endpoint`, a served run's descriptor),
@@ -336,16 +336,20 @@ its path, length and cost. It waits while the video is made, up to
 | `aspect_ratio` | `16:9`, `9:16`, `1:1`, ... |
 | `generate_audio` | With sound |
 | `seed` | Another seed is another take |
-| `edit` | An edit the model offers (`extend`, `upscale`, ...), with `input_video` |
+| `size` | Exact pixels as `WIDTHxHEIGHT` (two positive integers, e.g. `832x480`) |
+| `references` | Files the prompt points at: a list of `{path, kind}`, `kind` being `image` (png, jpg, jpeg, webp), `video` (mp4, mov, webm, mkv) or `audio` (wav). Paths are in the working directory and each file is at most 40 MiB. The prompt names them by order within their kind (`<Picture 1>`, `<Video 1>`, `<Audio 1>`), so the order given is kept and is part of the request |
+| `action` | An action the model offers other than an edit (e.g. `ref2va`, video and sound from references); `models` lists them |
+| `edit` | An edit the model offers (`extend`, `upscale`, ...), with `input_video`; not together with `action` |
 | `input_video` | The clip to edit: a path in the working directory |
-| `params` | The edit's own parameters |
+| `params` | The action's or the edit's own parameters (e.g. `{"steps": 4}`); refused without either |
 | `output` | Also save the clip at this path in the working directory (a harness names each shot this way) |
 
-The same request (model, arguments and input clip) answers the clip already
+The same request (model, arguments, and the content of the input clip and of every reference) answers the clip already
 made, in this session or a later one, and is never paid for twice; a request
-the provider failed is asked again once more under a new name. A clip the
+the provider failed is asked again once more under a new name. A changed reference is another request. A clip the
 provider also stores is named to it by its file when it is edited, instead
-of being sent again. It asks for approval under `--approval manual`, as every
+of being sent again; references are always sent inline. Whether the model takes a
+reference kind is the server's to say: its refusal is returned as it is. It asks for approval under `--approval manual`, as every
 write does: a video is paid for.
 
 ### `join_videos`

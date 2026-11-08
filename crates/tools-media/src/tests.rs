@@ -9,6 +9,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use base64::Engine as _;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -226,6 +227,99 @@ async fn an_edit_names_the_providers_own_file_or_sends_the_clip_inline() {
     assert!(inline.starts_with("data:video/mp4;base64,"), "{inline}");
 }
 
+/// A working directory holding one file per reference kind.
+fn with_references() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("face.png"), b"png-bytes").unwrap();
+    std::fs::write(dir.path().join("pose.jpg"), b"jpg-bytes").unwrap();
+    std::fs::write(dir.path().join("move.mp4"), b"mp4-bytes").unwrap();
+    std::fs::write(dir.path().join("voice.wav"), b"wav-bytes").unwrap();
+    dir
+}
+
+fn reference_request() -> Value {
+    json!({
+        "model": "brain/mock-video", "prompt": "<Picture 1> speaks <Audio 1>",
+        "action": "ref2va", "size": "832x480", "params": {"steps": 4},
+        "references": [
+            {"path": "face.png", "kind": "image"},
+            {"path": "move.mp4", "kind": "video"},
+            {"path": "voice.wav", "kind": "audio"},
+            {"path": "pose.jpg", "kind": "image"},
+        ],
+    })
+}
+
+#[tokio::test]
+async fn references_an_action_and_an_exact_size_reach_the_server_in_order() {
+    let fake = serve(0).await;
+    let dir = with_references();
+    let out = run(&tool(&fake, dir.path()), reference_request()).await;
+    assert!(!out.is_error, "{}", out.content);
+    let body = fake.created.lock().unwrap()[0].1.clone();
+    assert_eq!(body["size"], "832x480");
+    assert_eq!(
+        body["provider"]["options"]["brain"],
+        json!({"action": "ref2va", "params": {"steps": 4}})
+    );
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    assert_eq!(
+        body["input_references"],
+        json!([
+            {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{}", b64(b"png-bytes"))}},
+            {"type": "video_url", "video_url": {"url": format!("data:video/mp4;base64,{}", b64(b"mp4-bytes"))}},
+            {"type": "audio_url", "audio_url": {"url": format!("data:audio/wav;base64,{}", b64(b"wav-bytes"))}},
+            {"type": "image_url", "image_url": {"url": format!("data:image/jpeg;base64,{}", b64(b"jpg-bytes"))}},
+        ])
+    );
+}
+
+#[tokio::test]
+async fn a_changed_reference_is_a_new_request_and_an_unchanged_one_is_not() {
+    let fake = serve(0).await;
+    let dir = with_references();
+    let t = tool(&fake, dir.path());
+    run(&t, reference_request()).await;
+    run(&t, reference_request()).await;
+    assert_eq!(fake.created.lock().unwrap().len(), 1);
+    std::fs::write(dir.path().join("face.png"), b"another-face").unwrap();
+    run(&t, reference_request()).await;
+    assert_eq!(fake.created.lock().unwrap().len(), 2);
+    // The same files in another order are another request: the prompt names them by order.
+    let mut swapped = reference_request();
+    swapped["references"].as_array_mut().unwrap().swap(0, 3);
+    run(&t, swapped).await;
+    assert_eq!(fake.created.lock().unwrap().len(), 3);
+}
+
+#[test]
+fn references_the_working_directory_or_their_kind_cannot_vouch_for_are_refused() {
+    let dir = with_references();
+    let refused = |patch: Value| {
+        let mut args = json!({"model": "m", "prompt": "x"});
+        args.as_object_mut()
+            .unwrap()
+            .extend(patch.as_object().unwrap().clone());
+        plan(&args, dir.path()).unwrap_err()
+    };
+    let one = |path: &str, kind: &str| json!({"references": [{"path": path, "kind": kind}]});
+    assert!(refused(one("/etc/hostname", "image")).contains("working directory"));
+    assert!(refused(one("face.png", "audio")).contains("audio"));
+    assert!(refused(one("voice.wav", "video")).contains("video"));
+    assert!(refused(one("face.png", "sprite")).contains("sprite"));
+    assert!(refused(one("missing.png", "image")).contains("missing.png"));
+    assert!(refused(json!({"references": [{"path": "face.png"}]})).contains("kind"));
+    assert!(refused(json!({"references": []})).contains("references"));
+    assert!(
+        refused(json!({"action": "a", "edit": "extend", "input_video": "move.mp4"}))
+            .contains("both")
+    );
+    assert!(refused(json!({"params": {}})).contains("action"));
+    for size in ["832", "832x", "0x480", "-4x480", "axb", "832x480x2"] {
+        assert!(refused(json!({"size": size})).contains("size"), "{size}");
+    }
+}
+
 #[tokio::test]
 async fn models_lists_what_each_model_renders_and_costs() {
     let fake = serve(0).await;
@@ -268,19 +362,19 @@ fn equal_requests_have_one_name_and_any_difference_another() {
     let p = |args: Value| plan(&args, dir.path()).unwrap();
     let a = p(json!({"model": "m", "prompt": "x", "seed": 1, "duration": 2}));
     let b = p(json!({"duration": 2, "seed": 1, "prompt": "x", "model": "m"}));
-    assert_eq!(request_key("u", &a, None, 0), request_key("u", &b, None, 0));
-    assert_ne!(request_key("u", &a, None, 0), request_key("u", &a, None, 1));
-    assert_ne!(request_key("u", &a, None, 0), request_key("v", &a, None, 0));
+    assert_eq!(request_key("u", &a, &[], 0), request_key("u", &b, &[], 0));
+    assert_ne!(request_key("u", &a, &[], 0), request_key("u", &a, &[], 1));
+    assert_ne!(request_key("u", &a, &[], 0), request_key("v", &a, &[], 0));
     assert_ne!(
-        request_key("u", &a, None, 0),
-        request_key("u", &a, Some("d"), 0)
+        request_key("u", &a, &[], 0),
+        request_key("u", &a, &["video:d".to_owned()], 0)
     );
     assert_ne!(
-        request_key("u", &a, None, 0),
+        request_key("u", &a, &[], 0),
         request_key(
             "u",
             &p(json!({"model": "m", "prompt": "x", "seed": 2, "duration": 2})),
-            None,
+            &[],
             0
         )
     );

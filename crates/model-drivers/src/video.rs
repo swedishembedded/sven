@@ -74,6 +74,12 @@ pub struct VideoModel {
     pub seed: bool,
     /// Edits the model offers beyond generation (`extend`, `upscale`, ...).
     pub edits: Vec<String>,
+    /// The other actions it offers besides plain generation of the prompt
+    /// alone, e.g. `ref2va` (generation from references).
+    pub actions: Vec<String>,
+    /// What it takes as references (`image`, `video`, `audio`); empty when the
+    /// listing does not say.
+    pub supported_reference_types: Vec<String>,
     /// Its price per second, by the listing's own key, as listed.
     pub pricing: Vec<(String, String)>,
 }
@@ -181,6 +187,16 @@ fn parse_models(value: &Value) -> Vec<VideoModel> {
                         aspect_ratios: strings(&m["supported_aspect_ratios"]),
                         generate_audio: m["generate_audio"].as_bool(),
                         seed: m["seed"].as_bool().unwrap_or(false),
+                        supported_reference_types: strings(&m["supported_reference_types"]),
+                        actions: m["actions"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter(|x| x["edits"].as_bool() != Some(true))
+                                    .filter_map(|x| x["action"].as_str().map(str::to_owned))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
                         edits: m["actions"]
                             .as_array()
                             .map(|a| {
@@ -414,12 +430,15 @@ mod tests {
     fn models_are_read_with_their_edits_and_prices() {
         let models = parse_models(&json!({"data": [
             {"id": "brain/mock-video", "supported_durations": [1, 2], "supported_resolutions": ["480p"], "seed": true,
+             "supported_reference_types": ["image", "audio"],
              "actions": [{"action": "t2v", "edits": false}, {"action": "extend", "edits": true}],
              "pricing_skus": {"duration_seconds": "0.01"}},
             {"id": ""},
         ]}));
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].edits, ["extend"]);
+        assert_eq!(models[0].actions, ["t2v"]);
+        assert_eq!(models[0].supported_reference_types, ["image", "audio"]);
         assert_eq!(models[0].durations, [1, 2]);
         assert_eq!(
             models[0].pricing,
