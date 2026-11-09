@@ -58,7 +58,7 @@ use sven_hsm::ToolCapability;
 use sven_model_drivers::invoke::{InvocationClient, ListedModel};
 use sven_model_drivers::video::{VideoClient, VideoModel};
 use sven_tool_api::policy::ApprovalPolicy;
-use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
+use sven_tool_api::tool::{ArtifactRef, Tool, ToolCall, ToolOutput};
 
 /// The largest clip sent inline as an edit's input.
 const MAX_INPUT_BYTES: u64 = 40 * 1024 * 1024;
@@ -474,7 +474,10 @@ fn sidecar_path(clip: &Path) -> PathBuf {
 impl RunModelTool {
     /// A video: a durable job written to a file ([`generate`]), its
     /// parameters as the video API names them.
-    async fn video(&self, args: &serde_json::Map<String, Value>) -> Result<String, String> {
+    async fn video(
+        &self,
+        args: &serde_json::Map<String, Value>,
+    ) -> Result<(String, Option<ArtifactRef>), String> {
         let mut video = match args.get("params") {
             None => serde_json::Map::new(),
             Some(Value::Object(params)) => params.clone(),
@@ -520,8 +523,35 @@ impl RunModelTool {
             &mut |_| {},
         )
         .await?;
+        // In a conversation of the sven service the clip is also its file:
+        // shown to the person and passed on by handle.
+        let published = match (&self.config.session, &done.file_id) {
+            (Some(_), Some(id)) if id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') => {
+                Some(ArtifactRef {
+                    uri: format!("{}{id}", sven_model_drivers::invoke::HANDLE_PREFIX),
+                    name: done
+                        .path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("video.mp4")
+                        .to_owned(),
+                    mime_type: "video/mp4".into(),
+                    size: std::fs::metadata(&done.path)
+                        .map(|m| m.len())
+                        .unwrap_or_default(),
+                })
+            }
+            _ => None,
+        };
+        let handle = published
+            .as_ref()
+            .map(|a| format!(" It is {} in the conversation.", a.uri))
+            .unwrap_or_default();
         if done.reused {
-            return Ok(format!("The video is at {} (made earlier for the same request; another seed makes another take).", done.shown));
+            return Ok((
+                format!("The video is at {} (made earlier for the same request; another seed makes another take).{handle}", done.shown),
+                published,
+            ));
         }
         let mut line = format!(
             "Saved the video to {} ({} bytes",
@@ -535,7 +565,8 @@ impl RunModelTool {
             line.push_str(&format!(", ${cost:.4}"));
         }
         line.push_str(").");
-        Ok(line)
+        line.push_str(&handle);
+        Ok((line, published))
     }
 }
 
@@ -604,7 +635,9 @@ impl Tool for RunModelTool {
         };
         if operation == "video" {
             return match self.video(args).await {
-                Ok(text) => ToolOutput::ok(&call.id, text),
+                Ok((text, published)) => {
+                    ToolOutput::ok(&call.id, text).with_artifacts(published.into_iter().collect())
+                }
                 Err(error) => ToolOutput::err(&call.id, error),
             };
         }

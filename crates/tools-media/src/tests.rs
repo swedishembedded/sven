@@ -655,3 +655,31 @@ async fn a_provider_of_its_own_is_called_directly_and_its_outputs_saved_here() {
         handle.content
     );
 }
+
+#[tokio::test]
+async fn a_video_for_a_conversation_is_its_file_too() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tool = invoking(&fake, dir.path(), Some("conv-1"));
+    let out = call(&tool, "c1", json!({"model": "brain/mock-video", "operation": "video", "prompt": "a red ball", "params": {"duration": 1}})).await;
+    assert!(!out.is_error, "{}", out.content);
+    assert_eq!(out.artifacts[0].uri, "mcp-file://files/file-0");
+    assert_eq!(out.artifacts[0].mime_type, "video/mp4");
+    assert!(
+        out.content.contains("mcp-file://files/file-0"),
+        "{}",
+        out.content
+    );
+    // The job named the conversation; the clip is still here to be joined.
+    assert_eq!(
+        fake.created.lock().unwrap()[0].1["_session"],
+        json!("conv-1")
+    );
+    assert!(
+        dir.path().join(&out.artifacts[0].name).exists()
+            || std::fs::read_dir(dir.path().join(".sven/media"))
+                .unwrap()
+                .count()
+                > 0
+    );
+}

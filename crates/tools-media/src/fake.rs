@@ -104,7 +104,7 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                     words.next().unwrap_or("").to_owned(),
                     words.next().unwrap_or("").to_owned(),
                 );
-                let (mut length, mut key, mut session) = (0usize, String::new(), None);
+                let (mut length, mut key, mut session) = (0usize, String::new(), None::<String>);
                 loop {
                     let mut header = String::new();
                     reader.read_line(&mut header).await.unwrap();
@@ -130,9 +130,12 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                     let index = match jobs.iter().position(|(k, _)| *k == key) {
                         Some(index) => index,
                         None => {
-                            seen.lock()
-                                .unwrap()
-                                .push((key.clone(), serde_json::from_slice(&body).unwrap()));
+                            let mut request: Value = serde_json::from_slice(&body).unwrap();
+                            // The conversation it was asked for, as the server saw it.
+                            if let Some(session) = &session {
+                                request["_session"] = Value::String(session.clone());
+                            }
+                            seen.lock().unwrap().push((key.clone(), request));
                             jobs.push((key.clone(), 0));
                             jobs.len() - 1
                         }

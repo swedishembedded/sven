@@ -49,6 +49,9 @@ pub struct Generated {
     pub seconds: Option<f64>,
     /// What the provider charged, when it says.
     pub cost: Option<f64>,
+    /// The provider's own stored file of the clip, when it keeps one (the
+    /// sven service: a file of the conversation the job was for).
+    pub file_id: Option<String>,
 }
 
 impl Generated {
@@ -78,17 +81,17 @@ pub async fn generate(
 ) -> Result<Generated, String> {
     let planned = plan(args, workdir)?;
     let (body, digests) = planned.with_media().await?;
-    let video = client(endpoint);
+    let video = client(endpoint).with_session(config.session.clone());
     let dir = workdir.join(&config.dir);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(config.timeout_secs);
     for attempt in 0..MAX_ATTEMPTS {
         let key = request_key(&endpoint.base_url, &planned, &digests, attempt);
         let clip = dir.join(format!("{key}.mp4"));
         if clip.exists() {
-            let seconds = std::fs::read(sidecar_path(&clip))
+            let sidecar = std::fs::read(sidecar_path(&clip))
                 .ok()
-                .and_then(|raw| serde_json::from_slice::<Sidecar>(&raw).ok())
-                .and_then(|s| s.seconds);
+                .and_then(|raw| serde_json::from_slice::<Sidecar>(&raw).ok());
+            let seconds = sidecar.as_ref().and_then(|s| s.seconds);
             progress(&format!("the clip for request {key} is already made"));
             let path = save_as(&clip, planned.output.as_deref()).await?;
             return Ok(Generated {
@@ -98,6 +101,7 @@ pub async fn generate(
                 bytes: None,
                 seconds,
                 cost: None,
+                file_id: sidecar.and_then(|s| s.file_id),
             });
         }
         let mut status = video
@@ -153,6 +157,7 @@ pub async fn generate(
                     bytes: Some(bytes),
                     seconds: status.seconds,
                     cost: status.cost,
+                    file_id: status.file_id.clone(),
                 });
             }
             // A failed request is asked again under a fresh name: the same

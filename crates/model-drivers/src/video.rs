@@ -89,6 +89,9 @@ pub struct VideoModel {
 pub struct VideoClient {
     base_url: String,
     api_key: String,
+    /// The conversation of the sven service the job is for, when it is for
+    /// one: its file is then that conversation's (`X-Sven-Session`).
+    session: Option<String>,
 }
 
 fn job_id(value: &Value) -> anyhow::Result<String> {
@@ -220,7 +223,15 @@ impl VideoClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
             api_key: api_key.to_owned(),
+            session: None,
         }
+    }
+
+    /// Jobs this client starts are for conversation `session`, when given.
+    #[must_use]
+    pub fn with_session(mut self, session: Option<String>) -> Self {
+        self.session = session;
+        self
     }
 
     async fn read(response: reqwest::Response, what: &str) -> anyhow::Result<Value> {
@@ -255,15 +266,16 @@ impl VideoClient {
         request: &Value,
         idempotency_key: &str,
     ) -> anyhow::Result<VideoStatus> {
-        let response = crate::build_http_client()
+        let mut post = crate::build_http_client()
             .post(format!("{}/videos", self.base_url))
             .bearer_auth(&self.api_key)
             .header("idempotency-key", idempotency_key)
             .timeout(REQUEST_TIMEOUT)
-            .json(request)
-            .send()
-            .await
-            .context("starting the video")?;
+            .json(request);
+        if let Some(session) = &self.session {
+            post = post.header(crate::invoke::SESSION_HEADER, session);
+        }
+        let response = post.send().await.context("starting the video")?;
         let answer = Self::read(response, "starting the video").await?;
         parse_status(&answer).or_else(|_| {
             Ok(VideoStatus {
