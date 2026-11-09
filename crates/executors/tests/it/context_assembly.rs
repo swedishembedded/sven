@@ -115,8 +115,10 @@ fn a_file_read_is_recorded_with_its_version_and_goes_stale_when_the_file_changes
 #[test]
 fn only_results_that_can_be_demoted_are_recorded() {
     let f = fixture();
+    // A skill's instructions are what the model works from: never demoted,
+    // so never recorded. Any other tool's result is evidence.
     f.session
-        .record_result("edit_file", &json!({"path": "a"}), "edited");
+        .record_result("skill", &json!({"name": "a"}), "do this");
     f.session
         .record_result("shell", &json!({"command": "ls"}), "a b c");
     assert_eq!(f.store.lock().unwrap().len(), 1);
