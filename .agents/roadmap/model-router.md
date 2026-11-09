@@ -422,11 +422,10 @@ own program file and nothing beside it. Tests:
 A sub-agent dies with the session that started it (`die_with_parent`), and
 its run streams to the host as `SubagentStarted`/`SubagentEvent`.
 
-1. **History keeps handles (built 2026-11-09).** A second turn edits the
-   first turn's image by its handle in a hosted conversation (the server's
-   `test/e2e/multimodal`). Left: the same after the host restarts and the
-   conversation is restored from the server. Check: that edit in the
-   server's `test/e2e/rc`.
+History keeps handles: a later turn edits an earlier turn's image by its
+handle, also after the host is killed and a fresh one restores the
+conversation from the server (the server's `test/e2e/multimodal`, passed
+2026-11-09).
 
 ### Phase 3 - voice, end to end (sven)
 
