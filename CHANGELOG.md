@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **rc**: hosted sessions offer `task`: a sub-agent runs inside the host's confinement, held to its parent's tools, endpoints and model, which reach it on its standard input and never through its environment or a file.
+
+### Changed
+- **task**: a sub-agent ends with the session that started it, also when that session is killed.
+
 ## [4.8.0] - 2026-11-09
 
 ### Added

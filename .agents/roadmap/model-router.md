@@ -419,9 +419,14 @@ child's stdin), inside the host's Landlock domain, which admits running its
 own program file and nothing beside it. Tests:
 `cargo test -p sven-tools-media`, `cargo test -p sven-bootstrap --lib task_tool`.
 
-1. **History keeps handles (sven side built 2026-11-09).** What is left is a
-   live check: a restored hosted conversation edits an image of an earlier
-   turn by its handle. Check: the server's `test/e2e/rc`.
+A sub-agent dies with the session that started it (`die_with_parent`), and
+its run streams to the host as `SubagentStarted`/`SubagentEvent`.
+
+1. **History keeps handles (built 2026-11-09).** A second turn edits the
+   first turn's image by its handle in a hosted conversation (the server's
+   `test/e2e/multimodal`). Left: the same after the host restarts and the
+   conversation is restored from the server. Check: that edit in the
+   server's `test/e2e/rc`.
 
 ### Phase 3 - voice, end to end (sven)
 
