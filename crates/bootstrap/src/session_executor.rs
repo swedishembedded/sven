@@ -237,11 +237,7 @@ pub(crate) fn compose(
             .with_no_tools(parts.no_tools)
             .with_tool_result_token_cap(parts.config.agent.tool_result_token_cap)
             .with_repeat_notes(parts.config.agent.note_repeated_results)
-            // The watchdog that only catches a hung tool must outlast the
-            // longest a shell call may ask for.
-            .with_tool_timeout(std::time::Duration::from_secs(
-                parts.config.tools.max_timeout_secs.max(600) + 60,
-            ))
+            .with_tool_timeout(tool_watchdog(parts.config.tools.max_timeout_secs))
             .with_chunk_session(chunk_session)
             .with_instructions(Some(parts.instructions.activator()));
             base.with_tool_executor(if parts.reconcile_capabilities {
@@ -281,8 +277,28 @@ fn audit_log_in(base: &Path, project: &Path) -> PathBuf {
         .join(format!("{}.jsonl", key.trim_matches('-')))
 }
 
+/// The watchdog that only catches a hung tool: it must outlast the longest
+/// any tool may ask for - a shell call's `max_shell_secs`, or a harness gate's
+/// own cap - with a minute to spare.
+fn tool_watchdog(max_shell_secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(max_shell_secs.max(sven_tools_exec::GateCommandTool::MAX_TIMEOUT_SECS).max(600) + 60)
+}
+
 #[cfg(test)]
 mod audit_log_tests {
+
+    /// The watchdog that only catches a hung tool outlasts the longest any
+    /// tool may ask for: a shell call's configured cap and a harness gate's
+    /// own, whichever is longer - a gate allowed an hour must not be
+    /// aborted at half of it.
+    #[test]
+    fn the_tool_watchdog_outlasts_the_longest_shell_call_and_gate() {
+        let gate = sven_tools_exec::GateCommandTool::MAX_TIMEOUT_SECS;
+        assert!(super::tool_watchdog(1800).as_secs() > gate, "{:?}", super::tool_watchdog(1800));
+        assert!(super::tool_watchdog(2 * gate).as_secs() > 2 * gate);
+        assert!(super::tool_watchdog(1).as_secs() > 600);
+    }
+
     use super::*;
 
     #[test]

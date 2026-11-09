@@ -265,6 +265,10 @@ pub type TrajectoryHook =
     std::sync::Arc<dyn Fn(&std::path::Path) -> Result<(), String> + Send + Sync>;
 
 impl GateCommandTool {
+    /// The longest a gate may run (`sven_harness_spec::MAX_GATE_TIMEOUT_SECS`):
+    /// what an executor's watchdog over this tool must outlast.
+    pub const MAX_TIMEOUT_SECS: u64 = MAX_GATE_TIMEOUT_SECS;
+
     /// A gate tool whose commands start in, and may only be pointed at
     /// directories inside, `root`.
     ///
