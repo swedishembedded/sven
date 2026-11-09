@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-11-09
+
 ### Added
 - **media**: `models`, `model_schema` and `run_model` run models of every modality, not only video: chat models reading images, image models making or editing a picture, text-to-speech models. Signed in to the sven service, what a model makes is a file of the conversation, shown to the person and passed to the next model by its handle (`mcp-file://files/<id>`), never copied through the session's model; elsewhere it is saved in the working directory. A generated image is shown to the session's model when it takes images. `run_model` takes `operation`, `inputs` (handles or paths) and `params`; video's own arguments move into `params`.
 - **media**: with a provider of its own (`tools.media.provider`, e.g. an OpenRouter key), chat, image and speech run against that provider's APIs directly; raw speech is saved as WAV.

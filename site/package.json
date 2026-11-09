@@ -1,6 +1,6 @@
 {
   "name": "sven-site",
-  "version": "4.7.1",
+  "version": "4.8.0",
   "private": true,
   "type": "module",
   "scripts": {
