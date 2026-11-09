@@ -33,6 +33,8 @@ pub mod config;
 pub mod credentials;
 pub mod dbus;
 mod discovery;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod invoke;
 // Semantic memory's embedder: a native feature (its index is SQLite).
 #[cfg(not(target_arch = "wasm32"))]
 mod embedding;

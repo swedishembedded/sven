@@ -35,7 +35,7 @@ pub use sven_hsm::ToolCapability;
 /// What a question gets when no person can answer it.
 pub use sven_vocab::NO_USER_ANSWER;
 pub use tool::{
-    capability_by_action, OutputCategory, Tool, ToolCall, ToolDisplay, ToolDisplayRegistry,
-    ToolOutput, ToolOutputPart,
+    capability_by_action, ArtifactRef, OutputCategory, Tool, ToolCall, ToolDisplay,
+    ToolDisplayRegistry, ToolOutput, ToolOutputPart,
 };
 pub use tool_summary::{shorten_path, tool_category, tool_icon, tool_smart_summary};

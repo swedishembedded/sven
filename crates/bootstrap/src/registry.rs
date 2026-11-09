@@ -669,11 +669,12 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     reg.register(cfg.tools.web.fetch_tool());
     reg.register(cfg.web_search_tool());
 
-    // ── Media (video generation) ─────────────────────────────────────────────
-    // Clips land in the session's working directory, where they can always be
-    // joined. Generating spends the key of the configured provider (by
-    // default this machine's sven sign-in), so only sven's own sessions get it
-    // that way: an embedding host or a harness run, which may run for someone
+    // ── Media (models of every modality) ─────────────────────────────────────
+    // Outputs belong to the session's conversation of the sven service, or
+    // land in the working directory, where clips can always be joined.
+    // Running a model spends the key of the configured provider (by default
+    // this machine's sven sign-in), so only sven's own sessions get it that
+    // way: an embedding host or a harness run, which may run for someone
     // else, gets generation only by registering it with a key of its own.
     let workdir = paths.root().map_or_else(
         || std::path::PathBuf::from("."),
@@ -682,8 +683,11 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     if !confined {
         reg.register(sven_tools_media::JoinVideosTool::new(workdir.clone()));
     }
-    if let Some((models, run_model)) = include_full.then(|| cfg.media_tools(workdir)).flatten() {
+    if let Some((models, schema, run_model)) =
+        include_full.then(|| cfg.media_tools(workdir)).flatten()
+    {
         reg.register(models);
+        reg.register(schema);
         reg.register(run_model);
     }
 
@@ -1031,7 +1035,7 @@ mod tests {
         // key, which a machine signed in to the sven service has.
         expected.push("join_videos");
         if Config::default().media_tools(".".into()).is_some() {
-            expected.extend(["models", "run_model"]);
+            expected.extend(["models", "model_schema", "run_model"]);
         }
         expected.sort_unstable();
         assert_eq!(got, expected, "the agent's tool set changed");

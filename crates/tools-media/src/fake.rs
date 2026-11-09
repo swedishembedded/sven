@@ -8,7 +8,9 @@
 // by sending an email to info@swedishembedded.com.
 //! A fake OpenRouter-compatible video server for tests: it starts a job per
 //! idempotency key, answers a repeated key with the same job, completes every
-//! job on its second poll, and can fail the first jobs it starts. Behind the
+//! job on its second poll, and can fail the first jobs it starts. It also
+//! plays the sven service's invocation API: a model list, invocations that
+//! answer files by handle, and those files' bytes. Behind the
 //! `fake-server` feature so the binary's tests drive the same server the
 //! tool's tests do.
 
@@ -23,11 +25,50 @@ use crate::mp4::fixture::Clip;
 /// What the fake server was asked to start: idempotency key and body.
 pub type Created = Arc<Mutex<Vec<(String, Value)>>>;
 
+/// One invocation the fake server ran.
+#[derive(Debug, Clone)]
+pub struct Invocation {
+    pub key: String,
+    /// The conversation it named (`X-Sven-Session`).
+    pub session: Option<String>,
+    pub body: Value,
+}
+
 pub struct Fake {
     /// The `/v1` base URL to give a client.
     pub base_url: String,
     /// The jobs started so far, in order: idempotency key and request body.
     pub created: Created,
+    /// The invocations run so far, in order.
+    pub invoked: Arc<Mutex<Vec<Invocation>>>,
+}
+
+/// The smallest valid PNG: one transparent pixel.
+pub const ONE_PIXEL_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64, 0x60, 0xf8, 0x5f,
+    0x0f, 0x00, 0x02, 0x87, 0x01, 0x80, 0xeb, 0x47, 0xba, 0x92, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+/// The handle of the fake's `index`th file.
+#[must_use]
+pub fn handle_of(index: usize) -> String {
+    format!("mcp-file://files/00000000-0000-4000-8000-{index:012}")
+}
+
+/// What an invocation answers, by its operation.
+fn invoked_answer(index: usize, body: &Value) -> Value {
+    match body["operation"].as_str() {
+        Some("chat") => {
+            json!({"id": format!("inv{index}"), "status": "completed", "text": format!("{} sees a red car", body["model"].as_str().unwrap_or("?")), "outputs": [], "usage": {"cost_micro_usd": "300"}})
+        }
+        Some("speech") => json!({"id": format!("inv{index}"), "status": "completed", "text": null,
+            "outputs": [{"uri": handle_of(index), "name": "audio-1.wav", "mimeType": "audio/wav", "size": 48}], "usage": {"cost_micro_usd": "250"}}),
+        _ => json!({"id": format!("inv{index}"), "status": "completed", "text": null,
+            "outputs": [{"uri": handle_of(index), "name": "image-1.png", "mimeType": "image/png", "size": ONE_PIXEL_PNG.len()}], "usage": {"cost_micro_usd": "41000"}}),
+    }
 }
 
 /// A video server that fails the first `fail_first` jobs it starts, answers a
@@ -42,14 +83,16 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
     let created: Created = Arc::default();
+    let invoked: Arc<Mutex<Vec<Invocation>>> = Arc::default();
     let jobs: Arc<Mutex<Vec<(String, u32)>>> = Arc::default();
     let seen = Arc::clone(&created);
+    let ran = Arc::clone(&invoked);
     tokio::spawn(async move {
         loop {
             let Ok((stream, _)) = listener.accept().await else {
                 return;
             };
-            let (seen, jobs) = (Arc::clone(&seen), Arc::clone(&jobs));
+            let (seen, jobs, ran) = (Arc::clone(&seen), Arc::clone(&jobs), Arc::clone(&ran));
             tokio::spawn(async move {
                 let (read, mut write) = stream.into_split();
                 let mut reader = BufReader::new(read);
@@ -60,7 +103,7 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                     words.next().unwrap_or("").to_owned(),
                     words.next().unwrap_or("").to_owned(),
                 );
-                let (mut length, mut key) = (0usize, String::new());
+                let (mut length, mut key, mut session) = (0usize, String::new(), None);
                 loop {
                     let mut header = String::new();
                     reader.read_line(&mut header).await.unwrap();
@@ -72,6 +115,7 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                         match k.to_ascii_lowercase().as_str() {
                             "content-length" => length = v.parse().unwrap_or(0),
                             "idempotency-key" => key = v.to_owned(),
+                            "x-sven-session" => session = Some(v.to_owned()),
                             _ => {}
                         }
                     }
@@ -99,6 +143,42 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                             .to_string()
                             .into_bytes(),
                     )
+                } else if method == "GET" && path == "/v1/models" {
+                    let models = json!({"data": [
+                        {"id": "google/gemini-nano-banana-2.1", "name": "Nano Banana 2.1", "architecture": {"input_modalities": ["image", "text"], "output_modalities": ["image", "text"]},
+                         "pricing": {"image": "0.04"}, "supported_parameters": {"aspect_ratio": {"type": "enum", "values": ["1:1", "16:9"]}, "input_references": {"type": "range", "min": 0, "max": 14}}},
+                        {"id": "openai/tts", "architecture": {"input_modalities": ["text"], "output_modalities": ["speech"]}, "supported_voices": ["alloy", "nova"], "pricing": {"prompt": "0.000015"}},
+                        {"id": "vision/a", "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]}, "pricing": {"prompt": "0.000001", "completion": "0.000002"}}
+                    ]});
+                    (200, "application/json", models.to_string().into_bytes())
+                } else if method == "POST" && path == "/v1/invocations" {
+                    let body: Value = serde_json::from_slice(&body).unwrap();
+                    let mut ran = ran.lock().unwrap();
+                    // The same key is the same invocation: answered again, run once.
+                    let index = ran.iter().position(|i| i.key == key).unwrap_or_else(|| {
+                        ran.push(Invocation {
+                            key: key.clone(),
+                            session: session.clone(),
+                            body: body.clone(),
+                        });
+                        ran.len() - 1
+                    });
+                    (
+                        200,
+                        "application/json",
+                        invoked_answer(index, &ran[index].body)
+                            .to_string()
+                            .into_bytes(),
+                    )
+                } else if method == "GET"
+                    && path.starts_with("/v1/files/")
+                    && path.ends_with("/content")
+                {
+                    if path.contains("4000-8000") {
+                        (200, "image/png", ONE_PIXEL_PNG.to_vec())
+                    } else {
+                        (404, "application/json", b"{}".to_vec())
+                    }
                 } else if method == "GET" && path == "/v1/videos/models" {
                     let models = json!({"data": [{"id": "brain/mock-video", "supported_durations": [1, 2, 3], "supported_resolutions": ["480p"],
                         "generate_audio": false, "seed": true, "actions": [{"action": "extend", "edits": true}], "pricing_skus": {"duration_seconds": "0.01"}}]});
@@ -129,7 +209,11 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
             });
         }
     });
-    Fake { base_url, created }
+    Fake {
+        base_url,
+        created,
+        invoked,
+    }
 }
 
 /// The clip of [`serve`]: a few bytes that are not an MP4.

@@ -6,30 +6,37 @@
 // video for its clients. If your team needs expertise in generative media
 // workflows then you can procure our services by sending an email to
 // info@swedishembedded.com.
-//! Generative media as two tools, discovered rather than hard-coded:
+//! Every model a provider serves, as three tools, discovered rather than
+//! hard-coded:
 //!
-//! - `models` lists the models the configured provider generates video with:
-//!   what each renders (lengths, resolutions, sound), the edits it offers and
-//!   its price per second.
-//! - `run_model` runs one and writes the clip into the working directory, then
-//!   answers its path. An edit (`extend`, `upscale`, ...) names the clip to
-//!   work on by path and gets a new file back. References (images, clips,
-//!   sounds of the working directory) and an `action` drive generation from
-//!   them.
+//! - `models` lists them, one line each, filtered by what they read and make
+//!   (`input`, `output`) or by text: chat and vision, image, speech, music,
+//!   transcription and video models alike.
+//! - `model_schema` says everything needed to run one: its operations, the
+//!   parameters each takes (enums and ranges), its voices and prices.
+//! - `run_model` runs one once. Inputs and outputs are files by handle
+//!   ([`invocation`]): in a conversation of the sven service a model's output
+//!   stays there and is shown to the person, and the next model reads it by
+//!   the same handle; elsewhere outputs are fetched into the working
+//!   directory. Video is a durable job ([`generate`]) written to a file.
 //! - `join_videos` puts clips one after another into one film ([`mp4`]),
 //!   copying them as they are: the last step of a multi-shot film.
 //!
-//! Any OpenRouter-compatible video API serves: a local brain, the sven
-//! service, OpenRouter itself (`sven_model_drivers::video`).
+//! Any OpenRouter-compatible API serves video: a local brain, the sven
+//! service, OpenRouter itself (`sven_model_drivers::video`); every other
+//! operation needs the invocation API of the sven service
+//! (`sven_model_drivers::invoke`).
 //!
-//! **A request is named by what it asks.** The job's idempotency key is a
+//! **A clip is named by what it asks.** A video job's idempotency key is a
 //! digest of the provider, the model and the canonical arguments, and the clip
 //! is written under that name. Asking again for the same thing, in this
 //! session or after a restart, answers the same job or the file already
 //! written, and never pays for a second render; another take is another
-//! `seed`. A job that failed is asked again under a fresh name.
+//! `seed`. A job that failed is asked again under a fresh name. Every other
+//! invocation is named by its call, so asking again is a new picture.
 
 mod generate;
+mod invocation;
 pub mod mp4;
 mod request;
 
@@ -45,6 +52,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use sven_hsm::ToolCapability;
+use sven_model_drivers::invoke::{InvocationClient, ListedModel};
 use sven_model_drivers::video::{VideoClient, VideoModel};
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
@@ -63,6 +71,10 @@ pub struct MediaConfig {
     pub dir: PathBuf,
     /// The longest one generation may take, in seconds.
     pub timeout_secs: u64,
+    /// The conversation of the sven service outputs belong to: set by
+    /// `sven rc` for each session it hosts, never read from a file.
+    #[serde(skip)]
+    pub session: Option<String>,
 }
 
 impl MediaConfig {
@@ -79,6 +91,7 @@ impl Default for MediaConfig {
             provider: None,
             dir: PathBuf::from(".sven/media"),
             timeout_secs: 30 * 60,
+            session: None,
         }
     }
 }
@@ -92,6 +105,14 @@ pub struct MediaEndpoint {
 
 fn client(endpoint: &MediaEndpoint) -> VideoClient {
     VideoClient::new(&endpoint.base_url, &endpoint.api_key)
+}
+
+fn invoker(endpoint: &MediaEndpoint, config: &MediaConfig) -> InvocationClient {
+    InvocationClient::new(
+        &endpoint.base_url,
+        &endpoint.api_key,
+        config.session.clone(),
+    )
 }
 
 /// One line per model, what a model needs to choose one.
@@ -134,6 +155,66 @@ fn describe(model: &VideoModel) -> String {
 
 // ------------------------------------------------------------------ models
 
+/// Every model the provider serves, video models included, as one list.
+async fn every_model(endpoint: &MediaEndpoint) -> Result<Vec<ListedModel>, String> {
+    let listed = invoker(endpoint, &MediaConfig::default()).models().await;
+    let videos = client(endpoint).models().await;
+    let mut models = match (listed, &videos) {
+        (Ok(models), _) => models,
+        (Err(_), Ok(_)) => Vec::new(),
+        (Err(error), Err(_)) => return Err(format!("Could not list the models: {error:#}")),
+    };
+    for video in videos.unwrap_or_default() {
+        if let Some(known) = models.iter_mut().find(|m| m.id == video.id) {
+            if !known.output.iter().any(|o| o == "video") {
+                known.output.push("video".into());
+            }
+            continue;
+        }
+        models.push(ListedModel {
+            id: video.id.clone(),
+            name: video.name.clone(),
+            description: Some(describe(&video)),
+            input: std::iter::once("text".to_owned())
+                .chain(video.supported_reference_types.iter().cloned())
+                .collect(),
+            output: vec!["video".into()],
+            pricing: video.pricing.clone(),
+            voices: Vec::new(),
+            parameters: Value::Null,
+        });
+    }
+    Ok(models)
+}
+
+/// One line per model: what it reads and makes, how it is run, its price.
+fn line(model: &ListedModel) -> String {
+    let mut line = format!(
+        "{}: {} -> {}",
+        model.id,
+        model.input.join("+"),
+        model.output.join("+")
+    );
+    let ops = model.operations();
+    if !ops.is_empty() {
+        line.push_str(&format!("; run as {}", ops.join("/")));
+    }
+    if !model.voices.is_empty() {
+        line.push_str(&format!("; {} voices", model.voices.len()));
+    }
+    let prices: Vec<String> = model
+        .pricing
+        .iter()
+        .filter(|(_, v)| v.parse::<f64>().is_ok_and(|p| p > 0.0))
+        .take(3)
+        .map(|(k, v)| format!("{k} ${v}"))
+        .collect();
+    if !prices.is_empty() {
+        line.push_str(&format!("; {}", prices.join(", ")));
+    }
+    line
+}
+
 pub struct ModelsTool {
     endpoint: MediaEndpoint,
 }
@@ -145,19 +226,30 @@ impl ModelsTool {
     }
 }
 
+/// The most lines `models` answers at once.
+const MAX_LISTED: usize = 60;
+
 #[async_trait]
 impl Tool for ModelsTool {
     fn name(&self) -> &str {
         "models"
     }
     fn summary(&self) -> &str {
-        "List the models that generate video, what each renders and costs"
+        "List the models this session can run (chat, vision, image, speech, music, transcription, video)"
     }
     fn description(&self) -> &str {
-        "Lists the generative video models this session can run: each one's id, what it makes (text->video), the lengths and resolutions it renders, whether it makes sound, the references it takes (image, video, audio), its other actions (e.g. ref2va, generation from references), the edits it can do to an existing clip (extend, upscale, ...) and its price per second. Use it to choose a model before generating."
+        "Lists the models this session can run: one line each with its id, what it reads and makes (text, image, audio, speech, video), the operation it is run as (chat, image, speech, transcribe, audio, video), its voices and prices. Filter with `output` (what it makes, e.g. image or speech), `input` (what it must read, e.g. image) and `query` (words in its id or name, e.g. `nano banana`). Then ask for the chosen model's parameters."
     }
     fn parameters_schema(&self) -> Value {
-        json!({ "type": "object", "properties": {}, "additionalProperties": false })
+        json!({
+            "type": "object",
+            "properties": {
+                "output": { "type": "string", "description": "What the model makes: text, image, speech, audio, video, transcription" },
+                "input": { "type": "string", "description": "What the model must read: text, image, audio, file, video" },
+                "query": { "type": "string", "description": "Words that must appear in its id or name" }
+            },
+            "additionalProperties": false
+        })
     }
     fn default_policy(&self) -> ApprovalPolicy {
         ApprovalPolicy::Auto
@@ -166,18 +258,121 @@ impl Tool for ModelsTool {
         ToolCapability::NetworkAccess
     }
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        match client(&self.endpoint).models().await {
-            Ok(models) if models.is_empty() => {
-                ToolOutput::ok(&call.id, "No video model is available from this provider.")
-            }
-            Ok(models) => ToolOutput::ok(
-                &call.id,
-                models.iter().map(describe).collect::<Vec<_>>().join("\n"),
-            ),
-            Err(error) => {
-                ToolOutput::err(&call.id, format!("Could not list the models: {error:#}"))
-            }
+        let arg = |name: &str| {
+            call.args
+                .get(name)
+                .and_then(Value::as_str)
+                .map(str::to_ascii_lowercase)
+        };
+        let (output, input, query) = (arg("output"), arg("input"), arg("query"));
+        let models = match every_model(&self.endpoint).await {
+            Ok(models) => models,
+            Err(error) => return ToolOutput::err(&call.id, error),
+        };
+        let matching: Vec<&ListedModel> = models
+            .iter()
+            .filter(|m| {
+                output
+                    .as_ref()
+                    .is_none_or(|o| m.output.iter().any(|x| x == o))
+            })
+            .filter(|m| {
+                input
+                    .as_ref()
+                    .is_none_or(|i| m.input.iter().any(|x| x == i))
+            })
+            .filter(|m| {
+                query.as_ref().is_none_or(|q| {
+                    let hay = format!("{} {}", m.id, m.name.as_deref().unwrap_or(""))
+                        .to_ascii_lowercase();
+                    q.split_whitespace().all(|word| hay.contains(word))
+                })
+            })
+            .collect();
+        if matching.is_empty() {
+            return ToolOutput::ok(&call.id, "No model matches; try fewer filters.");
         }
+        let mut lines: Vec<String> = matching.iter().take(MAX_LISTED).map(|m| line(m)).collect();
+        if matching.len() > MAX_LISTED {
+            lines.push(format!(
+                "... and {} more; narrow with `query`.",
+                matching.len() - MAX_LISTED
+            ));
+        }
+        ToolOutput::ok(&call.id, lines.join("\n"))
+    }
+}
+
+// ------------------------------------------------------------------ model_schema
+
+pub struct ModelSchemaTool {
+    endpoint: MediaEndpoint,
+}
+
+impl ModelSchemaTool {
+    #[must_use]
+    pub fn new(endpoint: MediaEndpoint) -> Self {
+        Self { endpoint }
+    }
+}
+
+#[async_trait]
+impl Tool for ModelSchemaTool {
+    fn name(&self) -> &str {
+        "model_schema"
+    }
+    fn summary(&self) -> &str {
+        "Everything needed to run one model: operations, parameters, voices, prices"
+    }
+    fn description(&self) -> &str {
+        "Answers everything needed to run `model`: the operations it is run as, the parameters each takes with their allowed values (enums, ranges), how many reference images it takes, its voices and its prices. Ask for it once you have chosen a model, before running it."
+    }
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": { "model": { "type": "string", "description": "A model id from the model list" } },
+            "required": ["model"],
+            "additionalProperties": false
+        })
+    }
+    fn default_policy(&self) -> ApprovalPolicy {
+        ApprovalPolicy::Auto
+    }
+    fn kernel_capability(&self) -> ToolCapability {
+        ToolCapability::NetworkAccess
+    }
+    async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let Some(id) = call.args.get("model").and_then(Value::as_str) else {
+            return ToolOutput::err(&call.id, "`model` is required");
+        };
+        let models = match every_model(&self.endpoint).await {
+            Ok(models) => models,
+            Err(error) => return ToolOutput::err(&call.id, error),
+        };
+        let Some(model) = models.iter().find(|m| m.id == id) else {
+            return ToolOutput::err(
+                &call.id,
+                format!("No model `{id}`; list them with `models`."),
+            );
+        };
+        let voices: Vec<&String> = model.voices.iter().take(100).collect();
+        let schema = json!({
+            "model": model.id,
+            "name": model.name,
+            "description": model.description.as_deref().map(|d| d.chars().take(400).collect::<String>()),
+            "reads": model.input,
+            "makes": model.output,
+            "operations": model.operations(),
+            "parameters": model.parameters,
+            "voices": voices,
+            "more_voices": model.voices.len().saturating_sub(voices.len()),
+            "pricing": model.pricing.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect::<serde_json::Map<_, _>>(),
+            "run_model": "Give `operation` (one of operations), `prompt`, `inputs` (handles or paths of the files it reads) and `params` (the parameters above, by name).",
+        });
+        ToolOutput::ok(
+            &call.id,
+            serde_json::to_string_pretty(&schema).unwrap_or_default(),
+        )
     }
 }
 
@@ -262,12 +457,51 @@ fn sidecar_path(clip: &Path) -> PathBuf {
 }
 
 impl RunModelTool {
-    async fn run(&self, args: &Value) -> Result<String, String> {
+    /// A video: a durable job written to a file ([`generate`]), its
+    /// parameters as the video API names them.
+    async fn video(&self, args: &serde_json::Map<String, Value>) -> Result<String, String> {
+        let mut video = match args.get("params") {
+            None => serde_json::Map::new(),
+            Some(Value::Object(params)) => params.clone(),
+            Some(_) => return Err("`params` is an object of the operation's parameters".into()),
+        };
+        for key in ["model", "prompt", "output"] {
+            if let Some(value) = args.get(key) {
+                video.insert(key.into(), value.clone());
+            }
+        }
+        if let Some(inputs) = args.get("inputs").and_then(Value::as_array) {
+            let references = inputs
+                .iter()
+                .map(|input| {
+                    let path = input.as_str().ok_or("`inputs` holds paths")?;
+                    if path.starts_with(sven_model_drivers::invoke::HANDLE_PREFIX) {
+                        return Err(
+                            "a video reads files of the working directory, by path".to_owned()
+                        );
+                    }
+                    let kind = match Path::new(path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(str::to_ascii_lowercase)
+                        .as_deref()
+                    {
+                        Some("mp4" | "mov" | "webm" | "mkv") => "video",
+                        Some("wav") => "audio",
+                        _ => "image",
+                    };
+                    Ok(json!({ "path": path, "kind": kind }))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            if !references.is_empty() {
+                video.insert("references".into(), Value::Array(references));
+            }
+        }
         let done = generate(
             &self.endpoint,
             &self.config,
             &self.workdir,
-            args,
+            &Value::Object(video),
             &mut |_| {},
         )
         .await?;
@@ -290,6 +524,9 @@ impl RunModelTool {
     }
 }
 
+/// The arguments `run_model` takes.
+const RUN_ARGUMENTS: [&str; 6] = ["model", "operation", "prompt", "inputs", "params", "output"];
+
 /// A path as the model and the person read it: relative to the working
 /// directory.
 fn shown(workdir: &Path, path: &Path) -> String {
@@ -309,43 +546,23 @@ impl Tool for RunModelTool {
         "run_model"
     }
     fn summary(&self) -> &str {
-        "Generate or edit a video with a generative model; writes the clip to a file"
+        "Run any model once (chat, vision, image, speech, music, video); files in and out by handle"
     }
     fn description(&self) -> &str {
-        "Runs a generative video model and writes the result into the working directory, answering its path. Give `model` and `prompt`, and optionally `duration` (seconds), `resolution` (480p, 720p, 1080p, ...), `aspect_ratio` (16:9, 9:16, 1:1, ...), `generate_audio` and `seed`. `size` (WIDTHxHEIGHT) asks for exact pixels. `references` (a list of `{path, kind}`, kind image, video or audio; png/jpg/jpeg/webp, mp4/mov/webm/mkv, wav) are files of the working directory the prompt names by order within their kind (<Picture 1>, <Video 1>, <Audio 1>); `action` names the model's action for them (e.g. ref2va). To edit a clip, name the edit (`edit`, one the model offers, e.g. extend) and the clip (`input_video`, a path in the working directory). `params` are the action's or edit's own parameters. `output` also saves the clip at that path. The same request answers the same clip without paying again; change `seed` for another take. A video takes from seconds to many minutes and is charged for the seconds delivered."
+        "Runs one model once and answers its text and the files it made. Give `model` (an id from the model list), `operation` (chat, image, speech, transcribe, audio or video, as the model's parameters say), `prompt` (what to make, ask or say), `inputs` (files it reads: handles like mcp-file://files/<id> from the conversation or an earlier run, or paths in the working directory; e.g. the image to edit, the picture to describe) and `params` (the model's own parameters by name, e.g. aspect_ratio, resolution, voice, format, duration). What it makes is shown to the person and answered by handle; pass a handle in `inputs` to the next run to edit or reuse it, without reading it yourself. `output` also saves the first file at that path in the working directory. To compare several, run each in its own call, at once. Every run is charged; a video takes minutes."
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "model": { "type": "string", "description": "The id of a video model" },
-                "prompt": { "type": "string", "description": "What the video shows" },
-                "duration": { "type": "number", "description": "Seconds" },
-                "resolution": { "type": "string" },
-                "aspect_ratio": { "type": "string" },
-                "generate_audio": { "type": "boolean" },
-                "seed": { "type": "integer" },
-                "size": { "type": "string", "description": "Exact size, WIDTHxHEIGHT (e.g. 832x480)" },
-                "action": { "type": "string", "description": "An action the model offers (e.g. ref2va), not an edit" },
-                "references": {
-                    "type": "array",
-                    "description": "Reference files in the working directory, in the order the prompt names them",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "path": { "type": "string" },
-                            "kind": { "type": "string", "enum": ["image", "video", "audio"] }
-                        },
-                        "required": ["path", "kind"],
-                        "additionalProperties": false
-                    }
-                },
-                "edit": { "type": "string", "description": "An edit the model offers, with input_video" },
-                "input_video": { "type": "string", "description": "Path of the clip to edit, in the working directory" },
-                "params": { "type": "object", "description": "The action's or edit's own parameters" },
-                "output": { "type": "string", "description": "Also save the clip at this path in the working directory" }
+                "model": { "type": "string", "description": "A model id from the model list" },
+                "operation": { "type": "string", "enum": ["chat", "image", "speech", "transcribe", "audio", "video"] },
+                "prompt": { "type": "string", "description": "What to make, ask or say" },
+                "inputs": { "type": "array", "items": { "type": "string" }, "description": "Files it reads: handles (mcp-file://files/...) or paths in the working directory" },
+                "params": { "type": "object", "description": "The operation's parameters, as the model lists them" },
+                "output": { "type": "string", "description": "Also save the first file at this path in the working directory" }
             },
-            "required": ["model", "prompt"],
+            "required": ["model", "operation", "prompt"],
             "additionalProperties": false
         })
     }
@@ -358,8 +575,37 @@ impl Tool for RunModelTool {
         ToolCapability::WriteFile
     }
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
-        match self.run(&call.args).await {
-            Ok(text) => ToolOutput::ok(&call.id, text),
+        let Some(args) = call.args.as_object() else {
+            return ToolOutput::err(&call.id, "the arguments must be an object");
+        };
+        if let Some(unknown) = args.keys().find(|k| !RUN_ARGUMENTS.contains(&k.as_str())) {
+            return ToolOutput::err(
+                &call.id,
+                format!("unknown argument `{unknown}`; parameters go in `params`"),
+            );
+        }
+        let Some(operation) = args.get("operation").and_then(Value::as_str) else {
+            return ToolOutput::err(&call.id, "`operation` is required: see model_schema");
+        };
+        if operation == "video" {
+            return match self.video(args).await {
+                Ok(text) => ToolOutput::ok(&call.id, text),
+                Err(error) => ToolOutput::err(&call.id, error),
+            };
+        }
+        let output = args.get("output").and_then(Value::as_str);
+        match invocation::request(&self.workdir, args, operation) {
+            Ok(body) => {
+                invocation::run(
+                    &invoker(&self.endpoint, &self.config),
+                    &self.config,
+                    &self.workdir,
+                    &call.id,
+                    &body,
+                    output,
+                )
+                .await
+            }
             Err(error) => ToolOutput::err(&call.id, error),
         }
     }

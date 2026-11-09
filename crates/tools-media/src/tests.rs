@@ -12,8 +12,9 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use crate::fake::{serve, Fake};
+use crate::fake::{self as fixture, handle_of, serve, Fake};
 use crate::request::{plan, request_key};
+use sven_tool_api::tool::ToolOutputPart;
 
 fn tool(fake: &Fake, workdir: &Path) -> RunModelTool {
     let endpoint = MediaEndpoint {
@@ -30,11 +31,24 @@ fn tool(fake: &Fake, workdir: &Path) -> RunModelTool {
     )
 }
 
+/// `run_model` asked for a video with `args`: the model, prompt and output
+/// as they are, everything else the video API's own parameters.
 async fn run(tool: &RunModelTool, args: Value) -> ToolOutput {
+    let mut params = args.as_object().unwrap().clone();
+    let mut call = serde_json::Map::new();
+    call.insert("operation".into(), json!("video"));
+    for key in ["model", "prompt", "output"] {
+        if let Some(value) = params.remove(key) {
+            call.insert(key.into(), value);
+        }
+    }
+    if !params.is_empty() {
+        call.insert("params".into(), Value::Object(params));
+    }
     tool.execute(&ToolCall {
         id: "c1".into(),
         name: "run_model".into(),
-        args,
+        args: Value::Object(call),
     })
     .await
 }
@@ -226,12 +240,29 @@ async fn models_lists_what_each_model_renders_and_costs() {
     .execute(&ToolCall {
         id: "c".into(),
         name: "models".into(),
-        args: json!({}),
+        args: json!({"output": "video"}),
     })
     .await;
     assert_eq!(
         out.content,
-        "brain/mock-video: text->video, 1-3 s, 480p, edits: extend, $0.01/s (duration_seconds)"
+        "brain/mock-video: text -> video; run as video; duration_seconds $0.01"
+    );
+    let schema = ModelSchemaTool::new(MediaEndpoint {
+        base_url: fake.base_url.clone(),
+        api_key: "k".into(),
+    })
+    .execute(&ToolCall {
+        id: "c".into(),
+        name: "model_schema".into(),
+        args: json!({"model": "brain/mock-video"}),
+    })
+    .await;
+    assert!(
+        schema
+            .content
+            .contains("text->video, 1-3 s, 480p, edits: extend"),
+        "{}",
+        schema.content
     );
 }
 
@@ -392,4 +423,175 @@ async fn a_generation_killed_while_polling_resumes_the_job_it_started() {
     assert_eq!(again.seconds, Some(1.125));
     assert_eq!(again.path, done.path);
     assert_eq!(fake.created.lock().unwrap().len(), 1);
+}
+
+// ------------------------------------------------------------------ every other modality
+
+fn invoking(fake: &Fake, workdir: &Path, session: Option<&str>) -> RunModelTool {
+    RunModelTool::new(
+        endpoint(fake),
+        MediaConfig {
+            session: session.map(str::to_owned),
+            ..MediaConfig::default()
+        },
+        workdir.to_path_buf(),
+    )
+}
+
+async fn call(tool: &dyn Tool, id: &str, args: Value) -> ToolOutput {
+    tool.execute(&ToolCall {
+        id: id.into(),
+        name: tool.name().into(),
+        args,
+    })
+    .await
+}
+
+#[tokio::test]
+async fn models_finds_a_model_by_what_it_makes_reads_and_is_called() {
+    let fake = serve(0).await;
+    let models = ModelsTool::new(endpoint(&fake));
+    let speech = call(&models, "m", json!({"output": "speech"})).await;
+    assert_eq!(
+        speech.content,
+        "openai/tts: text -> speech; run as speech; 2 voices; prompt $0.000015"
+    );
+    let vision = call(&models, "m", json!({"input": "image", "output": "text"})).await;
+    assert!(
+        vision.content.starts_with("google/gemini-nano-banana-2.1")
+            && vision
+                .content
+                .contains("vision/a: text+image -> text; run as chat"),
+        "{}",
+        vision.content
+    );
+    let named = call(&models, "m", json!({"query": "nano banana"})).await;
+    assert!(
+        named
+            .content
+            .starts_with("google/gemini-nano-banana-2.1: image+text -> image+text; run as image"),
+        "{}",
+        named.content
+    );
+    let schema = call(
+        &ModelSchemaTool::new(endpoint(&fake)),
+        "s",
+        json!({"model": "google/gemini-nano-banana-2.1"}),
+    )
+    .await;
+    let schema: Value = serde_json::from_str(&schema.content).unwrap();
+    assert_eq!(schema["operations"], json!(["image"]));
+    assert_eq!(schema["parameters"]["input_references"]["max"], json!(14));
+}
+
+#[tokio::test]
+async fn in_a_conversation_an_image_is_answered_by_handle_shown_to_the_model_and_edited_by_it() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tool = invoking(&fake, dir.path(), Some("conv-1"));
+    let made = call(&tool, "call_1", json!({"model": "google/gemini-nano-banana-2.1", "operation": "image", "prompt": "a red car", "params": {"aspect_ratio": "16:9"}})).await;
+    assert!(!made.is_error, "{}", made.content);
+    let handle = handle_of(0);
+    assert_eq!(made.artifacts.len(), 1);
+    assert_eq!(
+        (
+            made.artifacts[0].uri.as_str(),
+            made.artifacts[0].mime_type.as_str()
+        ),
+        (handle.as_str(), "image/png")
+    );
+    assert!(
+        made.content.contains(&handle) && made.content.contains("$0.0410"),
+        "{}",
+        made.content
+    );
+    // The session's model sees the picture; the bytes travel to it, not to the person.
+    assert!(made.parts.iter().any(
+        |p| matches!(p, ToolOutputPart::Image(url) if url.starts_with("data:image/png;base64,"))
+    ));
+    // Nothing was written here: the file is the conversation's.
+    assert!(!dir.path().join(".sven").exists());
+
+    let edited = call(&tool, "call_2", json!({"model": "google/gemini-nano-banana-2.1", "operation": "image", "prompt": "make it black, in snow", "inputs": [handle]})).await;
+    assert!(!edited.is_error, "{}", edited.content);
+    let ran = fake.invoked.lock().unwrap().clone();
+    assert_eq!(ran.len(), 2);
+    assert!(ran.iter().all(|i| i.session.as_deref() == Some("conv-1")));
+    assert_eq!(ran[1].body["inputs"], json!([{"uri": handle}]));
+    assert_eq!(ran[0].body["params"], json!({"aspect_ratio": "16:9"}));
+}
+
+#[tokio::test]
+async fn the_same_call_asked_again_runs_once() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tool = invoking(&fake, dir.path(), Some("conv-1"));
+    let args = json!({"model": "openai/tts", "operation": "speech", "prompt": "my name is martin", "params": {"voice": "alloy"}});
+    call(&tool, "call_1", args.clone()).await;
+    let again = call(&tool, "call_1", args.clone()).await;
+    assert_eq!(again.artifacts[0].mime_type, "audio/wav");
+    // Speech is the person's to hear, never fed back to the model.
+    assert!(!again
+        .parts
+        .iter()
+        .any(|p| matches!(p, ToolOutputPart::Audio(_) | ToolOutputPart::Image(_))));
+    assert_eq!(fake.invoked.lock().unwrap().len(), 1);
+    call(&tool, "call_2", args).await;
+    assert_eq!(fake.invoked.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn three_vision_models_read_one_picture_in_parallel() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tool = invoking(&fake, dir.path(), Some("conv-1"));
+    let picture = handle_of(7);
+    let ask = |model: &str| json!({"model": model, "operation": "chat", "prompt": "Label the objects in this picture", "inputs": [picture.clone()]});
+    let (a, b, c) = tokio::join!(
+        call(&tool, "c1", ask("vision/a")),
+        call(&tool, "c2", ask("vision/b")),
+        call(&tool, "c3", ask("vision/c"))
+    );
+    for (out, model) in [(a, "vision/a"), (b, "vision/b"), (c, "vision/c")] {
+        assert!(
+            out.content.starts_with(&format!("{model} sees a red car")),
+            "{}",
+            out.content
+        );
+        assert!(out.artifacts.is_empty());
+    }
+    let ran = fake.invoked.lock().unwrap().clone();
+    assert_eq!(ran.len(), 3);
+    assert!(ran
+        .iter()
+        .all(|i| i.body["inputs"] == json!([{"uri": picture}])));
+}
+
+#[tokio::test]
+async fn outside_a_conversation_what_a_model_made_is_saved_in_the_working_directory() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("car.png"), fixture::ONE_PIXEL_PNG).unwrap();
+    let tool = invoking(&fake, dir.path(), None);
+    let out = call(&tool, "call_1", json!({"model": "google/gemini-nano-banana-2.1", "operation": "image", "prompt": "in snow", "inputs": ["car.png"], "output": "art/snow.png"})).await;
+    assert!(!out.is_error, "{}", out.content);
+    assert_eq!(out.artifacts[0].uri, "art/snow.png");
+    assert_eq!(
+        std::fs::read(dir.path().join("art/snow.png")).unwrap(),
+        fixture::ONE_PIXEL_PNG
+    );
+    let ran = fake.invoked.lock().unwrap().clone();
+    assert_eq!(ran[0].session, None);
+    assert_eq!(ran[0].body["inputs"][0]["mimeType"], json!("image/png"));
+    let outside = call(
+        &tool,
+        "call_2",
+        json!({"model": "m", "operation": "image", "prompt": "x", "inputs": ["/etc/hostname"]}),
+    )
+    .await;
+    assert!(
+        outside.is_error && outside.content.contains("working directory"),
+        "{}",
+        outside.content
+    );
 }

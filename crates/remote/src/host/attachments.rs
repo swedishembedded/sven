@@ -40,12 +40,12 @@ pub(super) const DIR: &str = ".sven/attachments";
 
 /// `config` for session `id` working in `working_dir`: every MCP server
 /// resolves the session's file arguments there, not in the host's own
-/// directory, and the signed-in server's requests name the session.
+/// directory, and the signed-in server's requests, its MCP calls and its
+/// model invocations alike, name the session.
 pub(super) fn for_session(config: &Arc<Config>, id: Uuid, working_dir: &Path) -> Arc<Config> {
-    if config.mcp_servers.is_empty() {
-        return Arc::clone(config);
-    }
     let mut own = Config::clone(config);
+    // What its models make belongs to the session's conversation.
+    own.tools.media.session = Some(id.to_string());
     for server in own.mcp_servers.values_mut() {
         server.file_root = Some(working_dir.to_path_buf());
     }
@@ -530,14 +530,14 @@ mod tests {
         assert!(!attached.text.contains("as an image"), "{}", attached.text);
     }
 
-    /// Only the signed-in server's file requests name the session; a host
-    /// without one shares its configuration untouched.
+    /// A session's model invocations name it, with or without an MCP server;
+    /// a host without one adds none.
     #[test]
-    fn a_host_without_a_server_shares_its_configuration() {
+    fn a_session_names_itself_to_the_models_it_runs() {
         let plain = Arc::new(Config::default());
-        assert!(Arc::ptr_eq(
-            &for_session(&plain, Uuid::new_v4(), Path::new("/work")),
-            &plain
-        ));
+        let id = Uuid::new_v4();
+        let own = for_session(&plain, id, Path::new("/work"));
+        assert_eq!(own.tools.media.session, Some(id.to_string()));
+        assert!(own.mcp_servers.is_empty());
     }
 }

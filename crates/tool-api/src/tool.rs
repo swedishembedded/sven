@@ -6,7 +6,9 @@ use serde_json::Value;
 
 use sven_hsm::ToolCapability;
 use sven_vocab::AgentMode;
-pub use sven_vocab::{OutputCategory, ParkedAnswer, ToolCall, ToolOutput, ToolOutputPart};
+pub use sven_vocab::{
+    ArtifactRef, OutputCategory, ParkedAnswer, ToolCall, ToolOutput, ToolOutputPart,
+};
 
 use crate::policy::ApprovalPolicy;
 

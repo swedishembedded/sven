@@ -399,33 +399,28 @@ music), and what they make is named by a handle (`mcp-file://files/<id>`
 from the sven service, a working-directory path otherwise) instead of being
 copied through tool results. Each item ends with its check.
 
-1. **Artifacts in the vocabulary.** `ArtifactRef` (`uri`, `name`,
-   `mimeType`, `size`); `ToolOutput.artifacts`; `ToolCallFinished.artifacts`
-   carried to an `sven rc` server; a tool that publishes artifacts sends no
-   inline copy of the same image. Check: vocab serde tests, rc upload test.
-2. **Invocation client.** `sven_model_drivers::invoke`: the service's
-   `/invocations` API (catalog, schema, run, poll), the session header from
-   the conversation, an idempotency key from session and call. Check: wire
-   tests against `fake`.
-3. **The three tools, every modality.** `models` (filters by input/output
-   modality and text), `model_schema` (one model's operations and
-   parameters), `run_model` (`model`, `operation`, `prompt`, `inputs`
-   handles or paths, `params`). Generated images the session model can see
-   are shown to it; audio and video are not. Without a service conversation
-   the outputs are downloaded into `tools.media.dir`. The video-only
-   arguments move into `params`; the short-film harness and `sven media`
-   follow. Check: tool tests against `fake`; harness_media test.
-4. **Everywhere.** The hosted allow list and sub-agents get the three tools
-   and `attach_file` takes handles. Check: hosted config test; sub-agent
-   registry test.
-5. **History keeps handles.** `HistoryEntry.attachments`, rendered as a
-   reference list the agent can pass on, never fetched eagerly. Check:
-   remote host test restoring a conversation with an image.
-6. **Sub-agents take inputs.** `task` `inputs` (handles or paths); the
+Built (2026-11-09): `ArtifactRef` on tool results and `ToolCallFinished`;
+`sven_model_drivers::invoke` (models, invocations with the session header and
+an idempotency key per call, file content); `models` (filters by input,
+output, text), `model_schema` and `run_model` (chat, image, speech,
+transcribe, audio; video stays the durable job), images shown to the session
+model, outputs by handle in a conversation and as files otherwise; `sven rc`
+names each session's conversation to its invocations; the hosted allow list
+and prompt include the three tools. Tests: `cargo test -p sven-tools-media`.
+
+1. **`attach_file` takes handles.** Fetch a handle into the session's own
+   model, as a path is today. Check: tools-fs test against the fake.
+2. **History keeps handles (sven side built 2026-11-09).** What is left is a
+   live check: a restored hosted conversation edits an image of an earlier
+   turn by its handle. Check: the server's `test/e2e/rc`.
+3. **Sub-agents take inputs.** A `task` child is a full sven process and has
+   the three tools, but names no conversation: its outputs land in the
+   working directory. It must inherit the parent's conversation (never a
+   wider one). `task` `inputs` (handles or paths); the
    child's first prompt carries images as images and every input by handle;
    the child's published artifacts are relayed in the parent's result.
    Check: task tool test with a child that reports what it received.
-7. **A direct backend.** With a bring-your-own OpenRouter-compatible
+4. **A direct backend.** With a bring-your-own OpenRouter-compatible
    provider, the same tools call its `/images`, `/audio/speech`, `/videos`
    and `/chat/completions` and keep outputs as working-directory files.
    Check: wire tests against `fake`.

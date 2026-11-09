@@ -197,16 +197,21 @@ impl Config {
         ))
     }
 
-    /// The media tools (`models`, `run_model`), generating where
-    /// [`Self::media_endpoint`] says and writing under `workdir`.
+    /// The media tools (`models`, `model_schema`, `run_model`), running models
+    /// where [`Self::media_endpoint`] says and writing under `workdir`.
     #[must_use]
     pub fn media_tools(
         &self,
         workdir: std::path::PathBuf,
-    ) -> Option<(sven_tools_media::ModelsTool, sven_tools_media::RunModelTool)> {
+    ) -> Option<(
+        sven_tools_media::ModelsTool,
+        sven_tools_media::ModelSchemaTool,
+        sven_tools_media::RunModelTool,
+    )> {
         let (endpoint, config) = self.media_endpoint()?;
         Some((
             sven_tools_media::ModelsTool::new(endpoint.clone()),
+            sven_tools_media::ModelSchemaTool::new(endpoint.clone()),
             sven_tools_media::RunModelTool::new(endpoint, config, workdir),
         ))
     }

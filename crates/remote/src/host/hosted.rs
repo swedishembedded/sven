@@ -15,14 +15,28 @@ use sven_bootstrap::{Config, RuntimeContext};
 use sven_tool_api::PathScope;
 
 /// The only tools a hosted host's sessions have (`sven rc --hosted`): none
-/// of them reads, writes or runs anything on the machine the host runs on.
-pub const HOSTED_TOOLS: &[&str] = &["web_search", "web_fetch", "skill"];
+/// of them runs anything on the machine the host runs on, and none reaches a
+/// file outside the conversation's own confined directory.
+pub const HOSTED_TOOLS: &[&str] = &[
+    "web_search",
+    "web_fetch",
+    "skill",
+    // Models of every modality run as the person on the sven service, their
+    // outputs the conversation's files: no file system, shell or network
+    // beyond that one service, whose key the host already holds.
+    "models",
+    "model_schema",
+    "run_model",
+];
 
 /// The system prompt of a hosted conversation when the site configures none
 /// (`agent.system_prompt` in the file `sven --config` reads).
 pub const HOSTED_SYSTEM_PROMPT: &str = "You are sven, a helpful assistant. Answer clearly and \
      concisely, and say so when you are not sure. You can search the web and read public web \
-     pages; say which sources you used. You have no access to the person's computer or files.";
+     pages; say which sources you used. You can run other models (image, speech, vision, music) \
+     with `models`, `model_schema` and `run_model`; what they make is shown in the conversation, \
+     and you pass a file on to the next model by its handle. You have no access to the person's \
+     computer or files beyond those of this conversation.";
 
 /// What a session works with. On a person's computer: the project it runs in,
 /// whose root, git state and context file the built-in prompt describes, with

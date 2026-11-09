@@ -62,6 +62,7 @@ the rest ([Core and deferred disclosure](#core-and-deferred-disclosure)).
 | [`web_fetch`](#web_fetch) | network | all | deferred |
 | [`web_search`](#web_search) | network | all | deferred |
 | [`models`](#models) | network | all | deferred |
+| [`model_schema`](#model_schema) | network | all | deferred |
 | [`run_model`](#run_model) | write | `agent` | deferred |
 | [`join_videos`](#join_videos) | write | `agent` | deferred |
 | [`task`](#task) | read | `agent` | deferred |
@@ -313,44 +314,70 @@ With neither, the call returns an error saying how to configure one.
 Lists the models `run_model` can run, as the provider in `tools.media.provider`
 lists them (default: the sven service, signed in or configured; a local brain
 or any OpenRouter-compatible server with a `providers.<name>` entry works the
-same way): each one's id, what it makes, the lengths and resolutions it
-renders, whether it makes sound, the reference kinds it takes, its other actions, the edits it can do to an existing clip and
-its price per second. Offered in sven's own sessions while that provider has a
-key; a harness run or an embedding host gets it only with a video API and key
-of its own (`sven harness run --media-endpoint`, a served run's descriptor),
-never from this machine's sign-in.
+same way for video), one line each: its id, what it reads and makes (text,
+image, audio, speech, video), the operation it is run as, its voices and its
+prices. Offered in sven's own sessions while that provider has a key, and in
+hosted sessions; a harness run or an embedding host gets it only with an API
+and key of its own (`sven harness run --media-endpoint`, a served run's
+descriptor), never from this machine's sign-in.
 
-### `run_model`
+| Parameter | Description |
+|-----------|-------------|
+| `output` | What the model makes: `text`, `image`, `speech`, `audio`, `video`, `transcription` |
+| `input` | What the model must read: `text`, `image`, `audio`, `file`, `video` |
+| `query` | Words that must all appear in its id or name (e.g. `nano banana`) |
 
-Generates a video with a model from `models` and writes it under
-`tools.media.dir` (default `.sven/media`) in the working directory, answering
-its path, length and cost. It waits while the video is made, up to
-`tools.media.timeout_secs`.
+### `model_schema`
+
+Everything needed to run one model: the operations it is run as, the
+parameters each takes with their allowed values (enums and ranges, as the
+provider lists them), how many reference images it takes, its voices and its
+prices. For a video model, also the lengths and resolutions it renders and the
+edits and actions it offers.
 
 | Parameter | Description |
 |-----------|-------------|
 | `model` (required) | A model id from `models` |
-| `prompt` (required) | What the video shows |
-| `duration` | Seconds |
-| `resolution` | `480p`, `720p`, `1080p`, ... |
-| `aspect_ratio` | `16:9`, `9:16`, `1:1`, ... |
-| `generate_audio` | With sound |
-| `seed` | Another seed is another take |
-| `size` | Exact pixels as `WIDTHxHEIGHT` (two positive integers, e.g. `832x480`) |
-| `references` | Files the prompt points at: a list of `{path, kind}`, `kind` being `image` (png, jpg, jpeg, webp), `video` (mp4, mov, webm, mkv) or `audio` (wav). Paths are in the working directory and each file is at most 40 MiB. The prompt names them by order within their kind (`<Picture 1>`, `<Video 1>`, `<Audio 1>`), so the order given is kept and is part of the request |
-| `action` | An action the model offers other than an edit (e.g. `ref2va`, video and sound from references); `models` lists them |
-| `edit` | An edit the model offers (`extend`, `upscale`, ...), with `input_video`; not together with `action` |
-| `input_video` | The clip to edit: a path in the working directory |
-| `params` | The action's or the edit's own parameters (e.g. `{"steps": 4}`); refused without either |
-| `output` | Also save the clip at this path in the working directory (a harness names each shot this way) |
 
-The same request (model, arguments, and the content of the input clip and of every reference) answers the clip already
-made, in this session or a later one, and is never paid for twice; a request
-the provider failed is asked again once more under a new name. A changed reference is another request. A clip the
-provider also stores is named to it by its file when it is edited, instead
-of being sent again; references are always sent inline. Whether the model takes a
-reference kind is the server's to say: its refusal is returned as it is. It asks for approval under `--approval manual`, as every
-write does: a video is paid for. `sven media generate` makes the same request from the command line, for scripts and harness checks.
+### `run_model`
+
+Runs one model once and answers its text and the files it made. Inputs and
+outputs are files by handle ([media artifacts](../internals/media-artifacts.md)):
+
+- In a conversation of the sven service (`sven rc`, hosted) what a model makes
+  stays there: it is shown to the person and answered as a handle
+  (`mcp-file://files/<id>`), and the next call reads it by that handle, so an
+  image is edited or passed to a vision model without anyone reading its bytes.
+- Elsewhere what it makes is saved under `tools.media.dir` (default
+  `.sven/media`) and answered as a path.
+
+A generated raster image is also put in front of the session's own model when
+that model takes images; speech, music and video are not. Each call is its
+own invocation, charged once even when a resumed turn asks it again; asking
+again in another call is another picture.
+
+| Parameter | Description |
+|-----------|-------------|
+| `model` (required) | A model id from `models` |
+| `operation` (required) | `chat` (text, also from images), `image`, `speech`, `transcribe`, `audio` (music and sound) or `video`, as `model_schema` says |
+| `prompt` (required) | What to make, ask or say |
+| `inputs` | Files it reads: handles from the conversation or an earlier call, or paths in the working directory (sent inline, at most 15 MiB each) |
+| `params` | The operation's parameters by name, as `model_schema` lists them (e.g. `aspect_ratio`, `resolution`, `voice`, `format`) |
+| `output` | Also save the first file at this path in the working directory |
+
+**Video** is a durable job written to a file. Its `params` are the video
+API's: `duration` (seconds), `resolution`, `aspect_ratio`, `generate_audio`,
+`seed` (another seed is another take), `size` (`WIDTHxHEIGHT`), `references`
+(a list of `{path, kind}`, kind `image`, `video` or `audio`, named in the prompt
+by order within their kind: `<Picture 1>`, `<Video 1>`, `<Audio 1>`; paths in
+`inputs` become references too), `action` (e.g. `ref2va`), `edit` with
+`input_video` (`extend`, `upscale`, ...) and `params` (the action's or edit's
+own). The same video request (model, arguments, and the content of every input
+clip and reference) answers the clip already made, in this session or a later
+one, and is never paid for twice; a request the provider failed is asked again
+once more under a new name. It asks for approval under `--approval manual`, as
+every write does: a model run is paid for. `sven media generate` makes the
+same video request from the command line, for scripts and harness checks.
 
 ### `join_videos`
 

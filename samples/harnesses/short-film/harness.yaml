@@ -67,8 +67,8 @@ workflow:
     tools: [run_model]
     task: |
       Render shot {{ item_id }} of the film: call run_model once with model
-      "{{ inputs.model }}", duration {{ inputs.seconds }}, output "shots/{{ item_id }}.mp4" and
-      this prompt, unchanged:
+      "{{ inputs.model }}", operation "video", params {"duration": {{ inputs.seconds }}},
+      output "shots/{{ item_id }}.mp4" and this prompt, unchanged:
 
       {{ item.prompt }}
     verify: [shot]
@@ -76,7 +76,8 @@ workflow:
       attempts: 2
       prompt: |
         The shot was refused: {{ failure.stderr }}
-        Render it again to "shots/{{ item_id }}.mp4" with the same prompt and another seed.
+        Render it again to "shots/{{ item_id }}.mp4" with the same prompt and another seed
+        in params.
   - name: film
     verify: [film]
 success:
