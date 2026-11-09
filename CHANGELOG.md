@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **media**: `models`, `model_schema` and `run_model` run models of every modality, not only video: chat models reading images, image models making or editing a picture, text-to-speech models. Signed in to the sven service, what a model makes is a file of the conversation, shown to the person and passed to the next model by its handle (`mcp-file://files/<id>`), never copied through the session's model; elsewhere it is saved in the working directory. A generated image is shown to the session's model when it takes images. `run_model` takes `operation`, `inputs` (handles or paths) and `params`; video's own arguments move into `params`.
+- **media**: with a provider of its own (`tools.media.provider`, e.g. an OpenRouter key), chat, image and speech run against that provider's APIs directly; raw speech is saved as WAV.
+- **media**: a video made in a conversation of the sven service is that conversation's file too, answered by handle beside the local copy.
+- **task**: `inputs` hands a sub-agent files by handle or path; it sees the images among them, its models' outputs belong to its parent's conversation, and the files it makes come back with its result.
+- **attach_file**: takes a handle of a file of the conversation, fetched into `.sven/files/` and shown like a path.
+- **rc**: hosted sessions offer `models`, `model_schema` and `run_model`, running models at the server with the host's own key.
+
+### Changed
+- **media**: sven's own sessions offer the media tools whatever their tool profile; before, only a project with debugger configuration got them. An embedding host's preset still gets them only with a key of its own.
+- **acp**: a prompt's images reach the model as images.
+
 ## [4.7.1] - 2026-11-09
 
 ### Fixed
