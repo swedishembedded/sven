@@ -219,6 +219,13 @@ fn handle(value: &Value) -> anyhow::Result<MadeFile> {
     })
 }
 
+/// The HTTP client every driver uses, for a caller that speaks a provider's
+/// media APIs itself (`sven_tools_media`'s direct runs).
+#[must_use]
+pub fn http_client() -> reqwest::Client {
+    crate::build_http_client()
+}
+
 impl InvocationClient {
     /// `session` names the conversation outputs belong to; none makes them
     /// the key's own, kept for a while to be fetched.
@@ -274,7 +281,7 @@ impl InvocationClient {
     /// The service cannot be reached or refuses.
     pub async fn models(&self) -> anyhow::Result<Vec<ListedModel>> {
         let response = self
-            .get(format!("{}/models", self.base_url))
+            .get(format!("{}/models?output_modalities=all", self.base_url))
             .timeout(LIST_TIMEOUT)
             .send()
             .await

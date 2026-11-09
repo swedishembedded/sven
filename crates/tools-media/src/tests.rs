@@ -595,3 +595,63 @@ async fn outside_a_conversation_what_a_model_made_is_saved_in_the_working_direct
         outside.content
     );
 }
+
+#[tokio::test]
+async fn a_provider_of_its_own_is_called_directly_and_its_outputs_saved_here() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("car.png"), fixture::ONE_PIXEL_PNG).unwrap();
+    let tool = RunModelTool::new(
+        endpoint(&fake),
+        MediaConfig {
+            provider: Some("openrouter".into()),
+            ..MediaConfig::default()
+        },
+        dir.path().to_path_buf(),
+    );
+    let image = call(&tool, "c1", json!({"model": "google/gemini-nano-banana-2.1", "operation": "image", "prompt": "in snow", "inputs": ["car.png"], "params": {"aspect_ratio": "16:9"}})).await;
+    assert!(!image.is_error, "{}", image.content);
+    assert_eq!(
+        std::fs::read(dir.path().join(&image.artifacts[0].uri)).unwrap(),
+        fixture::ONE_PIXEL_PNG
+    );
+    assert!(image
+        .parts
+        .iter()
+        .any(|p| matches!(p, ToolOutputPart::Image(_))));
+    let speech = call(&tool, "c2", json!({"model": "openai/tts", "operation": "speech", "prompt": "my name is martin", "params": {"voice": "alloy", "format": "pcm"}})).await;
+    assert_eq!(speech.artifacts[0].mime_type, "audio/wav");
+    let wav = std::fs::read(dir.path().join(&speech.artifacts[0].uri)).unwrap();
+    assert_eq!(&wav[..4], b"RIFF");
+    let label = call(&tool, "c3", json!({"model": "vision/a", "operation": "chat", "prompt": "label it", "inputs": ["car.png"]})).await;
+    assert!(
+        label.content.starts_with("vision/a sees a red car"),
+        "{}",
+        label.content
+    );
+    let ran = fake.invoked.lock().unwrap().clone();
+    assert_eq!(ran[0].body["aspect_ratio"], json!("16:9"));
+    assert!(ran[0].body["input_references"][0]["image_url"]["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("data:image/png;base64,"));
+    assert_eq!(
+        (ran[1].body["input"].as_str(), ran[1].body["voice"].as_str()),
+        (Some("my name is martin"), Some("alloy"))
+    );
+    assert_eq!(
+        ran[2].body["messages"][0]["content"][1]["type"],
+        json!("image_url")
+    );
+    let handle = call(
+        &tool,
+        "c4",
+        json!({"model": "m", "operation": "image", "prompt": "x", "inputs": [handle_of(1)]}),
+    )
+    .await;
+    assert!(
+        handle.is_error && handle.content.contains("by path"),
+        "{}",
+        handle.content
+    );
+}

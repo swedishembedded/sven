@@ -35,6 +35,7 @@
 //! `seed`. A job that failed is asked again under a fresh name. Every other
 //! invocation is named by its call, so asking again is a new picture.
 
+mod direct;
 mod generate;
 mod handover;
 mod invocation;
@@ -602,19 +603,38 @@ impl Tool for RunModelTool {
             };
         }
         let output = args.get("output").and_then(Value::as_str);
-        match invocation::request(&self.workdir, args, operation) {
-            Ok(body) => {
-                invocation::run(
-                    &invoker(&self.endpoint, &self.config),
-                    &self.config,
-                    &self.workdir,
-                    &call.id,
-                    &body,
-                    output,
-                )
-                .await
-            }
-            Err(error) => ToolOutput::err(&call.id, error),
+        let body = match invocation::request(&self.workdir, args, operation) {
+            Ok(body) => body,
+            Err(error) => return ToolOutput::err(&call.id, error),
+        };
+        // A provider of its own (a bring-your-own key) is called directly;
+        // the sven service runs the invocation as the person.
+        let direct = self
+            .config
+            .provider
+            .as_deref()
+            .is_some_and(|p| p != sven_model_drivers::sven_service::PROVIDER);
+        if direct {
+            direct::run(
+                &self.endpoint,
+                &self.config,
+                &self.workdir,
+                &call.id,
+                &body,
+                output,
+            )
+            .await
+        } else {
+            let client = invoker(&self.endpoint, &self.config);
+            invocation::run(
+                &client,
+                &self.config,
+                &self.workdir,
+                &call.id,
+                &body,
+                output,
+            )
+            .await
         }
     }
 }

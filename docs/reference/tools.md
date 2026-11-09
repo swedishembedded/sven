@@ -350,6 +350,10 @@ outputs are files by handle ([media artifacts](../internals/media-artifacts.md))
   image is edited or passed to a vision model without anyone reading its bytes.
 - Elsewhere what it makes is saved under `tools.media.dir` (default
   `.sven/media`) and answered as a path.
+- With a provider of its own (`tools.media.provider` naming a
+  `providers.<name>` entry, e.g. a bring-your-own OpenRouter key) chat, image
+  and speech are asked of its own `/chat/completions`, `/images` and
+  `/audio/speech`, and inputs are paths; raw speech is saved as WAV.
 
 A generated raster image is also put in front of the session's own model when
 that model takes images; speech, music and video are not. Each call is its

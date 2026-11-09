@@ -411,7 +411,9 @@ the child's first message over ACP, every file named by handle), the child
 names its parent's conversation (`SVEN_MEDIA_SESSION`) and the files it makes
 come back with the parent's result (`sven.artifacts` in ACP `_meta`);
 `attach_file` fetches a handle into `.sven/files/` and shows it (not offered
-hosted, whose model already sees what its models make). Tests:
+hosted, whose model already sees what its models make); with a provider of
+its own, chat, image and speech go straight to its `/chat/completions`,
+`/images` and `/audio/speech`, outputs saved here. Tests:
 `cargo test -p sven-tools-media`, `cargo test -p sven-bootstrap --lib task_tool`.
 
 1. **History keeps handles (sven side built 2026-11-09).** What is left is a
@@ -422,10 +424,6 @@ hosted, whose model already sees what its models make). Tests:
    hosted allow list: a child is a second confined process with the host's
    key. Check: a hosted host test spawning a child that stays inside the
    sandbox and names only its parent's conversation.
-3. **A direct backend.** With a bring-your-own OpenRouter-compatible
-   provider, the same tools call its `/images`, `/audio/speech`, `/videos`
-   and `/chat/completions` and keep outputs as working-directory files.
-   Check: wire tests against `fake`.
 
 ### Phase 3 - voice, end to end (sven)
 

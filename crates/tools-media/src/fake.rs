@@ -16,6 +16,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use base64::Engine as _;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -143,7 +144,7 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                             .to_string()
                             .into_bytes(),
                     )
-                } else if method == "GET" && path == "/v1/models" {
+                } else if method == "GET" && path.split('?').next() == Some("/v1/models") {
                     let models = json!({"data": [
                         {"id": "google/gemini-nano-banana-2.1", "name": "Nano Banana 2.1", "architecture": {"input_modalities": ["image", "text"], "output_modalities": ["image", "text"]},
                          "pricing": {"image": "0.04"}, "supported_parameters": {"aspect_ratio": {"type": "enum", "values": ["1:1", "16:9"]}, "input_references": {"type": "range", "min": 0, "max": 14}}},
@@ -151,6 +152,44 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                         {"id": "vision/a", "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]}, "pricing": {"prompt": "0.000001", "completion": "0.000002"}}
                     ]});
                     (200, "application/json", models.to_string().into_bytes())
+                } else if method == "POST" && path == "/v1/images" {
+                    // OpenRouter's Image API, for a provider of its own.
+                    let body: Value = serde_json::from_slice(&body).unwrap();
+                    ran.lock().unwrap().push(Invocation {
+                        key: "direct".into(),
+                        session: None,
+                        body,
+                    });
+                    let image = base64::engine::general_purpose::STANDARD.encode(ONE_PIXEL_PNG);
+                    (
+                        200,
+                        "application/json",
+                        json!({"data": [{"b64_json": image, "media_type": "image/png"}]})
+                            .to_string()
+                            .into_bytes(),
+                    )
+                } else if method == "POST" && path == "/v1/audio/speech" {
+                    let body: Value = serde_json::from_slice(&body).unwrap();
+                    let pcm = body["response_format"] == "pcm";
+                    ran.lock().unwrap().push(Invocation {
+                        key: "direct".into(),
+                        session: None,
+                        body,
+                    });
+                    if pcm {
+                        (200, "audio/pcm", vec![0u8; 960])
+                    } else {
+                        (200, "audio/mpeg", b"ID3\x04\x00\x00mock".to_vec())
+                    }
+                } else if method == "POST" && path == "/v1/chat/completions" {
+                    let body: Value = serde_json::from_slice(&body).unwrap();
+                    let answer = json!({"choices": [{"message": {"role": "assistant", "content": format!("{} sees a red car", body["model"].as_str().unwrap_or("?"))}}]});
+                    ran.lock().unwrap().push(Invocation {
+                        key: "direct".into(),
+                        session: None,
+                        body,
+                    });
+                    (200, "application/json", answer.to_string().into_bytes())
                 } else if method == "POST" && path == "/v1/invocations" {
                     let body: Value = serde_json::from_slice(&body).unwrap();
                     let mut ran = ran.lock().unwrap();
