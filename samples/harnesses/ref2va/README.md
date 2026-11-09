@@ -63,7 +63,7 @@ sven harness validate samples/harnesses/ref2va
 sven harness run samples/harnesses/ref2va --workspace DIR --approvals auto \
     --input '{"prompt": "<Picture 1> turns toward the camera and says hello",
               "reference": "character.png", "model": "MiniMaxAI/MiniMax-H3",
-              "width": 640, "height": 352, "frames": 124, "seconds": 5.1667,
+              "width": 768, "height": 448, "frames": 124, "seconds": 5.1667,
               "steps": 4, "seed": 1, "preset": "turbo-4step-vsa",
               "licence_confirmed": true, "output": "result.mp4"}'
 ```
@@ -77,7 +77,10 @@ If a gate fails the run stops there, with the reason as the command's last
 line on standard error (a refusal from the video model arrives that way).
 Fix the cause and run the same command again: the checks that passed pass
 again at once and the render reattaches or is answered from the clip already
-written. Do not pass a short `--timeout`: it suspends the run after that many
+written. A render that has to load its model cold can outlast the
+`render` gate's one hour (the first MiniMax-H3 clip after a server start
+reads its weights from disk first); the run then fails with the job's step,
+and the same command reattaches to that job, which went on rendering. Do not pass a short `--timeout`: it suspends the run after that many
 seconds, and a render takes minutes.
 
 The inputs:
@@ -87,7 +90,7 @@ The inputs:
 | `prompt` | What the clip shows. Names the references by order within their kind: `<Picture 1>` is `reference`. |
 | `reference` | Workspace-relative path of the character image. |
 | `model` | The video model, as the server lists it, e.g. `MiniMaxAI/MiniMax-H3` (brain serves a model-store checkout under its repository name). |
-| `width`, `height` | The picture in pixels, a size the model renders (for MiniMax-H3 a multiple of its stride, e.g. 640 and 352). |
+| `width`, `height` | The picture in pixels, a size the model renders (for MiniMax-H3 a multiple of its stride, e.g. 768 and 448). |
 | `frames` | The exact frame count, on the model's frame grid: the model snaps any other count up, and the probe then refuses the clip. |
 | `seconds` | The length those frames make at the model's rate (124 frames at 24 fps is 5.1667 s). It is checked, not requested: the request sets the length by `frames`, and the model refuses one that sets it twice. |
 | `steps`, `seed` | Denoising steps; another seed is another take. |
