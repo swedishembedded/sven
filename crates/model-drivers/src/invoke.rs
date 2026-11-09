@@ -170,7 +170,13 @@ fn listed(entry: &Value) -> Option<ListedModel> {
             .into_iter()
             .take(500)
             .collect(),
-        parameters: entry["supported_parameters"].clone(),
+        // An image model's descriptors (enums, ranges) and reference limit
+        // when the service gives them; the parameter names otherwise.
+        parameters: if entry["image_parameters"].is_object() {
+            entry["image_parameters"].clone()
+        } else {
+            entry["supported_parameters"].clone()
+        },
     })
 }
 
@@ -403,6 +409,8 @@ mod tests {
         let vision = listed(&json!({ "id": "v", "architecture": { "input_modalities": ["text", "image"], "output_modalities": ["text"] } })).unwrap();
         assert_eq!(vision.operations(), ["chat"]);
         assert!(listed(&json!({ "id": "" })).is_none());
+        let served = listed(&json!({ "id": "i", "supported_parameters": ["n"], "image_parameters": { "parameters": {}, "max_references": 14 } })).unwrap();
+        assert_eq!(served.parameters["max_references"], json!(14));
     }
 
     #[test]
