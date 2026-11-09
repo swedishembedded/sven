@@ -22,6 +22,7 @@
 
 use serde_json::Value;
 
+mod artifact;
 mod conclusion;
 pub mod cost;
 pub mod goal;
@@ -36,6 +37,10 @@ pub mod turn;
 pub mod verify;
 pub mod wait;
 
+pub use artifact::{
+    ArtifactRef, ShownArtifacts, MAX_ARTIFACTS, MAX_ARTIFACT_MIME_BYTES, MAX_ARTIFACT_NAME_BYTES,
+    MAX_ARTIFACT_URI_BYTES, TOO_MANY_ARTIFACTS_NOTE,
+};
 pub use cost::Amount;
 pub use harness::{HarnessEvent, PublishedFile};
 pub use ledger::{
@@ -126,6 +131,11 @@ pub struct ToolOutput {
     /// never parked, so they shouldn't pay for `ParkedAnswer`'s size (it
     /// pushed the unboxed struct over clippy's `result_large_err` threshold).
     pub parked: Option<Box<ParkedAnswer>>,
+    /// The artifacts the tool made or names, by handle. A client shows them;
+    /// their bytes are never in the output. When a result carries artifacts
+    /// its inline images are for the model only (see
+    /// `SessionEvent::ToolCallFinished`).
+    pub artifacts: Vec<ArtifactRef>,
 }
 
 /// The answer a question gets when no person can answer it: a session with
@@ -200,6 +210,7 @@ impl ToolOutput {
             is_error: false,
             provenance: None,
             parked: None,
+            artifacts: Vec::new(),
         }
     }
 
@@ -214,6 +225,7 @@ impl ToolOutput {
             is_error: true,
             provenance: None,
             parked: None,
+            artifacts: Vec::new(),
         }
     }
 
@@ -235,6 +247,7 @@ impl ToolOutput {
             is_error: false,
             provenance: None,
             parked: Some(Box::new(ParkedAnswer { prompt, options })),
+            artifacts: Vec::new(),
         }
     }
 
@@ -243,6 +256,13 @@ impl ToolOutput {
     #[must_use]
     pub fn with_provenance(mut self, source: FactSource) -> Self {
         self.provenance = Some(Box::new(source));
+        self
+    }
+
+    /// Names the artifacts this result made or refers to, by handle.
+    #[must_use]
+    pub fn with_artifacts(mut self, artifacts: Vec<ArtifactRef>) -> Self {
+        self.artifacts = artifacts;
         self
     }
 
@@ -265,6 +285,7 @@ impl ToolOutput {
             is_error: false,
             provenance: None,
             parked: None,
+            artifacts: Vec::new(),
         }
     }
 
@@ -671,6 +692,12 @@ pub enum SessionEvent {
         /// an old client ignores it and an old host never sends it.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<ToolImage>,
+        /// The files the tool made or names, by handle (bounded, see
+        /// [`ShownArtifacts`]); what a client shows. When a result carries
+        /// artifacts, `images` is left empty: the tool's inline images are
+        /// for the model only. Omitted from the wire when empty.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        artifacts: Vec<ArtifactRef>,
     },
     /// A long-running tool is reporting incremental progress. Consumers
     /// should update the spinner/status bar without adding a chat segment.

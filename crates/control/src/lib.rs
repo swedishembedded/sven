@@ -28,7 +28,7 @@ pub mod remote;
 pub mod work;
 
 use serde::{Deserialize, Serialize};
-use sven_vocab::AgentMode;
+use sven_vocab::{AgentMode, ArtifactRef};
 use uuid::Uuid;
 
 // ── Operator → Agent commands ─────────────────────────────────────────────────
@@ -79,7 +79,7 @@ pub enum ControlCommand {
         /// Files the person attached to this input, held by the server and
         /// fetched from it by their `uri` (MCP's `files/authorizeDownload`).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        attachments: Vec<Attachment>,
+        attachments: Vec<ArtifactRef>,
         /// Sent while the session's turn runs, to steer it: the turn takes
         /// it at its next safe point (after the tool calls in flight, before
         /// the model's next step) and from there answers it as this input's
@@ -310,18 +310,10 @@ pub struct HistoryEntry {
     pub role: HistoryRole,
     /// The turn's text content, rendered flat for display.
     pub text: String,
-}
-
-/// A file attached to an input: the server's file value (MCP's file
-/// transfer extension), without the bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Attachment {
-    /// The server's URI of the file, e.g. `mcp-file://files/<id>`.
-    pub uri: String,
-    pub name: String,
-    #[serde(rename = "mimeType")]
-    pub mime_type: String,
-    pub size: u64,
+    /// The files of this turn, by handle (never their bytes), so a restored
+    /// conversation still names them. Absent from an older server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<ArtifactRef>,
 }
 
 // ── Supporting types ──────────────────────────────────────────────────────────
@@ -697,10 +689,12 @@ mod tests {
                 HistoryEntry {
                     role: HistoryRole::User,
                     text: "hello".into(),
+                    attachments: Vec::new(),
                 },
                 HistoryEntry {
                     role: HistoryRole::Assistant,
                     text: "hi there".into(),
+                    attachments: Vec::new(),
                 },
             ],
         };

@@ -24,11 +24,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use sven_bootstrap::Config;
-use sven_control::Attachment;
 use sven_frontend::SessionController;
 use sven_mcp_client::McpManager;
 use sven_model::ContentPart;
 use sven_tools_fs::AttachOptions;
+use sven_vocab::ArtifactRef;
 use uuid::Uuid;
 
 use super::SessionActor;
@@ -95,7 +95,7 @@ pub(super) async fn attach(
     mcp: &McpManager,
     working_dir: &Path,
     text: String,
-    attachments: &[Attachment],
+    attachments: &[ArtifactRef],
     images: Option<&AttachOptions>,
 ) -> Attached {
     if attachments.is_empty() {
@@ -123,10 +123,7 @@ pub(super) async fn attach(
                     ""
                 };
                 shown.extend(parts.unwrap_or_default());
-                format!(
-                    "\n- `{path}` ({}, {} bytes{seen})",
-                    file.mime_type, file.size
-                )
+                file.list_line(&path, seen)
             }
             Err(e) => {
                 tracing::warn!("attachment {}: {e:#}", file.uri);
@@ -168,7 +165,7 @@ impl SessionActor {
     pub(super) async fn with_attachments(
         &mut self,
         text: String,
-        attached: &[Attachment],
+        attached: &[ArtifactRef],
     ) -> anyhow::Result<Attached> {
         if attached.is_empty() {
             return Ok(Attached {
@@ -206,7 +203,7 @@ impl SessionActor {
 }
 
 /// Fetches `file`; its path relative to `working_dir`.
-async fn fetch(mcp: &McpManager, working_dir: &Path, file: &Attachment) -> anyhow::Result<String> {
+async fn fetch(mcp: &McpManager, working_dir: &Path, file: &ArtifactRef) -> anyhow::Result<String> {
     let id = file.uri.rsplit('/').next().unwrap_or_default();
     anyhow::ensure!(
         !id.is_empty()
@@ -362,8 +359,8 @@ mod tests {
         format!("{base}/mcp")
     }
 
-    fn attachment(uri: &str, name: &str) -> Attachment {
-        Attachment {
+    fn attachment(uri: &str, name: &str) -> ArtifactRef {
+        ArtifactRef {
             uri: uri.into(),
             name: name.into(),
             mime_type: "text/csv".into(),
@@ -462,7 +459,7 @@ mod tests {
             bytes: PNG,
         };
         let url = server_of(png, digest_of(PNG), Arc::new(Mutex::new(Vec::new()))).await;
-        let image = Attachment {
+        let image = ArtifactRef {
             uri: "mcp-file://files/f1".into(),
             name: "shot.png".into(),
             mime_type: "image/png".into(),

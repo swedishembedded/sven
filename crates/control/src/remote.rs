@@ -299,11 +299,13 @@ mod tests {
                     vec![
                         HistoryEntry {
                             role: HistoryRole::User,
-                            text: "hi".into()
+                            text: "hi".into(),
+                            attachments: Vec::new(),
                         },
                         HistoryEntry {
                             role: HistoryRole::Assistant,
-                            text: "hello".into()
+                            text: "hello".into(),
+                            attachments: Vec::new(),
                         },
                     ]
                 );
@@ -434,6 +436,7 @@ mod tests {
                             output: "Cargo.toml".into(),
                             is_error: false,
                             images: Vec::new(),
+                            artifacts: Vec::new(),
                         },
                         answer_id: None,
                     },
@@ -485,6 +488,7 @@ mod tests {
             output: "Image file: a.png".into(),
             is_error: false,
             images,
+            artifacts: Vec::new(),
         };
         assert_eq!(
             serde_json::to_value(finished(vec![sven_vocab::ToolImage {
@@ -501,6 +505,67 @@ mod tests {
         // A host from before the field sends no `images`.
         let old: SessionEvent = serde_json::from_value(plain).unwrap();
         assert_eq!(old, finished(Vec::new()));
+    }
+
+    #[test]
+    fn a_finished_call_carries_its_artifacts_on_the_wire_only_when_it_has_any() {
+        let finished = |artifacts| SessionEvent::ToolCallFinished {
+            call_id: "call_1".into(),
+            tool_name: "run_model".into(),
+            output: "made one image".into(),
+            is_error: false,
+            images: Vec::new(),
+            artifacts,
+        };
+        let sunset = sven_vocab::ArtifactRef {
+            uri: "mcp-file://files/f1".into(),
+            name: "sunset.png".into(),
+            mime_type: "image/png".into(),
+            size: 1234,
+        };
+        let json = serde_json::to_value(finished(vec![sunset.clone()])).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"ToolCallFinished": {"call_id": "call_1", "tool_name": "run_model",
+                "output": "made one image", "is_error": false,
+                "artifacts": [{"uri": "mcp-file://files/f1", "name": "sunset.png",
+                    "mimeType": "image/png", "size": 1234}]}})
+        );
+        assert_eq!(
+            serde_json::from_value::<SessionEvent>(json).unwrap(),
+            finished(vec![sunset])
+        );
+        // Without artifacts the field is absent, and a host from before the
+        // field sends none: both parse to an empty list.
+        let plain = serde_json::to_value(finished(Vec::new())).unwrap();
+        assert!(plain["ToolCallFinished"].get("artifacts").is_none());
+        let old: SessionEvent = serde_json::from_value(plain).unwrap();
+        assert_eq!(old, finished(Vec::new()));
+    }
+
+    #[test]
+    fn a_history_entry_keeps_its_attachments_only_when_it_has_any() {
+        let file = sven_vocab::ArtifactRef {
+            uri: "mcp-file://files/f1".into(),
+            name: "sunset.png".into(),
+            mime_type: "image/png".into(),
+            size: 1234,
+        };
+        let with = HistoryEntry {
+            role: HistoryRole::User,
+            text: "look".into(),
+            attachments: vec![file],
+        };
+        let json = serde_json::to_value(&with).unwrap();
+        assert_eq!(json["attachments"][0]["mimeType"], "image/png");
+        assert_eq!(serde_json::from_value::<HistoryEntry>(json).unwrap(), with);
+        // An older server sends no field; our own empty list sends none.
+        let old: HistoryEntry = serde_json::from_str(r#"{"role":"user","text":"look"}"#).unwrap();
+        assert!(old.attachments.is_empty());
+        assert!(serde_json::to_value(&old)
+            .unwrap()
+            .get("attachments")
+            .is_none());
     }
 
     #[test]

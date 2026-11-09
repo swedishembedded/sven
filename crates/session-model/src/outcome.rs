@@ -287,6 +287,7 @@ mod tests {
             output: "out".to_string(),
             is_error,
             images: Vec::new(),
+            artifacts: Vec::new(),
         }
     }
 

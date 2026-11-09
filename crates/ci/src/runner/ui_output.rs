@@ -819,6 +819,7 @@ mod tests {
                 output: "no such file".into(),
                 is_error: true,
                 images: Vec::new(),
+                artifacts: Vec::new(),
             },
             &mut st,
         );
@@ -916,6 +917,7 @@ mod tests {
                 output: "contents".into(),
                 is_error: false,
                 images: Vec::new(),
+                artifacts: Vec::new(),
             },
             &mut st,
         );

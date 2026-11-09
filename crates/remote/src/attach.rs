@@ -288,8 +288,9 @@ fn show_parts(shown: &mut Shown, parts: &[Value], streaming: bool, events: &mut 
                         .get("isError")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
-                    // The server's stored form of a tool result is text.
+                    // The server's stored form of a tool result is text, without handles.
                     images: Vec::new(),
+                    artifacts: Vec::new(),
                 });
             }
             "goal" => {
@@ -506,6 +507,7 @@ mod tests {
                     output: "README.md".into(),
                     is_error: false,
                     images: Vec::new(),
+                    artifacts: Vec::new(),
                 },
             ]
         );

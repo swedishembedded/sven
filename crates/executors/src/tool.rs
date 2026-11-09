@@ -556,18 +556,14 @@ impl EffectExecutor for ToolExecutor {
             // `Event::ToolFailed` below. Emitted after the result is in the
             // conversation, so an observer that keeps the conversation when a
             // call finishes (a host checkpointing mid-answer) keeps its result.
-            let shown = sven_vocab::ShownImages::from_parts(&output.parts);
-            let shown_output = if shown.note.is_empty() {
-                output.content.clone()
-            } else {
-                format!("{}\n{}", output.content, shown.note)
-            };
+            let finished = finished_view(&output);
             obs.emit(UiEvent::ToolCallFinished {
                 call_id: display_id,
                 tool_name: name.clone(),
-                output: shown_output,
+                output: finished.output,
                 is_error: output.is_error,
-                images: shown.images,
+                images: finished.images,
+                artifacts: finished.artifacts,
             });
 
             if output.is_error {
@@ -600,6 +596,37 @@ impl EffectExecutor for ToolExecutor {
                     .await;
             }
         });
+    }
+}
+
+/// What a client watching the session is told of a finished tool call: the
+/// result's text (with a note for anything left out for its bounds), and what
+/// it shows.
+struct FinishedView {
+    output: String,
+    images: Vec<sven_vocab::ToolImage>,
+    artifacts: Vec<sven_vocab::ArtifactRef>,
+}
+
+/// The client's view of `output`. Artifacts are what a client shows, so a
+/// result that carries any sends no inline images: those are for the model.
+fn finished_view(output: &ToolOutput) -> FinishedView {
+    let artifacts = sven_vocab::ShownArtifacts::from_artifacts(&output.artifacts);
+    let images = if output.artifacts.is_empty() {
+        sven_vocab::ShownImages::from_parts(&output.parts)
+    } else {
+        sven_vocab::ShownImages::default()
+    };
+    let mut text = output.content.clone();
+    for note in [&images.note, &artifacts.note] {
+        if !note.is_empty() {
+            text = format!("{text}\n{note}");
+        }
+    }
+    FinishedView {
+        output: text,
+        images: images.images,
+        artifacts: artifacts.artifacts,
     }
 }
 
@@ -1000,6 +1027,45 @@ mod tests {
         assert!(
             matches!(&parts[1], ToolContentPart::Image { image_url } if image_url == "data:image/png;base64,iVBO")
         );
+    }
+
+    /// A result that names artifacts shows a client those and none of its
+    /// inline images (which are for the model); too many are cut with a note.
+    #[test]
+    fn a_result_with_artifacts_shows_the_artifacts_and_no_images() {
+        let file = |n: usize| sven_vocab::ArtifactRef {
+            uri: format!("mcp-file://files/{n}"),
+            name: format!("{n}.png"),
+            mime_type: "image/png".into(),
+            size: 10,
+        };
+        let with_image = |artifacts| {
+            sven_tool_api::ToolOutput::with_parts(
+                "c",
+                vec![
+                    sven_tool_api::ToolOutputPart::Text("made".into()),
+                    sven_tool_api::ToolOutputPart::Image("data:image/png;base64,iVBO".into()),
+                ],
+            )
+            .with_artifacts(artifacts)
+        };
+        let view = super::finished_view(&with_image(vec![file(1)]));
+        assert_eq!(view.artifacts, vec![file(1)]);
+        assert!(view.images.is_empty());
+        assert_eq!(view.output, "made");
+
+        let many: Vec<_> = (0..sven_vocab::MAX_ARTIFACTS + 2).map(file).collect();
+        let view = super::finished_view(&with_image(many));
+        assert_eq!(view.artifacts.len(), sven_vocab::MAX_ARTIFACTS);
+        assert_eq!(
+            view.output,
+            format!("made\n{}", sven_vocab::TOO_MANY_ARTIFACTS_NOTE)
+        );
+
+        // Without artifacts the inline image is still carried.
+        let view = super::finished_view(&with_image(Vec::new()));
+        assert_eq!(view.images.len(), 1);
+        assert!(view.artifacts.is_empty());
     }
 
     /// A client watching the session sees the image a tool returned, not

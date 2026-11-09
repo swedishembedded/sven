@@ -17,7 +17,7 @@ use crate::client::{EnvironmentTaken, RemoteClient};
 
 /// The most events one upload carries.
 const BATCH_EVENTS: usize = 256;
-/// The most image and tool-output payload one upload gathers, so a batch of
+/// The most image, artifact-reference and tool-output payload one upload gathers, so a batch of
 /// image-carrying events stays under the server's 24 MB cap on an upload. One
 /// event is never split: it goes alone, and the most one carries (four images
 /// of 4 MiB, `sven_vocab::ShownImages`) is below the cap.
@@ -36,15 +36,29 @@ pub(super) enum Upload {
     Ack(u64),
 }
 
-/// What an upload counts of `upload` against [`BATCH_PAYLOAD_BYTES`]: the text
-/// and images of a finished tool call, the only events that can be large.
+/// What an upload counts of `upload` against [`BATCH_PAYLOAD_BYTES`]: the text,
+/// images and artifact references of a finished tool call, the only events
+/// that can be large.
 fn payload_bytes(upload: &Upload) -> usize {
     match upload {
         Upload::Event(event) => match event.as_ref() {
             ControlEvent::Session {
-                event: sven_vocab::SessionEvent::ToolCallFinished { output, images, .. },
+                event:
+                    sven_vocab::SessionEvent::ToolCallFinished {
+                        output,
+                        images,
+                        artifacts,
+                        ..
+                    },
                 ..
-            } => output.len() + images.iter().map(|i| i.data.len()).sum::<usize>(),
+            } => {
+                output.len()
+                    + images.iter().map(|i| i.data.len()).sum::<usize>()
+                    + artifacts
+                        .iter()
+                        .map(|a| a.uri.len() + a.name.len() + a.mime_type.len())
+                        .sum::<usize>()
+            }
             _ => 0,
         },
         Upload::Ack(_) => 0,
@@ -161,6 +175,7 @@ mod tests {
                     media_type: "image/png".into(),
                     data: "A".repeat(image_bytes),
                 }],
+                artifacts: Vec::new(),
             },
             answer_id: None,
         }))
@@ -169,6 +184,22 @@ mod tests {
     #[test]
     fn a_finished_call_weighs_its_text_and_images() {
         assert_eq!(payload_bytes(&finished("abc", 10)), 13);
+        let mut with_artifact = finished("abc", 0);
+        if let Upload::Event(event) = &mut with_artifact {
+            if let ControlEvent::Session {
+                event: SessionEvent::ToolCallFinished { artifacts, .. },
+                ..
+            } = event.as_mut()
+            {
+                artifacts.push(sven_vocab::ArtifactRef {
+                    uri: "mcp-file://files/f1".into(),
+                    name: "a.png".into(),
+                    mime_type: "image/png".into(),
+                    size: 5,
+                });
+            }
+        }
+        assert_eq!(payload_bytes(&with_artifact), 3 + 19 + 5 + 9);
         assert_eq!(payload_bytes(&Upload::Ack(3)), 0);
     }
 

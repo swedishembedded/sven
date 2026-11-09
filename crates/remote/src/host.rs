@@ -509,7 +509,7 @@ impl SessionActor {
         }
     }
 
-    async fn answer(&mut self, text: String, attached: &[sven_control::Attachment]) {
+    async fn answer(&mut self, text: String, attached: &[sven_vocab::ArtifactRef]) {
         println!("[{}] > {}", self.short(), printable(first_line(&text)));
         // The server asking again for the answer this host was stopped in
         // the middle of: continue it, rather than start it over.
@@ -1075,6 +1075,7 @@ mod tests {
         HistoryEntry {
             role,
             text: text.into(),
+            attachments: Vec::new(),
         }
     }
 

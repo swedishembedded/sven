@@ -150,6 +150,7 @@ fn tool_call_finished_becomes_tool_call() {
         output: "ok".into(),
         is_error: false,
         images: Vec::new(),
+        artifacts: Vec::new(),
     };
     assert!(matches!(
         agent_event_to_session_update(&ev),

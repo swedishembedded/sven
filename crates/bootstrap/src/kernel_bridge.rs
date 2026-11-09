@@ -469,6 +469,7 @@ mod tests {
             output: "ok".into(),
             is_error: false,
             images: Vec::new(),
+            artifacts: Vec::new(),
         });
         sink.emit(UiEvent::TextComplete("done".into()));
         sink.emit(UiEvent::TurnComplete);

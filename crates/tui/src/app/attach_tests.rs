@@ -67,6 +67,7 @@ async fn a_message_sent_elsewhere_and_its_answer_are_drawn_as_if_they_ran_here()
             output: "README.md".into(),
             is_error: false,
             images: Vec::new(),
+            artifacts: Vec::new(),
         },
     )
     .await;

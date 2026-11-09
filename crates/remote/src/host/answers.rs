@@ -34,7 +34,7 @@ pub(super) struct Input {
     pub text: String,
     pub answer_id: Option<String>,
     /// Files the person attached ([`super::attachments`]).
-    pub attachments: Vec<sven_control::Attachment>,
+    pub attachments: Vec<sven_vocab::ArtifactRef>,
     /// Steers the running turn instead of waiting for it to end.
     pub steer: bool,
 }

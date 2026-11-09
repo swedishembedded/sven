@@ -56,6 +56,7 @@ fn tool_finished(id: &str, output: &str) -> sven_machines::AgentEvent {
         output: output.into(),
         is_error: false,
         images: Vec::new(),
+        artifacts: Vec::new(),
     }
 }
 

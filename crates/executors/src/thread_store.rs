@@ -682,7 +682,9 @@ pub(crate) fn append_messages(store: &Mutex<ThreadStore>, thread_id: &str, messa
 /// as the session's own messages: the remote-control protocol's flat turns
 /// (`sven_control::HistoryEntry`), oldest first. A tool turn is dropped: it is
 /// only meaningful next to the call that made it, which a flat history cannot
-/// carry, and the answer that used it says enough.
+/// carry, and the answer that used it says enough. A turn's files are listed
+/// after its text by handle ([`sven_vocab::ArtifactRef::handles_note`]), never
+/// fetched, so the agent can pass them on.
 #[must_use]
 pub fn history_messages(
     entries: impl IntoIterator<Item = sven_control::HistoryEntry>,
@@ -690,10 +692,13 @@ pub fn history_messages(
     use sven_control::HistoryRole;
     entries
         .into_iter()
-        .filter_map(|entry| match entry.role {
-            HistoryRole::User => Some(Message::user(entry.text)),
-            HistoryRole::Assistant => Some(Message::assistant(entry.text)),
-            HistoryRole::Tool | HistoryRole::System => None,
+        .filter_map(|entry| {
+            let text = entry.text + &sven_vocab::ArtifactRef::handles_note(&entry.attachments);
+            match entry.role {
+                HistoryRole::User => Some(Message::user(text)),
+                HistoryRole::Assistant => Some(Message::assistant(text)),
+                HistoryRole::Tool | HistoryRole::System => None,
+            }
         })
         .collect()
 }
@@ -708,18 +713,30 @@ mod tests {
             HistoryEntry {
                 role: HistoryRole::User,
                 text: "hi".into(),
+                attachments: vec![sven_vocab::ArtifactRef {
+                    uri: "mcp-file://files/f1".into(),
+                    name: "sunset.png".into(),
+                    mime_type: "image/png".into(),
+                    size: 1234,
+                }],
             },
             HistoryEntry {
                 role: HistoryRole::Tool,
                 text: "ls output".into(),
+                attachments: Vec::new(),
             },
             HistoryEntry {
                 role: HistoryRole::Assistant,
                 text: "hello".into(),
+                attachments: Vec::new(),
             },
         ]);
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].as_text(), Some("hi"));
+        // The handle is in the text, so the agent can pass the file on.
+        assert_eq!(
+            messages[0].as_text(),
+            Some("hi\n\n(Files of this message:\n- `sunset.png` (image/png, 1234 bytes): mcp-file://files/f1)")
+        );
         assert_eq!(messages[1].as_text(), Some("hello"));
     }
 
