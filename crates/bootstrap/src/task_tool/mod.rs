@@ -130,6 +130,147 @@ pub const CAPABILITY_META_KEY: &str = "sven.capability";
 /// parent relays them with its own result and its client shows them.
 pub const ARTIFACTS_META_KEY: &str = "sven.artifacts";
 
+/// What a parent held to an allow list (`tools.only`: a hosted session)
+/// hands its sub-agent before anything else, as one JSON line on its stdin
+/// (`sven acp serve --parent-terms-stdin`): the same allow list without
+/// `task`, the same web and location limits, no MCP server of its own, and
+/// the endpoints and key the parent itself works with. A child is never
+/// given more than its parent has, and the key never reaches a file or an
+/// environment variable.
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ParentTerms {
+    pub only_tools: Vec<String>,
+    pub web_public_only: bool,
+    pub hide_locations: bool,
+    pub system_prompt: Option<String>,
+    /// The parent's model endpoint (an OpenAI-style base URL and its key).
+    pub model: Option<TermsEndpoint>,
+    /// The provider the parent names its models under (`openai/<model>`),
+    /// which a model the child is told to use is named without.
+    pub model_provider: String,
+    /// Where the parent runs other models, and the conversation it names.
+    pub media: Option<TermsEndpoint>,
+    pub media_session: Option<String>,
+    /// The service the parent searches the web through.
+    pub search: Option<TermsEndpoint>,
+}
+
+/// An endpoint and its key, as [`ParentTerms`] carries one.
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TermsEndpoint {
+    pub base_url: String,
+    pub api_key: String,
+}
+
+impl std::fmt::Debug for TermsEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TermsEndpoint")
+            .field("base_url", &self.base_url)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for ParentTerms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParentTerms")
+            .field("only_tools", &self.only_tools)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ParentTerms {
+    /// The terms `config` (a session's own) holds its sub-agents to, when it
+    /// is held to an allow list; none otherwise, and the child reads its own.
+    #[must_use]
+    pub fn of(config: &crate::Config) -> Option<Self> {
+        let only = config.tools.only.as_ref()?;
+        let endpoint =
+            |base_url: &Option<String>, api_key: &Option<String>| match (base_url, api_key) {
+                (Some(base_url), Some(api_key)) => Some(TermsEndpoint {
+                    base_url: base_url.clone(),
+                    api_key: api_key.clone(),
+                }),
+                _ => None,
+            };
+        let media = config.media_endpoint();
+        Some(Self {
+            only_tools: only
+                .iter()
+                .filter(|name| name.as_str() != "task")
+                .cloned()
+                .collect(),
+            web_public_only: config.tools.web.public_only,
+            hide_locations: config.tools.hide_locations,
+            system_prompt: config.agent.system_prompt.clone(),
+            model: endpoint(&config.model.base_url, &config.model.api_key),
+            model_provider: config.model.provider.clone(),
+            media: media.as_ref().map(|(e, _)| TermsEndpoint {
+                base_url: e.base_url.clone(),
+                api_key: e.api_key.clone(),
+            }),
+            media_session: media.and_then(|(_, c)| c.session),
+            search: config
+                .tools
+                .web
+                .search
+                .sven
+                .as_ref()
+                .map(|e| TermsEndpoint {
+                    base_url: e.base_url.clone(),
+                    api_key: e.api_key.clone(),
+                }),
+        })
+    }
+
+    /// The name `model` (as a parent names it, perhaps `provider/model`) has
+    /// at the parent's endpoint.
+    #[must_use]
+    pub fn model_name<'a>(&self, model: &'a str) -> &'a str {
+        model
+            .strip_prefix(&format!("{}/", self.model_provider))
+            .unwrap_or(model)
+    }
+
+    /// `config` (the child's) held to these terms: each only narrows what it
+    /// would have, and the endpoints are the parent's.
+    pub fn apply(&self, config: &mut crate::Config) {
+        config.tools.only = Some(
+            self.only_tools
+                .iter()
+                .filter(|name| name.as_str() != "task")
+                .cloned()
+                .collect(),
+        );
+        config.mcp_servers.clear();
+        config.tools.web.public_only |= self.web_public_only;
+        config.tools.hide_locations |= self.hide_locations;
+        if self.system_prompt.is_some() {
+            config.agent.system_prompt.clone_from(&self.system_prompt);
+        }
+        if let Some(model) = &self.model {
+            config.model.provider = "openai".into();
+            config.model.base_url = Some(model.base_url.clone());
+            config.model.api_key = Some(model.api_key.clone());
+        }
+        if let Some(media) = &self.media {
+            config.tools.media.provider = None;
+            config.tools.media.service = Some(sven_tools_media::MediaEndpoint {
+                base_url: media.base_url.clone(),
+                api_key: media.api_key.clone(),
+            });
+        }
+        config.tools.media.session.clone_from(&self.media_session);
+        if let Some(search) = &self.search {
+            config.tools.web.search.sven = Some(sven_tools_web::SvenEndpoint {
+                base_url: search.base_url.clone(),
+                api_key: search.api_key.clone(),
+            });
+        }
+    }
+}
+
 // ── TaskTool ─────────────────────────────────────────────────────────────────
 
 pub struct TaskTool {
@@ -185,6 +326,8 @@ pub struct TaskTool {
         sven_tools_media::MediaEndpoint,
         sven_tools_media::MediaConfig,
     )>,
+    /// What a parent held to an allow list hands each child (`ParentTerms`).
+    terms: Option<ParentTerms>,
 }
 
 impl TaskTool {
@@ -210,6 +353,7 @@ impl TaskTool {
             disabled_tools: Vec::new(),
             command_patterns: None,
             media: None,
+            terms: None,
             chunks: None,
             ledger: Arc::default(),
             subgoals: Arc::default(),
@@ -292,6 +436,13 @@ impl TaskTool {
         )>,
     ) -> Self {
         self.media = media;
+        self
+    }
+
+    /// Holds each child to `terms` (its parent's allow list and endpoints).
+    #[must_use]
+    pub fn with_parent_terms(mut self, terms: Option<ParentTerms>) -> Self {
+        self.terms = terms;
         self
     }
 
@@ -752,6 +903,7 @@ impl Tool for TaskTool {
             prompt: format!("{prompt}{}", handed.note),
             images: handed.images,
             media_session: self.media.as_ref().and_then(|(_, c)| c.session.clone()),
+            parent_terms: self.terms.clone(),
             description: description.clone(),
             mode: acp_mode,
             contract: ChildRunContract {
@@ -831,6 +983,67 @@ mod tests {
 
     use super::{resolve_mode_and_prompt, TaskTool};
     use sven_vocab::{AgentMode, ApprovalMode};
+
+    /// A parent held to an allow list (a hosted session) holds its children
+    /// to the same list without `task`, and hands them its own endpoints;
+    /// a parent held to none hands nothing, and its child reads its own.
+    #[test]
+    fn a_child_is_held_to_its_parents_allow_list_and_endpoints() {
+        let mut parent = crate::Config::default();
+        use super::ParentTerms;
+        assert!(ParentTerms::of(&parent).is_none());
+        parent.tools.only = Some(vec!["web_search".into(), "run_model".into(), "task".into()]);
+        parent.tools.web.public_only = true;
+        parent.tools.hide_locations = true;
+        parent.model.base_url = Some("https://sven.example/v1".into());
+        parent.model.api_key = Some("host-key".into());
+        parent.model.provider = "openai".into();
+        parent.tools.media.service = Some(sven_tools_media::MediaEndpoint {
+            base_url: "https://sven.example/v1".into(),
+            api_key: "host-key".into(),
+        });
+        parent.tools.media.session = Some("conv-1".into());
+        let terms = ParentTerms::of(&parent).expect("a held parent hands terms");
+        assert_eq!(terms.only_tools, ["web_search", "run_model"]);
+        // Never the key in its debug form (a log line).
+        assert!(!format!("{terms:?}").contains("host-key"));
+        assert_eq!(terms.model_name("openai/e2e/agent"), "e2e/agent");
+        assert_eq!(terms.model_name("e2e/agent"), "e2e/agent");
+
+        let mut child: crate::Config = serde_yaml::from_str(
+            "mcp_servers:\n  local: {transport: {type: stdio, command: /bin/true}}\n",
+        )
+        .unwrap();
+        terms.apply(&mut child);
+        assert_eq!(
+            child.tools.only.as_deref(),
+            Some(&["web_search".to_owned(), "run_model".to_owned()][..])
+        );
+        assert!(
+            child.mcp_servers.is_empty()
+                && child.tools.web.public_only
+                && child.tools.hide_locations
+        );
+        assert_eq!(
+            (
+                child.model.provider.as_str(),
+                child.model.api_key.as_deref()
+            ),
+            ("openai", Some("host-key"))
+        );
+        let (media, config) = child
+            .media_endpoint()
+            .expect("models run at the parent's service");
+        assert_eq!(
+            (media.api_key.as_str(), config.session.as_deref()),
+            ("host-key", Some("conv-1"))
+        );
+        // Terms that somehow named `task` still give the child none.
+        let mut sneaky = terms.clone();
+        sneaky.only_tools.push("task".into());
+        sneaky.apply(&mut child);
+        assert!(!child.tools.only.unwrap().contains(&"task".to_owned()));
+    }
 
     fn make_task() -> TaskTool {
         make_task_with_agents(SharedAgents::empty())

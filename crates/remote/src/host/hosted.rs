@@ -27,6 +27,10 @@ pub const HOSTED_TOOLS: &[&str] = &[
     "models",
     "model_schema",
     "run_model",
+    // Sub-agents: this binary again, inside the same confinement, held to
+    // this allow list (without `task`) and this session's endpoints and key,
+    // handed over on its stdin.
+    "task",
 ];
 
 /// The system prompt of a hosted conversation when the site configures none

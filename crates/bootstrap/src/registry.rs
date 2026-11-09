@@ -464,7 +464,9 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
             )
             .with_approver(p.approver, p.approval_mode)
             .with_disabled_tools(p.cfg.tools.disabled.clone())
-            .with_command_patterns(&p.cfg.tools),
+            .with_command_patterns(&p.cfg.tools)
+            .with_media(p.cfg.media_endpoint())
+            .with_parent_terms(crate::task_tool::ParentTerms::of(p.cfg)),
         );
     }
 
@@ -527,7 +529,8 @@ fn build_profile_research(
         .with_approver(integrations.approver.clone(), integrations.approval_mode)
         .with_disabled_tools(cfg.tools.disabled.clone())
         .with_command_patterns(&cfg.tools)
-        .with_media(cfg.media_endpoint()),
+        .with_media(cfg.media_endpoint())
+        .with_parent_terms(crate::task_tool::ParentTerms::of(cfg)),
     );
 
     reg

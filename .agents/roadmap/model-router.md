@@ -413,17 +413,15 @@ come back with the parent's result (`sven.artifacts` in ACP `_meta`);
 `attach_file` fetches a handle into `.sven/files/` and shows it (not offered
 hosted, whose model already sees what its models make); with a provider of
 its own, chat, image and speech go straight to its `/chat/completions`,
-`/images` and `/audio/speech`, outputs saved here. Tests:
+`/images` and `/audio/speech`, outputs saved here; hosted sessions spawn
+sub-agents held to their allow list and endpoints (`ParentTerms` on the
+child's stdin), inside the host's Landlock domain, which admits running its
+own program file and nothing beside it. Tests:
 `cargo test -p sven-tools-media`, `cargo test -p sven-bootstrap --lib task_tool`.
 
 1. **History keeps handles (sven side built 2026-11-09).** What is left is a
    live check: a restored hosted conversation edits an image of an earlier
    turn by its handle. Check: the server's `test/e2e/rc`.
-2. **Sub-agents in hosted sessions.** `task` (with `inputs`, the parent's
-   conversation and its files relayed back; built 2026-11-09) is not in the
-   hosted allow list: a child is a second confined process with the host's
-   key. Check: a hosted host test spawning a child that stays inside the
-   sandbox and names only its parent's conversation.
 
 ### Phase 3 - voice, end to end (sven)
 

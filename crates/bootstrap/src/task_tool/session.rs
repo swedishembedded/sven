@@ -214,6 +214,8 @@ pub(super) struct SpawnArgs {
     /// The conversation of the sven service its models' outputs belong to:
     /// the parent's.
     pub(super) media_session: Option<String>,
+    /// The terms it is held to, written to its stdin before anything else.
+    pub(super) parent_terms: Option<super::ParentTerms>,
     pub(super) description: String,
     pub(super) mode: String,
     /// What the child may do, and until when.
@@ -551,6 +553,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         prompt,
         images,
         media_session,
+        parent_terms,
         description,
         mode,
         contract,
@@ -574,6 +577,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         &terms,
         std::time::Instant::now(),
     ))
+    .args(parent_terms.is_some().then_some("--parent-terms-stdin"))
     .env(SUBAGENT_DEPTH_ENV, depth.to_string())
     .env_remove(sven_tools_media::MEDIA_SESSION_ENV)
     .stdin(std::process::Stdio::piped())
@@ -601,7 +605,20 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         buffer_store.lock().await.set_pid(&handle_id, pid);
     }
 
-    let child_stdin = child.stdin.take().expect("stdin piped");
+    let mut child_stdin = child.stdin.take().expect("stdin piped");
+    // A child held to its parent's terms reads them first, before ACP.
+    if let Some(terms) = &parent_terms {
+        use tokio::io::AsyncWriteExt;
+        let mut line = serde_json::to_vec(terms).unwrap_or_default();
+        line.push(b'\n');
+        if let Err(e) = child_stdin.write_all(&line).await {
+            let _ = child.kill().await;
+            return ToolOutput::err(
+                &call_id,
+                format!("the sub-agent could not be given its terms: {e}"),
+            );
+        }
+    }
     let child_stdout = child.stdout.take().expect("stdout piped");
     let child_stderr = child.stderr.take().expect("stderr piped");
 

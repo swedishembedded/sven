@@ -933,7 +933,7 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            ["skill", "web_fetch", "web_search"],
+            ["skill", "task", "web_fetch", "web_search"],
             "every hosted tool is a real one, and nothing else is offered"
         );
     }
@@ -974,6 +974,7 @@ mod tests {
                 "models",
                 "run_model",
                 "skill",
+                "task",
                 "web_fetch",
                 "web_search"
             ]

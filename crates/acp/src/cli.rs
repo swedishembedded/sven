@@ -89,7 +89,42 @@ pub enum AcpCommands {
         /// session store (`<root>/.sven/context/<session id>`) is accepted.
         #[arg(long, value_name = "DIR", value_parser = sven_bootstrap::evidence_store_path)]
         evidence_store: Option<std::path::PathBuf>,
+
+        /// Read the parent's terms (`ParentTerms`, one JSON line) from stdin
+        /// before serving: its allow list, its limits and the endpoints and
+        /// key it works with, which this server is then held to. The `task`
+        /// tool of a parent held to an allow list (a hosted session) sends
+        /// them, so the key never reaches a file or the environment.
+        #[arg(long)]
+        parent_terms_stdin: bool,
     },
+}
+
+/// The most a parent's terms line may hold.
+const MAX_TERMS_BYTES: usize = 64 * 1024;
+
+/// The parent's terms, from the first line of stdin, read a byte at a time so
+/// that nothing of the ACP stream after it is consumed.
+fn read_parent_terms() -> anyhow::Result<sven_bootstrap::task_tool::ParentTerms> {
+    use std::io::Read;
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    let mut stdin = std::io::stdin().lock();
+    loop {
+        anyhow::ensure!(
+            stdin.read(&mut byte)? == 1,
+            "stdin ended before the parent's terms"
+        );
+        if byte[0] == b'\n' {
+            break;
+        }
+        anyhow::ensure!(
+            line.len() < MAX_TERMS_BYTES,
+            "the parent's terms are longer than {MAX_TERMS_BYTES} bytes"
+        );
+        line.push(byte[0]);
+    }
+    Ok(serde_json::from_slice(&line)?)
 }
 
 /// Shell-command patterns a parent hands its sub-agent (`--command-patterns`).
@@ -147,9 +182,18 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             approval,
             command_patterns,
             evidence_store,
+            parent_terms_stdin,
         } => {
             let mut config = sven_bootstrap::Config::load(None)?;
             sven_bootstrap::connectors::add_signed_in(&mut config);
+            // Held to a parent's terms: its memory, which will hold the
+            // parent's key, is kept from other processes first.
+            let terms = if *parent_terms_stdin {
+                sven_tools_exec::confine::keep_memory_private()?;
+                Some(read_parent_terms()?)
+            } else {
+                None
+            };
             if let Some(ref name) = model {
                 config.model = config.resolve_model(name);
             }
@@ -167,6 +211,13 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                 config.tools.auto_approve_patterns = patterns.auto_approve.clone();
             }
             config.context.evidence_store = evidence_store.clone();
+            if let Some(terms) = &terms {
+                terms.apply(&mut config);
+                // The parent's model, by the name its endpoint knows it by.
+                if let (Some(_), Some(name)) = (&terms.model, model) {
+                    config.model.name = terms.model_name(name).to_owned();
+                }
+            }
             let permission_timeout = permission_timeout_secs.map_or(
                 crate::agent::DEFAULT_PERMISSION_TIMEOUT,
                 std::time::Duration::from_secs,

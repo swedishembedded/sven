@@ -9,9 +9,11 @@
 //! for the case that one of them, or sven itself, does: the kernel refuses
 //! every access to the file system outside the host's sandbox directory,
 //! except reading what any program needs to run and reach the network (TLS
-//! roots, name resolution, time zones, system libraries) and the skills
-//! installed for everyone (`/usr/share/sven/skills`, read-only) - none of
-//! which holds anyone's data. An account's own skills are in its sandbox.
+//! roots, name resolution, time zones, system libraries), the skills
+//! installed for everyone (`/usr/share/sven/skills`, read-only) and its own
+//! program file (read and run, to start a sub-agent inside the same walls) -
+//! none of which holds anyone's data. An account's own skills are in its
+//! sandbox.
 //!
 //! The kernel also refuses every TCP bind and every TCP connect except to the
 //! ports the host needs (name resolution, the web tools, the server it
@@ -72,11 +74,24 @@ pub fn confine(sandbox: &Path, server_ports: &[u16]) -> anyhow::Result<()> {
             SYSTEM_READ_ONLY,
             AccessFs::from_read(abi),
         ))?
+        // Its own program, read and run, and nothing beside it: a sub-agent
+        // is this binary started again, inside this same confinement.
+        .add_rules(path_beneath_rules(own_program(), AccessFs::from_read(abi)))?
         .add_rules(WEB_PORTS.iter().chain(server_ports).map(|port| {
             Ok::<_, landlock::RulesetError>(NetPort::new(*port, AccessNet::ConnectTcp))
         }))?
         .restrict_self()?;
     require_full(status.ruleset, status.no_new_privs)
+}
+
+/// The file this process runs from, when it can be named; a sub-agent is
+/// started from it. Only that file: the directory it is in may hold others.
+#[cfg(target_os = "linux")]
+fn own_program() -> Vec<std::path::PathBuf> {
+    std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .into_iter()
+        .collect()
 }
 
 /// A partly enforced rule set is no confinement: the host must not run.
@@ -178,6 +193,13 @@ mod tests {
             std::fs::write(std::env::temp_dir().join("sven-sandbox-escape"), "x"),
             "writing the shared temp directory",
         );
+
+        // Its own program it may read (and so run again, as a sub-agent);
+        // nothing beside it in the same directory.
+        let own = std::env::current_exe().unwrap().canonicalize().unwrap();
+        assert!(std::fs::File::open(&own).is_ok(), "reading its own program");
+        let beside = std::fs::read_dir(own.parent().unwrap());
+        assert!(beside.is_err(), "listing the directory of its own program");
 
         // A program it starts is confined too.
         match Command::new("/bin/cat").arg(outside).output() {
