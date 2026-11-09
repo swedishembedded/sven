@@ -90,6 +90,12 @@ pub struct ToolsConfig {
     /// never read from a configuration file.
     #[serde(skip)]
     pub confine: Option<sven_tools_exec::confine::CommandConfinement>,
+    /// The `skill` tool never says where a skill is on this machine, only
+    /// its files' paths relative to it. Set by sven itself for a hosted host
+    /// (`restrict_to_hosted`), whose paths are the server's, never read from
+    /// a configuration file.
+    #[serde(skip)]
+    pub hide_locations: bool,
 }
 
 impl ToolsConfig {
@@ -160,6 +166,7 @@ impl Default for ToolsConfig {
             disclosure: DisclosureConfig::default(),
             path_prefix: Vec::new(),
             confine: None,
+            hide_locations: false,
         }
     }
 }

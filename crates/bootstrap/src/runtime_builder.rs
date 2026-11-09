@@ -702,6 +702,7 @@ impl RuntimeBuilder {
                 deferred,
                 skill_ranker,
                 skills: runtime.skills.clone(),
+                hide_skill_locations: self.config.tools.hide_locations,
                 disabled: &self.config.tools.disabled,
                 only: self.config.tools.only.as_deref(),
             },

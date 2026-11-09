@@ -8,15 +8,21 @@
 //! - `list` - list available skills, optionally filtered by a regex.
 //! - `search` - the skills that best match a query, ranked like tool search.
 //!
+//! - `read` - one of a skill's bundled files (`references/x.md`), by its path
+//!   relative to the skill, never outside the skill's own directory.
+//!
 //! The model calls `load` after recognising that a user request matches one
 //! of the skills shown by `list` or listed in the system prompt's
 //! `<available_skills>` block.  The `load` action returns:
 //!
 //! - The full SKILL.md body (everything after the frontmatter fence).
-//! - The absolute path to the skill directory so the model can resolve bundled
-//!   resources (`scripts/`, `references/`, `assets/`) relative to it.
-//! - A sampled listing of up to `MAX_BUNDLED_FILES` bundled file paths so
-//!   the model knows what resources are available without reading them all.
+//! - The skill's bundled files (`scripts/`, `references/`, `assets/`), up to
+//!   `MAX_BUNDLED_FILES`, each by its path relative to the skill, which
+//!   `read` takes.
+//! - The skill's directory on this machine, so a shell can run its scripts,
+//!   unless locations are hidden ([`SkillTool::hiding_locations`]): a hosted
+//!   host's sandbox path says how the server lays out its accounts, which is
+//!   nobody's business, and its sessions have no shell to use it with.
 //! - A compact navigation hint listing **direct child sub-skills** (name +
 //!   one-line description) when the skill has nested skill packages below it.
 
@@ -38,6 +44,9 @@ use sven_tool_api::tool::{Tool, ToolCall, ToolOutput};
 /// Maximum number of bundled file paths to list in the tool response.
 const MAX_BUNDLED_FILES: usize = 20;
 
+/// The most of a bundled file `read` returns.
+const MAX_READ_BYTES: u64 = 256 * 1024;
+
 /// Build the static description string for the tool, listing available skills.
 fn build_description(skills: &[SkillInfo]) -> String {
     if skills.is_empty() {
@@ -49,12 +58,13 @@ fn build_description(skills: &[SkillInfo]) -> String {
     // The skills themselves are listed once, in the system prompt's
     // `<available_skills>` block; repeating them here would charge for the
     // list twice on every request.
-    "Load, list or search agent skills. action: load | list | search\n\
-     load: returns a skill's SKILL.md body, its base directory and bundled files. Use it \
+    "Load, list, search or read agent skills. action: load | list | search | read\n\
+     load: returns a skill's SKILL.md body and its bundled files. Use it \
      when the request matches an entry of <available_skills> in the system prompt; \
      pass the entry's <command> as `name`.\n\
      list: skills whose command, name or description matches the `regex` (empty lists all).\n\
-     search: the skills that best match a `query`, best first."
+     search: the skills that best match a `query`, best first.\n\
+     read: one of a skill's bundled files: `name` and the file's `path` as load lists it."
         .to_string()
 }
 
@@ -102,6 +112,8 @@ pub struct SkillTool {
     description: String,
     /// Orders the skills `search` returns; BM25 unless replaced.
     ranker: Arc<dyn ToolRanker>,
+    /// Whether `load` leaves out where a skill is on this machine.
+    hide_locations: bool,
 }
 
 impl SkillTool {
@@ -112,7 +124,17 @@ impl SkillTool {
             skills,
             description,
             ranker: Arc::new(Bm25Ranker),
+            hide_locations: false,
         }
+    }
+
+    /// Never says where a skill is on this machine: for a host whose paths
+    /// are the server's own (`sven rc --hosted`). Its files are still listed,
+    /// and read, by their paths relative to the skill.
+    #[must_use]
+    pub fn hiding_locations(mut self, hide: bool) -> Self {
+        self.hide_locations = hide;
+        self
     }
 
     /// Orders `search` results with `ranker` instead of BM25.
@@ -143,12 +165,16 @@ impl Tool for SkillTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["load", "list", "search"],
-                    "description": "load, list or search"
+                    "enum": ["load", "list", "search", "read"],
+                    "description": "load, list, search or read"
                 },
                 "name": {
                     "type": "string",
-                    "description": "[load] The skill's command, e.g. \"sven/plan\""
+                    "description": "[load, read] The skill's command, e.g. \"sven/plan\""
+                },
+                "path": {
+                    "type": "string",
+                    "description": "[read] A bundled file's path as load lists it, e.g. \"references/guide.md\""
                 },
                 "regex": {
                     "type": "string",
@@ -181,9 +207,10 @@ impl Tool for SkillTool {
             "load" => self.exec_load(call).await,
             "list" => self.exec_list(call).await,
             "search" => self.exec_search(call).await,
+            "read" => self.exec_read(call).await,
             other => ToolOutput::err(
                 &call.id,
-                format!("unknown action '{other}'. Valid: load, list, search"),
+                format!("unknown action '{other}'. Valid: load, list, search, read"),
             ),
         }
     }
@@ -222,14 +249,7 @@ impl SkillTool {
             }
         };
 
-        let mut bundled_files: Vec<String> = Vec::new();
-        collect_files_recursive(
-            &skill.skill_dir,
-            &mut bundled_files,
-            &skill.skill_md_path,
-            true,
-        );
-        bundled_files.sort();
+        let mut bundled_files = bundled_files_of(skill);
         bundled_files.truncate(MAX_BUNDLED_FILES);
 
         let files_block = if bundled_files.is_empty() {
@@ -240,10 +260,22 @@ impl SkillTool {
                 .map(|p| format!("<file>{p}</file>"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            format!("\n\n<skill_files>\n{list}\n</skill_files>")
+            format!(
+                "\n\n<skill_files>\n\
+                 <!-- Call skill(action=read, name=<command>, path=<file>) to read one. -->\n\
+                 {list}\n</skill_files>"
+            )
         };
 
-        let base_dir = skill.skill_dir.display().to_string();
+        let location = if self.hide_locations {
+            String::new()
+        } else {
+            format!(
+                "\n\nBase directory: {}\n\
+                 Its files' paths below are relative to it.",
+                skill.skill_dir.display()
+            )
+        };
         let content = match load_skill_content_from_disk(&skill.skill_md_path) {
             Some(body) => body,
             None => {
@@ -264,16 +296,63 @@ impl SkillTool {
             format!(
                 "<skill_content command=\"{command}\" name=\"{name}\">\n\
                  # Skill: {name}\n\n\
-                 {content}\n\n\
-                 Base directory: {base_dir}\n\
-                 Relative paths in this skill (scripts/, references/, assets/) \
-                 are relative to this base directory.\
+                 {content}\
+                 {location}\
                  {files_block}\
                  {sub_skills_hint}\n\
                  </skill_content>",
                 name = skill.name
             ),
         )
+    }
+
+    /// One of a skill's bundled files, by its path relative to the skill:
+    /// only a file `load` lists for it, and only while it is still inside
+    /// the skill's directory once links are followed. A refusal never says
+    /// where anything is.
+    async fn exec_read(&self, call: &ToolCall) -> ToolOutput {
+        let (Some(command), Some(wanted)) = (
+            call.args.get("name").and_then(|v| v.as_str()),
+            call.args.get("path").and_then(|v| v.as_str()),
+        ) else {
+            return ToolOutput::err(&call.id, "action=read needs 'name' and 'path'");
+        };
+        let current_skills = self.skills.get();
+        let Some(skill) = current_skills.iter().find(|s| s.command == command) else {
+            return ToolOutput::err(&call.id, format!("skill \"{command}\" not found"));
+        };
+        let wanted = wanted.trim_start_matches("./");
+        if !bundled_files_of(skill).iter().any(|file| file == wanted) {
+            return ToolOutput::err(
+                &call.id,
+                format!("\"{wanted}\" is not one of the files of skill \"{command}\"; load it to see them"),
+            );
+        }
+        let path = skill.skill_dir.join(wanted);
+        let inside = match (path.canonicalize(), skill.skill_dir.canonicalize()) {
+            (Ok(file), Ok(root)) => file.starts_with(&root).then_some(file),
+            _ => None,
+        };
+        let Some(file) = inside else {
+            return ToolOutput::err(&call.id, format!("\"{wanted}\" cannot be read"));
+        };
+        let read = std::fs::File::open(&file).and_then(|f| {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            f.take(MAX_READ_BYTES + 1).read_to_end(&mut bytes)?;
+            Ok(bytes)
+        });
+        match read {
+            Ok(bytes) if bytes.len() as u64 > MAX_READ_BYTES => ToolOutput::err(
+                &call.id,
+                format!("\"{wanted}\" is larger than {} KiB", MAX_READ_BYTES / 1024),
+            ),
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => ToolOutput::ok(&call.id, text),
+                Err(_) => ToolOutput::err(&call.id, format!("\"{wanted}\" is not text")),
+            },
+            Err(_) => ToolOutput::err(&call.id, format!("\"{wanted}\" cannot be read")),
+        }
     }
 
     async fn exec_search(&self, call: &ToolCall) -> ToolOutput {
@@ -366,10 +445,29 @@ impl SkillTool {
 
 // ── File collection helpers ───────────────────────────────────────────────────
 
+/// A skill's bundled files, sorted, each by its path relative to the skill
+/// (`/`-separated), leaving out SKILL.md and the sub-skills' own directories.
+fn bundled_files_of(skill: &SkillInfo) -> Vec<String> {
+    let mut found = Vec::new();
+    collect_files_recursive(&skill.skill_dir, &mut found, &skill.skill_md_path, true);
+    let mut relative: Vec<String> = found
+        .iter()
+        .filter_map(|path| path.strip_prefix(&skill.skill_dir).ok())
+        .map(|path| {
+            path.components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .collect();
+    relative.sort();
+    relative
+}
+
 /// Recursively collect file paths under `dir`, excluding `exclude_file`.
 fn collect_files_recursive(
     dir: &std::path::Path,
-    out: &mut Vec<String>,
+    out: &mut Vec<std::path::PathBuf>,
     exclude_file: &std::path::Path,
     skip_skill_subdirs: bool,
 ) {
@@ -387,7 +485,7 @@ fn collect_files_recursive(
             }
             collect_files_recursive(&path, out, exclude_file, skip_skill_subdirs);
         } else if path.is_file() {
-            out.push(path.display().to_string());
+            out.push(path);
         }
     }
 }
@@ -486,6 +584,74 @@ mod tests {
         assert!(out.content.contains("## Steps"));
         assert!(out.content.contains("Base directory:"));
         assert!(out.content.contains("command=\"git-workflow\""));
+    }
+
+    /// A skill with a reference, as a served skill arrives on a host.
+    fn skill_with_reference(tmp: &tempfile::TempDir) -> SkillInfo {
+        let skill = make_skill_on_disk("case-manager", "Cases.", "## Cases", tmp);
+        fs::create_dir_all(skill.skill_dir.join("references")).unwrap();
+        fs::write(skill.skill_dir.join("references/guide.md"), "the guide").unwrap();
+        skill
+    }
+
+    fn read_call(command: &str, path: &str) -> ToolCall {
+        ToolCall {
+            id: "t3".into(),
+            name: "skill".into(),
+            args: json!({ "action": "read", "name": command, "path": path }),
+        }
+    }
+
+    #[tokio::test]
+    async fn load_names_bundled_files_relative_to_the_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = make_tool(vec![skill_with_reference(&tmp)]);
+        let out = tool.execute(&load_call("case-manager")).await;
+        assert!(out.content.contains("<file>references/guide.md</file>"), "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn a_host_hiding_locations_says_nowhere_where_a_skill_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill = skill_with_reference(&tmp);
+        let tool = make_tool(vec![skill]).hiding_locations(true);
+        let root = tmp.path().display().to_string();
+        let calls = [
+            load_call("case-manager"),
+            read_call("case-manager", "references/guide.md"),
+            read_call("case-manager", "references/missing.md"),
+            read_call("case-manager", "../../etc/passwd"),
+            list_call(None),
+        ];
+        for call in calls {
+            let out = tool.execute(&call).await;
+            assert!(!out.content.contains(&root), "{} leaks {root}: {}", call.args, out.content);
+            assert!(!out.content.contains("Base directory"), "{}", out.content);
+        }
+    }
+
+    #[tokio::test]
+    async fn read_returns_a_bundled_file_and_nothing_outside_the_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill = skill_with_reference(&tmp);
+        let outside = tmp.path().join("other-account.txt");
+        fs::write(&outside, "someone else's").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, skill.skill_dir.join("references/link.md")).unwrap();
+        let tool = make_tool(vec![skill]);
+
+        let out = tool.execute(&read_call("case-manager", "references/guide.md")).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(out.content, "the guide");
+        for path in ["../other-account.txt", "references/../../other-account.txt", "/etc/passwd", "SKILL.md"] {
+            let out = tool.execute(&read_call("case-manager", path)).await;
+            assert!(out.is_error, "{path} was read: {}", out.content);
+        }
+        #[cfg(unix)]
+        {
+            let out = tool.execute(&read_call("case-manager", "references/link.md")).await;
+            assert!(out.is_error && !out.content.contains("someone else's"), "{}", out.content);
+        }
     }
 
     #[tokio::test]

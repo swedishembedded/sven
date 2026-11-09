@@ -84,9 +84,12 @@ mod linux {
     use std::process::Command;
 
     /// What a confined process may read, besides its own directory: no one's
-    /// data, only what a program needs to run and reach the network. Missing
-    /// ones are skipped.
+    /// data, only what a program needs to run and reach the network, and the
+    /// skills installed for everyone on the machine (the system skill
+    /// directories `sven-workspace` discovers first). Missing ones are skipped.
     pub const SYSTEM_READ_ONLY: &[&str] = &[
+        "/usr/share/sven/skills",
+        "/usr/local/share/sven/skills",
         "/etc/ssl",
         "/etc/pki",
         "/etc/ca-certificates",

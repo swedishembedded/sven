@@ -9,8 +9,9 @@
 //! for the case that one of them, or sven itself, does: the kernel refuses
 //! every access to the file system outside the host's sandbox directory,
 //! except reading what any program needs to run and reach the network (TLS
-//! roots, name resolution, time zones, system libraries) - none of which
-//! holds anyone's data.
+//! roots, name resolution, time zones, system libraries) and the skills
+//! installed for everyone (`/usr/share/sven/skills`, read-only) - none of
+//! which holds anyone's data. An account's own skills are in its sandbox.
 //!
 //! The kernel also refuses every TCP bind and every TCP connect except to the
 //! ports the host needs (name resolution, the web tools, the server it

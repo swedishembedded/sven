@@ -129,6 +129,9 @@ pub fn restrict_to_hosted(config: &mut Config) {
             .collect(),
     );
     config.tools.web.public_only = true;
+    // Its paths are the server's: where its sandbox is says how the server
+    // lays out every account's.
+    config.tools.hide_locations = true;
     // Connector tools change while sessions run: disclosed on demand, a
     // change leaves what each request carries, and the cached prefix, alone.
     config.tools.disclosure.mode = sven_bootstrap::Disclosure::Deferred;
@@ -141,6 +144,16 @@ mod tests {
     /// A hosted session's connectors may grow to hundreds of tools and change
     /// while it runs: it always discloses them on demand, so a change leaves
     /// what each request carries alone, even where a configuration says Full.
+    /// A hosted host's skill tool never names where anything is on the
+    /// server, whatever its configuration file says.
+    #[test]
+    fn a_hosted_host_hides_where_its_skills_are() {
+        let mut config: Config = serde_yaml::from_str("tools: {}\n").unwrap();
+        assert!(!config.tools.hide_locations);
+        restrict_to_hosted(&mut config);
+        assert!(config.tools.hide_locations);
+    }
+
     #[test]
     fn a_hosted_host_discloses_tools_on_demand_whatever_its_configuration_says() {
         let mut config: Config =

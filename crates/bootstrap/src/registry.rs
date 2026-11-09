@@ -497,7 +497,7 @@ fn build_profile_research(
     reg.register(cfg.tools.web.fetch_tool());
     reg.register(cfg.web_search_tool());
     reg.register(cfg.tools.memory.tool(runtime.knowledge.clone()));
-    reg.register(SkillTool::new(runtime.skills.clone()));
+    reg.register(SkillTool::new(runtime.skills.clone()).hiding_locations(cfg.tools.hide_locations));
     reg.register(system_tool(
         Arc::clone(&mode_lock),
         tool_event_tx.clone(),
@@ -692,7 +692,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     reg.register(cfg.tools.memory.tool(runtime.knowledge.clone()));
 
     // ── Skills ────────────────────────────────────────────────────────────────
-    reg.register(SkillTool::new(runtime.skills.clone()));
+    reg.register(SkillTool::new(runtime.skills.clone()).hiding_locations(cfg.tools.hide_locations));
 
     // ── Context and GDB (Full profile only) ──────────────────────────────────
     if include_full && !confined {
@@ -768,6 +768,8 @@ pub(crate) struct Completion<'a> {
     pub skill_ranker: Option<Arc<dyn sven_tool_registry::ToolRanker>>,
     /// The skills the `skill` tool serves.
     pub skills: sven_workspace::SharedSkills,
+    /// Whether the `skill` tool leaves out where skills are (`tools.hide_locations`).
+    pub hide_skill_locations: bool,
     pub disabled: &'a [String],
     /// When set, every tool not named here is removed too.
     pub only: Option<&'a [String]>,
@@ -787,7 +789,11 @@ pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) 
         crate::tool_discovery::enable(registry, deferred.mode, deferred.ranker);
     }
     if let (Some(ranker), true) = (completion.skill_ranker, registry.get("skill").is_some()) {
-        registry.register(SkillTool::new(completion.skills).with_ranker(ranker));
+        registry.register(
+            SkillTool::new(completion.skills)
+                .with_ranker(ranker)
+                .hiding_locations(completion.hide_skill_locations),
+        );
     }
     // Last, so a disabled name is gone whoever registered it, and held for
     // the registry's life, so an MCP refresh cannot bring one back.

@@ -214,10 +214,11 @@ named it).
 
 ## On-demand loading: `SkillTool` (`sven-tools-agent`)
 
-The `skill` tool has three actions: `load` (a skill's body, by command as
+The `skill` tool has four actions: `load` (a skill's body, by command as
 `name`), `list` (skills whose command, name or description matches a `regex`;
-empty lists all) and `search` (the skills that best match a `query`, ranked like
-tool search). When the model decides a skill is relevant it calls:
+empty lists all), `search` (the skills that best match a `query`, ranked like
+tool search) and `read` (one of a skill's bundled files). When the model
+decides a skill is relevant it calls:
 
 ```
 skill({"action": "load", "name": "sven/plan"})
@@ -226,16 +227,25 @@ skill({"action": "load", "name": "sven/plan"})
 The tool returns a `<skill_content>` block containing:
 
 1. **Full body** - the complete SKILL.md body (no frontmatter).
-2. **Base directory** - absolute path to the skill directory, so that relative
-   references to `scripts/`, `references/`, etc. can be resolved with
-   `read_file`.
-3. **Bundled files listing** - up to 20 file paths from the skill directory,
-   excluding the SKILL.md itself and any sub-skill subdirectories (they are
-   separate packages).
+2. **Base directory** - the skill's directory on this machine, so a shell can
+   run its `scripts/`. Left out on a hosted host (`tools.hide_locations`, set
+   by `restrict_to_hosted`): its paths are the server's, and say how the
+   server lays out its accounts.
+3. **Bundled files listing** - up to 20 files of the skill directory, each by
+   its path relative to the skill (`references/guide.md`), excluding the
+   SKILL.md itself and any sub-skill subdirectories (they are separate
+   packages).
 4. **Sub-skill navigation hint** - a compact `<sub_skills>` block listing the
    skill's **direct children** (one level only) by command and one-line
    description.  The model loads whichever child it
    needs next.
+
+`read` takes the skill's command as `name` and a file's relative `path` as
+`load` lists it, and returns the file (text, at most 256 KiB). It reads only a
+file `load` lists for that skill, and only while the file is still inside the
+skill's directory once links are followed; a refusal never names a location.
+It is how a session with no file tools (a hosted one) reads a skill's
+references.
 
 Example output for loading `sven`:
 
@@ -246,8 +256,7 @@ Example output for loading `sven`:
 ... full body ...
 
 Base directory: /path/to/.sven/skills/sven
-Relative paths in this skill (scripts/, references/, assets/) are relative to
-this base directory.
+Its files' paths below are relative to it.
 
 <sub_skills>
 <!-- Call skill(action=load, name=<command>) to load any sub-skill's full instructions. -->
