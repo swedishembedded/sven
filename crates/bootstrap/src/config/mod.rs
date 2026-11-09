@@ -180,6 +180,11 @@ impl Config {
         sven_tools_media::MediaEndpoint,
         sven_tools_media::MediaConfig,
     )> {
+        // A host signed in to the sven service runs models there, with its
+        // own key, unless another provider is named.
+        if let (None, Some(service)) = (&self.tools.media.provider, &self.tools.media.service) {
+            return Some((service.clone(), self.tools.media.clone()));
+        }
         let endpoint = self.provider_endpoint_with(
             self.tools
                 .media

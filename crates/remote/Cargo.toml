@@ -21,6 +21,7 @@ sven-model         = { path = "../model" }
 sven-config = { path = "../config" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-tools-web     = { path = "../tools-web" }
+sven-tools-media   = { path = "../tools-media" }
 sven-session-sync  = { path = "../session-sync" }
 sven-tool-api      = { path = "../tool-api" }
 sven-tools-agent   = { path = "../tools-agent" }

@@ -75,6 +75,11 @@ pub struct MediaConfig {
     /// `sven rc` for each session it hosts, never read from a file.
     #[serde(skip)]
     pub session: Option<String>,
+    /// The sven service this process is signed in to, with its key: set at
+    /// run time by `sven rc` from its sign-in, never read from a file. Used
+    /// unless `provider` names another.
+    #[serde(skip)]
+    pub service: Option<MediaEndpoint>,
 }
 
 impl MediaConfig {
@@ -92,12 +97,13 @@ impl Default for MediaConfig {
             dir: PathBuf::from(".sven/media"),
             timeout_secs: 30 * 60,
             session: None,
+            service: None,
         }
     }
 }
 
 /// Where the tools generate: a provider's OpenAI-style base URL and key.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MediaEndpoint {
     pub base_url: String,
     pub api_key: String,

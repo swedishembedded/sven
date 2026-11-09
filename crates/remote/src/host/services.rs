@@ -2,19 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! What the server a host signed in to provides the host's sessions: its web
-//! search and the person's connected accounts.
+//! search, its models and the person's connected accounts.
 
 use sven_bootstrap::Config;
 
 use crate::login::RemoteLogin;
 
 /// What the server a host signed in to provides its sessions, with the
-/// host's key: web searches (run and billed there), and the person's
+/// host's key: web searches and model invocations (run and billed there),
+/// and the person's
 /// connected accounts as the `connectors` MCP server when the server offers
 /// them. A hosted host's allow list admits that one server's tools; it
 /// starts no other MCP server (`restrict_to_hosted`).
 pub(super) fn use_server_services(config: &mut Config, login: &RemoteLogin) {
     config.tools.web.search.sven = Some(login.search_endpoint());
+    config.tools.media.service = Some(sven_tools_media::MediaEndpoint {
+        base_url: login.openai_base_url.clone(),
+        api_key: login.token.clone(),
+    });
     if let Some(url) = &login.mcp_url {
         sven_bootstrap::connectors::add(config, url, login.mcp_token_url.as_deref(), &login.token);
         if let Some(only) = config.tools.only.as_mut() {
@@ -64,6 +69,12 @@ mod tests {
         assert!(
             only.iter().any(|t| t == sven_bootstrap::DISCOVERY_TOOL),
             "without the discovery tool every connector tool is sent in full on every request"
+        );
+        // Models run at the same server, with the host's own key.
+        let (media, _) = config.media_endpoint().expect("models run at the server");
+        assert_eq!(
+            (media.base_url.as_str(), media.api_key.as_str()),
+            (login.openai_base_url.as_str(), login.token.as_str())
         );
 
         let mut without: Config = Config::default();
