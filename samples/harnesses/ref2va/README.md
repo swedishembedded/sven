@@ -62,8 +62,8 @@ What it shows:
 sven harness validate samples/harnesses/ref2va
 sven harness run samples/harnesses/ref2va --workspace DIR --approvals auto \
     --input '{"prompt": "<Picture 1> turns toward the camera and says hello",
-              "reference": "character.png", "model": "brain/minimaxh3",
-              "width": 768, "height": 448, "frames": 121, "seconds": 5.0417,
+              "reference": "character.png", "model": "MiniMaxAI/MiniMax-H3",
+              "width": 640, "height": 352, "frames": 124, "seconds": 5.1667,
               "steps": 4, "seed": 1, "preset": "turbo-4step-vsa",
               "licence_confirmed": true, "output": "result.mp4"}'
 ```
@@ -86,12 +86,12 @@ The inputs:
 |---|---|
 | `prompt` | What the clip shows. Names the references by order within their kind: `<Picture 1>` is `reference`. |
 | `reference` | Workspace-relative path of the character image. |
-| `model` | The video model, e.g. `brain/minimaxh3`. |
-| `width`, `height` | The picture in pixels, a size the model renders (for `minimaxh3` a multiple of its stride, e.g. 768 and 448). |
+| `model` | The video model, as the server lists it, e.g. `MiniMaxAI/MiniMax-H3` (brain serves a model-store checkout under its repository name). |
+| `width`, `height` | The picture in pixels, a size the model renders (for MiniMax-H3 a multiple of its stride, e.g. 640 and 352). |
 | `frames` | The exact frame count, on the model's frame grid: the model snaps any other count up, and the probe then refuses the clip. |
-| `seconds` | The length those frames make at the model's rate (121 frames at 24 fps is 5.0417 s). It is checked, not requested: the request sets the length by `frames`, and the model refuses one that sets it twice. |
+| `seconds` | The length those frames make at the model's rate (124 frames at 24 fps is 5.1667 s). It is checked, not requested: the request sets the length by `frames`, and the model refuses one that sets it twice. |
 | `steps`, `seed` | Denoising steps; another seed is another take. |
-| `preset` | What the model runs with, by the server's own name: a request never names a file on the server. For `brain/minimaxh3`, `base` (the release alone), `turbo-4step` (a 4-step distillation adapter; set `steps` to 4) or `turbo-4step-vsa` (that adapter with sparse attention and its trained gates). The server must hold the files the preset names. |
+| `preset` | What the model runs with, by the server's own name: a request never names a file on the server. For MiniMax-H3, `base` (the release alone), `turbo-4step` (a 4-step distillation adapter; set `steps` to 4) or `turbo-4step-vsa` (that adapter with sparse attention and its trained gates). The server must hold the files the preset names. |
 | `licence_confirmed` | `true`, as above. |
 | `output` | Workspace-relative path of the clip to write. |
 

@@ -17,14 +17,14 @@ description: "Render a clip from a reference image with a video model and check 
 inputs:
   prompt: { type: string, description: "what the clip shows; names the reference as <Picture 1>" }
   reference: { type: string, description: "workspace-relative path of the character image (png, jpg, jpeg or webp): an image you own or made yourself" }
-  model: { type: string, description: "the video model, e.g. brain/minimaxh3" }
-  width: { type: number, description: "picture width in pixels, one the model renders (e.g. 768)" }
-  height: { type: number, description: "picture height in pixels (e.g. 448)" }
-  frames: { type: number, description: "the exact number of frames; on the model's frame grid, which does not snap it (e.g. 121)" }
-  seconds: { type: number, description: "the length frames make at the model's frame rate, to within half a second (e.g. 5.0417)" }
+  model: { type: string, description: "the video model as the server lists it, e.g. MiniMaxAI/MiniMax-H3" }
+  width: { type: number, description: "picture width in pixels, one the model renders (e.g. 640)" }
+  height: { type: number, description: "picture height in pixels (e.g. 352)" }
+  frames: { type: number, description: "the exact number of frames; on the model's frame grid, which does not snap it (e.g. 124 for MiniMax-H3, whose grid snaps 121 up to it)" }
+  seconds: { type: number, description: "the length frames make at the model's frame rate, to within half a second (e.g. 5.1667)" }
   steps: { type: number, description: "denoising steps" }
   seed: { type: number, description: "another seed is another take" }
-  preset: { type: string, description: "what the model runs with, by the server's own name for it: for brain/minimaxh3, base, turbo-4step (a 4-step adapter: steps 4) or turbo-4step-vsa (that adapter and sparse attention)" }
+  preset: { type: string, description: "what the model runs with, by the server's own name for it: for MiniMax-H3, base, turbo-4step (a 4-step adapter: steps 4) or turbo-4step-vsa (that adapter and sparse attention)" }
   licence_confirmed: { type: boolean, description: "true confirms you hold the model's licence; the model refuses every request without it" }
   output: { type: string, description: "workspace-relative path of the clip to write, e.g. result.mp4" }
 agent:
