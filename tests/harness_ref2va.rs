@@ -213,7 +213,10 @@ fn running_it_again_submits_nothing_and_another_preset_is_another_request() {
     let again = run.sven(json!({}));
     assert_eq!(code(&again), 0, "{}", stderr(&again));
     assert_eq!(bodies(&fake).len(), 1);
-    assert_eq!(bodies(&fake)[0]["provider"]["options"]["brain"]["params"]["preset"], "base");
+    assert_eq!(
+        bodies(&fake)[0]["provider"]["options"]["brain"]["params"]["preset"],
+        "base"
+    );
 
     // A preset names the server's own adapter and gates: the request never
     // carries a path on the server.

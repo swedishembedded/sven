@@ -607,7 +607,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let tool = make_tool(vec![skill_with_reference(&tmp)]);
         let out = tool.execute(&load_call("case-manager")).await;
-        assert!(out.content.contains("<file>references/guide.md</file>"), "{}", out.content);
+        assert!(
+            out.content.contains("<file>references/guide.md</file>"),
+            "{}",
+            out.content
+        );
     }
 
     #[tokio::test]
@@ -625,7 +629,12 @@ mod tests {
         ];
         for call in calls {
             let out = tool.execute(&call).await;
-            assert!(!out.content.contains(&root), "{} leaks {root}: {}", call.args, out.content);
+            assert!(
+                !out.content.contains(&root),
+                "{} leaks {root}: {}",
+                call.args,
+                out.content
+            );
             assert!(!out.content.contains("Base directory"), "{}", out.content);
         }
     }
@@ -640,17 +649,30 @@ mod tests {
         std::os::unix::fs::symlink(&outside, skill.skill_dir.join("references/link.md")).unwrap();
         let tool = make_tool(vec![skill]);
 
-        let out = tool.execute(&read_call("case-manager", "references/guide.md")).await;
+        let out = tool
+            .execute(&read_call("case-manager", "references/guide.md"))
+            .await;
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(out.content, "the guide");
-        for path in ["../other-account.txt", "references/../../other-account.txt", "/etc/passwd", "SKILL.md"] {
+        for path in [
+            "../other-account.txt",
+            "references/../../other-account.txt",
+            "/etc/passwd",
+            "SKILL.md",
+        ] {
             let out = tool.execute(&read_call("case-manager", path)).await;
             assert!(out.is_error, "{path} was read: {}", out.content);
         }
         #[cfg(unix)]
         {
-            let out = tool.execute(&read_call("case-manager", "references/link.md")).await;
-            assert!(out.is_error && !out.content.contains("someone else's"), "{}", out.content);
+            let out = tool
+                .execute(&read_call("case-manager", "references/link.md"))
+                .await;
+            assert!(
+                out.is_error && !out.content.contains("someone else's"),
+                "{}",
+                out.content
+            );
         }
     }
 
