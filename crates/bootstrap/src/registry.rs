@@ -571,6 +571,23 @@ fn build_profile_subagent(
     reg
 }
 
+/// The sven service's files of the session's conversation, fetched by handle
+/// for `attach_file`.
+#[cfg(feature = "media")]
+struct ServiceFiles {
+    endpoint: sven_tools_media::MediaEndpoint,
+    config: sven_tools_media::MediaConfig,
+    workdir: std::path::PathBuf,
+}
+
+#[cfg(feature = "media")]
+#[async_trait::async_trait]
+impl sven_tools_fs::HandleFetcher for ServiceFiles {
+    async fn fetch(&self, handle: &str) -> Result<String, String> {
+        sven_tools_media::fetch_to(&self.endpoint, &self.config, &self.workdir, handle).await
+    }
+}
+
 /// What [`register_base_tools`] registers the shared tool set from.
 struct BaseTools<'a> {
     cfg: &'a Config,
@@ -643,10 +660,21 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     // moved into the context tool below. Only in a build that decodes media.
     #[cfg(feature = "media")]
     if !confined {
-        reg.register(
-            AttachFileTool::new(Some(Arc::clone(&model)), cfg.tools.asr.clone())
-                .with_scope(paths.clone()),
-        );
+        let mut attach = AttachFileTool::new(Some(Arc::clone(&model)), cfg.tools.asr.clone())
+            .with_scope(paths.clone());
+        // A file of the conversation, named by handle, is fetched from the
+        // service that keeps it into the working directory first.
+        if let Some((endpoint, config)) = cfg.media_endpoint() {
+            attach = attach.with_fetcher(Arc::new(ServiceFiles {
+                endpoint,
+                config,
+                workdir: paths.root().map_or_else(
+                    || std::path::PathBuf::from("."),
+                    std::path::Path::to_path_buf,
+                ),
+            }));
+        }
+        reg.register(attach);
     }
 
     // ── Search ────────────────────────────────────────────────────────────────

@@ -45,7 +45,7 @@ mod request;
 pub mod fake;
 
 pub use generate::{generate, Generated};
-pub use handover::{hand_over, Handover, MEDIA_SESSION_ENV};
+pub use handover::{fetch_to, hand_over, Handover, MEDIA_SESSION_ENV};
 
 use std::path::{Path, PathBuf};
 

@@ -21,7 +21,7 @@ pub mod snapshot;
 pub mod write_file;
 
 #[cfg(feature = "media")]
-pub use attach_file::AttachFileTool;
+pub use attach_file::{AttachFileTool, HandleFetcher};
 #[cfg(feature = "media")]
 pub use attachment::{
     classify as classify_attachment, load_attachment, AttachError, AttachOptions, AttachmentKind,

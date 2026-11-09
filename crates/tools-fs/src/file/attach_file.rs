@@ -43,7 +43,23 @@ const DESCRIPTION: &str = description!("otherwise transcribed to text.");
 #[cfg(not(all(target_os = "linux", feature = "asr")))]
 const DESCRIPTION: &str = description!("otherwise refused.");
 
+/// Fetches a file a service keeps for the conversation, named by its handle
+/// (`mcp-file://files/<id>`), into the working directory.
+#[async_trait]
+pub trait HandleFetcher: Send + Sync {
+    /// Where the file was saved, as a path `attach_file` reads.
+    ///
+    /// # Errors
+    /// The file cannot be fetched or saved; the message says why.
+    async fn fetch(&self, handle: &str) -> Result<String, String>;
+}
+
+/// The scheme of a handle a service keeps.
+const HANDLE_PREFIX: &str = "mcp-file://";
+
 pub struct AttachFileTool {
+    /// Fetches a handle's file before it is read; none where no service is.
+    fetcher: Option<Arc<dyn HandleFetcher>>,
     /// The live model, when one is available.
     ///
     /// `None` (e.g. the `sven tool call ...` CLI registry) means "assume
@@ -63,12 +79,20 @@ pub struct AttachFileTool {
 impl AttachFileTool {
     pub fn new(model: Option<Arc<dyn ModelProvider>>, asr: AsrConfig) -> Self {
         Self {
+            fetcher: None,
             model,
             asr,
             #[cfg(all(target_os = "linux", feature = "asr"))]
             asr_client: None,
             scope: PathScope::default(),
         }
+    }
+
+    /// Fetches handles (a file of the conversation) through `fetcher`.
+    #[must_use]
+    pub fn with_fetcher(mut self, fetcher: Arc<dyn HandleFetcher>) -> Self {
+        self.fetcher = Some(fetcher);
+        self
     }
 
     /// Resolves `path` through `scope` instead of the process working
@@ -138,7 +162,7 @@ impl Tool for AttachFileTool {
             "path": {
                 "type": "string",
                 "description":
-                    "Image or audio file"
+                    "Image or audio file: a path, or a handle (mcp-file://...) of the conversation"
             },
             "note": {
                 "type": "string",
@@ -198,6 +222,23 @@ impl Tool for AttachFileTool {
             .and_then(|v| v.as_str())
             .map(|s| s.trim())
             .filter(|s| !s.is_empty());
+
+        // A file of the conversation is fetched next to the session's own
+        // files first, then read like any other.
+        let path_str = if path_str.starts_with(HANDLE_PREFIX) {
+            let Some(fetcher) = &self.fetcher else {
+                return ToolOutput::err(
+                    &call.id,
+                    "this session reaches no service that keeps that file",
+                );
+            };
+            match fetcher.fetch(&path_str).await {
+                Ok(saved) => saved,
+                Err(e) => return ToolOutput::err(&call.id, format!("attach_file failed: {e}")),
+            }
+        } else {
+            path_str
+        };
 
         let scoped = match self.scope.resolve_for(call, &path_str) {
             Ok(p) => p,
@@ -293,6 +334,36 @@ mod tests {
         assert!(out.has_images(), "should carry an image part");
         assert!(out.content.contains("Attached image"), "{}", out.content);
         assert!(matches!(out.parts[1], ToolOutputPart::Image(_)));
+    }
+
+    /// Saves every handle it is asked for as the same picture.
+    struct SavedPicture(std::path::PathBuf);
+
+    #[async_trait]
+    impl HandleFetcher for SavedPicture {
+        async fn fetch(&self, handle: &str) -> Result<String, String> {
+            assert!(handle.starts_with(HANDLE_PREFIX));
+            std::fs::write(&self.0, MINIMAL_PNG).map_err(|e| e.to_string())?;
+            Ok(self.0.display().to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_file_of_the_conversation_is_fetched_by_handle_and_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let handle = json!({"path": "mcp-file://files/7b1d6c1e-2f0a-4c3b-9a8d-5e6f7a8b9c0d"});
+        let fetching = AttachFileTool::new(Some(vision_model()), AsrConfig::default())
+            .with_fetcher(Arc::new(SavedPicture(dir.path().join("pic.png"))));
+        let out = fetching.execute(&call(handle.clone())).await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.has_images());
+        let alone = AttachFileTool::new(Some(vision_model()), AsrConfig::default());
+        let refused = alone.execute(&call(handle)).await;
+        assert!(
+            refused.is_error && refused.content.contains("no service"),
+            "{}",
+            refused.content
+        );
     }
 
     #[tokio::test]

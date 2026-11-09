@@ -36,6 +36,50 @@ const RASTER: [(&str, &str); 5] = [
     ("webp", "image/webp"),
 ];
 
+/// The largest file fetched into the working directory by handle.
+const MAX_FETCHED_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Fetch file `handle` into `workdir`, under `.sven/files/`, named by its id
+/// and type; answers the path relative to `workdir`. A file fetched before is
+/// answered as it is.
+///
+/// # Errors
+/// Not a handle, unreachable or refused, too large, or not writable.
+pub async fn fetch_to(
+    endpoint: &MediaEndpoint,
+    config: &MediaConfig,
+    workdir: &Path,
+    handle: &str,
+) -> Result<String, String> {
+    let id = handle
+        .strip_prefix(HANDLE_PREFIX)
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 64
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+        .ok_or("not a handle of a file the service keeps")?;
+    let (bytes, mime) = invoker(endpoint, config)
+        .download(handle, MAX_FETCHED_BYTES)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    let extension = match mime.as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/mpeg" => "mp3",
+        "audio/ogg" => "ogg",
+        "audio/flac" => "flac",
+        _ => "bin",
+    };
+    let relative = format!(".sven/files/{id}.{extension}");
+    let target = super::file_to_write(workdir, &relative, "path")?;
+    std::fs::write(&target, bytes).map_err(|e| format!("saving {relative}: {e}"))?;
+    Ok(relative)
+}
+
 /// What a sub-agent is handed.
 #[derive(Debug, Default)]
 pub struct Handover {
@@ -125,6 +169,40 @@ pub async fn hand_over(
 mod tests {
     use super::*;
     use crate::fake::{handle_of, serve, ONE_PIXEL_PNG};
+
+    #[tokio::test]
+    async fn a_file_is_fetched_by_handle_into_the_working_directory() {
+        let fake = serve(0).await;
+        let dir = tempfile::tempdir().unwrap();
+        let endpoint = MediaEndpoint {
+            base_url: fake.base_url.clone(),
+            api_key: "k".into(),
+        };
+        let saved = fetch_to(
+            &endpoint,
+            &MediaConfig::default(),
+            dir.path(),
+            &handle_of(3),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            saved,
+            ".sven/files/00000000-0000-4000-8000-000000000003.png"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join(&saved)).unwrap(),
+            ONE_PIXEL_PNG
+        );
+        assert!(fetch_to(
+            &endpoint,
+            &MediaConfig::default(),
+            dir.path(),
+            "mcp-file://files/../x"
+        )
+        .await
+        .is_err());
+    }
 
     #[tokio::test]
     async fn a_sub_agent_is_handed_each_file_by_handle_and_sees_the_images() {

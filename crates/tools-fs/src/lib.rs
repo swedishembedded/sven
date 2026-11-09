@@ -20,7 +20,7 @@ pub use buffer::{
 };
 #[cfg(feature = "media")]
 pub use file::{
-    classify_attachment, load_attachment, AttachError, AttachFileTool, AttachOptions,
+    classify_attachment, load_attachment, AttachError, AttachFileTool, AttachOptions, HandleFetcher,
     AttachmentKind, LoadedAttachment,
 };
 pub use file::{

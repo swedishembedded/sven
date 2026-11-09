@@ -235,7 +235,7 @@ feature `asr`, Linux), and refused without that.
 
 | Parameter | Description |
 |-----------|-------------|
-| `path` (required) | Image or audio file |
+| `path` (required) | Image or audio file: a path, or a handle (`mcp-file://files/<id>`) of a file of the sven service's conversation, which is fetched into `.sven/files/` first |
 | `note` | Note recorded with the attachment |
 | `force_transcribe` | Audio: transcribe even when the model accepts audio (offered only in builds with `asr` on Linux) |
 

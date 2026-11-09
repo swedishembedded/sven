@@ -409,20 +409,20 @@ names each session's conversation to its invocations; the hosted allow list
 and prompt include the three tools; `task` takes `inputs` (images attached to
 the child's first message over ACP, every file named by handle), the child
 names its parent's conversation (`SVEN_MEDIA_SESSION`) and the files it makes
-come back with the parent's result (`sven.artifacts` in ACP `_meta`). Tests:
+come back with the parent's result (`sven.artifacts` in ACP `_meta`);
+`attach_file` fetches a handle into `.sven/files/` and shows it (not offered
+hosted, whose model already sees what its models make). Tests:
 `cargo test -p sven-tools-media`, `cargo test -p sven-bootstrap --lib task_tool`.
 
-1. **`attach_file` takes handles.** Fetch a handle into the session's own
-   model, as a path is today. Check: tools-fs test against the fake.
-2. **History keeps handles (sven side built 2026-11-09).** What is left is a
+1. **History keeps handles (sven side built 2026-11-09).** What is left is a
    live check: a restored hosted conversation edits an image of an earlier
    turn by its handle. Check: the server's `test/e2e/rc`.
-3. **Sub-agents in hosted sessions.** `task` (with `inputs`, the parent's
+2. **Sub-agents in hosted sessions.** `task` (with `inputs`, the parent's
    conversation and its files relayed back; built 2026-11-09) is not in the
    hosted allow list: a child is a second confined process with the host's
    key. Check: a hosted host test spawning a child that stays inside the
    sandbox and names only its parent's conversation.
-4. **A direct backend.** With a bring-your-own OpenRouter-compatible
+3. **A direct backend.** With a bring-your-own OpenRouter-compatible
    provider, the same tools call its `/images`, `/audio/speech`, `/videos`
    and `/chat/completions` and keep outputs as working-directory files.
    Check: wire tests against `fake`.
