@@ -938,6 +938,48 @@ mod tests {
         );
     }
 
+    /// As a hosted host really runs a session: its tool set detected and its
+    /// server's services added. It runs other models there, and nothing more.
+    #[tokio::test]
+    async fn a_hosted_session_runs_models_at_its_server() {
+        let mut config = sven_bootstrap::Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+        restrict_to_hosted(&mut config);
+        let login = RemoteLogin {
+            server: "https://sven.example".into(),
+            control_url: "https://sven.example/api/control".into(),
+            openai_base_url: "https://sven.example/v1".into(),
+            mcp_url: None,
+            mcp_token_url: None,
+            transfer_origins: Vec::new(),
+            token: "server_minted_key".into(),
+            workspace_id: Uuid::nil(),
+            workspace_name: "Hosted".into(),
+            account: "a@example.com".into(),
+        };
+        use_server_services(&mut config, &login);
+        let (runtime, handle, ..) =
+            sven_bootstrap::RuntimeBuilder::new(std::sync::Arc::new(config), "agent")
+                .build()
+                .await
+                .expect("runtime builds");
+        let mut names = handle.tool_registry().names();
+        runtime.abort();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "model_schema",
+                "models",
+                "run_model",
+                "skill",
+                "web_fetch",
+                "web_search"
+            ]
+        );
+    }
+
     use super::*;
     use sven_control::HistoryRole;
 

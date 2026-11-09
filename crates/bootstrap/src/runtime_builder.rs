@@ -662,10 +662,13 @@ impl RuntimeBuilder {
         );
         // The registry describes the model this session actually runs on, which
         // an override may have replaced (sub-agents are told to use it).
-        let registry_config = Config {
+        let mut registry_config = Config {
             model: model_cfg.clone(),
             ..(*self.config).clone()
         };
+        // sven's own sessions (their tool set detected) run other models with
+        // this machine's sign-in; an embedding host's preset registers its own.
+        registry_config.tools.media.offered = matches!(self.builtin_tools, BuiltinTools::Detect);
         let mut tool_registry = match tool_profile {
             Some(profile) => build_tool_registry_with_integrations(
                 &registry_config,

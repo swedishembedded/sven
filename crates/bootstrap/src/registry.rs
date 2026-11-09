@@ -605,8 +605,9 @@ struct BaseTools<'a> {
 
 /// Register the lean consolidated tool set shared by agent profiles.
 ///
-/// `include_full` (sven's own sessions) controls whether the GDB and context
-/// tools, and video generation with the configured provider, are included.
+/// `include_full` controls whether the GDB and context tools are included;
+/// the media tools come with `tools.media.offered` (sven's own sessions, which
+/// may spend this machine's sign-in), whatever the profile.
 /// SubAgent uses the slimmer set (no GDB, no context) since sub-agents
 /// typically perform focused coding/research tasks.
 fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
@@ -712,8 +713,12 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     if !confined {
         reg.register(sven_tools_media::JoinVideosTool::new(workdir.clone()));
     }
-    if let Some((models, schema, run_model)) =
-        include_full.then(|| cfg.media_tools(workdir)).flatten()
+    if let Some((models, schema, run_model)) = cfg
+        .tools
+        .media
+        .offered
+        .then(|| cfg.media_tools(workdir))
+        .flatten()
     {
         reg.register(models);
         reg.register(schema);
@@ -924,8 +929,11 @@ mod tests {
     /// Every tool the agent is offered, with its description.
     fn agent_tools() -> Vec<(String, String, serde_json::Value)> {
         let (tx, _rx) = mpsc::channel::<ToolEvent>(16);
+        // As sven's own session: its tool set detected, not a host's preset.
+        let mut cfg = Config::default();
+        cfg.tools.media.offered = true;
         let reg = build_tool_registry(
-            &Config::default(),
+            &cfg,
             Arc::new(MockProvider),
             ToolSetProfile::Full {
                 questions: Questions::Unavailable,
@@ -1066,6 +1074,7 @@ mod tests {
         if Config::default().media_tools(".".into()).is_some() {
             expected.extend(["models", "model_schema", "run_model"]);
         }
+        // Whatever the profile: a coding session of sven's own has them too.
         expected.sort_unstable();
         assert_eq!(got, expected, "the agent's tool set changed");
     }

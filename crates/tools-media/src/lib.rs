@@ -83,6 +83,11 @@ pub struct MediaConfig {
     /// unless `provider` names another.
     #[serde(skip)]
     pub service: Option<MediaEndpoint>,
+    /// Whether the session is sven's own (its tool set detected, not an
+    /// embedding host's preset), so the media tools may spend this machine's
+    /// sign-in. Set by the session builder, never read from a file.
+    #[serde(skip)]
+    pub offered: bool,
 }
 
 impl MediaConfig {
@@ -101,6 +106,7 @@ impl Default for MediaConfig {
             timeout_secs: 30 * 60,
             session: None,
             service: None,
+            offered: false,
         }
     }
 }
