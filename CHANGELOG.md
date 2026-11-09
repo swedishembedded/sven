@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.1] - 2026-11-09
+
 ### Fixed
 - **release**: sven builds on macOS and Windows again; 4.7.0 built only on Linux and was never published.
 
