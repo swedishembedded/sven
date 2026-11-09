@@ -475,7 +475,7 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             args.protocol_version
         );
         let caps = AgentCapabilities::new()
-            .prompt_capabilities(PromptCapabilities::new().embedded_context(true));
+            .prompt_capabilities(PromptCapabilities::new().embedded_context(true).image(true));
         Ok(InitializeResponse::new(args.protocol_version)
             .agent_capabilities(caps)
             .agent_info(
@@ -527,25 +527,28 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             .get_session(&session_id)
             .ok_or_else(Error::invalid_params)?;
 
-        // Extract text content from the prompt.  Non-text blocks (images, audio,
-        // embedded resources) are logged and skipped; we don't yet advertise
-        // image/audio prompt capabilities to the IDE.
-        let text = args
-            .prompt
-            .into_iter()
-            .filter_map(|block| match block {
-                agent_client_protocol::ContentBlock::Text(t) => Some(t.text),
-                other => {
-                    debug!(
-                        session = %session_id,
-                        "ACP prompt: dropping non-text ContentBlock variant (not yet supported)"
-                    );
-                    let _ = other;
-                    None
+        // The prompt's text, and its images as the model's own input (a
+        // `task` parent hands its sub-agent the pictures it is to look at).
+        // Other blocks (audio, embedded resources) are logged and skipped.
+        let mut texts = Vec::new();
+        let mut images = Vec::new();
+        for block in args.prompt {
+            match block {
+                agent_client_protocol::ContentBlock::Text(t) => texts.push(t.text),
+                agent_client_protocol::ContentBlock::Image(image)
+                    if image.mime_type.starts_with("image/") =>
+                {
+                    images.push(sven_model::ContentPart::image(format!(
+                        "data:{};base64,{}",
+                        image.mime_type, image.data
+                    )));
                 }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+                _ => {
+                    debug!(session = %session_id, "ACP prompt: dropping a block that is neither text nor an image")
+                }
+            }
+        }
+        let text = texts.join("\n");
 
         // Counted before the first await, so a mode change that arrives while
         // this turn waits or runs sees it and is refused.
@@ -581,6 +584,16 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
             // A `/goal` line is the session's goal command, read as the
             // terminal reads it; the turn it starts streams like any other.
             match sven_frontend::goal::goal_line(&text) {
+                None if !images.is_empty() => {
+                    let mut parts = vec![sven_model::ContentPart::Text { text }];
+                    parts.extend(images);
+                    if let Err(e) = session.submit_parts(parts, None, None).await {
+                        return Err(Error::new(
+                            i32::from(ErrorCode::InternalError),
+                            e.to_string(),
+                        ));
+                    }
+                }
                 None => {
                     let _ = session.post(text).await;
                 }

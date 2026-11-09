@@ -406,20 +406,22 @@ output, text), `model_schema` and `run_model` (chat, image, speech,
 transcribe, audio; video stays the durable job), images shown to the session
 model, outputs by handle in a conversation and as files otherwise; `sven rc`
 names each session's conversation to its invocations; the hosted allow list
-and prompt include the three tools. Tests: `cargo test -p sven-tools-media`.
+and prompt include the three tools; `task` takes `inputs` (images attached to
+the child's first message over ACP, every file named by handle), the child
+names its parent's conversation (`SVEN_MEDIA_SESSION`) and the files it makes
+come back with the parent's result (`sven.artifacts` in ACP `_meta`). Tests:
+`cargo test -p sven-tools-media`, `cargo test -p sven-bootstrap --lib task_tool`.
 
 1. **`attach_file` takes handles.** Fetch a handle into the session's own
    model, as a path is today. Check: tools-fs test against the fake.
 2. **History keeps handles (sven side built 2026-11-09).** What is left is a
    live check: a restored hosted conversation edits an image of an earlier
    turn by its handle. Check: the server's `test/e2e/rc`.
-3. **Sub-agents take inputs.** A `task` child is a full sven process and has
-   the three tools, but names no conversation: its outputs land in the
-   working directory. It must inherit the parent's conversation (never a
-   wider one). `task` `inputs` (handles or paths); the
-   child's first prompt carries images as images and every input by handle;
-   the child's published artifacts are relayed in the parent's result.
-   Check: task tool test with a child that reports what it received.
+3. **Sub-agents in hosted sessions.** `task` (with `inputs`, the parent's
+   conversation and its files relayed back; built 2026-11-09) is not in the
+   hosted allow list: a child is a second confined process with the host's
+   key. Check: a hosted host test spawning a child that stays inside the
+   sandbox and names only its parent's conversation.
 4. **A direct backend.** With a bring-your-own OpenRouter-compatible
    provider, the same tools call its `/images`, `/audio/speech`, `/videos`
    and `/chat/completions` and keep outputs as working-directory files.

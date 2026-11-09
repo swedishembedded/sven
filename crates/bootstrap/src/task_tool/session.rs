@@ -209,6 +209,11 @@ fn pick_option<'a>(
 pub(super) struct SpawnArgs {
     pub(super) exe: PathBuf,
     pub(super) prompt: String,
+    /// Images its first message carries, as `(media type, base64)`.
+    pub(super) images: Vec<(String, String)>,
+    /// The conversation of the sven service its models' outputs belong to:
+    /// the parent's.
+    pub(super) media_session: Option<String>,
     pub(super) description: String,
     pub(super) mode: String,
     /// What the child may do, and until when.
@@ -255,6 +260,9 @@ struct UpdateSink {
     handle_id: String,
     /// Bytes of the child's transcript seen so far (see `transcript_bytes`).
     transcript: Cell<usize>,
+    /// The files the child's tools made or named, by handle (each finished
+    /// call's `sven/artifacts`), relayed with the parent's result.
+    artifacts: std::cell::RefCell<Vec<sven_vocab::ArtifactRef>>,
 }
 
 impl UpdateSink {
@@ -265,6 +273,24 @@ impl UpdateSink {
 
     /// Forwards one notification, returning the assistant text it carried.
     async fn forward(&self, notification: &SessionNotification) -> Option<String> {
+        if let agent_client_protocol::SessionUpdate::ToolCall(call) = &notification.update {
+            let made = call
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get(super::ARTIFACTS_META_KEY))
+                .and_then(|value| {
+                    serde_json::from_value::<Vec<sven_vocab::ArtifactRef>>(value.clone()).ok()
+                });
+            if let Some(made) = made {
+                let mut artifacts = self.artifacts.borrow_mut();
+                for artifact in made {
+                    if artifacts.len() < sven_vocab::MAX_ARTIFACTS && !artifacts.contains(&artifact)
+                    {
+                        artifacts.push(artifact);
+                    }
+                }
+            }
+        }
         let (updates, text) = session_update_to_subagent_updates(&notification.update);
         for update in updates {
             self.count(&update);
@@ -286,6 +312,8 @@ struct DriveArgs<'a, Exit> {
     workdir: PathBuf,
     mode: String,
     prompt: String,
+    /// Images the prompt carries, as `(media type, base64)`.
+    images: Vec<(String, String)>,
     /// When the child must be done; `None` for no wall-clock bound.
     deadline: Option<Instant>,
     notifications: futures::channel::mpsc::UnboundedReceiver<SessionNotification>,
@@ -317,6 +345,7 @@ where
         workdir,
         mode,
         prompt,
+        images,
         deadline,
         mut notifications,
         mut cancel_rx,
@@ -362,10 +391,11 @@ where
         return (SessionEnd::ModeRefused(e.to_string()), final_text);
     }
 
-    let prompt_req = PromptRequest::new(
-        session_id.clone(),
-        vec![ContentBlock::from(prompt.as_str())],
-    );
+    let mut blocks = vec![ContentBlock::from(prompt.as_str())];
+    blocks.extend(images.into_iter().map(|(mime, data)| {
+        ContentBlock::Image(agent_client_protocol::ImageContent::new(data, mime))
+    }));
+    let prompt_req = PromptRequest::new(session_id.clone(), blocks);
     let prompter = Rc::clone(&agent);
     // Spawned locally so `agent` stays usable for the cancel branches.
     let mut prompt_task =
@@ -519,6 +549,8 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     let SpawnArgs {
         exe,
         prompt,
+        images,
+        media_session,
         description,
         mode,
         contract,
@@ -543,12 +575,16 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         std::time::Instant::now(),
     ))
     .env(SUBAGENT_DEPTH_ENV, depth.to_string())
+    .env_remove(sven_tools_media::MEDIA_SESSION_ENV)
     .stdin(std::process::Stdio::piped())
     .stdout(std::process::Stdio::piped())
     .stderr(std::process::Stdio::piped()) // capture stderr for diagnostics
     .kill_on_drop(true);
 
     cmd.current_dir(&workdir);
+    if let Some(session) = &media_session {
+        cmd.env(sven_tools_media::MEDIA_SESSION_ENV, session);
+    }
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -637,6 +673,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         call_id: call_id.clone(),
         handle_id: handle_id.clone(),
         transcript: Cell::new(0),
+        artifacts: std::cell::RefCell::default(),
     };
     let (end, final_text) = drive(
         conn,
@@ -644,6 +681,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
             workdir,
             mode: mode.clone(),
             prompt,
+            images,
             deadline,
             notifications: notif_rx,
             cancel_rx,
@@ -737,7 +775,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
                 Some(line) => format!("{text}\n\n{line}"),
                 None => text,
             };
-            ToolOutput::ok(&call_id, text)
+            ToolOutput::ok(&call_id, text).with_artifacts(updates.artifacts.take())
         }
         Err(reason) => ToolOutput::err(&call_id, reason),
     }
@@ -1083,6 +1121,8 @@ mod tests {
         hang: bool,
         prompted: Cell<bool>,
         cancelled: Cell<bool>,
+        /// The media types of the images its prompt carried.
+        images: std::cell::RefCell<Vec<String>>,
     }
 
     #[async_trait(?Send)]
@@ -1108,8 +1148,13 @@ mod tests {
                 Ok(SetSessionModeResponse::new())
             }
         }
-        async fn prompt(&self, _: PromptRequest) -> AcpResult<PromptResponse> {
+        async fn prompt(&self, request: PromptRequest) -> AcpResult<PromptResponse> {
             self.prompted.set(true);
+            for block in request.prompt {
+                if let ContentBlock::Image(image) = block {
+                    self.images.borrow_mut().push(image.mime_type);
+                }
+            }
             if self.hang {
                 std::future::pending::<()>().await;
             }
@@ -1145,6 +1190,7 @@ mod tests {
             call_id: "c".into(),
             handle_id: "h".into(),
             transcript: Cell::new(0),
+            artifacts: std::cell::RefCell::default(),
         };
         let (_notify, notifications) = futures::channel::mpsc::unbounded();
         let (_cancel, cancel_rx) = tokio::sync::oneshot::channel();
@@ -1156,6 +1202,7 @@ mod tests {
                     workdir: PathBuf::from("."),
                     mode: "research".into(),
                     prompt: "look around".into(),
+                    images: vec![("image/png".into(), "iVBORw0KGgo=".into())],
                     deadline,
                     notifications,
                     cancel_rx,
@@ -1195,6 +1242,48 @@ mod tests {
         .expect("the deadline ends the session long before the inactivity timeout");
         assert!(matches!(end, SessionEnd::OutOfTime), "{end:?}");
         assert!(agent.cancelled.get(), "the child's session was cancelled");
+    }
+
+    #[tokio::test]
+    async fn a_child_sees_the_images_it_was_handed_and_its_files_come_back() {
+        let agent = Rc::new(FakeAgent::default());
+        run(Rc::clone(&agent), None).await;
+        assert_eq!(*agent.images.borrow(), ["image/png"]);
+
+        let (tool_event_tx, _events) = mpsc::channel(16);
+        let sink = UpdateSink {
+            tool_event_tx,
+            call_id: "c".into(),
+            handle_id: "h".into(),
+            transcript: Cell::new(0),
+            artifacts: std::cell::RefCell::default(),
+        };
+        let made = sven_vocab::ArtifactRef {
+            uri: "mcp-file://files/7b1d".into(),
+            name: "image-1.png".into(),
+            mime_type: "image/png".into(),
+            size: 9,
+        };
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            super::super::ARTIFACTS_META_KEY.into(),
+            serde_json::json!([made]),
+        );
+        let finished = agent_client_protocol::ToolCall::new("t1", "run_model")
+            .status(agent_client_protocol::ToolCallStatus::Completed)
+            .meta(meta);
+        sink.forward(&SessionNotification::new(
+            "s",
+            agent_client_protocol::SessionUpdate::ToolCall(finished.clone()),
+        ))
+        .await;
+        // The same call reported again relays its file once.
+        sink.forward(&SessionNotification::new(
+            "s",
+            agent_client_protocol::SessionUpdate::ToolCall(finished),
+        ))
+        .await;
+        assert_eq!(sink.artifacts.take(), [made]);
     }
 
     #[tokio::test]

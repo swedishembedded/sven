@@ -77,6 +77,7 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
             tool_name,
             output,
             is_error,
+            artifacts,
             ..
         } => {
             let status = if *is_error {
@@ -85,10 +86,19 @@ pub fn agent_event_to_session_update(event: &AgentEvent) -> Option<SessionUpdate
                 ToolCallStatus::Completed
             };
             let raw_output = serde_json::Value::String(output.clone());
-            let acp_tc = AcpToolCall::new(call_id.clone(), tool_name.clone())
+            let mut acp_tc = AcpToolCall::new(call_id.clone(), tool_name.clone())
                 .kind(tool_name_to_kind(tool_name))
                 .status(status)
                 .raw_output(raw_output);
+            // The files it made, by handle, for a parent to relay.
+            if !artifacts.is_empty() {
+                let mut meta = serde_json::Map::new();
+                meta.insert(
+                    sven_bootstrap::task_tool::ARTIFACTS_META_KEY.to_string(),
+                    serde_json::to_value(artifacts).unwrap_or_default(),
+                );
+                acp_tc = acp_tc.meta(meta);
+            }
             Some(SessionUpdate::ToolCall(acp_tc))
         }
 

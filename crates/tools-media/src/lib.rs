@@ -36,6 +36,7 @@
 //! invocation is named by its call, so asking again is a new picture.
 
 mod generate;
+mod handover;
 mod invocation;
 pub mod mp4;
 mod request;
@@ -44,6 +45,7 @@ mod request;
 pub mod fake;
 
 pub use generate::{generate, Generated};
+pub use handover::{hand_over, Handover, MEDIA_SESSION_ENV};
 
 use std::path::{Path, PathBuf};
 

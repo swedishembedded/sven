@@ -125,6 +125,11 @@ pub(crate) const SUBAGENT_DEPTH_ENV: &str = "SVEN_SUBAGENT_DEPTH";
 /// parent answering it knows what the call does.
 pub const CAPABILITY_META_KEY: &str = "sven.capability";
 
+/// `_meta` key under which `sven acp serve` names, on a finished tool call,
+/// the files the call made or names, by handle (`ArtifactRef`s), so the
+/// parent relays them with its own result and its client shows them.
+pub const ARTIFACTS_META_KEY: &str = "sven.artifacts";
+
 // ── TaskTool ─────────────────────────────────────────────────────────────────
 
 pub struct TaskTool {
@@ -174,6 +179,12 @@ pub struct TaskTool {
     /// when the tool is built, so no call depends on the process environment
     /// at the moment it runs.
     is_subagent: bool,
+    /// Where the session runs models, and the conversation it names there:
+    /// a child is handed files through it and makes its own there.
+    media: Option<(
+        sven_tools_media::MediaEndpoint,
+        sven_tools_media::MediaConfig,
+    )>,
 }
 
 impl TaskTool {
@@ -198,6 +209,7 @@ impl TaskTool {
             approval_mode: ApprovalMode::Auto,
             disabled_tools: Vec::new(),
             command_patterns: None,
+            media: None,
             chunks: None,
             ledger: Arc::default(),
             subgoals: Arc::default(),
@@ -266,6 +278,20 @@ impl TaskTool {
     #[must_use]
     pub fn with_disabled_tools(mut self, tools: Vec<String>) -> Self {
         self.disabled_tools = tools;
+        self
+    }
+
+    /// Hands children files through the session's model service, and has
+    /// what they make belong to the same conversation.
+    #[must_use]
+    pub fn with_media(
+        mut self,
+        media: Option<(
+            sven_tools_media::MediaEndpoint,
+            sven_tools_media::MediaConfig,
+        )>,
+    ) -> Self {
+        self.media = media;
         self
     }
 
@@ -470,6 +496,11 @@ impl Tool for TaskTool {
                     "type": "string",
                     "description": "[spawn] Model override"
                 },
+                "inputs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "[spawn] Files it works on: handles (mcp-file://files/...) or paths; images are shown to it"
+                },
                 "handle": {
                     "type": "string",
                     "description": "[status|read|grep] Buffer handle from a spawn"
@@ -596,6 +627,29 @@ impl Tool for TaskTool {
                 Err(e) => return ToolOutput::err(&call.id, e),
             };
 
+        let inputs: Vec<String> = match call.args.get("inputs") {
+            None => Vec::new(),
+            Some(serde_json::Value::Array(list)) => match list
+                .iter()
+                .map(|v| v.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+            {
+                Some(list) => list,
+                None => return ToolOutput::err(&call.id, "`inputs` holds handles or paths"),
+            },
+            Some(_) => return ToolOutput::err(&call.id, "`inputs` is a list of handles or paths"),
+        };
+        let handed = match sven_tools_media::hand_over(
+            self.media.as_ref().map(|(e, c)| (e, c)),
+            &workdir,
+            &inputs,
+        )
+        .await
+        {
+            Ok(handed) => handed,
+            Err(e) => return ToolOutput::err(&call.id, e),
+        };
+
         let requested_model = call
             .args
             .get("model")
@@ -695,7 +749,9 @@ impl Tool for TaskTool {
 
         let args = SpawnArgs {
             exe,
-            prompt,
+            prompt: format!("{prompt}{}", handed.note),
+            images: handed.images,
+            media_session: self.media.as_ref().and_then(|(_, c)| c.session.clone()),
             description: description.clone(),
             mode: acp_mode,
             contract: ChildRunContract {

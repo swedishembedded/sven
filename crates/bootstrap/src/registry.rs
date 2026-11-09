@@ -526,7 +526,8 @@ fn build_profile_research(
         .with_turn_budgets(Some(cfg.agent.max_tool_rounds), cfg.model.max_output_tokens)
         .with_approver(integrations.approver.clone(), integrations.approval_mode)
         .with_disabled_tools(cfg.tools.disabled.clone())
-        .with_command_patterns(&cfg.tools),
+        .with_command_patterns(&cfg.tools)
+        .with_media(cfg.media_endpoint()),
     );
 
     reg
