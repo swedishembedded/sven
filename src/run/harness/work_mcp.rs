@@ -88,7 +88,7 @@ fn confined(
         .extend(declared.read_only.iter().cloned());
     // Built once here, where a failure can refuse the run; applied in the
     // child of every start.
-    confinement.prepare().map_err(|e| anyhow!(e))?;
+    confinement.check().map_err(|e| anyhow!(e))?;
     let mut config = package_mcp::config(
         declared,
         &Home {

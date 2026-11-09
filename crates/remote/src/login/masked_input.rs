@@ -7,14 +7,16 @@
 //! server's page shows it. Elsewhere than on a Unix terminal (input piped
 //! in, or another system) the line is read as it is.
 
-use std::io::{BufRead, Write};
+use std::io::BufRead;
 
 /// Characters shown at each end of a code being entered.
+#[cfg(any(unix, test))]
 pub(super) const SHOWN_AT_EACH_END: usize = 10;
 
 /// `code` as the terminal shows it: its first and last
 /// [`SHOWN_AT_EACH_END`] characters with masks between them, or all masks
 /// while it is too short for that to hide anything.
+#[cfg(any(unix, test))]
 pub(super) fn masked(code: &str) -> String {
     let chars: Vec<char> = code.chars().collect();
     if chars.len() <= SHOWN_AT_EACH_END * 2 {
@@ -48,7 +50,7 @@ pub(super) fn read_code() -> anyhow::Result<String> {
 /// Reads keys one at a time and redraws the masked code after each.
 #[cfg(unix)]
 fn read_masked(_echo_off: &EchoOff) -> anyhow::Result<String> {
-    use std::io::Read;
+    use std::io::{Read, Write};
     let mut stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout();
     let mut code = String::new();

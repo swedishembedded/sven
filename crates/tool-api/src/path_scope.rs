@@ -255,6 +255,7 @@ impl PathScope {
     /// When the root cannot be opened, or the platform has no `openat2`
     /// (anything but Linux): a scope that was asked to be race-free and cannot
     /// be must not silently fall back.
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     pub fn race_free(mut self) -> io::Result<Self> {
         let Some(root) = self.root.as_deref() else {
             return Ok(self);

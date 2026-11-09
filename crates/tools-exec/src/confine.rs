@@ -259,6 +259,16 @@ mod linux {
             Ok(Prepared { ruleset })
         }
 
+        /// Whether these rules can confine a command here: they are built
+        /// once and dropped, so a run can be refused before it starts.
+        ///
+        /// # Errors
+        ///
+        /// See [`Self::prepare`].
+        pub fn check(&self) -> Result<(), String> {
+            self.prepare().map(|_| ())
+        }
+
         /// Confines `command` and everything it starts, and gives it
         /// `tmpdir` as its `TMPDIR`.
         ///
@@ -283,6 +293,13 @@ impl CommandConfinement {
     /// Always.
     pub fn require_kernel_support() -> Result<(), String> {
         Err("commands are confined only on Linux (Landlock)".into())
+    }
+
+    /// # Errors
+    ///
+    /// Always.
+    pub fn check(&self) -> Result<(), String> {
+        Self::require_kernel_support()
     }
 
     /// # Errors
