@@ -586,6 +586,9 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     .kill_on_drop(true);
 
     cmd.current_dir(&workdir);
+    // The child goes with the session: killed when this thread, which drives
+    // it to its end, ends, even when the whole host is killed.
+    sven_tools_exec::confine::die_with_parent(&mut cmd);
     if let Some(session) = &media_session {
         cmd.env(sven_tools_media::MEDIA_SESSION_ENV, session);
     }

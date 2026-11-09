@@ -38,6 +38,36 @@ pub use linux::{require_abi, Prepared, ABI_REQUIRED, SYSTEM_READ_ONLY};
 
 use std::path::PathBuf;
 
+/// Ends `command`'s process when the thread that starts it ends, however it
+/// ends: a sub-agent never outlives the session that ran it, also when that
+/// session's host is killed outright. The thread that spawns must live as
+/// long as the child is wanted (`task` spawns from the thread that drives
+/// the child to its end). Linux only; elsewhere nothing changes.
+pub fn die_with_parent(command: &mut tokio::process::Command) {
+    #[cfg(target_os = "linux")]
+    {
+        // Read before the fork; the child compares, so a parent that died
+        // between the fork and the call is noticed.
+        let parent = std::process::id();
+        // SAFETY: the closure runs in the forked child of a multi-threaded
+        // parent, so it may only call async-signal-safe functions: two raw
+        // system calls, and an error built from errno or a constant.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if u32::try_from(libc::getppid()).ok() != Some(parent) {
+                    return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = command;
+}
+
 /// Keeps this process's memory, which holds its sign-in key, from other
 /// processes of the same user: its tool children (a shell, gdb, an MCP
 /// server) and anything they start. Without it, where the kernel lets a
@@ -307,5 +337,42 @@ impl CommandConfinement {
     /// Always.
     pub fn restrict(&self, _command: &mut std::process::Command) -> Result<(), String> {
         Self::require_kernel_support()
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod die_with_parent_tests {
+    /// A process started with `die_with_parent` is killed when the thread
+    /// that started it ends, though nothing else stops it.
+    #[test]
+    fn a_child_ends_with_the_thread_that_started_it() {
+        let pid = std::thread::spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let mut command = tokio::process::Command::new("sleep");
+                command.arg("30");
+                super::die_with_parent(&mut command);
+                let child = command.spawn().unwrap();
+                let pid = child.id().unwrap();
+                // Not killed on drop: only the thread's end may end it.
+                std::mem::forget(child);
+                pid
+            })
+        })
+        .join()
+        .unwrap();
+        let alive = || {
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .map(|stat| !stat.split(") ").nth(1).unwrap_or("").starts_with('Z'))
+                .unwrap_or(false)
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while alive() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!alive(), "the child outlived the thread that started it");
     }
 }
