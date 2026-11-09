@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **release**: sven builds on macOS and Windows again; 4.7.0 built only on Linux and was never published.
+
 ### Changed
 - **harness**: a command gate that fails says why: the failure message (and a repair prompt's `failure.detail`) ends with the last line the command wrote to standard error, at most 300 characters.
 
