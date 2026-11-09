@@ -32,9 +32,9 @@ jobs:
   # ── E2E basic tests (gate before any release artifacts are published) ─────────
   e2e-basic:
     name: E2E basic tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -53,9 +53,9 @@ jobs:
   # ── Linux x86_64 ─────────────────────────────────────────────────────────────
   build-linux-x86_64:
     name: Linux x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -89,7 +89,7 @@ jobs:
           # Keep completions as a shared artifact for the arm64 deb build
           cp -r target/completions       dist/completions
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: linux-x86_64
           path: dist/
@@ -100,7 +100,7 @@ jobs:
   # an Alpine gateway (pinned by version and checksum). Both are required.
   build-linux-musl:
     name: Linux ${{ matrix.arch }} (static, musl)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
@@ -111,7 +111,7 @@ jobs:
             target: aarch64-unknown-linux-musl
             platform: linux/arm64
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -127,7 +127,7 @@ jobs:
         # statically. The packaged and macOS builds have it.
         run: cross build --release --target ${{ matrix.target }} -p sven --no-default-features --features tui,network,gdb,memory,coding,research,dbus,android
 
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         if: matrix.arch != 'x86_64'
 
       - name: Check it is static and runs without glibc
@@ -141,7 +141,7 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/sven dist/sven-linux-${{ matrix.arch }}-musl
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: linux-${{ matrix.arch }}-musl
           path: dist/
@@ -153,11 +153,11 @@ jobs:
   # continue-on-error: the x86_64 release is never blocked by an aarch64 failure.
   build-linux-aarch64:
     name: Linux aarch64 [experimental]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-linux-x86_64
     continue-on-error: true
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -172,7 +172,7 @@ jobs:
         run: cross build --release --target aarch64-unknown-linux-gnu
 
       - name: Download x86_64 completions
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: linux-x86_64
           path: x86-artifacts
@@ -192,7 +192,7 @@ jobs:
           cp target/aarch64-unknown-linux-gnu/release/sven dist/sven-linux-aarch64
           cp target/debian/sven_*_arm64.deb                dist/sven-linux-aarch64.deb
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: linux-aarch64
           path: dist/
@@ -209,7 +209,7 @@ jobs:
     name: macOS (universal)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -231,7 +231,7 @@ jobs:
             target/aarch64-apple-darwin/release/sven \
             -output dist/sven-darwin-universal
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: macos
           path: dist/
@@ -243,7 +243,7 @@ jobs:
     runs-on: windows-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -257,7 +257,7 @@ jobs:
           mkdir dist
           copy target\release\sven.exe dist\sven-windows-x86_64.exe
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: windows
           path: dist/
@@ -265,7 +265,7 @@ jobs:
   # ── GitHub Release ────────────────────────────────────────────────────────────
   publish:
     name: Publish GitHub Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Waits for every build, the experimental glibc aarch64 and Windows ones
     # included: a job not waited for is raced, and its files are simply
     # missing from the release (v4.4.5 shipped without the aarch64 build,
@@ -283,36 +283,36 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Download x86_64 artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: linux-x86_64
           path: dist
 
       - name: Download the static (musl) artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: linux-*-musl
           merge-multiple: true
           path: dist
 
       - name: Download aarch64 artifact (if available)
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: linux-aarch64
           path: dist
 
       - name: Download macOS artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: macos
           path: dist
 
       - name: Download Windows artifact (if available)
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         continue-on-error: true
         with:
           name: windows
@@ -341,7 +341,7 @@ jobs:
         if: >-
           ${{ !(github.event_name == 'workflow_dispatch' &&
               github.event.inputs.dry_run == 'true') }}
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: dist/*
           generate_release_notes: true
