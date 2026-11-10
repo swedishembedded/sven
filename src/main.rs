@@ -90,6 +90,10 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     // Before anything runs: manual approval without a person to ask fails
     // here, never by hanging at the first prompt.
     cli.check_approval()?;
+    if let Err(why) = cli.goal_terms() {
+        eprintln!("[sven:error] {why}");
+        std::process::exit(2);
+    }
 
     // In TUI mode writing to stderr corrupts the display.
     // Suppress all tracing output unless the caller explicitly opts in by

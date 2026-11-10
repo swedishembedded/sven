@@ -9,7 +9,10 @@
 //! A session's standing goal in words, the same on every surface: what
 //! `/goal` alone shows.
 
-use sven_vocab::goal::{CheckResult, Goal, GoalCommand, GoalStatus};
+use sven_vocab::goal::{
+    CheckResult, Goal, GoalCheck, GoalCommand, GoalStatus, DEFAULT_CHECK_TIMEOUT_SECS,
+    MAX_OBJECTIVE_CHARS, MAX_TURNS_LIMIT,
+};
 
 /// What a `/goal` line asks of a surface that reads it as a whole prompt
 /// (a headless run, an editor's prompt).
@@ -37,6 +40,56 @@ pub fn goal_line(text: &str) -> Option<GoalLine> {
         Some(ImmediateAction::ShowGoal) => GoalLine::Show,
         Some(ImmediateAction::Notice { text }) => GoalLine::Usage(text),
         _ => GoalLine::Usage(goal::GOAL_USAGE.to_string()),
+    })
+}
+
+/// The check a command line stands for (`--goal-check`), read the way
+/// `/goal --check` reads its quoted command, with the default time.
+///
+/// # Errors
+/// When the line holds no command.
+pub fn check_from_line(line: &str) -> Result<GoalCheck, String> {
+    let argv = crate::commands::parser::tokenise(line);
+    if argv.is_empty() {
+        return Err("a goal check takes a command".to_string());
+    }
+    Ok(GoalCheck {
+        argv,
+        timeout_secs: DEFAULT_CHECK_TIMEOUT_SECS,
+    })
+}
+
+/// The goal a headless run sets from `--goal-turns` and `--goal-check`: the
+/// whole prompt, verbatim, is the objective (a `/goal` line would be read
+/// word by word, losing its quotes and line breaks).
+///
+/// # Errors
+/// When the turns are outside `1..=MAX_TURNS_LIMIT`, the objective is blank,
+/// or it is longer than a goal keeps: truncating it would not be verbatim.
+pub fn verbatim_goal(
+    objective: &str,
+    max_turns: u32,
+    check: Option<GoalCheck>,
+) -> Result<GoalCommand, String> {
+    if !(1..=MAX_TURNS_LIMIT).contains(&max_turns) {
+        return Err(format!(
+            "--goal-turns takes a number from 1 to {MAX_TURNS_LIMIT}"
+        ));
+    }
+    if objective.trim().is_empty() {
+        return Err("a goal needs an objective: the prompt is empty".to_string());
+    }
+    let chars = objective.trim().chars().count();
+    if chars > MAX_OBJECTIVE_CHARS {
+        return Err(format!(
+            "the prompt is {chars} characters; a goal's objective holds at most \
+             {MAX_OBJECTIVE_CHARS}"
+        ));
+    }
+    Ok(GoalCommand::Set {
+        objective: objective.to_string(),
+        max_turns: Some(max_turns),
+        check,
     })
 }
 
@@ -104,7 +157,40 @@ pub fn describe(goal: Option<&Goal>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sven_vocab::goal::{BlockerReport, GoalCheck};
+    use sven_vocab::goal::BlockerReport;
+
+    #[test]
+    fn a_verbatim_goal_keeps_the_prompt_byte_for_byte() {
+        let prompt = "Fix \"the\" parser:\n\n  - keep   spaces\n/goal is text here";
+        let check = check_from_line("cargo test --quiet").unwrap();
+        assert_eq!(
+            verbatim_goal(prompt, 7, Some(check.clone())),
+            Ok(GoalCommand::Set {
+                objective: prompt.to_string(),
+                max_turns: Some(7),
+                check: Some(check),
+            })
+        );
+    }
+
+    #[test]
+    fn a_verbatim_goal_refuses_what_a_goal_cannot_hold() {
+        for turns in [0, MAX_TURNS_LIMIT + 1] {
+            assert!(verbatim_goal("x", turns, None).is_err(), "{turns}");
+        }
+        assert!(verbatim_goal("x", MAX_TURNS_LIMIT, None).is_ok());
+        assert!(verbatim_goal(" \n ", 3, None).is_err());
+        assert!(verbatim_goal(&"x".repeat(MAX_OBJECTIVE_CHARS), 3, None).is_ok());
+        assert!(verbatim_goal(&"x".repeat(MAX_OBJECTIVE_CHARS + 1), 3, None).is_err());
+    }
+
+    #[test]
+    fn a_goal_check_line_is_a_command_with_the_default_time() {
+        let check = check_from_line("sh -c \"cargo test\"").unwrap();
+        assert_eq!(check.argv, ["sh", "-c", "cargo test"]);
+        assert_eq!(check.timeout_secs, DEFAULT_CHECK_TIMEOUT_SECS);
+        assert!(check_from_line("  ").is_err());
+    }
 
     #[test]
     fn a_goal_line_is_read_the_way_the_terminal_reads_it() {

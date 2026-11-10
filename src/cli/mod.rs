@@ -291,6 +291,22 @@ pub struct Cli {
     #[arg(long)]
     pub token_ledger: bool,
 
+    /// Run the whole headless prompt as a standing goal with this many turns
+    /// (1 to 500), taken verbatim as the objective: quotes, line breaks and
+    /// spacing are kept, unlike a `/goal` line, which is read word by word.
+    /// The run takes turns and exits as `/goal` does in a headless run (0
+    /// completed, 4 out of turns, 5 blocked, 6 paused). A prompt that is
+    /// itself a `/goal` line is refused. See docs/guides/goals.md.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=500))]
+    pub goal_turns: Option<u32>,
+
+    /// The command that decides whether the `--goal-turns` goal is done: run
+    /// in the project after each turn, it passes on exit status 0 (within 600
+    /// seconds). Given as one command line, quoted as `/goal --check` takes
+    /// it. Needs `--goal-turns`.
+    #[arg(long, value_name = "COMMAND", requires = "goal_turns")]
+    pub goal_check: Option<String>,
+
     /// Append every model request this process sends, exactly as sent, and
     /// what came back to FILE (JSONL). `sven replay FILE` sends one again.
     #[arg(long, value_name = "FILE")]
@@ -366,6 +382,30 @@ impl Cli {
             ),
             None => Ok(()),
         }
+    }
+
+    /// The goal terms `--goal-turns` and `--goal-check` give a headless run,
+    /// `None` without `--goal-turns`.
+    ///
+    /// # Errors
+    /// When the run is not a headless prompt run, or the check holds no
+    /// command: refused before anything runs.
+    pub fn goal_terms(&self) -> Result<Option<sven_ci::GoalTerms>, String> {
+        let Some(max_turns) = self.goal_turns else {
+            return Ok(None);
+        };
+        if self.command.is_some() || self.team_name.is_some() || !self.is_headless() {
+            return Err("--goal-turns sets the goal of a headless run: \
+                 give a PROMPT or pipe one in, with --headless"
+                .to_string());
+        }
+        let check = self
+            .goal_check
+            .as_deref()
+            .map(sven_frontend::goal::check_from_line)
+            .transpose()
+            .map_err(|why| format!("--goal-check: {why}"))?;
+        Ok(Some(sven_ci::GoalTerms { max_turns, check }))
     }
 
     /// Whether a headless run reads stdin: when --stdin asks for it, or when
@@ -520,6 +560,34 @@ mod tests {
                 "{args:?}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn goal_flags_give_a_headless_run_its_goal_terms() {
+        assert!(cli(&["fix it"]).goal_terms().unwrap().is_none());
+        let terms = cli(&["--goal-turns", "9", "--goal-check", "make test", "fix it"])
+            .goal_terms()
+            .unwrap()
+            .expect("terms");
+        assert_eq!(terms.max_turns, 9);
+        assert_eq!(terms.check.unwrap().argv, ["make", "test"]);
+        // Refused before anything runs: out of range, a check without turns,
+        // a blank check, a run that is not a headless prompt run.
+        for args in [
+            &["--goal-turns", "0", "fix it"][..],
+            &["--goal-turns", "501", "fix it"],
+            &["--goal-turns", "x", "fix it"],
+            &["--goal-check", "make test", "fix it"],
+        ] {
+            assert!(
+                Cli::try_parse_from(std::iter::once("sven").chain(args.iter().copied())).is_err(),
+                "{args:?}"
+            );
+        }
+        assert!(cli(&["--goal-turns", "3", "--goal-check", " ", "fix it"])
+            .goal_terms()
+            .is_err());
+        assert!(cli(&["--goal-turns", "3", "chats"]).goal_terms().is_err());
     }
 
     #[test]

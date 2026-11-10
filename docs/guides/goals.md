@@ -94,6 +94,16 @@ speaks to it with the same `/goal` line:
   ends as the goal does: exit 0 when it completed, 4 out of turns, 5 blocked
   (it needs a person), 6 paused; a line used wrongly exits 2 before anything
   runs: `echo '/goal --check "cargo test" fix the tests' | sven --headless`.
+  A `/goal` line is read word by word (quotes dropped, spaces collapsed), so
+  a program that must hand over a task as it is passes it with
+  `--goal-turns N` (1 to 500): the whole prompt, from the argument or stdin,
+  is then the objective verbatim, and the run is the same goal run.
+  `--goal-check "<command>"` decides completion as `/goal --check` does and
+  needs `--goal-turns`. The prompt must not itself be a `/goal` line, must
+  hold at most 4000 characters (a longer one is refused, never cut), and the
+  run cannot use the workflow features (`--file`, `--var`, trace files and
+  the like): each of these exits 2 before anything runs:
+  `sven --headless --goal-turns 30 --goal-check "make test" < task.txt`.
 - **Editors** (ACP): a prompt that is a `/goal` line sets or steers the goal,
   and `/goal` alone answers with how it stands.
 - **Programs** (`sven-sdk`): `Agent::goal` sets or steers the goal and runs

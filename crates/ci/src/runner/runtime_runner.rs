@@ -99,6 +99,20 @@ pub struct RuntimeRunnerOptions {
     /// Print one `[sven:ledger]` JSON line to stderr per model request
     /// (`--token-ledger`). The ledger is recorded in the trajectory either way.
     pub token_ledger: bool,
+    /// Take the whole prompt, verbatim, as the objective of a goal with these
+    /// terms (`--goal-turns`, `--goal-check`), instead of reading a `/goal`
+    /// line from it. The run is then a goal run exactly as one started by
+    /// that line. A prompt that is itself a `/goal` line is refused.
+    pub goal: Option<GoalTerms>,
+}
+
+/// The terms of a goal whose objective is a headless run's whole prompt.
+#[derive(Debug)]
+pub struct GoalTerms {
+    /// The goal turns it gets, `1..=500`.
+    pub max_turns: u32,
+    /// The command that decides it, if completion is not the agent's report.
+    pub check: Option<sven_vocab::goal::GoalCheck>,
 }
 
 impl RuntimeRunner {
@@ -213,7 +227,7 @@ impl RuntimeRunner {
 
         // Post the user prompt, or, for a `/goal` line, set the goal: the
         // same grammar the terminal and `sven rc` read.
-        let goal_run = match goal_command(&opts.prompt) {
+        let goal_run = match goal_command(&opts.prompt, opts.goal.as_ref()) {
             Some(Ok(command)) => {
                 session
                     .goal(command, true)
@@ -401,10 +415,26 @@ impl RuntimeRunner {
 }
 
 /// The goal command a headless prompt stands for: `None` when it is not a
-/// `/goal` line, the command's usage when it is one used wrongly (showing the
+/// goal run, the command's usage when it is one used wrongly (showing the
 /// goal means nothing in a run that starts with none).
-fn goal_command(prompt: &str) -> Option<Result<sven_vocab::goal::GoalCommand, String>> {
-    use sven_frontend::goal::{goal_line, GoalLine};
+///
+/// With `terms` the whole prompt is the objective, as given; without them a
+/// `/goal` line is read, word by word, as in the terminal.
+fn goal_command(
+    prompt: &str,
+    terms: Option<&GoalTerms>,
+) -> Option<Result<sven_vocab::goal::GoalCommand, String>> {
+    use sven_frontend::goal::{goal_line, verbatim_goal, GoalLine};
+    if let Some(terms) = terms {
+        if goal_line(prompt).is_some() {
+            return Some(Err(
+                "--goal-turns takes the whole prompt as the objective; \
+                 a prompt that is a /goal line sets its own goal"
+                    .to_string(),
+            ));
+        }
+        return Some(verbatim_goal(prompt, terms.max_turns, terms.check.clone()));
+    }
     Some(match goal_line(prompt)? {
         GoalLine::Command(command) => Ok(command),
         GoalLine::Usage(text) => Err(text),
@@ -448,6 +478,7 @@ mod tests {
             no_tools: false,
             trace_level: 0,
             token_ledger: false,
+            goal: None,
         };
         assert!(format!("{opts:?}").contains("agent"));
     }
@@ -455,14 +486,28 @@ mod tests {
     #[test]
     fn a_goal_line_sets_the_goal_and_its_end_is_the_exit_code() {
         use sven_vocab::goal::{Goal, GoalCommand, GoalStatus};
-        assert!(goal_command("fix the tests").is_none());
-        assert!(goal_command("/goalkeeper").is_none());
+        assert!(goal_command("fix the tests", None).is_none());
+        assert!(goal_command("/goalkeeper", None).is_none());
         assert!(matches!(
-            goal_command("/goal --check \"cargo test\" fix the tests"),
+            goal_command("/goal --check \"cargo test\" fix the tests", None),
             Some(Ok(GoalCommand::Set { check: Some(_), .. }))
         ));
-        assert!(matches!(goal_command("/goal"), Some(Err(_))));
-        assert!(matches!(goal_command("/goal check"), Some(Err(_))));
+        assert!(matches!(goal_command("/goal", None), Some(Err(_))));
+        assert!(matches!(goal_command("/goal check", None), Some(Err(_))));
+
+        let terms = GoalTerms {
+            max_turns: 4,
+            check: None,
+        };
+        let task = "fix \"it\"\n\n  now";
+        assert!(matches!(
+            goal_command(task, Some(&terms)),
+            Some(Ok(GoalCommand::Set { objective, max_turns: Some(4), .. })) if objective == task
+        ));
+        assert!(matches!(
+            goal_command("/goal fix it", Some(&terms)),
+            Some(Err(_))
+        ));
 
         let mut goal = Goal::new("g".into(), "x".into(), 3, None);
         for (status, code) in [

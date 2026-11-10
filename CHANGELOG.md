@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **headless**: `--goal-turns N` runs the whole prompt, verbatim, as a standing goal's objective (a `/goal` line is read word by word, losing quotes and line breaks), and `--goal-check COMMAND` decides it. The run takes turns and exits exactly as a headless `/goal` run does; wrong use (turns outside 1 to 500, a check without turns, a `/goal` line as the prompt, an objective over 4000 characters, workflow features) exits 2 before anything runs.
 - **task**: `isolation: "worktree"` runs a writing sub-agent in its own git worktree, started from a snapshot of the parent's working state (the parent's index and tree untouched). When the child succeeds its change is merged into the parent's tree, one child at a time; on a conflict nothing is applied and the child's branch is kept and named, as for a child that failed. Several writing sub-agents can run at once without overwriting each other.
 
 ## [4.9.0] - 2026-11-09

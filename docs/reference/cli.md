@@ -29,6 +29,8 @@ both for that step and the steps after it.
 |--------|---------|-------------|
 | `PROMPT` | - | The task. Giving one makes the run headless. |
 | `--stdin` | off | Read stdin to the end and join it to `PROMPT` with a blank line as one user message (`cmd \| sven --stdin "fix these errors"`). Without `--stdin`, a run that has a `PROMPT` never reads stdin. Without a `PROMPT`, a non-terminal stdin is the task and is always read. |
+| `--goal-turns N` | off | Headless: take the whole prompt verbatim as the objective of a standing goal with `N` turns (1 to 500) and run it as a headless `/goal` does ([goals](../guides/goals.md)): exit 0 completed, 4 out of turns, 5 blocked, 6 paused. Quotes, line breaks and spacing are kept. Exits 2 for a prompt that is a `/goal` line, one over 4000 characters, or a workflow feature (`--file`, `--var`, trace files, `--output-format`, ...). |
+| `--goal-check COMMAND` | none | Needs `--goal-turns`. The command line, run in the project after each turn, that decides the goal: it passes on exit status 0 (600 s limit). Quoted as `/goal --check` takes it. |
 | `-f, --file FILE` | - | A markdown [workflow file](../guides/workflows.md) (`#` title, preamble, `##` steps), a saved conversation, or an ATIF trajectory (`.json` extension: loaded as `--load-trace`). Stdin is never parsed as a workflow. In the TUI the steps are queued for review. |
 | `--attach PATH` | - | Attach an image or audio file to the first user turn. Repeatable. Audio is sent as audio when the model accepts it and transcribed otherwise. Needs no tool call, so it works with models that cannot call tools. |
 | `--var KEY=VALUE` | - | Template variable, substituted as `{{KEY}}` in workflow steps. Repeatable. An argument without `=` is ignored with a warning. |

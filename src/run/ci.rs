@@ -56,6 +56,8 @@ pub(crate) async fn run_ci(
 ) -> anyhow::Result<()> {
     // ── Detect project root ──────────────────────────────────────────────────
     let project_root = find_project_root().ok();
+    // Checked in `run_cli` before anything ran; read again for the runner.
+    let goal = cli.goal_terms().map_err(anyhow::Error::msg)?;
     let mode = cli.agent_mode(config.agent.default_mode);
 
     // ── --resume in headless mode ────────────────────────────────────────────
@@ -133,11 +135,11 @@ pub(crate) async fn run_ci(
     // Every headless run is driven by the HSM kernel. There are two kernel-backed
     // entry points and the routing below picks between them:
     //
-    //   * `RuntimeRunner` — the reactive-agent single-turn path: it drives one
+    //   * `RuntimeRunner` - the reactive-agent single-turn path: it drives one
     //     turn to completion and streams a conversation document. It handles a
     //     fresh single prompt *and* a piped prior-conversation document replayed
     //     as history (`sven '…' | sven --stdin 'next task'`).
-    //   * `CiRunner` — the multi-step workflow orchestrator, also kernel-backed
+    //   * `CiRunner` - the multi-step workflow orchestrator, also kernel-backed
     //     (it runs every turn on the kernel via `KernelAgent`). It owns the
     //     workflow features that `RuntimeRunner` does not: markdown `--file`,
     //     JSONL, `--var` templating, `--artifacts-dir`, `--dry-run`,
@@ -186,7 +188,20 @@ pub(crate) async fn run_ci(
         && !sven_ci::is_trace_input(&input)
         && cli.effective_output_trace().is_none();
 
-    if load_trace.is_none() && (mode_forces_runtime_runner || workflow_features_absent) {
+    let runs_on_runtime_runner =
+        load_trace.is_none() && (mode_forces_runtime_runner || workflow_features_absent);
+    if goal.is_some() && !runs_on_runtime_runner {
+        // The workflow runner has no goal run: refuse rather than run the
+        // prompt as a plain message and ignore the goal.
+        eprintln!(
+            "[sven:error] --goal-turns runs a single prompt as a goal; it cannot be combined \
+             with a workflow file, --var, --artifacts-dir, --dry-run, --attach, --output-format, \
+             --output-last-message, --system-prompt-file, a loaded or saved trace, or piped \
+             trace input"
+        );
+        std::process::exit(2);
+    }
+    if runs_on_runtime_runner {
         let kernel_mode = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
             match mode {
                 AgentMode::Chat => "chat",
@@ -281,6 +296,7 @@ pub(crate) async fn run_ci(
                 no_tools: cli.no_tools || cli.bare,
                 trace_level: cli.verbose,
                 token_ledger: cli.token_ledger,
+                goal,
             })
             .await;
         std::process::exit(code);
