@@ -345,7 +345,7 @@ impl Tool for ModelsTool {
         "List the models this session can run, by what they make (text, image, speech, audio, video, transcription)"
     }
     fn description(&self) -> &str {
-        "Lists the models this session can run. Call it once with no arguments first: it answers how many models make each kind (text, image, speech, audio for music and sound, video, transcription, embeddings), a few of each, and what nothing makes. Then list one kind with `output` (e.g. image, speech, audio; everyday words such as music or voice work too), narrowed with `input` (what it must read, e.g. image) or `query` (words in its id or name). Each line gives its id, what it reads and makes, the operation it is run as, its voices and prices. The list is everything there is: when nothing makes what the person asked for, tell them and ask, instead of searching under other names. Then ask for the chosen model's parameters."
+        "Lists the models this session can run. Call it once with no arguments first: it answers how many models make each kind (text, image, speech, audio for music and sound, video, transcription, embeddings), a few of each, and what nothing makes. Then list one kind with `output` (e.g. image, speech, audio; everyday words such as music or voice work too), narrowed with `input` (what it must read, e.g. image) or `query` (words in its id or name). Each line gives its id, what it reads and makes, the operation it is run as, its voices and list prices, which are for choosing between models: what a run is charged is often less and is shown to the person beside the conversation, so never add up or report costs from them. The list is everything there is: when nothing makes what the person asked for, tell them and ask, instead of searching under other names. Then ask for the chosen model's parameters."
     }
     fn parameters_schema(&self) -> Value {
         json!({
@@ -660,9 +660,6 @@ impl RunModelTool {
         if let Some(seconds) = done.seconds {
             line.push_str(&format!(", {seconds:.1} s"));
         }
-        if let Some(cost) = done.cost {
-            line.push_str(&format!(", ${cost:.4}"));
-        }
         line.push_str(").");
         line.push_str(&handle);
         Ok((line, published))
@@ -702,7 +699,7 @@ impl Tool for RunModelTool {
         "Run one model once (chat, vision, image, speech, audio, video); files in and out by handle"
     }
     fn description(&self) -> &str {
-        "Runs one model once and answers its text and the files it made. Give `model` (an id from the model list), `operation` (chat, image, speech, transcribe, audio or video, as the model's parameters say), `prompt` (what to make, ask or say), `inputs` (files it reads: handles like mcp-file://files/<id> from the conversation or an earlier run, or paths in the working directory; e.g. the image to edit, the picture to describe) and `params` (the model's own parameters by name, e.g. aspect_ratio, resolution, voice, format, duration). What it makes is shown to the person and answered by handle; pass a handle in `inputs` to the next run to edit or reuse it, without reading it yourself. Give `name`, a short name for what it makes (e.g. `sven-slap-1`), so the person finds it among the conversation's files; `output` also saves the first file at that path in the working directory, and names it so when no `name` is given. Run once for each thing the person asked for: one image asked for is one run, of one model. Every run is charged and a video takes minutes, so before running several (to compare models, or variants nobody asked for) ask the person first, saying how many and about what they cost; when they asked for several, run them in their own calls."
+        "Runs one model once and answers its text and the files it made. Give `model` (an id from the model list), `operation` (chat, image, speech, transcribe, audio or video, as the model's parameters say), `prompt` (what to make, ask or say), `inputs` (files it reads: handles like mcp-file://files/<id> from the conversation or an earlier run, or paths in the working directory; e.g. the image to edit, the picture to describe) and `params` (the model's own parameters by name, e.g. aspect_ratio, resolution, voice, format, duration). What it makes is shown to the person and answered by handle; pass a handle in `inputs` to the next run to edit or reuse it, without reading it yourself. Give `name`, a short name for what it makes (e.g. `sven-slap-1`), so the person finds it among the conversation's files; `output` also saves the first file at that path in the working directory, and names it so when no `name` is given. Run once for each thing the person asked for: one image asked for is one run, of one model. Every run is charged and a video takes minutes, so before running several (to compare models, or variants nobody asked for) ask the person first, saying how many; when they asked for several, run them in their own calls. What a run was charged is shown to the person beside the conversation: do not work it out or report it."
     }
     fn parameters_schema(&self) -> Value {
         json!({

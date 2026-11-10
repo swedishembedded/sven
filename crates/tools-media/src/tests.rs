@@ -519,6 +519,20 @@ fn run_model_runs_what_was_asked_and_asks_before_running_more() {
     let said = tool.description();
     assert!(!said.contains("at once"), "{said}");
     assert!(said.contains("ask the person first"), "{said}");
+    // Nothing invites it to price what it ran.
+    assert!(
+        !said.contains("cost;") && !said.contains("what they cost"),
+        "{said}"
+    );
+    let listed = ModelsTool::new(MediaEndpoint {
+        base_url: "http://x".into(),
+        api_key: "k".into(),
+    });
+    assert!(
+        listed.description().contains("never add up or report"),
+        "{}",
+        listed.description()
+    );
 }
 
 #[tokio::test]
@@ -574,8 +588,11 @@ async fn in_a_conversation_an_image_is_answered_by_handle_shown_to_the_model_and
         ),
         (handle.as_str(), "image/png")
     );
+    // What it made, never what it cost: the person sees the charge beside
+    // the conversation, and a figure here is only one the model would add up.
+    assert!(made.content.contains(&handle), "{}", made.content);
     assert!(
-        made.content.contains(&handle) && made.content.contains("$0.0410"),
+        !made.content.contains('$') && !made.content.contains("Charged"),
         "{}",
         made.content
     );

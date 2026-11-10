@@ -218,10 +218,6 @@ async fn place(
     Ok((artifact, raster.then_some(bytes)))
 }
 
-fn dollars(micro: u64) -> String {
-    format!("${:.4}", micro as f64 / 1_000_000.0)
-}
-
 /// Run the invocation `body` for call `call_id` and answer what it made.
 pub(crate) async fn run(
     client: &InvocationClient,
@@ -276,9 +272,6 @@ pub(crate) async fn run(
         } else {
             "Pass a path in `inputs` to work on one.\n"
         });
-    }
-    if let Some(cost) = invoked.cost_micro_usd {
-        text.push_str(&format!("Charged {}.\n", dollars(cost)));
     }
     let text = text.trim_end().to_owned();
     let mut parts = vec![ToolOutputPart::Text(text.clone())];
