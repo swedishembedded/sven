@@ -448,6 +448,80 @@ async fn call(tool: &dyn Tool, id: &str, args: Value) -> ToolOutput {
 }
 
 #[tokio::test]
+async fn models_answers_what_kinds_there_are_before_it_lists_any() {
+    let fake = serve(0).await;
+    let models = ModelsTool::new(endpoint(&fake));
+    let overview = call(&models, "m", json!({})).await.content;
+    for kind in [
+        "- text (chat, and vision: reading images): 2",
+        "- image (pictures): 1",
+        "- speech (text to speech, voices): 1",
+        "- video (video clips): 1",
+    ] {
+        assert!(overview.contains(kind), "{kind} in {overview}");
+    }
+    // What is not here is said, so nothing is searched for.
+    assert!(overview.contains("Nothing here makes audio"), "{overview}");
+    assert!(overview.contains(r#"{"output": "image"}"#), "{overview}");
+}
+
+#[tokio::test]
+async fn models_says_plainly_when_nothing_makes_what_was_asked_and_to_ask_the_person() {
+    let fake = serve(0).await;
+    let models = ModelsTool::new(endpoint(&fake));
+    for asked in ["music", "audio", "song"] {
+        let answer = call(&models, "m", json!({"output": asked})).await.content;
+        assert!(
+            answer.contains("No model this session can run makes audio"),
+            "{asked}: {answer}"
+        );
+        assert!(answer.contains("ask"), "{asked}: {answer}");
+        assert!(!answer.contains("try fewer filters"), "{asked}: {answer}");
+    }
+    // A kind there is, but no model of it by that name: its models, not a dead end.
+    let answer = call(
+        &models,
+        "m",
+        json!({"output": "speech", "query": "elevenlabs"}),
+    )
+    .await
+    .content;
+    assert!(answer.contains("openai/tts"), "{answer}");
+}
+
+#[tokio::test]
+async fn models_takes_the_everyday_word_for_a_kind() {
+    let fake = serve(0).await;
+    let models = ModelsTool::new(endpoint(&fake));
+    for word in ["voice", "tts", "Speech"] {
+        let answer = call(&models, "m", json!({"output": word})).await.content;
+        assert!(answer.starts_with("openai/tts"), "{word}: {answer}");
+    }
+    let answer = call(&models, "m", json!({"output": "picture"}))
+        .await
+        .content;
+    assert!(
+        answer.starts_with("google/gemini-nano-banana-2.1"),
+        "{answer}"
+    );
+}
+
+#[test]
+fn run_model_runs_what_was_asked_and_asks_before_running_more() {
+    let tool = RunModelTool::new(
+        MediaEndpoint {
+            base_url: "http://x".into(),
+            api_key: "k".into(),
+        },
+        MediaConfig::default(),
+        std::env::temp_dir(),
+    );
+    let said = tool.description();
+    assert!(!said.contains("at once"), "{said}");
+    assert!(said.contains("ask the person first"), "{said}");
+}
+
+#[tokio::test]
 async fn models_finds_a_model_by_what_it_makes_reads_and_is_called() {
     let fake = serve(0).await;
     let models = ModelsTool::new(endpoint(&fake));

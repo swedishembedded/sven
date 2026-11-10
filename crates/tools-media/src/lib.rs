@@ -230,6 +230,98 @@ fn line(model: &ListedModel) -> String {
     line
 }
 
+/// The kinds of thing a model makes, as the model list names them, in the
+/// order an overview gives them, with what each is in a person's words.
+const KINDS: [(&str, &str); 7] = [
+    ("text", "chat, and vision: reading images"),
+    ("image", "pictures"),
+    ("speech", "text to speech, voices"),
+    ("audio", "music and sound"),
+    ("video", "video clips"),
+    ("transcription", "speech to text"),
+    ("embeddings", "vectors for search"),
+];
+
+/// The kind `word` names: the list's own name, or the everyday word for it.
+fn kind_of(word: &str) -> String {
+    match word.trim() {
+        "music" | "song" | "songs" | "sound" | "sounds" | "sfx" | "jingle" => "audio",
+        "voice" | "voices" | "tts" | "speak" | "narration" | "say" => "speech",
+        "picture" | "pictures" | "photo" | "drawing" | "illustration" | "images" => "image",
+        "stt" | "asr" | "transcribe" | "transcript" => "transcription",
+        "chat" | "vision" | "llm" => "text",
+        "clip" | "film" | "movie" | "videos" => "video",
+        "embedding" | "embed" => "embeddings",
+        other => other,
+    }
+    .to_owned()
+}
+
+fn makes(model: &ListedModel, kind: &str) -> bool {
+    model.output.iter().any(|o| o == kind)
+}
+
+/// How many models make each kind, with a few of each, and what nothing makes.
+fn overview(models: &[ListedModel]) -> String {
+    let mut lines = vec![format!(
+        "This session can run {} models, by what they make:",
+        models.len()
+    )];
+    let mut missing = Vec::new();
+    for (kind, means) in KINDS {
+        let of: Vec<&str> = models
+            .iter()
+            .filter(|m| makes(m, kind))
+            .map(|m| m.id.as_str())
+            .collect();
+        if of.is_empty() {
+            missing.push(format!("{kind} ({means})"));
+            continue;
+        }
+        let shown: Vec<&str> = of.iter().take(3).copied().collect();
+        lines.push(format!(
+            "- {kind} ({means}): {}, e.g. {}",
+            of.len(),
+            shown.join(", ")
+        ));
+    }
+    if !missing.is_empty() {
+        lines.push(format!("Nothing here makes {}.", missing.join(", ")));
+    }
+    lines.push(r#"List one kind with `output`, e.g. {"output": "image"}; add `query` for words in a model's name."#.into());
+    lines.join("\n")
+}
+
+/// What to say when nothing matches: that nothing makes `kind` at all, and
+/// to ask the person rather than look further; or, when some model does,
+/// those models.
+fn no_match(models: &[ListedModel], kind: Option<&str>) -> String {
+    let available: Vec<String> = KINDS
+        .iter()
+        .filter_map(|(k, _)| {
+            let n = models.iter().filter(|m| makes(m, k)).count();
+            (n > 0).then(|| format!("{k} ({n})"))
+        })
+        .collect();
+    match kind {
+        Some(kind) if !models.iter().any(|m| makes(m, kind)) => {
+            let means = KINDS.iter().find(|(k, _)| *k == kind).map(|(_, m)| format!(" ({m})")).unwrap_or_default();
+            format!(
+                "No model this session can run makes {kind}{means}. It can run: {}. This list is every model there is, so another name will not find one: tell the person, say what could be done instead, and ask them how to go on.",
+                available.join(", ")
+            )
+        }
+        Some(kind) => {
+            let of: Vec<String> = models.iter().filter(|m| makes(m, kind)).take(MAX_LISTED).map(line).collect();
+            format!("No {kind} model matches that; these are every {kind} model:\n{}", of.join("\n"))
+        }
+        None => format!(
+            "No model matches. It can run: {}. List one kind with `output` instead of guessing names, and ask the person if what they want is not there.",
+            available.join(", ")
+        ),
+    }
+}
+
 pub struct ModelsTool {
     endpoint: MediaEndpoint,
 }
@@ -250,16 +342,16 @@ impl Tool for ModelsTool {
         "models"
     }
     fn summary(&self) -> &str {
-        "List the models this session can run (chat, vision, image, speech, music, transcription, video)"
+        "List the models this session can run, by what they make (text, image, speech, audio, video, transcription)"
     }
     fn description(&self) -> &str {
-        "Lists the models this session can run: one line each with its id, what it reads and makes (text, image, audio, speech, video), the operation it is run as (chat, image, speech, transcribe, audio, video), its voices and prices. Filter with `output` (what it makes, e.g. image or speech), `input` (what it must read, e.g. image) and `query` (words in its id or name, e.g. `nano banana`). Then ask for the chosen model's parameters."
+        "Lists the models this session can run. Call it once with no arguments first: it answers how many models make each kind (text, image, speech, audio for music and sound, video, transcription, embeddings), a few of each, and what nothing makes. Then list one kind with `output` (e.g. image, speech, audio; everyday words such as music or voice work too), narrowed with `input` (what it must read, e.g. image) or `query` (words in its id or name). Each line gives its id, what it reads and makes, the operation it is run as, its voices and prices. The list is everything there is: when nothing makes what the person asked for, tell them and ask, instead of searching under other names. Then ask for the chosen model's parameters."
     }
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "output": { "type": "string", "description": "What the model makes: text, image, speech, audio, video, transcription" },
+                "output": { "type": "string", "description": "What the model makes: text, image, speech (text to speech), audio (music, sound), video, transcription, embeddings" },
                 "input": { "type": "string", "description": "What the model must read: text, image, audio, file, video" },
                 "query": { "type": "string", "description": "Words that must appear in its id or name" }
             },
@@ -279,11 +371,18 @@ impl Tool for ModelsTool {
                 .and_then(Value::as_str)
                 .map(str::to_ascii_lowercase)
         };
-        let (output, input, query) = (arg("output"), arg("input"), arg("query"));
+        let (output, input, query) = (
+            arg("output").map(|o| kind_of(&o)),
+            arg("input"),
+            arg("query"),
+        );
         let models = match every_model(&self.endpoint).await {
             Ok(models) => models,
             Err(error) => return ToolOutput::err(&call.id, error),
         };
+        if output.is_none() && input.is_none() && query.is_none() {
+            return ToolOutput::ok(&call.id, overview(&models));
+        }
         let matching: Vec<&ListedModel> = models
             .iter()
             .filter(|m| {
@@ -305,7 +404,7 @@ impl Tool for ModelsTool {
             })
             .collect();
         if matching.is_empty() {
-            return ToolOutput::ok(&call.id, "No model matches; try fewer filters.");
+            return ToolOutput::ok(&call.id, no_match(&models, output.as_deref()));
         }
         let mut lines: Vec<String> = matching.iter().take(MAX_LISTED).map(|m| line(m)).collect();
         if matching.len() > MAX_LISTED {
@@ -592,10 +691,10 @@ impl Tool for RunModelTool {
         "run_model"
     }
     fn summary(&self) -> &str {
-        "Run any model once (chat, vision, image, speech, music, video); files in and out by handle"
+        "Run one model once (chat, vision, image, speech, audio, video); files in and out by handle"
     }
     fn description(&self) -> &str {
-        "Runs one model once and answers its text and the files it made. Give `model` (an id from the model list), `operation` (chat, image, speech, transcribe, audio or video, as the model's parameters say), `prompt` (what to make, ask or say), `inputs` (files it reads: handles like mcp-file://files/<id> from the conversation or an earlier run, or paths in the working directory; e.g. the image to edit, the picture to describe) and `params` (the model's own parameters by name, e.g. aspect_ratio, resolution, voice, format, duration). What it makes is shown to the person and answered by handle; pass a handle in `inputs` to the next run to edit or reuse it, without reading it yourself. `output` also saves the first file at that path in the working directory. To compare several, run each in its own call, at once. Every run is charged; a video takes minutes."
+        "Runs one model once and answers its text and the files it made. Give `model` (an id from the model list), `operation` (chat, image, speech, transcribe, audio or video, as the model's parameters say), `prompt` (what to make, ask or say), `inputs` (files it reads: handles like mcp-file://files/<id> from the conversation or an earlier run, or paths in the working directory; e.g. the image to edit, the picture to describe) and `params` (the model's own parameters by name, e.g. aspect_ratio, resolution, voice, format, duration). What it makes is shown to the person and answered by handle; pass a handle in `inputs` to the next run to edit or reuse it, without reading it yourself. `output` also saves the first file at that path in the working directory. Run once for each thing the person asked for: one image asked for is one run, of one model. Every run is charged and a video takes minutes, so before running several (to compare models, or variants nobody asked for) ask the person first, saying how many and about what they cost; when they asked for several, run them in their own calls."
     }
     fn parameters_schema(&self) -> Value {
         json!({
