@@ -258,6 +258,9 @@ impl ParentTerms {
             config.model.provider = "openai".into();
             config.model.base_url = Some(model.base_url.clone());
             config.model.api_key = Some(model.api_key.clone());
+            // Its model calls are the parent's conversation's, as its media
+            // calls are.
+            config.model.session.clone_from(&self.media_session);
         }
         if let Some(media) = &self.media {
             config.tools.media.provider = None;
@@ -1050,6 +1053,8 @@ mod tests {
         )
         .unwrap();
         terms.apply(&mut child);
+        // Its model calls name the parent's conversation, as its media calls do.
+        assert_eq!(child.model.session.as_deref(), Some("conv-1"));
         assert_eq!(
             child.tools.only.as_deref(),
             Some(&["web_search".to_owned(), "run_model".to_owned()][..])

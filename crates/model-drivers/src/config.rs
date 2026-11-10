@@ -461,6 +461,13 @@ pub struct ModelConfig {
     /// Can also be set via the SVEN_MOCK_RESPONSES environment variable.
     pub mock_responses_file: Option<String>,
 
+    /// The conversation this model's calls are made for, sent with each as
+    /// `X-Sven-Session` so the sven service records its cost under it. Set
+    /// in the process for a conversation of the service (`sven rc`, and the
+    /// sub-agents it starts), never in a configuration file.
+    #[serde(skip)]
+    pub session: Option<String>,
+
     // ── Multimodal capability declaration ────────────────────────────────────
     /// Input modalities this model accepts: any of `text`, `image`, `audio`.
     ///
@@ -522,6 +529,7 @@ impl Default for ModelConfig {
             driver_options: serde_json::Value::Null,
             enable_thinking: None,
             mock_responses_file: None,
+            session: None,
             input_modalities: None,
             detection_fallback: None,
         }

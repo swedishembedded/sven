@@ -594,6 +594,9 @@ impl SessionActor {
             name,
             base_url: Some(self.context.openai_base_url.clone()),
             api_key: Some(self.context.token.clone()),
+            // Each call names this conversation, so the server records what
+            // it cost under it.
+            session: Some(self.id.to_string()),
             ..ModelConfig::default()
         })
     }
@@ -1150,6 +1153,15 @@ mod tests {
 
     /// A session of this host not opened yet, with `config`, whose opening
     /// waits `mcp_tools_wait_ms` for its MCP servers' tools.
+    #[test]
+    fn its_model_calls_name_the_conversation_so_the_server_records_their_cost() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut actor = idle_session(dir.path(), Config::default(), 0);
+        actor.model = Some("e2e/agent".into());
+        let model = actor.model_config().expect("a model was chosen");
+        assert_eq!(model.session, Some(actor.id.to_string()));
+    }
+
     fn idle_session(dir: &std::path::Path, config: Config, mcp_tools_wait_ms: u64) -> SessionActor {
         let (uploads, _kept_open) = mpsc::channel(64);
         let (asks, _asks_open) = mpsc::channel(8);

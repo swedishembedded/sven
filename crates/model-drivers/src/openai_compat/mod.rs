@@ -172,6 +172,11 @@ impl OpenAICompatProvider {
                 headers.push(((*header).into(), value.into()));
             }
         }
+        // The conversation the calls are made for, as the service's media
+        // calls name it (`invoke::SESSION_HEADER`).
+        if let Some(session) = &cfg.session {
+            headers.push((crate::invoke::SESSION_HEADER.into(), session.clone()));
+        }
         let options = match extras.rewrite_options {
             Some(rewrite) => rewrite(cfg.driver_options.clone()),
             None => cfg.driver_options.clone(),
@@ -840,6 +845,28 @@ mod tests {
         );
         assert_eq!(p.extra_headers.len(), 1);
         assert_eq!(p.extra_headers[0].0, "HTTP-Referer");
+    }
+
+    #[test]
+    fn a_model_call_names_the_conversation_it_is_made_for_and_only_then() {
+        let driver = sven_model::registry::get_driver("openai").expect("the openai driver");
+        let mut cfg = crate::ModelConfig {
+            provider: "openai".into(),
+            name: "m".into(),
+            ..crate::ModelConfig::default()
+        };
+        let plain = OpenAICompatProvider::for_driver(driver, &cfg, None, "https://s/v1", None);
+        assert!(plain
+            .extra_headers
+            .iter()
+            .all(|(name, _)| name != crate::invoke::SESSION_HEADER));
+        cfg.session = Some("conv-1".into());
+        let named = OpenAICompatProvider::for_driver(driver, &cfg, None, "https://s/v1", None);
+        assert!(named
+            .extra_headers
+            .contains(&(crate::invoke::SESSION_HEADER.into(), "conv-1".into())));
+        // Never in the body the model reads.
+        assert!(named.extra_body.get("session").is_none());
     }
 
     // ── extra_body (driver_options) ───────────────────────────────────────────
