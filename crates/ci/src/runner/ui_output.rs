@@ -112,13 +112,13 @@ impl CiOutState {
 /// reward its outcome earned.
 ///
 /// Only ever called once, after the run has settled, so the document is always
-/// a conclusion — a consumer that sees no `final_metrics.extra.reward` on a
+/// a conclusion - a consumer that sees no `final_metrics.extra.reward` on a
 /// trajectory knows the session did not finish.
 ///
 /// Writes nothing when there is no `.sven/` project directory to write into
 /// (`resolve_auto_log_path` returns `None`), and nothing here is fatal: a
 /// failed trace write warns and leaves the run's exit code alone. Unlike
-/// `CiRunner`, this runner embeds no `subagent_trajectories` — it keeps no
+/// `CiRunner`, this runner embeds no `subagent_trajectories` - it keeps no
 /// child assemblers.
 pub(super) fn write_trajectory(
     state: CiOutState,
@@ -126,8 +126,9 @@ pub(super) fn write_trajectory(
     config: &Config,
     mode: &str,
     verdict: Option<Verdict>,
+    path: Option<std::path::PathBuf>,
 ) {
-    let Some(path) = sven_workspace::resolve_auto_log_path() else {
+    let Some(path) = path.or_else(sven_workspace::resolve_auto_log_path) else {
         return;
     };
 
@@ -330,7 +331,7 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             // The `output=` snippet is verbose-only signal for both success and
             // error outcomes: it appears solely at `-v` (trace >= 1) and is
             // truncated, so a large tool payload never floods stderr at default
-            // verbosity. Tool errors are non-fatal — the model receives the
+            // verbosity. Tool errors are non-fatal - the model receives the
             // error and may recover on the next round, so the run still
             // succeeds; only the `success=<bool>` field distinguishes them.
             let success = !is_error;
@@ -474,12 +475,12 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
         // has no such surface. It writes an ATIF trajectory (the project
         // auto-log; `--output-trace` still routes to `CiRunner`, see
         // `run/ci.rs`'s runner-routing comment) but keeps no child
-        // assemblers, so that document carries no `subagent_trajectories` —
+        // assemblers, so that document carries no `subagent_trajectories` -
         // unlike `CiRunner`'s. Still emit the same `[sven:subagent:...]` stderr tokens
         // `CiRunner` does (see `crates/ci/src/runner/event.rs`) so a plain
         // `sven --headless` run (no `--output-trace`) has the same
         // subagent-lifecycle visibility on stderr instead of silently
-        // dropping these — previously the case for every field here.
+        // dropping these - previously the case for every field here.
         UiEvent::SubagentStarted {
             call_id,
             handle_id,

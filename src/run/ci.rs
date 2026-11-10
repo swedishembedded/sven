@@ -186,7 +186,8 @@ pub(crate) async fn run_ci(
         // JSONL steps and a JSON trajectory are history only the workflow runner
         // reads; the single-prompt runner would hand them to the model as text.
         && !sven_ci::is_trace_input(&input)
-        && cli.effective_output_trace().is_none();
+        // A goal run writes its trajectory itself (`RuntimeRunnerOptions::output_trace`).
+        && (cli.effective_output_trace().is_none() || goal.is_some());
 
     let runs_on_runtime_runner =
         load_trace.is_none() && (mode_forces_runtime_runner || workflow_features_absent);
@@ -196,8 +197,7 @@ pub(crate) async fn run_ci(
         eprintln!(
             "[sven:error] --goal-turns runs a single prompt as a goal; it cannot be combined \
              with a workflow file, --var, --artifacts-dir, --dry-run, --attach, --output-format, \
-             --output-last-message, --system-prompt-file, a loaded or saved trace, or piped \
-             trace input"
+             --output-last-message, --system-prompt-file, a loaded trace, or piped trace input"
         );
         std::process::exit(2);
     }
@@ -297,6 +297,7 @@ pub(crate) async fn run_ci(
                 trace_level: cli.verbose,
                 token_ledger: cli.token_ledger,
                 goal,
+                output_trace: cli.effective_output_trace().cloned(),
             })
             .await;
         std::process::exit(code);

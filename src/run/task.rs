@@ -113,6 +113,7 @@ async fn run(
             trace_level: 0,
             token_ledger: false,
             goal: None,
+            output_trace: None,
         })
         .await;
     std::process::exit(code);

@@ -101,8 +101,9 @@ speaks to it with the same `/goal` line:
   `--goal-check "<command>"` decides completion as `/goal --check` does and
   needs `--goal-turns`. The prompt must not itself be a `/goal` line, must
   hold at most 4000 characters (a longer one is refused, never cut), and the
-  run cannot use the workflow features (`--file`, `--var`, trace files and
-  the like): each of these exits 2 before anything runs:
+  run cannot use the workflow features (`--file`, `--var`, a loaded trace and
+  the like): each of these exits 2 before anything runs. `--output-trace`
+  writes the goal run's trajectory, every turn of it:
   `sven --headless --goal-turns 30 --goal-check "make test" < task.txt`.
 - **Editors** (ACP): a prompt that is a `/goal` line sets or steers the goal,
   and `/goal` alone answers with how it stands.

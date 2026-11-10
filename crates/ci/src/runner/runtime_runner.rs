@@ -104,6 +104,9 @@ pub struct RuntimeRunnerOptions {
     /// line from it. The run is then a goal run exactly as one started by
     /// that line. A prompt that is itself a `/goal` line is refused.
     pub goal: Option<GoalTerms>,
+    /// Where the run's trajectory is written (`--output-trace`); without it,
+    /// the project's automatic log (`.sven/logs/`), when there is one.
+    pub output_trace: Option<std::path::PathBuf>,
 }
 
 /// The terms of a goal whose objective is a headless run's whole prompt.
@@ -408,7 +411,14 @@ impl RuntimeRunner {
         ));
 
         call_records.feed(&mut state.assembler);
-        write_trajectory(state, result, &self.config, &opts.mode, verdict);
+        write_trajectory(
+            state,
+            result,
+            &self.config,
+            &opts.mode,
+            verdict,
+            opts.output_trace.clone(),
+        );
 
         Ok(result)
     }
@@ -479,6 +489,7 @@ mod tests {
             trace_level: 0,
             token_ledger: false,
             goal: None,
+            output_trace: None,
         };
         assert!(format!("{opts:?}").contains("agent"));
     }

@@ -60,3 +60,12 @@ load helpers
     assert_output_contains "sets its own goal"
     refute_output_contains "[sven:goal]"
 }
+
+@test "25.07 a --goal-turns run writes its trajectory where --output-trace says" {
+    local trace="${BATS_TEST_TMPDIR}/goal.atif.json"
+    run bash -c 'echo "tidy the readme" | "$BIN" --headless --model mock --goal-turns 2 --goal-check false --output-trace "$0" 2>&1' "${trace}"
+    [ "${status}" -eq 4 ]
+    assert_output_contains "[sven:goal] The check fails; turn 2 of 2."
+    [ -s "${trace}" ]
+    grep -q '"schema_version": *"ATIF-' "${trace}"
+}
