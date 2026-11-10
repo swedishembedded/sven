@@ -52,4 +52,4 @@ pub use stream_turn::{
     to_model_schemas, AbortedError, Decoding, ModelResolver, StreamedTurn, ThinkingBudget,
     TurnLimits,
 };
-pub use time_budget::TimeBudget;
+pub use time_budget::{NoticeReplay, TimeBudget};

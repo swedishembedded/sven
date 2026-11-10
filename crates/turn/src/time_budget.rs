@@ -10,12 +10,18 @@
 //!
 //! A model that is never told its deadline explores until the host kills it.
 //! [`TimeBudget`] states the elapsed and remaining whole minutes, and
-//! [`TimeBudget::append_to`] puts that line at the very end of the request
-//! being sent: on the newest message, never earlier. A server that caches
-//! the prompt's prefix then re-reads only the notice's few tokens each turn,
-//! because every message before the newest one is byte-identical to the
-//! previous request. The line is a property of one outgoing request: it is
-//! applied to a copy of the history and never stored.
+//! [`NoticeReplay::apply`] puts that line at the very end of the request
+//! being sent: on the text of the newest message (or, after a tool call, as
+//! a message of its own), never earlier. The line is a property
+//! of the outgoing requests: it is applied to a copy of the history and never
+//! stored.
+//!
+//! [`NoticeReplay`] keeps the requests append-only: a notice once sent on a
+//! message is sent on it again in every later request, so each request begins
+//! with the whole previous one. A server resumes a model whose layers keep a
+//! recurrent state (Gated-DeltaNet) only from the exact end of a cached
+//! prompt; a notice that moved would make it prefill the whole conversation
+//! again every turn.
 
 use std::time::Duration;
 
@@ -50,43 +56,80 @@ impl TimeBudget {
             total - used
         )
     }
+}
 
-    /// Ends `messages` with the notice: appended to the text of the newest
-    /// message, or as a message of its own when that one carries no text
-    /// (an assistant's tool call). Nothing before the newest message changes.
-    pub fn append_to(&self, messages: &mut Vec<Message>) {
-        let notice = self.notice();
-        let Some(last) = messages.last_mut() else {
+/// The notices one thread's requests carried, replayed so its requests stay
+/// append-only (module docs).
+#[derive(Debug, Default)]
+pub struct NoticeReplay {
+    /// Position of the message, a fingerprint of it as stored, the notice.
+    sent: Vec<(usize, u64, String)>,
+}
+
+impl NoticeReplay {
+    /// Puts back every notice an earlier request carried on a message that is
+    /// still where it was and unchanged, then ends `messages` with `budget`'s
+    /// notice and remembers it. A history that changed (compaction rewrote
+    /// it) drops the notices it no longer holds: that request starts afresh.
+    pub fn apply(&mut self, budget: &TimeBudget, messages: &mut Vec<Message>) {
+        self.sent.retain(|(at, fingerprint, _)| {
+            messages
+                .get(*at)
+                .is_some_and(|m| self::fingerprint(m) == *fingerprint)
+        });
+        for (at, _, notice) in &self.sent {
+            attach(&mut messages[*at], notice);
+        }
+        let Some(newest) = messages.len().checked_sub(1) else {
             return;
         };
-        let appended = match &mut last.content {
-            MessageContent::Text(t) => {
-                push_line(t, &notice);
+        let stored = fingerprint(&messages[newest]);
+        let notice = budget.notice();
+        if attach(&mut messages[newest], &notice) {
+            self.sent.push((newest, stored, notice));
+        } else {
+            // After a tool call: a message of its own, which a later request
+            // cannot carry where it was (a tool result must follow its call).
+            messages.push(Message::user(notice));
+        }
+    }
+}
+
+fn fingerprint(message: &Message) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(message)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Appends `notice` to the text of `message`; false when it has none (a tool call).
+fn attach(message: &mut Message, notice: &str) -> bool {
+    match &mut message.content {
+        MessageContent::Text(t) => {
+            push_line(t, notice);
+            true
+        }
+        MessageContent::ContentParts(parts) => {
+            parts.push(ContentPart::Text {
+                text: notice.to_owned(),
+            });
+            true
+        }
+        MessageContent::ToolResult { content, .. } => match content {
+            ToolResultContent::Text(t) => {
+                push_line(t, notice);
                 true
             }
-            MessageContent::ContentParts(parts) => {
-                parts.push(ContentPart::Text {
-                    text: notice.clone(),
+            ToolResultContent::Parts(parts) => {
+                parts.push(ToolContentPart::Text {
+                    text: notice.to_owned(),
                 });
                 true
             }
-            MessageContent::ToolResult { content, .. } => match content {
-                ToolResultContent::Text(t) => {
-                    push_line(t, &notice);
-                    true
-                }
-                ToolResultContent::Parts(parts) => {
-                    parts.push(ToolContentPart::Text {
-                        text: notice.clone(),
-                    });
-                    true
-                }
-            },
-            MessageContent::ToolCall { .. } => false,
-        };
-        if !appended {
-            messages.push(Message::user(notice));
-        }
+        },
+        MessageContent::ToolCall { .. } => false,
     }
 }
 
@@ -128,7 +171,7 @@ mod tests {
     async fn the_notice_goes_on_the_text_of_the_newest_message_only() {
         let budget = TimeBudget::starting_now(10 * MIN);
         let mut messages = vec![Message::user("a"), Message::tool_result("c1", "out")];
-        budget.append_to(&mut messages);
+        NoticeReplay::default().apply(&budget, &mut messages);
         assert_eq!(messages.len(), 2);
         assert!(matches!(&messages[0].content, MessageContent::Text(t) if t == "a"));
         match &messages[1].content {
@@ -154,8 +197,26 @@ mod tests {
             },
             reasoning: None,
         }];
-        budget.append_to(&mut messages);
+        NoticeReplay::default().apply(&budget, &mut messages);
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[1].role, sven_model::Role::User);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rewritten_history_drops_the_notices_it_no_longer_holds() {
+        let budget = TimeBudget::starting_now(10 * MIN);
+        let mut replay = NoticeReplay::default();
+        let mut first = vec![Message::user("a")];
+        replay.apply(&budget, &mut first);
+        let mut grown = vec![Message::user("a"), Message::tool_result("c1", "out")];
+        replay.apply(&budget, &mut grown);
+        assert!(
+            format!("{:?}", grown[0].content).contains("Time: "),
+            "replayed"
+        );
+        // Compaction replaced the first message: its old notice is not put back.
+        let mut compacted = vec![Message::user("summary"), Message::tool_result("c1", "out")];
+        replay.apply(&budget, &mut compacted);
+        assert!(!format!("{:?}", compacted[0].content).contains("Time: "));
     }
 }

@@ -184,6 +184,8 @@ pub struct TurnExecutor {
     instructions: Option<Arc<sven_turn::instructions::Activator>>,
     /// The run's deadline, announced on the newest message of every request.
     time_budget: Option<sven_turn::TimeBudget>,
+    /// Per thread, the time notices its requests carried (kept append-only).
+    time_notices: std::collections::HashMap<String, sven_turn::NoticeReplay>,
     /// What a request's `attachments` are relative to: the project root.
     attachment_root: Option<std::path::PathBuf>,
 }
@@ -218,6 +220,7 @@ impl TurnExecutor {
             rebuilds: Vec::new(),
             instructions: None,
             time_budget: None,
+            time_notices: std::collections::HashMap::new(),
             attachment_root: None,
             no_tools: false,
             compaction: CompactionConfig::default(),
@@ -486,9 +489,13 @@ impl EffectExecutor for TurnExecutor {
             None => (messages, None),
         };
         // Last, on the copy that goes out: the stored thread never holds the
-        // notice, and it changes only the newest message of the request.
+        // notice; the requests carry every notice they ever sent, so each
+        // begins with the whole previous one.
         if let Some(budget) = &self.time_budget {
-            budget.append_to(&mut messages);
+            self.time_notices
+                .entry(thread_id.to_string())
+                .or_default()
+                .apply(budget, &mut messages);
         }
 
         let no_room = |prompt: usize, budget: usize| {

@@ -474,10 +474,11 @@ once.
 model ends with one line stating the whole minutes used and left, for example
 `Time: 12 of 58 min used, 46 min left; leave time to verify and finish.`, so
 that the agent can pace itself instead of exploring until it is stopped. The
-line is appended to the newest message of the request only: every earlier
-message is byte-identical to the previous request, so a server's prompt-prefix
-cache is not invalidated, and the line is never stored in the session or the
-trajectory. A subagent with a limit of its own (`agent.child_run_timeout_secs`)
+line is appended to the newest message of the request, and every later request
+carries it there again: each request begins with the whole previous one, so a
+server's prompt-prefix cache resumes it even for a model whose layers keep a
+recurrent state (which resumes only from the exact end of a cached prompt).
+The line is never stored in the session or the trajectory. A subagent with a limit of its own (`agent.child_run_timeout_secs`)
 is told its own time; a run without a limit (`--run-timeout 0`) and an
 interactive session are told nothing. There is no switch for it.
 

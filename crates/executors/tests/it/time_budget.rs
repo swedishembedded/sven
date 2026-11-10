@@ -135,33 +135,39 @@ async fn the_newest_message_of_each_request_ends_with_the_time_left() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn every_earlier_message_is_byte_identical_across_requests() {
+async fn each_request_begins_with_the_whole_previous_request() {
+    // A server that caches prompts resumes a recurrent model only from the
+    // exact end of an earlier prompt, so a notice once sent stays in every
+    // later request where it was: requests only ever grow at the end.
     let r = run(Some(TimeBudget::starting_now(58 * MIN)));
     r.say("first", 1).await;
     tokio::time::advance(7 * MIN).await;
     r.say("second", 2).await;
+    tokio::time::advance(3 * MIN).await;
+    r.say("third", 3).await;
     r.rt.abort();
 
-    let (a, b) = (r.sent(0), r.sent(1));
-    let prior = a.len() - 1;
-    assert!(b.len() > a.len(), "the second request extends the first");
-    for i in 0..prior {
-        assert_eq!(
-            serde_json::to_string(&a[i]).unwrap(),
-            serde_json::to_string(&b[i]).unwrap(),
-            "message {i} changed between requests"
-        );
+    for n in 1..3 {
+        let (a, b) = (r.sent(n - 1), r.sent(n));
+        assert!(b.len() > a.len(), "request {n} extends request {}", n - 1);
+        for i in 0..a.len() {
+            assert_eq!(
+                serde_json::to_string(&a[i]).unwrap(),
+                serde_json::to_string(&b[i]).unwrap(),
+                "message {i} of request {} changed in request {n}",
+                n - 1
+            );
+        }
     }
-    // The previously newest message differs only by the notice it carried.
-    let carried = text(&a[prior]);
-    let stored = text(&b[prior]);
-    assert!(carried.starts_with(&stored), "{carried:?} vs {stored:?}");
-    assert!(carried.contains("Time: "), "{carried}");
-    assert!(!stored.contains("Time: "), "{stored}");
-    // Nothing but the newest message carries a notice.
-    assert!(b[..b.len() - 1]
+    // Each message keeps the notice of the request it was newest in.
+    let last = r.sent(2);
+    let notices: Vec<_> = last
         .iter()
-        .all(|m| !format!("{:?}", m.content).contains("Time: ")));
+        .filter(|m| format!("{:?}", m.content).contains("Time: "))
+        .collect();
+    assert_eq!(notices.len(), 3, "{last:?}");
+    assert!(text(last.last().unwrap())
+        .ends_with("Time: 10 of 58 min used, 48 min left; leave time to verify and finish."));
 }
 
 #[tokio::test(start_paused = true)]
