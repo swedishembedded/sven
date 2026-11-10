@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.10.0] - 2026-11-10
+
 ### Added
 - **headless**: `--goal-turns N` runs the whole prompt, verbatim, as a standing goal's objective (a `/goal` line is read word by word, losing quotes and line breaks), and `--goal-check COMMAND` decides it. The run takes turns and exits exactly as a headless `/goal` run does; wrong use (turns outside 1 to 500, a check without turns, a `/goal` line as the prompt, an objective over 4000 characters, workflow features) exits 2 before anything runs.
 - **headless**: a `--goal-turns` run writes its trajectory, every turn of it, where `--output-trace` names (it was refused, and benchmark harnesses need the trace).
