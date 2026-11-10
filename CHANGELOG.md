@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **task**: `isolation: "worktree"` runs a writing sub-agent in its own git worktree, started from a snapshot of the parent's working state (the parent's index and tree untouched). When the child succeeds its change is merged into the parent's tree, one child at a time; on a conflict nothing is applied and the child's branch is kept and named, as for a child that failed. Several writing sub-agents can run at once without overwriting each other.
+
 ## [4.9.0] - 2026-11-09
 
 ### Added

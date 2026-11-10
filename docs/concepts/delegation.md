@@ -183,6 +183,43 @@ approval gate, and teammates of an agent team keep their own task claims. Dedupl
 answered from another call, never put to the decision model, and never
 served to a read-only twin or the reverse, whatever its scope overlaps.
 
+### Isolated writing children
+
+Two writing children in one tree can overwrite each other. `isolation:
+"worktree"` on a spawn gives a writing child its own tree instead; the default
+`"none"` is the behaviour above. Use it whenever several writing sub-agents run
+at once.
+
+- **Start.** sven snapshots the parent's working state as a commit - tracked
+  changes and untracked files, but not ignored ones - using a temporary index,
+  so the parent's index and files are not touched. It checks out a git
+  worktree of that snapshot on a fresh branch `sven/task-<id>`, under sven's
+  state directory (`$XDG_STATE_HOME/sven/task-worktrees`), outside the
+  parent's tree. The child runs there; a `workdir` argument is resolved to the
+  same directory inside the worktree. Outside a git repository, or in one
+  without a commit, the call is refused.
+- **Finish.** When the child succeeds, its change - its commits and its
+  uncommitted and untracked files, as a binary diff from the snapshot - is
+  merged three-way with the parent's tree as it is at that moment and applied
+  as uncommitted edits (the parent's index is not updated). The result lists
+  the files changed. The worktree directory and branch are removed.
+- **Conflict.** If the change overlaps the parent's own edits or a change an
+  earlier child already integrated, nothing at all is applied (the merge is
+  computed first, with no side effect on the tree), the result is an error
+  naming the conflicting paths, and the child's branch is kept and named so
+  the parent can inspect or merge it.
+- **Failure.** A child that failed, timed out or was cancelled is never
+  integrated; its branch (holding whatever it left, uncommitted files
+  included) is kept and named. The worktree directory is removed on every
+  path.
+- **Parallel children.** Integrations run one at a time, in finish order, each
+  on top of the previous, so a child that conflicts with an earlier one is
+  reported, never merged over it. The serialization is per sven process.
+- **Read-only children** (`research`, `plan`, a read-only persona) have nothing
+  to isolate: `isolation: "worktree"` for them is refused with an error.
+
+Needs git 2.40 or newer.
+
 ## Cost policy
 
 `delegation.policy` (`off`, `advise`, `enforce`; default `off`) decides whether

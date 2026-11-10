@@ -416,6 +416,7 @@ parent's permissions and approval mode. See [Delegation](../concepts/delegation.
 | `mode` | `spawn`: `research`, `plan`, `agent` (default) or the name of a discovered subagent persona |
 | `workdir` | `spawn`: working directory, inside the session's scope |
 | `model` | `spawn`: model override |
+| `isolation` | `spawn`: `none` (default: a writing child works in the parent's tree) or `worktree` (a writing child works in its own git worktree and its change is merged into the parent's tree when it succeeds; refused for read-only children and outside a git repository). See [Isolated writing children](../concepts/delegation.md#isolated-writing-children) |
 | `inputs` | `spawn`: files the sub-agent works on, handles (`mcp-file://files/...`) or paths in the working directory. Each is named in its first message so it can pass it on to a model, and each image (at most 3 MiB) is attached for it to see. In a conversation of the sven service the sub-agent's own model runs belong to that conversation, and the files they make are relayed with its result. A session held to an allow list (a hosted one) holds its sub-agents to the same list without `task`, the same web and location limits and its own endpoints and key, handed to the child on its stdin (`sven acp serve --parent-terms-stdin`), never through a file or the environment; a hosted child runs inside the host's own confinement |
 | `handle` | `status`, `read`, `grep`: output buffer handle from a spawn (required) |
 | `start_line`, `end_line` | `read`: line range (default 1 to 50) |

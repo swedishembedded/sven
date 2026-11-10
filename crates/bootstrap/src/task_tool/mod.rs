@@ -103,14 +103,19 @@ mod brief;
 mod finding;
 mod handback;
 mod inspect;
+mod isolation;
 mod report;
+mod runner;
 mod session;
 mod subgoals;
 mod updates;
 mod voi;
 mod weigh;
+mod worktree;
 pub use approver::ChildApprover;
-use session::{run_acp_session, CancelGuard, SpawnArgs};
+use isolation::Isolation;
+use runner::{AcpProcessRunner, ChildRunner};
+use session::{CancelGuard, SpawnArgs};
 pub(crate) use subgoals::NearMatch;
 
 /// Environment variable set when running as a subagent (depth 0).
@@ -328,6 +333,11 @@ pub struct TaskTool {
     )>,
     /// What a parent held to an allow list hands each child (`ParentTerms`).
     terms: Option<ParentTerms>,
+    /// Runs a prepared child to its end; the production one starts a
+    /// `sven acp serve` process.
+    runner: Arc<dyn ChildRunner>,
+    /// Where isolated children's worktrees live, outside every parent tree.
+    worktree_root: PathBuf,
 }
 
 impl TaskTool {
@@ -354,6 +364,8 @@ impl TaskTool {
             command_patterns: None,
             media: None,
             terms: None,
+            runner: Arc::new(AcpProcessRunner),
+            worktree_root: isolation::default_worktree_root(),
             chunks: None,
             ledger: Arc::default(),
             subgoals: Arc::default(),
@@ -454,6 +466,20 @@ impl TaskTool {
             tools.auto_approve_patterns.clone(),
         );
         self.command_patterns = Some(patterns);
+        self
+    }
+
+    /// Makes isolated children's worktrees under `root`.
+    #[cfg(test)]
+    fn with_worktree_root(mut self, root: PathBuf) -> Self {
+        self.worktree_root = root;
+        self
+    }
+
+    /// Runs children with `runner` instead of a `sven acp serve` process.
+    #[cfg(test)]
+    fn with_runner(mut self, runner: Arc<dyn ChildRunner>) -> Self {
+        self.runner = runner;
         self
     }
 
@@ -605,7 +631,8 @@ impl Tool for TaskTool {
          (action=status|read|grep; 'handle' required), or list the discovered subagents\n\
          with their descriptions (action=agents).\n\
          Spawning blocks until the sub-agent finishes; issue several calls to run several\n\
-         at once. 'mode' is research, plan, agent or the name of a discovered subagent\n\
+         at once; when several writing sub-agents run at once, give each\n\
+         isolation=worktree so they cannot overwrite each other. 'mode' is research, plan, agent or the name of a discovered subagent\n\
          persona, whose instructions become the sub-agent's system prompt and whose\n\
          readonly flag picks its tools.\n\
          Worth it for open-ended search over unfamiliar ground when only the conclusion\n\
@@ -646,6 +673,11 @@ impl Tool for TaskTool {
                 "model": {
                     "type": "string",
                     "description": "[spawn] Model override"
+                },
+                "isolation": {
+                    "type": "string",
+                    "enum": ["none", "worktree"],
+                    "description": "[spawn] worktree: a writing child works in its own git worktree and its change is merged into your tree when it succeeds (conflicts are reported, never forced); default none"
                 },
                 "inputs": {
                     "type": "array",
@@ -819,6 +851,10 @@ impl Tool for TaskTool {
         if let Err(e) = child_mode_allowed(parent_mode, &acp_mode) {
             return ToolOutput::err(&call.id, e);
         }
+        let isolation = match Isolation::of(&call.args, &acp_mode) {
+            Ok(isolation) => isolation,
+            Err(e) => return ToolOutput::err(&call.id, e),
+        };
         let prompt = resolved.prompt;
         let model_override =
             effective_model(requested_model, resolved.model, self.default_model.clone());
@@ -855,6 +891,23 @@ impl Tool for TaskTool {
             weigh::Verdict::Launch { note } => note,
             weigh::Verdict::Decline(answer) => return answer,
         };
+
+        // An isolated child runs in a private worktree of the parent's
+        // current state; its change is merged back once it has finished.
+        let mut workdir = workdir;
+        let mut isolated = None;
+        if isolation == Isolation::Worktree {
+            match isolation::create_worktree(workdir.clone(), self.worktree_root.clone()).await {
+                Ok(worktree) => {
+                    workdir = worktree.workdir();
+                    isolated = Some(worktree);
+                }
+                Err(e) => {
+                    leader.finish(None);
+                    return ToolOutput::err(&call.id, e);
+                }
+            }
+        }
 
         let exe = match std::env::current_exe() {
             Ok(p) => p,
@@ -936,28 +989,10 @@ impl Tool for TaskTool {
                 ledger: Arc::clone(&self.ledger),
             },
         };
-        // Subagents always run with depth 0.
-        let depth_for_env = 0u32;
-
-        // The ACP ClientSideConnection is !Send (uses LocalBoxFuture internally).
-        // We run the entire ACP session in a dedicated OS thread with its own
-        // single-threaded tokio runtime + LocalSet.  Using a plain std::thread
-        // avoids any interaction between the outer multi-threaded runtime and the
-        // inner single-threaded one.
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<ToolOutput>();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to build sub-agent runtime");
-            let local = tokio::task::LocalSet::new();
-            let output = rt.block_on(local.run_until(run_acp_session(args, depth_for_env)));
-            let _ = result_tx.send(output);
-        });
-
-        let mut output = result_rx
-            .await
-            .unwrap_or_else(|_| ToolOutput::err(&handle_id, "sub-agent thread died unexpectedly"));
+        let mut output = self.runner.run(args).await;
+        if let Some(worktree) = isolated {
+            output = isolation::settle(worktree, output, &call.id).await;
+        }
         leader.finish((!output.is_error).then(|| subgoals::Outcome {
             handle: handle_id.clone(),
             text: output.content.clone(),
@@ -1045,7 +1080,7 @@ mod tests {
         assert!(!child.tools.only.unwrap().contains(&"task".to_owned()));
     }
 
-    fn make_task() -> TaskTool {
+    pub(super) fn make_task() -> TaskTool {
         make_task_with_agents(SharedAgents::empty())
     }
 
@@ -1177,7 +1212,7 @@ mod tests {
         }
     }
 
-    fn call(args: serde_json::Value) -> ToolCall {
+    pub(super) fn call(args: serde_json::Value) -> ToolCall {
         ToolCall {
             id: "t1".into(),
             name: "task".into(),
