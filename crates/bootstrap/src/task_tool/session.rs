@@ -579,7 +579,6 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     ))
     .args(parent_terms.is_some().then_some("--parent-terms-stdin"))
     .env(SUBAGENT_DEPTH_ENV, depth.to_string())
-    .env_remove(sven_tools_media::MEDIA_SESSION_ENV)
     .stdin(std::process::Stdio::piped())
     .stdout(std::process::Stdio::piped())
     .stderr(std::process::Stdio::piped()) // capture stderr for diagnostics
@@ -589,8 +588,9 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     // The child goes with the session: killed when this thread, which drives
     // it to its end, ends, even when the whole host is killed.
     sven_tools_exec::confine::die_with_parent(&mut cmd);
+    // What the child's models make belongs to this conversation.
     if let Some(session) = &media_session {
-        cmd.env(sven_tools_media::MEDIA_SESSION_ENV, session);
+        cmd.arg("--media-session").arg(session);
     }
 
     let mut child = match cmd.spawn() {

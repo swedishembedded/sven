@@ -180,13 +180,9 @@ impl Config {
         sven_tools_media::MediaEndpoint,
         sven_tools_media::MediaConfig,
     )> {
-        // A sub-agent's models make what its parent's conversation holds.
-        let mut config = self.tools.media.clone();
-        if config.session.is_none() {
-            config.session = std::env::var(sven_tools_media::MEDIA_SESSION_ENV)
-                .ok()
-                .filter(|s| !s.is_empty());
-        }
+        // A sub-agent's `session` is its parent's conversation, set by
+        // `sven acp serve --media-session`.
+        let config = self.tools.media.clone();
         // A host signed in to the sven service runs models there, with its
         // own key, unless another provider is named.
         if let (None, Some(service)) = (&config.provider, &config.service) {

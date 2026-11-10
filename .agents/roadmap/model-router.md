@@ -408,7 +408,7 @@ model, outputs by handle in a conversation and as files otherwise; `sven rc`
 names each session's conversation to its invocations; the hosted allow list
 and prompt include the three tools; `task` takes `inputs` (images attached to
 the child's first message over ACP, every file named by handle), the child
-names its parent's conversation (`SVEN_MEDIA_SESSION`) and the files it makes
+names its parent's conversation (`sven acp serve --media-session`) and the files it makes
 come back with the parent's result (`sven.artifacts` in ACP `_meta`);
 `attach_file` fetches a handle into `.sven/files/` and shows it (not offered
 hosted, whose model already sees what its models make); with a provider of

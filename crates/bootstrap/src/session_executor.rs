@@ -281,7 +281,12 @@ fn audit_log_in(base: &Path, project: &Path) -> PathBuf {
 /// any tool may ask for - a shell call's `max_shell_secs`, or a harness gate's
 /// own cap - with a minute to spare.
 fn tool_watchdog(max_shell_secs: u64) -> std::time::Duration {
-    std::time::Duration::from_secs(max_shell_secs.max(sven_tools_exec::GateCommandTool::MAX_TIMEOUT_SECS).max(600) + 60)
+    std::time::Duration::from_secs(
+        max_shell_secs
+            .max(sven_tools_exec::GateCommandTool::MAX_TIMEOUT_SECS)
+            .max(600)
+            + 60,
+    )
 }
 
 #[cfg(test)]
@@ -294,7 +299,11 @@ mod audit_log_tests {
     #[test]
     fn the_tool_watchdog_outlasts_the_longest_shell_call_and_gate() {
         let gate = sven_tools_exec::GateCommandTool::MAX_TIMEOUT_SECS;
-        assert!(super::tool_watchdog(1800).as_secs() > gate, "{:?}", super::tool_watchdog(1800));
+        assert!(
+            super::tool_watchdog(1800).as_secs() > gate,
+            "{:?}",
+            super::tool_watchdog(1800)
+        );
         assert!(super::tool_watchdog(2 * gate).as_secs() > 2 * gate);
         assert!(super::tool_watchdog(1).as_secs() > 600);
     }

@@ -90,6 +90,14 @@ pub enum AcpCommands {
         #[arg(long, value_name = "DIR", value_parser = sven_bootstrap::evidence_store_path)]
         evidence_store: Option<std::path::PathBuf>,
 
+        /// The parent's conversation of the sven service, so what this
+        /// server's models make is that conversation's too
+        /// (`tools.media.session`). The `task` tool passes its session's;
+        /// never wider than the parent's, since the child runs with the same
+        /// sign-in.
+        #[arg(long, value_name = "ID", value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        media_session: Option<String>,
+
         /// Read the parent's terms (`ParentTerms`, one JSON line) from stdin
         /// before serving: its allow list, its limits and the endpoints and
         /// key it works with, which this server is then held to. The `task`
@@ -182,6 +190,7 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             approval,
             command_patterns,
             evidence_store,
+            media_session,
             parent_terms_stdin,
         } => {
             let mut config = sven_bootstrap::Config::load(None)?;
@@ -211,6 +220,9 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                 config.tools.auto_approve_patterns = patterns.auto_approve.clone();
             }
             config.context.evidence_store = evidence_store.clone();
+            if let Some(session) = media_session {
+                config.tools.media.session = Some(session.clone());
+            }
             if let Some(terms) = &terms {
                 terms.apply(&mut config);
                 // The parent's model, by the name its endpoint knows it by.
@@ -307,6 +319,22 @@ mod tests {
         config.model.max_output_tokens = None;
         apply_budgets(&mut config, None, Some(u32::MAX), &[]);
         assert_eq!(config.model.max_output_tokens, entry.max_output_tokens);
+    }
+
+    #[test]
+    fn a_child_is_handed_its_parents_media_session_by_flag() {
+        let parse = |args: &[&str]| {
+            Cli::try_parse_from(args).map(|cli| {
+                let AcpCommands::Serve { media_session, .. } = cli.acp;
+                media_session
+            })
+        };
+        assert_eq!(
+            parse(&["sven", "serve", "--media-session", "conv-1"]).unwrap(),
+            Some("conv-1".to_owned())
+        );
+        assert_eq!(parse(&["sven", "serve"]).unwrap(), None);
+        assert!(parse(&["sven", "serve", "--media-session", ""]).is_err());
     }
 
     #[test]

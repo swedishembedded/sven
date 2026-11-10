@@ -17,12 +17,6 @@ use sven_model_drivers::invoke::HANDLE_PREFIX;
 
 use super::{file_to_read, invoker, MediaConfig, MediaEndpoint};
 
-/// The variable a sub-agent is started with that names its parent's
-/// conversation of the sven service, so what its models make is that
-/// conversation's too. Never wider than the parent's: the child runs with
-/// the same sign-in.
-pub const MEDIA_SESSION_ENV: &str = "SVEN_MEDIA_SESSION";
-
 /// The largest image attached to a sub-agent's first message.
 const MAX_HANDED_IMAGE_BYTES: u64 = 3 * 1024 * 1024;
 /// The most files one sub-agent is handed.
