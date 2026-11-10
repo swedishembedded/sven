@@ -52,6 +52,12 @@ fn describe(agent: &AgentInfo) -> String {
 }
 
 impl TaskTool {
+    /// The provider-reported input and output tokens of the finished child
+    /// `handle`, when its server reported them.
+    pub(super) fn tokens_used_by(&self, handle: &str) -> Option<(u64, u64)> {
+        self.ledger.used_by(handle)
+    }
+
     /// Runs `action` when it is not a spawn, or returns `None` for a spawn.
     pub(super) async fn inspect(&self, action: &str, call: &ToolCall) -> Option<ToolOutput> {
         let handle = |action: &str| {

@@ -362,6 +362,9 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     if let Some(mode) = cli.context_assembly {
         settings.runtime.context.assembly.mode = mode.into();
     }
+    if let Some(mode) = cli.orchestration {
+        settings.runtime.agent.orchestration = mode.into();
+    }
 
     // ── Teammate mode ─────────────────────────────────────────────────────────
     // When --team-name is set (injected by spawn_teammate), skip the normal CI

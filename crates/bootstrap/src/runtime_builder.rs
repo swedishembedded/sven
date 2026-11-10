@@ -755,6 +755,7 @@ impl RuntimeBuilder {
             &tool_registry,
             self.agent_mode.unwrap_or(AgentMode::Agent),
         );
+        runtime.orchestration = tool_registry.get("plan_tasks").is_some();
         let seed_thread = sven_machines::mode::primary_thread(&self.mode);
         if let Ok(mut store) = conv_store.lock() {
             let mode = self.agent_mode.unwrap_or(AgentMode::Agent);

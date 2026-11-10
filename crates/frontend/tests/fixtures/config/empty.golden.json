@@ -11,6 +11,11 @@
       "max_step_timeout_secs": 0,
       "max_tool_rounds": 200,
       "note_repeated_results": true,
+      "orchestration": "off",
+      "orchestration_max_fanout": 8,
+      "orchestration_max_graphs": 3,
+      "orchestration_max_parallel": 4,
+      "orchestration_max_tasks": 24,
       "system_prompt": null,
       "tool_result_token_cap": 4000
     },

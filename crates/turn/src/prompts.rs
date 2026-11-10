@@ -56,6 +56,9 @@ pub struct PromptContext<'a> {
     /// list are loaded, and which exist. `None` when every tool is in the
     /// list. Fixed for the session, so part of the stable prefix.
     pub tool_index: Option<&'a str>,
+    /// Whether the session offers `plan_tasks`: adds the short paragraph on
+    /// when to use it. Fixed for the session, so part of the stable prefix.
+    pub orchestration: bool,
     /// How much of each catalog entry the Skills, Subagents and Knowledge Base
     /// sections carry.
     pub disclosure: instructions::InstructionDisclosure,
@@ -74,6 +77,7 @@ impl<'a> Default for PromptContext<'a> {
             knowledge: Arc::from(Vec::<KnowledgeInfo>::new()),
             knowledge_drift_note: None,
             tool_index: None,
+            orchestration: false,
             disclosure: instructions::InstructionDisclosure::default(),
         }
     }
@@ -98,6 +102,7 @@ impl<'a> PromptContext<'a> {
             knowledge: self.knowledge.clone(),
             knowledge_drift_note: self.knowledge_drift_note,
             tool_index: self.tool_index,
+            orchestration: self.orchestration,
             disclosure: self.disclosure,
         }
     }
@@ -140,6 +145,16 @@ mod guidelines {
          - Issue independent tool calls together in one turn.\n\
          - Keep changes you did not make; never force-push, rewrite published history or skip hooks unless asked.\n\
          - Finish with a short report: what changed, how it was verified, and anything left open."
+    }
+
+    /// Only for a session that is offered `plan_tasks`.
+    pub fn orchestration() -> &'static str {
+        "\n\n## Parallel Work\n\
+         When a task splits into independent modules or files that can be built in parallel, \
+         describe the split with `plan_tasks`: each task gets a self-contained brief, the files \
+         only it writes and the tasks it depends on, and a verification command (such as the \
+         tests) checks the result, because a sub-agent's report is not proof. Do small tasks \
+         directly."
     }
 
     pub fn core_tools() -> &'static str {
@@ -512,7 +527,7 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
 /// The sections tile the text (see [`sven_model::manifest`]); their ids are
 /// `identity`, `mode`, `project`, `git`, `project_instructions`, `tool_index`,
 /// `skills`, `agents`, `knowledge`, `knowledge_drift`, `ci`, the two
-/// `guidelines.*` and `append`, or `custom` and `append` for an override. A
+/// `guidelines.*`, `orchestration` and `append`, or `custom` and `append` for an override. A
 /// block with nothing to say has no section.
 pub fn compose_system_prompt(
     mode: AgentMode,
@@ -706,6 +721,14 @@ pub fn compose_system_prompt(
     for (id, section) in guideline_sections() {
         composer.push(id, section);
     }
+    composer.push(
+        "orchestration",
+        if ctx.orchestration {
+            guidelines::orchestration().to_string()
+        } else {
+            String::new()
+        },
+    );
     composer.push("append", append_section.unwrap_or_default());
     composer.finish()
 }

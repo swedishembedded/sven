@@ -29,14 +29,16 @@ mod questions;
 mod rc;
 #[cfg(feature = "network")]
 pub use rc::RcAction;
+#[cfg(feature = "network")]
+mod orchestration;
 mod replay;
 mod task;
-#[cfg(feature = "network")]
 mod team;
 mod tool;
 
 pub use assembly::ContextAssemblyArg;
 pub use disclosure::DisclosureFlags;
+pub use orchestration::OrchestrationArg;
 
 // `AcpCommands`/`McpCommands` live in `sven-acp`/`sven-mcp` themselves,
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
@@ -130,6 +132,13 @@ pub struct Cli {
         overrides_with = "context_assembly"
     )]
     pub context_assembly: Option<ContextAssemblyArg>,
+
+    /// Whether the agent is offered `plan_tasks` (overrides
+    /// `agent.orchestration`). `plan` lets it submit a task graph that sven
+    /// validates and runs as parallel isolated sub-agents; see
+    /// docs/concepts/orchestration.md.
+    #[arg(long, value_enum, value_name = "MODE")]
+    pub orchestration: Option<OrchestrationArg>,
 
     /// Model to use, e.g. "gpt-4o" or "anthropic/claude-opus-4-5"
     #[arg(long, short = 'M', env = "SVEN_MODEL")]
@@ -560,6 +569,16 @@ mod tests {
                 "{args:?}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn orchestration_is_chosen_with_a_flag_and_otherwise_left_to_configuration() {
+        assert_eq!(cli(&["fix it"]).orchestration, None);
+        assert_eq!(
+            cli(&["--orchestration", "plan", "fix it"]).orchestration,
+            Some(OrchestrationArg::Plan)
+        );
+        assert!(Cli::try_parse_from(["sven", "--orchestration", "swarm", "x"]).is_err());
     }
 
     #[test]

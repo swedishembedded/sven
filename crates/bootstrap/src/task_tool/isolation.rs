@@ -51,6 +51,12 @@ impl Isolation {
     }
 }
 
+/// The words of a settled child's result that `plan_tasks` reads back to
+/// tell an integrated change from a conflict and to name the kept branch.
+pub(super) const FILES_HEADER: &str = "Files changed:";
+pub(super) const CONFLICT_MARK: &str = "Integration failed: the sub-agent's change conflicts";
+pub(super) const BRANCH_MARK: &str = "kept on branch '";
+
 /// Where isolated worktrees are made: the user's state directory, never
 /// inside a project tree.
 pub(super) fn default_worktree_root() -> PathBuf {
@@ -87,7 +93,7 @@ pub(super) async fn settle(
 ) -> ToolOutput {
     use worktree::Integration;
     let branch_note = |branch: &str| {
-        format!("Its work is kept on branch '{branch}' (inspect with `git diff HEAD...{branch}` or `git log {branch}`).")
+        format!("Its work is {BRANCH_MARK}{branch}' (inspect with `git diff HEAD...{branch}` or `git log {branch}`).")
     };
     let work = output.content.clone();
     let refuse = |note: String| {
@@ -127,7 +133,7 @@ pub(super) async fn settle(
         Integration::Applied(files) => {
             let mut done = output;
             done.content = format!(
-                "{}\n\nIntegrated into your working tree (uncommitted). Files changed:\n{}",
+                "{}\n\nIntegrated into your working tree (uncommitted). {FILES_HEADER}\n{}",
                 done.content,
                 files
                     .iter()
@@ -138,7 +144,7 @@ pub(super) async fn settle(
             done
         }
         Integration::Conflicted { paths, branch } => refuse(format!(
-            "Integration failed: the sub-agent's change conflicts with your tree (or an earlier sub-agent's integrated change) in: {}. Nothing was applied. {}",
+            "{CONFLICT_MARK} with your tree (or an earlier sub-agent's integrated change) in: {}. Nothing was applied. {}",
             paths.join(", "),
             branch_note(&branch)
         )),

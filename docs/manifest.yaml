@@ -45,6 +45,7 @@ navigation:
       - docs/concepts/state-machines.md
       - docs/concepts/deliberation.md
       - docs/concepts/delegation.md
+      - docs/concepts/orchestration.md
       - docs/concepts/memory.md
       - docs/concepts/knowledge-base.md
   - title: Reference

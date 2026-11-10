@@ -53,7 +53,7 @@ pub mod ui_test_dispatch;
 pub use cli_registry::build_cli_tool_registry;
 pub use config::{
     AgentConfig, AssemblyConfig, AssemblyMode, Config, ContextSettings, DisclosureConfig,
-    ListingConfig, ToolsConfig,
+    ListingConfig, Orchestration, ToolsConfig,
 };
 pub use context::{BuiltinTools, Questions, RuntimeContext, ToolSetProfile};
 pub use context_query::{

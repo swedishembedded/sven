@@ -48,6 +48,7 @@ both for that step and the steps after it.
 | `--subagent-disclosure MODE` | `subagents.disclosure` | `full` or `deferred`: how much of each sub-agent the system prompt lists. |
 | `--knowledge-disclosure MODE` | `knowledge.disclosure` | `full` or `deferred`: how much of each knowledge document the system prompt lists. |
 | `--context-assembly MODE` | `context.assembly.mode` | `off`, `demote` or `reconstruct`; see [Addressable context](../internals/context-assembly.md). |
+| `--orchestration MODE` | `agent.orchestration` | `off` or `plan`: whether the agent is offered `plan_tasks`; see [Orchestration](../concepts/orchestration.md). |
 | `-c, --config FILE` | auto-discovery | A configuration file merged over every file found by the [normal lookup](configuration.md#config-file-location). |
 
 Disclosure and context-assembly options override the configuration file for

@@ -41,6 +41,18 @@ fn default_compaction_threshold() -> f32 {
 fn default_child_run_timeout_secs() -> u64 {
     3600
 }
+fn default_orchestration_max_parallel() -> usize {
+    4
+}
+fn default_orchestration_max_fanout() -> usize {
+    8
+}
+fn default_orchestration_max_tasks() -> usize {
+    24
+}
+fn default_orchestration_max_graphs() -> u32 {
+    3
+}
 fn default_compaction_summary_tokens() -> u32 {
     10_000
 }
@@ -209,6 +221,23 @@ pub struct AgentConfig {
     /// when it runs out, and never outlives its parent. 0 = no limit.
     #[serde(default = "default_child_run_timeout_secs")]
     pub child_run_timeout_secs: u64,
+
+    /// Whether the main agent is offered `plan_tasks`: `off` (the default) or
+    /// `plan`. See `docs/concepts/orchestration.md`.
+    #[serde(default)]
+    pub orchestration: super::Orchestration,
+    /// Most `plan_tasks` children running at once.
+    #[serde(default = "default_orchestration_max_parallel")]
+    pub orchestration_max_parallel: usize,
+    /// Widest layer of side-by-side tasks a submitted graph may have.
+    #[serde(default = "default_orchestration_max_fanout")]
+    pub orchestration_max_fanout: usize,
+    /// Most tasks in one submitted graph.
+    #[serde(default = "default_orchestration_max_tasks")]
+    pub orchestration_max_tasks: usize,
+    /// Most graphs one session may run.
+    #[serde(default = "default_orchestration_max_graphs")]
+    pub orchestration_max_graphs: u32,
 }
 
 impl AgentConfig {
@@ -236,6 +265,11 @@ impl AgentConfig {
             "transient_retries",
             "transient_retry_delay_ms",
             "child_run_timeout_secs",
+            "orchestration",
+            "orchestration_max_parallel",
+            "orchestration_max_fanout",
+            "orchestration_max_tasks",
+            "orchestration_max_graphs",
         ])
         .with(
             "compaction_keep_recent",
@@ -309,6 +343,11 @@ impl Default for AgentConfig {
             no_progress_timeout_secs: None,
             transient_retries: None,
             transient_retry_delay_ms: None,
+            orchestration: super::Orchestration::default(),
+            orchestration_max_parallel: default_orchestration_max_parallel(),
+            orchestration_max_fanout: default_orchestration_max_fanout(),
+            orchestration_max_tasks: default_orchestration_max_tasks(),
+            orchestration_max_graphs: default_orchestration_max_graphs(),
         }
     }
 }

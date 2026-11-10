@@ -87,6 +87,7 @@ fn full<'a>(root: &'a std::path::Path, context_file: &'a std::path::Path) -> Pro
         knowledge: Arc::from(vec![doc("overview")]),
         knowledge_drift_note: Some("## Knowledge Drift\noverview is stale"),
         tool_index: Some("## Deferred Tools\n\nNot loaded:\n- grep\n\n"),
+        orchestration: false,
         disclosure: InstructionDisclosure::default(),
     }
 }
@@ -134,6 +135,15 @@ fn cases() -> Vec<(String, String)> {
     out.push((
         "deferred".into(),
         system_prompt(AgentMode::Agent, None, deferred),
+    ));
+    // `agent.orchestration: plan` adds one paragraph, and only that.
+    let planning = PromptContext {
+        orchestration: true,
+        ..full(&root, &file)
+    };
+    out.push((
+        "orchestration".into(),
+        system_prompt(AgentMode::Agent, None, planning),
     ));
     // A block that is present but empty still takes its separator.
     let blank = PromptContext {
@@ -259,5 +269,10 @@ const GOLDEN: &[(&str, usize, &str)] = &[
         "full/sdlc",
         3625,
         "01b061e9ad9ddead2f1f3d88b9a4faf24fdb05281c12ea6be5832a65825be6d8",
+    ),
+    (
+        "orchestration",
+        3904,
+        "e2f6db268ddeaecab691141feaf7f0f3075b89e84ea419e76309df7913a20933",
     ),
 ];

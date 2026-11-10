@@ -350,6 +350,14 @@ agent:
   # SDLC task), in seconds (0 = no limit).
   child_run_timeout_secs: 3600
 
+  # Whether the agent is offered `plan_tasks` (off | plan) and the bounds of
+  # the graphs it submits. See concepts/orchestration.md.
+  orchestration: off
+  orchestration_max_parallel: 4
+  orchestration_max_fanout: 8
+  orchestration_max_tasks: 24
+  orchestration_max_graphs: 3
+
   # Thinking-loop watchdog. A repetition detector stops reasoning loops and
   # the output budget bounds a turn; the token and time caps are opt-in (a
   # wall-clock cap measures throughput, and ends honest reasoning on a busy
@@ -780,6 +788,11 @@ Controls the agent's autonomy and defaults.
 | `max_step_timeout_secs` | `0` | Wall-clock limit of one headless workflow step; `0` = no limit. `--step-timeout` overrides it |
 | `max_run_timeout_secs` | `14400` (4 hours) | Wall-clock limit of a whole headless run, covering every wait in it: model, tools, approvals and questions. The run ends with exit code `124`. `0` = no limit. `--run-timeout` overrides it; see [CI pipeline](../guides/headless.md#timeouts). While a limit applies, each model request ends with a line stating the minutes used and left |
 | `child_run_timeout_secs` | `3600` | Wall-clock budget of each child agent run (a parallel SDLC task, a `task` sub-agent); the child is stopped when it runs out. `0` = no limit |
+| `orchestration` | `off` | `plan` offers the agent `plan_tasks`, which runs a task graph it submits as parallel isolated sub-agents; see [Orchestration](../concepts/orchestration.md). `--orchestration` overrides it |
+| `orchestration_max_parallel` | `4` | Most `plan_tasks` children running at once |
+| `orchestration_max_fanout` | `8` | Widest layer of side-by-side tasks a graph may have |
+| `orchestration_max_tasks` | `24` | Most tasks in one graph |
+| `orchestration_max_graphs` | `3` | Most graphs one session may run |
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
 Decreasing it gives you more control by forcing sven to pause and ask.

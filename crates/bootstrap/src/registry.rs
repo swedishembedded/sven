@@ -418,7 +418,6 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     // What sub-agents are told to run on: resolvable by a child process
     // loading the same config (a named provider stays named).
     let model_id = p.cfg.model_reference();
-    let parent_mode = Arc::clone(&p.mode_lock);
     reg.register(system_tool(
         Arc::clone(&p.mode_lock),
         p.tool_event_tx.clone(),
@@ -445,13 +444,13 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     // A delegated child is a whole sven process with its own, unconfined
     // shell: where commands are confined, delegation is not offered.
     if p.cfg.tools.confine.is_none() {
-        reg.register(
+        let task = Arc::new(
             TaskTool::new(
                 Arc::clone(&p.buffer_store),
                 p.tool_event_tx,
                 Some(model_id),
                 p.runtime.agents.clone(),
-                parent_mode,
+                Arc::clone(&p.mode_lock),
             )
             .with_scope(p.runtime.path_scope.clone())
             .with_chunks(p.chunks)
@@ -468,6 +467,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
             .with_media(p.cfg.media_endpoint())
             .with_parent_terms(crate::task_tool::ParentTerms::of(p.cfg)),
         );
+        crate::task_tool::orchestrate::register(&mut reg, task, p.cfg, &p.runtime.path_scope);
     }
 
     reg

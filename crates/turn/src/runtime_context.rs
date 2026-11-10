@@ -70,6 +70,8 @@ pub struct AgentRuntimeContext {
     /// The `## Deferred Tools` system-prompt section, rendered from the tool
     /// registry once it is built; `None` when every tool is in the tool list.
     pub tool_index: Option<String>,
+    /// Whether the tool registry offers `plan_tasks`; set with `tool_index`.
+    pub orchestration: bool,
     /// How much of each skill, subagent and knowledge entry the system prompt
     /// lists.
     pub disclosure: crate::instructions::InstructionDisclosure,
@@ -129,6 +131,7 @@ impl AgentRuntimeContext {
             knowledge: self.knowledge.get(),
             knowledge_drift_note: self.knowledge_drift_note.as_deref(),
             tool_index: self.tool_index.as_deref(),
+            orchestration: self.orchestration,
             disclosure: self.disclosure,
         };
         Some(compose_system_prompt(

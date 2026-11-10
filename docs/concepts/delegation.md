@@ -220,6 +220,10 @@ at once.
 
 Needs git 2.40 or newer.
 
+[`plan_tasks`](orchestration.md) runs a validated task graph on top of this:
+parallel isolated writers, started in dependency order and checked by a
+verification command.
+
 ## Cost policy
 
 `delegation.policy` (`off`, `advise`, `enforce`; default `off`) decides whether

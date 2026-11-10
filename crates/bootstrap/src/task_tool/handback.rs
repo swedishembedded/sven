@@ -95,6 +95,12 @@ impl ChildLedger {
         }
     }
 
+    /// The provider-reported input and output tokens of the child `handle`.
+    pub(super) fn used_by(&self, handle: &str) -> Option<(u64, u64)> {
+        let all = self.children.lock().ok()?;
+        all.iter().find(|c| c.handle == handle).and_then(|c| c.used)
+    }
+
     /// The averages of the children that finished and reported, once `min`
     /// of them have: what the next child can be expected to cost.
     pub(super) fn observed(&self, min: u32) -> Observed {

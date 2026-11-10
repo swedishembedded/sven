@@ -96,7 +96,6 @@ use sven_tool_api::{
 use sven_tools_fs::{BufferSource, OutputBufferStore};
 use sven_vocab::{AgentMode, ApprovalMode};
 use sven_workspace::{AgentInfo, SharedAgents};
-
 mod admission;
 mod approver;
 mod brief;
@@ -104,6 +103,7 @@ mod finding;
 mod handback;
 mod inspect;
 mod isolation;
+pub(crate) mod orchestrate;
 mod report;
 mod runner;
 mod session;

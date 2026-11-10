@@ -26,6 +26,7 @@ mod delegation;
 mod disclosure;
 mod listing;
 mod ocr;
+mod orchestration;
 mod tools;
 
 use std::path::Path;
@@ -43,6 +44,7 @@ pub use delegation::{DelegationConfig, DelegationPolicy};
 pub use disclosure::DisclosureConfig;
 pub use listing::ListingConfig;
 pub use ocr::{OcrConfig, Specs};
+pub use orchestration::Orchestration;
 pub use tools::ToolsConfig;
 
 /// Everything a session is configured by.
