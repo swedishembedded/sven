@@ -41,6 +41,13 @@ pub struct ToolsConfig {
     /// Tools, by name, a session never offers the model and never runs -
     /// built-in, MCP or supplied by an embedding application alike.
     pub disabled: Vec<String>,
+    /// Deferred tools, by name, offered in full from the first request instead
+    /// of waiting for the model to load them, in this order after the core
+    /// tools. A name no session tool has (or `disabled` removed) is reported
+    /// once as a warning and skipped; a core tool named here changes nothing.
+    /// `agent.orchestration: plan` preloads `plan_tasks` without naming it.
+    /// A sub-agent does not inherit the list.
+    pub preload: Vec<String>,
     /// When set, the only tools, by name, a session offers the model and
     /// runs; every other tool is removed, whoever registered it. A tool
     /// added to sven later is therefore never offered unless named here.
@@ -106,6 +113,7 @@ impl ToolsConfig {
             "auto_approve_patterns",
             "deny_patterns",
             "disabled",
+            "preload",
             "timeout_secs",
         ])
         .with("web", WebConfig::schema())
@@ -153,6 +161,7 @@ impl Default for ToolsConfig {
             ],
             deny_patterns: vec!["rm -rf /*".into(), "dd if=*".into()],
             disabled: Vec::new(),
+            preload: Vec::new(),
             only: None,
             timeout_secs: 30,
             max_timeout_secs: sven_tools_exec::shell::DEFAULT_MAX_TIMEOUT_SECS,

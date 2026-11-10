@@ -389,6 +389,27 @@ pub fn enable(
     registry.set_disclosure(Disclosure::Deferred);
 }
 
+/// Starts the session with `configured` and, under orchestration,
+/// `plan_tasks` loaded (see [`ToolRegistry::set_preload`]). Call after the
+/// name policy is set, so a disabled tool counts as unknown.
+///
+/// A configured name the session does not have is warned about once, here;
+/// `plan_tasks` is implied only where it is registered (a confined session
+/// has no delegation at all), so it never warns.
+pub(crate) fn preload(registry: &ToolRegistry, configured: &[String], orchestration: bool) {
+    let mut names = configured.to_vec();
+    if orchestration && registry.get("plan_tasks").is_some() {
+        names.push("plan_tasks".to_string());
+    }
+    let unknown = registry.set_preload(&names);
+    if !unknown.is_empty() {
+        tracing::warn!(
+            tools = %unknown.join(", "),
+            "tools.preload names tools this session does not have (unknown or disabled); skipped"
+        );
+    }
+}
+
 /// The system-prompt section that tells the model how deferred tools work
 /// and, while there are few enough, which ones exist.
 ///

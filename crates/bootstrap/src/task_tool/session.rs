@@ -544,6 +544,9 @@ fn serve_args(
         flag("wall-clock-secs", seconds.to_string());
         flag("permission-timeout-secs", seconds.to_string());
     }
+    // A child does not recurse and has no `plan_tasks`: `tools.preload` is
+    // the parent's choice of tools, not the child's.
+    args.push("--no-preload".to_string());
     args
 }
 
@@ -1024,7 +1027,8 @@ mod tests {
                 "--wall-clock-secs",
                 "90",
                 "--permission-timeout-secs",
-                "90"
+                "90",
+                "--no-preload"
             ],
             "the child gets the parent's budgets, approval mode and command patterns"
         );
@@ -1035,7 +1039,7 @@ mod tests {
                 &ServeTerms::default(),
                 now
             ),
-            ["acp", "serve"],
+            ["acp", "serve", "--no-preload"],
             "without a deadline the child's own bounded permission timeout applies"
         );
         // A part second rounds up: the child never stops before the parent's
@@ -1062,7 +1066,13 @@ mod tests {
         );
         assert_eq!(
             args,
-            ["acp", "serve", "--evidence-store", store.to_str().unwrap()]
+            [
+                "acp",
+                "serve",
+                "--evidence-store",
+                store.to_str().unwrap(),
+                "--no-preload"
+            ]
         );
     }
 

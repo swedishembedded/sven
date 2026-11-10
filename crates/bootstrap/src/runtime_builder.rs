@@ -711,6 +711,12 @@ impl RuntimeBuilder {
             },
         );
 
+        crate::tool_discovery::preload(
+            &tool_registry,
+            &self.config.tools.preload,
+            self.config.agent.orchestration == crate::config::Orchestration::Plan,
+        );
+
         if let Some(requester) = self.permission_requester {
             tool_registry.set_permission_requester(requester);
         }
@@ -1276,10 +1282,13 @@ mod tests {
     /// wiring can be asserted end-to-end (not just at the `PromptContext`
     /// composition level covered by `sven_machines::runtime_context` unit tests).
     async fn first_request_with(runtime_ctx: RuntimeContext) -> sven_model::CompletionRequest {
-        let mut config = Config::default();
-        config.model.provider = "mock".into();
-        config.model.name = "mock-model".into();
+        first_request_configured(mock_config(), runtime_ctx).await
+    }
 
+    async fn first_request_configured(
+        config: Config,
+        runtime_ctx: RuntimeContext,
+    ) -> sven_model::CompletionRequest {
         let provider = sven_model_mock::ScriptedMockProvider::always_text("hi");
         let last_request = provider.last_request.clone();
 
@@ -1340,6 +1349,65 @@ mod tests {
                 "{expected} must survive: {names:?}"
             );
         }
+    }
+
+    /// The tool names of the first request of a session with deferred
+    /// disclosure and the tools of `edit`.
+    async fn deferred_first_tools(edit: impl FnOnce(&mut Config)) -> Vec<String> {
+        let mut config = mock_config();
+        config.tools.disclosure.mode = sven_tool_registry::Disclosure::Deferred;
+        edit(&mut config);
+        let req = first_request_configured(config, RuntimeContext::empty()).await;
+        req.tools.iter().map(|t| t.name.clone()).collect()
+    }
+
+    #[tokio::test]
+    async fn preloaded_tools_lead_the_loaded_ones_in_the_first_request() {
+        let names = deferred_first_tools(|c| {
+            c.tools.preload = vec!["web_fetch".into(), "task".into(), "shell".into()];
+        })
+        .await;
+        let at = |n: &str| names.iter().position(|x| x == n);
+        assert!(at("task").is_some(), "{names:?}");
+        assert!(at("web_fetch") < at("task"), "config order: {names:?}");
+        assert!(
+            at("tools") < at("web_fetch"),
+            "after the core tools: {names:?}"
+        );
+        assert_eq!(
+            names.iter().filter(|n| *n == "shell").count(),
+            1,
+            "a core tool named is a no-op: {names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn orchestration_plan_offers_plan_tasks_from_the_first_request() {
+        let off = deferred_first_tools(|_| {}).await;
+        assert!(!off.contains(&"plan_tasks".to_string()), "{off:?}");
+        assert!(!off.contains(&"task".to_string()), "{off:?}");
+
+        let plan = deferred_first_tools(|c| {
+            c.agent.orchestration = crate::config::Orchestration::Plan;
+        })
+        .await;
+        assert!(plan.contains(&"plan_tasks".to_string()), "{plan:?}");
+        assert!(
+            !plan.contains(&"task".to_string()),
+            "the controller spawns the children; the model needs no `task`: {plan:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_or_disabled_preload_is_skipped_not_fatal() {
+        let names = deferred_first_tools(|c| {
+            c.tools.disabled = vec!["task".into()];
+            c.tools.preload = vec!["task".into(), "no_such_tool".into(), "web_fetch".into()];
+        })
+        .await;
+        assert!(names.contains(&"web_fetch".to_string()), "{names:?}");
+        assert!(!names.contains(&"task".to_string()), "{names:?}");
+        assert!(!names.contains(&"no_such_tool".to_string()), "{names:?}");
     }
 
     #[tokio::test]

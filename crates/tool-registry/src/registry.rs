@@ -81,6 +81,9 @@ pub struct ToolRegistry {
     /// Calls the model made to tools it had not loaded; see
     /// [`ToolRegistry::hold_back`].
     pub(crate) held_back: std::sync::Mutex<crate::disclosure::HeldBack>,
+    /// Deferred tools offered in full from the first request; see
+    /// [`ToolRegistry::set_preload`]. Shared with the [`crate::ToolCatalog`].
+    pub(crate) preloaded: Arc<RwLock<Vec<String>>>,
     /// Calls whose arguments the model garbled beyond repair, with the reason
     /// each is not run; see [`ToolRegistry::refuse_unparsed`].
     refused: std::sync::Mutex<crate::refusal::Refused>,
@@ -105,6 +108,7 @@ impl ToolRegistry {
             tools: Arc::new(RwLock::new(HashMap::new())),
             disclosure: crate::Disclosure::default(),
             held_back: std::sync::Mutex::default(),
+            preloaded: Arc::default(),
             refused: std::sync::Mutex::default(),
             display_registry: Arc::new(RwLock::new(ToolDisplayRegistry::new())),
             permission_requester: None,

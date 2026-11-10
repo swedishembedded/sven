@@ -113,7 +113,7 @@ configure:
 |---------|------------|
 | `model`, `providers` | the active model and the named endpoints a model can be reached through |
 | `agent` | the loop's bounds, compaction, timeouts and stall limits |
-| `tools` | shell patterns, `disabled`, `timeout_secs`, `disclosure` and the settings of the web, memory, lint, GDB, context and speech-to-text tools |
+| `tools` | shell patterns, `disabled`, `preload`, `timeout_secs`, `disclosure` and the settings of the web, memory, lint, GDB, context and speech-to-text tools |
 | `mcp_servers` | external MCP servers |
 | `context`, `cost`, `delegation` | context assembly, the cache-aware cost gate and the delegation policy |
 | `decision` | the decision model that advises the harness |
@@ -398,6 +398,9 @@ tools:
 
   # Tools, by name, a session never offers the model and never runs.
   disabled: []
+
+  # Deferred tools offered in full from the first request (e.g. ["task"]).
+  preload: []
 
   # When set, the ONLY tools a session offers and runs; every other is removed.
   # only: [web_search, web_fetch]
@@ -994,6 +997,7 @@ Controls what the agent is allowed to do and how.
 | `auto_approve_patterns` | `["cat *", "ls *", ...]` | Under `--approval manual`, a shell command whose text matches one of these runs without asking (sub-agents' and SDLC tasks' included). A command containing `;`, `\|`, `&`, `<`, `>`, a backtick, `$(` or a line break never matches. |
 | `deny_patterns` | `["rm -rf /*", ...]` | A shell command whose text matches one of these is refused, in every approval mode - by the `shell` tool, `sven mcp serve`, sub-agents and the GDB tool's host commands (the shell side of `shell`, `!`, `pipe` and `\|`, and the server it starts) |
 | `disabled` | `[]` | Tools, by name, a session never offers the model and never runs - built-in, MCP or application-supplied alike |
+| `preload` | `[]` | Deferred tools, by name, offered in full from the first request instead of waiting for the model to `tools action=load` them: after the core tools, in the order listed, never moved by later loads. A name that is not registered or is in `disabled` is warned about once and skipped; a core tool is a no-op. `agent.orchestration: plan` preloads `plan_tasks` without naming it. Sub-agents do not inherit it. `--preload-tool NAME` (repeatable) adds to it |
 | `only` | unset | When set, the only tools, by name, a session offers and runs; every other tool is removed, whoever registered it, so a tool added later is never offered unless named. An entry ending in `*` admits every name it begins (`connectors-*`: one MCP server's tools). `sven rc --hosted` sets it |
 | `timeout_secs` | `30` | Per-tool-call timeout in seconds |
 | `disclosure.mode` | `deferred` | How much of each tool's definition a request carries: `full` or `deferred` (below) |

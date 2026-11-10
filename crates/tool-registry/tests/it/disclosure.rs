@@ -271,3 +271,64 @@ fn a_connector_added_mid_session_leaves_the_requests_definitions_byte_identical(
         .iter()
         .any(|n| n == "connectors-cloudflare__list_buckets"));
 }
+
+fn strings(names: &[&str]) -> Vec<String> {
+    names.iter().map(|n| (*n).to_string()).collect()
+}
+
+#[test]
+fn preloaded_tools_follow_the_core_tools_in_the_order_named_and_stay_put() {
+    let reg = registry(Disclosure::Deferred);
+    let unknown = reg.set_preload(&strings(&["web_fetch", "task", "shell", "task"]));
+    assert!(unknown.is_empty(), "{unknown:?}");
+
+    let first = reg.offer(&offer(&[])).schemas;
+    assert_eq!(
+        names(&first),
+        [
+            "read_file",
+            "shell",
+            "tools",
+            "write_file",
+            "web_fetch",
+            "task"
+        ],
+        "core in name order, then the preloaded in config order; a core name is a no-op"
+    );
+
+    let later = strings(&["skill", "web_fetch"]);
+    let after = reg.offer(&offer(&later)).schemas;
+    assert_eq!(
+        &names(&after)[..names(&first).len()],
+        names(&first),
+        "the list the provider cached stays a prefix"
+    );
+    assert_eq!(names(&after)[first.len()..], ["skill"]);
+}
+
+#[test]
+fn a_preloaded_tool_is_not_withheld_nor_listed_as_deferred() {
+    let reg = registry(Disclosure::Deferred);
+    reg.set_preload(&strings(&["task"]));
+    let offered = reg.offer(&offer(&[]));
+    assert!(!offered.withheld.contains(&"task".to_string()));
+    let listed: Vec<_> = reg
+        .catalog()
+        .deferred_descriptors(AgentMode::Agent)
+        .into_iter()
+        .map(|d| d.name)
+        .collect();
+    assert!(!listed.contains(&"task".to_string()), "{listed:?}");
+    assert!(listed.contains(&"skill".to_string()), "{listed:?}");
+}
+
+#[test]
+fn preloading_reports_the_names_the_registry_does_not_have() {
+    let reg = registry(Disclosure::Deferred);
+    let unknown = reg.set_preload(&strings(&["nope", "task", "nope"]));
+    assert_eq!(unknown, ["nope"], "reported once, the rest still preloaded");
+    assert_eq!(
+        names(&reg.offer(&offer(&[])).schemas).last().copied(),
+        Some("task")
+    );
+}

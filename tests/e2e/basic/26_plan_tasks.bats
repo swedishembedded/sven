@@ -89,7 +89,9 @@ teardown() {
 }
 
 @test "26.01 a submitted graph is run in parallel worktrees and merged into the project" {
-    run timeout 300 "$BIN" --headless --orchestration plan --output-trace "${WORKDIR}/trace.json" "build the two modules" </dev/null
+    # Deferred disclosure, and the script never loads plan_tasks first: it is
+    # preloaded by --orchestration plan.
+    run timeout 300 "$BIN" --headless --tool-disclosure deferred --orchestration plan --output-trace "${WORKDIR}/trace.json" "build the two modules" </dev/null
     [ "${status}" -eq 0 ]
     [ "$(cat alpha.txt)" = "alpha" ]
     [ "$(cat beta.txt)" = "beta" ]

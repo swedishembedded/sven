@@ -140,6 +140,12 @@ pub struct Cli {
     #[arg(long, value_enum, value_name = "MODE")]
     pub orchestration: Option<OrchestrationArg>,
 
+    /// A deferred tool to offer in full from the first request, added after
+    /// the `tools.preload` of the configuration file. Repeatable. A name no
+    /// session tool has is reported once as a warning and skipped.
+    #[arg(long = "preload-tool", value_name = "NAME")]
+    pub preload_tools: Vec<String>,
+
     /// Model to use, e.g. "gpt-4o" or "anthropic/claude-opus-4-5"
     #[arg(long, short = 'M', env = "SVEN_MODEL")]
     pub model: Option<String>,

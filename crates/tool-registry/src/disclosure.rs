@@ -32,6 +32,10 @@
 //! name order, then the loaded tools in the order they were loaded. The set
 //! never shrinks and never reorders: loading costs one rewrite, and
 //! everything after it is a prefix hit again.
+//!
+//! A session may name tools to preload ([`ToolRegistry::set_preload`]): they
+//! start out loaded, so they lead the loaded tools in the order named, and
+//! loading never moves them.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock, Weak};
@@ -160,6 +164,36 @@ impl ToolRegistry {
         self.disclosure = disclosure;
     }
 
+    /// Has the session start with `names` loaded: offered in full from the
+    /// first request, right after the core tools and ahead of every tool the
+    /// model loads later, in the order given. Replaces an earlier preload.
+    ///
+    /// A core tool is already offered and is skipped; a repeated name counts
+    /// once. Returns the names that are not registered (never registered, or
+    /// removed by the name policy), which are not preloaded: call after the
+    /// name policy is set so a disabled tool is among them.
+    pub fn set_preload(&self, names: &[String]) -> Vec<String> {
+        let mut preload: Vec<String> = Vec::new();
+        let mut unknown: Vec<String> = Vec::new();
+        for name in names {
+            match self.get(name) {
+                None if !unknown.contains(name) => unknown.push(name.clone()),
+                Some(tool) if !is_core(tool.as_ref()) && !preload.contains(name) => {
+                    preload.push(name.clone());
+                }
+                _ => {}
+            }
+        }
+        if let Ok(mut guard) = self.preloaded.write() {
+            *guard = preload;
+        }
+        unknown
+    }
+
+    fn preload(&self) -> Vec<String> {
+        self.preloaded.read().map(|p| p.clone()).unwrap_or_default()
+    }
+
     /// The tools, and the definitions, one model request carries.
     ///
     /// Named tools win; else the mode's tools, which under deferral are the
@@ -192,8 +226,9 @@ impl ToolRegistry {
 
         let mut schemas: Vec<ToolSchema> =
             core.iter().map(|t| schema_of(t.as_ref(), false)).collect();
+        let preloaded = self.preload();
         let mut loaded = HashSet::new();
-        for name in offer.active {
+        for name in preloaded.iter().chain(offer.active) {
             if let Some(tool) = deferred.iter().find(|t| t.name() == name) {
                 if loaded.insert(name.as_str()) {
                     schemas.push(schema_of(tool.as_ref(), true));
@@ -235,6 +270,7 @@ impl ToolRegistry {
     pub fn catalog(&self) -> ToolCatalog {
         ToolCatalog {
             tools: Arc::downgrade(&self.tools),
+            preloaded: Arc::clone(&self.preloaded),
         }
     }
 
@@ -298,6 +334,7 @@ fn tools_in_mode(tools: &ToolTable, mode: AgentMode) -> Vec<Arc<dyn Tool>> {
 #[derive(Clone)]
 pub struct ToolCatalog {
     tools: Weak<ToolTable>,
+    preloaded: Arc<RwLock<Vec<String>>>,
 }
 
 impl ToolCatalog {
@@ -306,15 +343,17 @@ impl ToolCatalog {
     }
 
     /// The descriptors of the tools `mode` has that a request does not carry
-    /// unless they are loaded: every non-core tool, sorted by name.
+    /// unless they are loaded: every non-core, non-preloaded tool, sorted by
+    /// name.
     #[must_use]
     pub fn deferred_descriptors(&self, mode: AgentMode) -> Vec<ToolDescriptor> {
         let Some(table) = self.table() else {
             return Vec::new();
         };
+        let preloaded = self.preloaded.read().map(|p| p.clone()).unwrap_or_default();
         let mut descriptors: Vec<_> = tools_in_mode(&table, mode)
             .iter()
-            .filter(|t| !is_core(t.as_ref()))
+            .filter(|t| !is_core(t.as_ref()) && !preloaded.iter().any(|n| n == t.name()))
             .map(|t| ToolDescriptor::of(t.as_ref()))
             .collect();
         descriptors.sort_by(|a, b| a.name.cmp(&b.name));

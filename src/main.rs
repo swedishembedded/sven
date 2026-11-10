@@ -362,6 +362,11 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     if let Some(mode) = cli.context_assembly {
         settings.runtime.context.assembly.mode = mode.into();
     }
+    for name in &cli.preload_tools {
+        if !settings.runtime.tools.preload.contains(name) {
+            settings.runtime.tools.preload.push(name.clone());
+        }
+    }
     if let Some(mode) = cli.orchestration {
         settings.runtime.agent.orchestration = mode.into();
     }

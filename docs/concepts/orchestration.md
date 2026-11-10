@@ -12,7 +12,10 @@ A model left to itself rarely delegates, so a long build runs as one agent
 from start to end. With `agent.orchestration: plan` the main agent is offered
 `plan_tasks`: planning becomes an explicit step that sven checks, and the
 independent parts run in parallel. The default, `off`, offers no such tool and
-changes nothing.
+changes nothing. `plan_tasks` is preloaded: it is in the model's tool list
+from the first request, not one of the deferred tools it would have to load
+first. The `task` tool is not implied; the controller starts the children, so
+the model does not need it.
 
 Orchestration is built from parts that exist already: the writing children and
 their [isolated worktrees](delegation.md#isolated-writing-children) of the

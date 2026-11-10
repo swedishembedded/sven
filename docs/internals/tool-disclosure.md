@@ -143,12 +143,28 @@ and history, and every request after it is a prefix hit again; it also means
 tools are flagged as the part of the list after the stable prefix, whatever
 they are, which is how the provider places its second breakpoint.
 
+## Preloading
+
+`tools.preload` (and `--preload-tool NAME`, repeatable) names deferred tools a
+session starts with loaded: they are in the first request's list in full, right
+after the core tools, in the order named, and ahead of every tool the model
+loads later, so the cache-order rule above holds. They are not listed under
+"Not loaded" and not withheld. A core tool named is a no-op; a name that is not
+registered (misspelt, or removed by `tools.disabled`) is reported once as a
+warning and skipped. The preloaded set is configuration, not kernel session
+state: it is applied on top of `active_tools` when the list is built.
+`agent.orchestration: plan` preloads `plan_tasks` the same way, so the system
+prompt's "Parallel Work" paragraph never names a tool the model does not have.
+`task` is not implied by it: the controller spawns the children itself.
+
 ## Sub-agents
 
 A `task` sub-agent is a new process with its own session: it starts with the
 core tools and nothing loaded. It does not inherit the parent's loaded tools -
 the parent's history is not in the child's prefix either, so there is nothing
-to keep warm, and a child that needs a tool loads it. It reads
+to keep warm, and a child that needs a tool loads it. It does not inherit
+`tools.preload` either (the parent passes `--no-preload`): a child cannot
+recurse and has no `plan_tasks`. It reads
 `tools.disclosure.mode` from the configuration file; the `--tool-disclosure`
 flag applies to the process it was given to.
 

@@ -63,6 +63,12 @@ pub enum AcpCommands {
         #[arg(long = "disable-tool", value_name = "NAME")]
         disable_tools: Vec<String>,
 
+        /// Ignores `tools.preload`: the sessions of a delegated child start
+        /// with only the core tools loaded, as the model that delegated to it
+        /// chose its tools, not the child.
+        #[arg(long)]
+        no_preload: bool,
+
         /// How long a tool call waits for the client's permission answer
         /// before it is denied (default 60, at least 1: a client that never
         /// answers must not stall the session).
@@ -186,6 +192,7 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             max_output_tokens,
             wall_clock_secs,
             disable_tools,
+            no_preload,
             permission_timeout_secs,
             approval,
             command_patterns,
@@ -215,6 +222,9 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                 *max_output_tokens,
                 disable_tools,
             );
+            if *no_preload {
+                config.tools.preload.clear();
+            }
             if let Some(patterns) = command_patterns {
                 config.tools.deny_patterns = patterns.deny.clone();
                 config.tools.auto_approve_patterns = patterns.auto_approve.clone();
@@ -270,6 +280,7 @@ mod tests {
             "60",
             "--disable-tool",
             "shell",
+            "--no-preload",
         ])
         .expect("the flags parse");
         let AcpCommands::Serve {
@@ -277,8 +288,10 @@ mod tests {
             max_output_tokens,
             wall_clock_secs,
             disable_tools,
+            no_preload,
             ..
         } = cli.acp;
+        assert!(no_preload);
         assert_eq!(wall_clock_secs, Some(60));
 
         let mut config = sven_bootstrap::Config::default();
