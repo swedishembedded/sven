@@ -655,7 +655,7 @@ impl Tool for TaskTool {
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "[spawn] Complete, self-contained task"
+                    "description": "[spawn] Complete, self-contained task (required for spawn)"
                 },
                 "description": {
                     "type": "string",
@@ -686,7 +686,7 @@ impl Tool for TaskTool {
                 },
                 "handle": {
                     "type": "string",
-                    "description": "[status|read|grep] Buffer handle from a spawn"
+                    "description": "[status|read|grep] Buffer handle from a spawn (required for these)"
                 },
                 "start_line": {
                     "type": "integer",
@@ -709,10 +709,10 @@ impl Tool for TaskTool {
                     "description": "[grep] Maximum matches (default 50)"
                 }
             },
-            // What `execute` refuses a call without: spawn needs `prompt`,
-            // buffer actions need `handle`. Stating it here keeps a
-            // schema-conformant model out of a guaranteed error round.
-            "required": ["prompt", "handle"],
+            // Nothing is required here: spawn needs `prompt` and the buffer
+            // actions need `handle`, so a top-level list would force one onto
+            // the other. `execute` validates per action; the property
+            // descriptions say which action needs what.
             "additionalProperties": false
         });
         // The brief, the declared scope and the cost account belong to
@@ -1346,11 +1346,7 @@ mod tests {
         let schema = make_task().with_chunks(Some(store)).parameters_schema();
         for key in ["evidence", "evidence_visibility", "deliverable", "paths"] {
             assert!(schema["properties"].get(key).is_some(), "{key}");
-            assert!(!schema["required"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|r| r == key));
+            assert!(schema.get("required").is_none(), "{key} is not required");
         }
     }
 
@@ -1520,20 +1516,33 @@ mod tests {
         assert!(names.contains(&"code-reviewer"));
     }
 
-    /// The schema must state every parameter `execute` refuses a call for:
-    /// `prompt` is mandatory for spawn, `handle` for status/read/grep. A
-    /// model conforming to a schema silent about this produces a guaranteed
-    /// error round - observed as a real 8-call retry storm.
-    #[test]
-    fn the_schema_requires_what_execute_validates() {
+    /// `prompt` is needed by spawn only and `handle` by the buffer actions
+    /// only, so neither may be required at the top level: a schema-conformant
+    /// model would otherwise invent a `handle` for every spawn and a `prompt`
+    /// for every status. `execute` refuses the call that lacks what its own
+    /// action needs, and the property descriptions say which action does.
+    #[tokio::test]
+    async fn the_schema_requires_nothing_that_only_one_action_needs() {
         let t = make_task();
         let schema = t.parameters_schema();
-        let required = schema["required"]
+        let required: Vec<&str> = schema["required"]
             .as_array()
-            .expect("required list present");
-        let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
-        assert!(names.contains(&"prompt"), "prompt must be required");
-        assert!(names.contains(&"handle"), "handle must be required");
+            .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert!(required.is_empty(), "top-level required: {required:?}");
+        assert!(schema["properties"]["prompt"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("required"));
+        assert!(schema["properties"]["handle"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("required"));
+        // What the schema leaves optional, execute still enforces per action.
+        let no_prompt = t.execute(&call(json!({"action": "spawn"}))).await;
+        assert!(no_prompt.is_error && no_prompt.content.contains("'prompt'"));
+        let no_handle = t.execute(&call(json!({"action": "status"}))).await;
+        assert!(no_handle.is_error && no_handle.content.contains("handle"));
     }
 
     #[tokio::test]
