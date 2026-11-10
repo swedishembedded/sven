@@ -715,6 +715,7 @@ impl RuntimeBuilder {
             &tool_registry,
             &self.config.tools.preload,
             self.config.agent.orchestration == crate::config::Orchestration::Plan,
+            AgentMode::from_name(&self.mode).unwrap_or(AgentMode::Agent),
         );
 
         if let Some(requester) = self.permission_requester {

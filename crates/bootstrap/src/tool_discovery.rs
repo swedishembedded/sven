@@ -393,21 +393,46 @@ pub fn enable(
 /// `plan_tasks` loaded (see [`ToolRegistry::set_preload`]). Call after the
 /// name policy is set, so a disabled tool counts as unknown.
 ///
-/// A configured name the session does not have is warned about once, here;
-/// `plan_tasks` is implied only where it is registered (a confined session
-/// has no delegation at all), so it never warns.
-pub(crate) fn preload(registry: &ToolRegistry, configured: &[String], orchestration: bool) {
+/// A configured name the session does not have is warned about once, here,
+/// and so is one the starting `mode` does not offer (it is offered once a
+/// mode that has it is entered); `plan_tasks` is implied only where it is
+/// registered (a confined session has no delegation at all), so it never warns.
+/// Returns the warnings, for tests.
+pub(crate) fn preload(
+    registry: &ToolRegistry,
+    configured: &[String],
+    orchestration: bool,
+    mode: AgentMode,
+) -> Vec<String> {
     let mut names = configured.to_vec();
     if orchestration && registry.get("plan_tasks").is_some() {
         names.push("plan_tasks".to_string());
     }
+    let mut warnings = Vec::new();
     let unknown = registry.set_preload(&names);
     if !unknown.is_empty() {
-        tracing::warn!(
-            tools = %unknown.join(", "),
-            "tools.preload names tools this session does not have (unknown or disabled); skipped"
-        );
+        warnings.push(format!(
+            "tools.preload names tools this session does not have (unknown or disabled); skipped: {}",
+            unknown.join(", ")
+        ));
     }
+    let outside_mode: Vec<&str> = names
+        .iter()
+        .filter_map(|name| registry.get(name).map(|tool| (name, tool)))
+        .filter(|(_, tool)| !tool.modes().contains(&mode))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    if !outside_mode.is_empty() {
+        warnings.push(format!(
+            "tools.preload names tools the {} mode does not offer; offered once a mode that has them is entered: {}",
+            mode,
+            outside_mode.join(", ")
+        ));
+    }
+    for warning in &warnings {
+        tracing::warn!("{warning}");
+    }
+    warnings
 }
 
 /// The system-prompt section that tells the model how deferred tools work
@@ -459,4 +484,58 @@ pub fn index_section(registry: &ToolRegistry, mode: AgentMode) -> Option<String>
         out.push('\n');
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod preload_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use serde_json::{json, Value};
+    use sven_tool_api::{ApprovalPolicy, Tool, ToolCall, ToolCapability, ToolOutput};
+
+    struct AgentOnly;
+
+    #[async_trait]
+    impl Tool for AgentOnly {
+        fn name(&self) -> &str {
+            "builder"
+        }
+        fn description(&self) -> &str {
+            "Builds things."
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({"type": "object"})
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        fn modes(&self) -> &[AgentMode] {
+            &[AgentMode::Agent]
+        }
+        fn kernel_capability(&self) -> ToolCapability {
+            ToolCapability::ReadFile
+        }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "built")
+        }
+    }
+
+    #[test]
+    fn a_preloaded_tool_the_starting_mode_lacks_is_warned_about_never_skipped_silently() {
+        let mut registry = ToolRegistry::new();
+        registry.register(AgentOnly);
+        let names = vec!["builder".to_string()];
+        assert!(preload(&registry, &names, false, AgentMode::Agent).is_empty());
+        let warnings = preload(&registry, &names, false, AgentMode::Research);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("builder") && warnings[0].contains("research"),
+            "{warnings:?}"
+        );
+        let unknown = preload(&registry, &["nope".to_string()], false, AgentMode::Agent);
+        assert!(
+            unknown.len() == 1 && unknown[0].contains("nope"),
+            "{unknown:?}"
+        );
+    }
 }
