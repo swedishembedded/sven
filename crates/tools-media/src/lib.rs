@@ -670,7 +670,15 @@ impl RunModelTool {
 }
 
 /// The arguments `run_model` takes.
-const RUN_ARGUMENTS: [&str; 6] = ["model", "operation", "prompt", "inputs", "params", "output"];
+const RUN_ARGUMENTS: [&str; 7] = [
+    "model",
+    "operation",
+    "prompt",
+    "inputs",
+    "params",
+    "output",
+    "name",
+];
 
 /// A path as the model and the person read it: relative to the working
 /// directory.
@@ -694,7 +702,7 @@ impl Tool for RunModelTool {
         "Run one model once (chat, vision, image, speech, audio, video); files in and out by handle"
     }
     fn description(&self) -> &str {
-        "Runs one model once and answers its text and the files it made. Give `model` (an id from the model list), `operation` (chat, image, speech, transcribe, audio or video, as the model's parameters say), `prompt` (what to make, ask or say), `inputs` (files it reads: handles like mcp-file://files/<id> from the conversation or an earlier run, or paths in the working directory; e.g. the image to edit, the picture to describe) and `params` (the model's own parameters by name, e.g. aspect_ratio, resolution, voice, format, duration). What it makes is shown to the person and answered by handle; pass a handle in `inputs` to the next run to edit or reuse it, without reading it yourself. `output` also saves the first file at that path in the working directory. Run once for each thing the person asked for: one image asked for is one run, of one model. Every run is charged and a video takes minutes, so before running several (to compare models, or variants nobody asked for) ask the person first, saying how many and about what they cost; when they asked for several, run them in their own calls."
+        "Runs one model once and answers its text and the files it made. Give `model` (an id from the model list), `operation` (chat, image, speech, transcribe, audio or video, as the model's parameters say), `prompt` (what to make, ask or say), `inputs` (files it reads: handles like mcp-file://files/<id> from the conversation or an earlier run, or paths in the working directory; e.g. the image to edit, the picture to describe) and `params` (the model's own parameters by name, e.g. aspect_ratio, resolution, voice, format, duration). What it makes is shown to the person and answered by handle; pass a handle in `inputs` to the next run to edit or reuse it, without reading it yourself. Give `name`, a short name for what it makes (e.g. `sven-slap-1`), so the person finds it among the conversation's files; `output` also saves the first file at that path in the working directory, and names it so when no `name` is given. Run once for each thing the person asked for: one image asked for is one run, of one model. Every run is charged and a video takes minutes, so before running several (to compare models, or variants nobody asked for) ask the person first, saying how many and about what they cost; when they asked for several, run them in their own calls."
     }
     fn parameters_schema(&self) -> Value {
         json!({
@@ -705,7 +713,8 @@ impl Tool for RunModelTool {
                 "prompt": { "type": "string", "description": "What to make, ask or say" },
                 "inputs": { "type": "array", "items": { "type": "string" }, "description": "Files it reads: handles (mcp-file://files/...) or paths in the working directory" },
                 "params": { "type": "object", "description": "The operation's parameters, as the model lists them" },
-                "output": { "type": "string", "description": "Also save the first file at this path in the working directory" }
+                "output": { "type": "string", "description": "Also save the first file at this path in the working directory" },
+                "name": { "type": "string", "description": "A short name for what it makes, e.g. sven-slap-1; the file's extension is added" }
             },
             "required": ["model", "operation", "prompt"],
             "additionalProperties": false

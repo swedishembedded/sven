@@ -132,13 +132,32 @@ pub(crate) fn request(
         Some(Value::Object(params)) => Value::Object(params.clone()),
         Some(_) => return Err("`params` is an object of the operation's parameters".into()),
     };
-    Ok(json!({
+    let mut body = json!({
         "model": model,
         "operation": operation,
         "prompt": prompt,
         "inputs": inputs(workdir, args)?,
         "params": params,
-    }))
+    });
+    // What the service keeps the files under: the name given, else the name
+    // of the file the agent saves its copy as; absent, the service names it
+    // from the prompt.
+    let named = args
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|n| !n.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            args.get("output")
+                .and_then(Value::as_str)
+                .and_then(|path| Path::new(path).file_name())
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        });
+    if let Some(name) = named {
+        body["name"] = Value::String(name);
+    }
+    Ok(body)
 }
 
 /// A file made, put where the agent can find it: by handle in a
@@ -272,6 +291,30 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_it_makes_is_named_as_the_agent_named_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let ask = |extra: Value| {
+            let mut args = json!({ "model": "m", "prompt": "a red car" });
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            request(dir.path(), args.as_object().unwrap(), "image").unwrap()
+        };
+        // The file it saves its copy as is the name the service keeps too.
+        assert_eq!(
+            ask(json!({ "output": "shots/sven-slap-1.png" }))["name"],
+            "sven-slap-1.png"
+        );
+        // A name given wins.
+        assert_eq!(
+            ask(json!({ "output": "a.png", "name": "Poster, final" }))["name"],
+            "Poster, final"
+        );
+        // Neither: the service names it from the prompt.
+        assert!(ask(json!({})).get("name").is_none());
+    }
 
     #[test]
     fn the_same_call_is_one_invocation_and_another_call_another() {
