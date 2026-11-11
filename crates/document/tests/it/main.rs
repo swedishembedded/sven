@@ -6,5 +6,6 @@
 
 mod batching;
 mod common;
+mod isolation;
 mod pictures;
 mod pipeline;

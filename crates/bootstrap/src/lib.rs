@@ -33,6 +33,8 @@ pub mod decision_ranker;
 mod delegation_decision;
 #[cfg(feature = "document")]
 mod document_models;
+#[cfg(feature = "document")]
+pub mod document_worker;
 mod evidence_share;
 mod instruction_wiring;
 pub mod kernel_bridge;

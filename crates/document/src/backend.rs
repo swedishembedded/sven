@@ -24,6 +24,7 @@ use hayro::{render, render_into, PixmapSettings, RenderCache, RenderSettings};
 
 use crate::columns::column_profile;
 use crate::error::DocumentError;
+use crate::locate::OutlineEntry;
 use crate::picture::PictureBackend;
 
 /// One rendered page, PNG encoded.
@@ -56,6 +57,9 @@ pub trait DocumentSource: Send + Sync {
     fn native_text(&self) -> Vec<Option<String>>;
     /// Render page `index` (0-based) at `dpi`.
     fn render(&self, index: usize, dpi: f32) -> Result<RenderedPage, DocumentError>;
+    /// The document's outline (bookmarks) with the pages each covers; empty
+    /// for a document without one.
+    fn outline(&self) -> Result<Vec<OutlineEntry>, DocumentError>;
     /// Render only `bbox` (`[x1, y1, x2, y2]` as fractions of the page) of
     /// page `index` at `dpi`.
     fn render_region(
@@ -159,6 +163,10 @@ impl DocumentSource for HayroSource {
                 vec![None; self.pages]
             }
         }
+    }
+
+    fn outline(&self) -> Result<Vec<OutlineEntry>, DocumentError> {
+        crate::locate::outline(&self.data)
     }
 
     fn render(&self, index: usize, dpi: f32) -> Result<RenderedPage, DocumentError> {

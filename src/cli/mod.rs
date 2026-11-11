@@ -49,7 +49,7 @@ pub use commands::Commands;
 pub use config::ConfigCommands;
 pub use decisions::{DecisionsCommands, DoctorCommands};
 #[cfg(feature = "document")]
-pub use document::{ConvertArgs, DocumentCommands};
+pub use document::{ConvertArgs, DocumentCommands, WorkerArgs};
 pub use harness::{ApprovalsArg, GraphArg, HarnessCommands, HarnessRunArgs, PlanFormatArg};
 pub use index::IndexCommands;
 pub use media::{GenerateArgs, MediaCommands};

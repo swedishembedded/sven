@@ -22,6 +22,10 @@ pub(crate) async fn run_document_command(
 ) -> anyhow::Result<i32> {
     match cmd {
         DocumentCommands::Convert(args) => convert(args, config).await,
+        // Dispatched by `main` before anything else starts; see `worker`.
+        DocumentCommands::Worker(_) => {
+            anyhow::bail!("the document worker is started by sven itself")
+        }
         DocumentCommands::Score {
             reference,
             hypothesis,
@@ -160,4 +164,66 @@ fn no_model_text(reason: &str) -> String {
          DeepSeek-OCR-2, or another OpenAI-compatible service) and set `ocr.model`, \
          or pass --model. `sven list-models` shows what can be used now."
     )
+}
+
+/// `sven document worker`: limits itself, then serves one document over
+/// stdin and stdout ([`sven_document::serve_worker`]). Runs before any
+/// runtime, log or configuration exists, so nothing but frames reaches
+/// stdout and nothing outside its confinement is touched. The exit status is
+/// 0 when its input ended, 1 when it could not limit itself or serve.
+pub(crate) fn worker(args: &crate::cli::WorkerArgs) -> i32 {
+    if let Err(e) = limit_self(args.max_memory_mb, args.max_cpu_seconds) {
+        eprintln!("sven document worker: {e}");
+        return 1;
+    }
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    match sven_document::serve_worker(&mut stdin.lock(), &mut stdout.lock(), &StandardBackend) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("sven document worker: {e}");
+            1
+        }
+    }
+}
+
+/// Hard limits on this process's address space and processor time, both
+/// soft and hard, so neither can be raised again; never above the limits it
+/// was started with.
+fn limit_self(memory_mb: u64, cpu_seconds: u64) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let set = |resource, wanted: u64| -> std::io::Result<()> {
+            let mut current = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            // SAFETY: getrlimit and setrlimit only read and write the struct
+            // passed by pointer, which lives for the call.
+            unsafe {
+                if libc::getrlimit(resource, &mut current) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let limit: libc::rlim_t = std::cmp::min(wanted, current.rlim_max);
+                let new = libc::rlimit {
+                    rlim_cur: limit,
+                    rlim_max: limit,
+                };
+                if libc::setrlimit(resource, &new) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        };
+        set(libc::RLIMIT_AS, memory_mb.saturating_mul(1024 * 1024))?;
+        set(libc::RLIMIT_CPU, cpu_seconds)?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (memory_mb, cpu_seconds);
+        Err(std::io::Error::other(
+            "a document worker limits itself only on Unix",
+        ))
+    }
 }

@@ -24,6 +24,7 @@ use image::{ImageFormat, ImageReader, Limits, RgbaImage};
 use crate::backend::{DocumentBackend, DocumentSource, RenderedPage, MAX_SIDE_PX};
 use crate::columns::column_profile;
 use crate::error::DocumentError;
+use crate::locate::OutlineEntry;
 
 /// The resolution a picture is taken to have (the converter's default page
 /// resolution, so a picture is sent at its own size by default).
@@ -150,6 +151,10 @@ impl DocumentSource for PictureSource {
 
     fn native_text(&self) -> Vec<Option<String>> {
         vec![None]
+    }
+
+    fn outline(&self) -> Result<Vec<OutlineEntry>, DocumentError> {
+        Ok(Vec::new())
     }
 
     fn render(&self, index: usize, dpi: f32) -> Result<RenderedPage, DocumentError> {

@@ -31,6 +31,7 @@ mod query;
 mod request;
 mod score;
 mod validate;
+mod worker;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
@@ -54,3 +55,7 @@ pub use quality::{assess as assess_native_text, TextQuality};
 pub use query::{normalize as normalize_whitespace, Hit, Query, Syntax};
 pub use score::character_error_rate;
 pub use validate::Problem;
+pub use worker::{
+    serve as serve_worker, IsolatedBackend, WorkerLimits, WorkerProcess, WorkerSpawner,
+    MAX_PAYLOAD_BYTES,
+};

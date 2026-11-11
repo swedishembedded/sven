@@ -21,6 +21,16 @@ pub enum DocumentCommands {
     ///   sven document convert scan.pdf scan.md --model "deepseek ocr v2" --ocr always
     Convert(Box<ConvertArgs>),
 
+    /// Read one document for another sven process (internal).
+    ///
+    /// The document arrives on stdin and pages, text and the outline go back
+    /// on stdout, in frames; nothing else is read or written. It is started,
+    /// confined (no network, nothing writable) by a sven that reads documents
+    /// someone else gave it, and sets its own hard memory and CPU limits
+    /// before it reads a byte.
+    #[command(hide = true)]
+    Worker(WorkerArgs),
+
     /// Character error rate of a conversion against a reference text.
     ///
     /// Whitespace is normalised on both sides; prints a number between 0 and
@@ -95,4 +105,15 @@ pub struct ConvertArgs {
     /// No per-page progress on stderr.
     #[arg(long, short = 'q')]
     pub quiet: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct WorkerArgs {
+    /// Address space the worker may use, in MiB (never more than it was
+    /// started with).
+    #[arg(long, default_value_t = 1024)]
+    pub max_memory_mb: u64,
+    /// Processor time the worker may use over its life, in seconds.
+    #[arg(long, default_value_t = 600)]
+    pub max_cpu_seconds: u64,
 }

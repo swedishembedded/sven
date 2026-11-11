@@ -280,6 +280,7 @@ minimal = []
 serde_json       = { workspace = true }
 uuid             = { workspace = true }
 sven-bootstrap   = { path = "crates/bootstrap" }
+sven-document    = { path = "crates/document", features = ["test-support"] }
 sven-tools-exec  = { path = "crates/tools-exec" }
 sven-tools-fs    = { path = "crates/tools-fs" }
 sven-tools-media = { path = "crates/tools-media", features = ["fake-server"] }

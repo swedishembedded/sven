@@ -22,7 +22,7 @@ use crate::DocumentError;
 type RawOutline = (Vec<(usize, String, usize)>, usize);
 
 /// One bookmark of the outline, with the pages it covers.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OutlineEntry {
     /// 1 for a top-level entry, 2 for its children, ...
     pub level: usize,

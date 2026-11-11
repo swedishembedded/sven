@@ -53,6 +53,15 @@ fn main() -> anyhow::Result<()> {
     sven_http::ensure_crypto_provider();
 
     let cli = Cli::parse();
+    // A document worker serves one document on its pipes and nothing else:
+    // before any runtime, log or configuration (`run::document::worker`).
+    #[cfg(feature = "document")]
+    if let Some(Commands::Document {
+        command: cli::DocumentCommands::Worker(args),
+    }) = &cli.command
+    {
+        std::process::exit(run::document::worker(args));
+    }
     // A hosted host is confined to its sandbox here, while this process has
     // one thread: the confinement covers only threads and processes started
     // after it, and every runtime thread must be one of them.
