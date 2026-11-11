@@ -291,9 +291,10 @@ its own that it never shares. Two walls keep a hosted host to itself:
   itself, every request under a deadline after which the worker is killed
   and replaced. Only page images, text and the outline come back; only the
   host talks to the OCR model.
-- **Each conversation's files.** A host serves all of its person's
-  conversations from one working directory, so each conversation works in
-  a directory of its own below it (`work/.sven/conversations/<id>`): its
+- **Each conversation's files.** A host in a sandbox serves all of its
+  person's conversations from one working directory, so each conversation
+  works in a directory of its own below it (`work/.sven/conversations/<id>`;
+  a container serves one conversation and is not split): its
   attachments are saved there, its tools' paths are held there, and it is
   removed when the conversation is archived or deleted. Another
   conversation's files are reached only by handle, which the server checks

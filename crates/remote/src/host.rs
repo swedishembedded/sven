@@ -81,6 +81,11 @@ pub struct HostOptions {
     /// working directory and the public internet (`sven rc --wide-access`):
     /// otherwise [`restrict_to_working_dir`] applies.
     pub wide_access: bool,
+    /// The working directory serves several conversations (a hosted host in
+    /// a sandbox, one per person): each then works in a directory of its own
+    /// below it, held there, and removed with it. A container serves one
+    /// conversation and a person's computer is theirs: neither is split.
+    pub shared_workdir: bool,
 }
 
 /// Runs until interrupted, or until the server stops accepting the token.
@@ -147,6 +152,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
         working_dir: options.working_dir,
         hosted: options.hosted,
         wide_access: options.wide_access,
+        shared_workdir: options.shared_workdir,
         openai_base_url: options.login.openai_base_url,
         token: options.login.token,
         client: client.clone(),
@@ -239,6 +245,8 @@ struct SessionContext {
     hosted: bool,
     /// See [`HostOptions::wide_access`].
     wide_access: bool,
+    /// See [`HostOptions::shared_workdir`].
+    shared_workdir: bool,
     openai_base_url: String,
     token: String,
     /// The server, for the files a session's tools publish to its
@@ -491,7 +499,7 @@ impl SessionActor {
                 }
                 hosted::forget_conversation_files(
                     &self.context.working_dir,
-                    self.context.hosted,
+                    self.context.shared_workdir,
                     self.id,
                 );
                 println!("[{}] closed", self.short());
@@ -1011,7 +1019,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.agent.system_prompt = Some("You are a helpful assistant.".into());
-        let runtime = session_runtime(&config, dir.path(), true, false).unwrap();
+        let runtime = session_runtime(&config, dir.path(), true, false, true).unwrap();
         assert!(
             runtime.no_system,
             "the built-in prompt and its context sections are left out"
@@ -1025,7 +1033,7 @@ mod tests {
     #[test]
     fn a_hosted_session_without_a_configured_prompt_gets_one_that_names_no_path() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = session_runtime(&Config::default(), dir.path(), true, false).unwrap();
+        let runtime = session_runtime(&Config::default(), dir.path(), true, false, true).unwrap();
         assert!(runtime.no_system);
         let prompt = runtime
             .system_prompt_override
@@ -1041,7 +1049,7 @@ mod tests {
         let dir = std::path::Path::new("someone/project");
         let mut config = Config::default();
         config.agent.system_prompt = Some("Be terse.".into());
-        let runtime = session_runtime(&config, dir, false, true).unwrap();
+        let runtime = session_runtime(&config, dir, false, true, false).unwrap();
         assert!(
             !runtime.no_system,
             "the project context stays for a local session"
@@ -1105,6 +1113,7 @@ mod tests {
             working_dir: dir.to_path_buf(),
             hosted: false,
             wide_access: true,
+            shared_workdir: false,
             openai_base_url: String::new(),
             token: String::new(),
             client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),
@@ -1458,6 +1467,7 @@ mod tests {
             working_dir: dir.path().to_path_buf(),
             hosted: false,
             wide_access: true,
+            shared_workdir: false,
             openai_base_url: String::new(),
             token: String::new(),
             client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),
@@ -1501,6 +1511,7 @@ mod tests {
             working_dir: dir.path().to_path_buf(),
             hosted: false,
             wide_access: true,
+            shared_workdir: false,
             openai_base_url: String::new(),
             token: String::new(),
             client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),
@@ -1603,6 +1614,7 @@ mod tests {
             working_dir: dir.to_path_buf(),
             hosted: false,
             wide_access: true,
+            shared_workdir: false,
             openai_base_url: String::new(),
             token: String::new(),
             client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),

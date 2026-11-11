@@ -67,13 +67,15 @@ pub(super) fn session_runtime(
     working_dir: &Path,
     hosted: bool,
     wide_access: bool,
+    shared_workdir: bool,
 ) -> anyhow::Result<RuntimeContext> {
     let mut runtime = RuntimeContext::auto_detect_at(Some(working_dir.to_path_buf()));
     runtime.project_root = Some(working_dir.to_path_buf());
-    // A hosted session is held by the kernel to its person's environment,
-    // which holds every conversation of theirs; its path-taking tools are
-    // held to its own conversation's directory as well.
-    if hosted || !wide_access {
+    // A hosted host in a sandbox is held by the kernel to its person's
+    // environment, which holds every conversation of theirs; its sessions'
+    // path-taking tools are held to their own conversation's directory as
+    // well. A container serving one conversation is its own boundary.
+    if shared_workdir || (!hosted && !wide_access) {
         runtime.path_scope = confined_scope(working_dir, &protected_locations())?;
     }
     if hosted {
@@ -117,10 +119,11 @@ pub(super) fn conversation_dir(
     Ok(dir)
 }
 
-/// A closed hosted conversation's files removed with it. Nothing on a
-/// person's computer is removed.
-pub(super) fn forget_conversation_files(working_dir: &Path, hosted: bool, id: uuid::Uuid) {
-    if !hosted {
+/// A closed conversation's own directory removed with it, where the working
+/// directory is `shared`. Nothing else is ever removed: a person's computer
+/// and a container's workspace are theirs.
+pub(super) fn forget_conversation_files(working_dir: &Path, shared: bool, id: uuid::Uuid) {
+    if !shared {
         return;
     }
     let dir = working_dir.join(CONVERSATIONS).join(id.to_string());
@@ -261,7 +264,7 @@ mod tests {
     #[test]
     fn a_confined_session_cannot_write_what_runs_later_outside_it() {
         let tmp = tempfile::tempdir().unwrap();
-        let runtime = session_runtime(&Config::default(), tmp.path(), false, false).unwrap();
+        let runtime = session_runtime(&Config::default(), tmp.path(), false, false, false).unwrap();
         for path in [
             ".git/hooks/pre-commit",
             ".git/config",
@@ -341,7 +344,7 @@ mod tests {
         assert!(dir_a.starts_with(work.path()) && dir_b.starts_with(work.path()));
         // One conversation's tools cannot reach the other's files.
         std::fs::write(dir_b.join("invoice.pdf"), "x").unwrap();
-        let scope_a = session_runtime(&Config::default(), &dir_a, true, false)
+        let scope_a = session_runtime(&Config::default(), &dir_a, true, false, true)
             .unwrap()
             .path_scope;
         assert!(scope_a.resolve("../").is_err());
@@ -388,19 +391,29 @@ mod tests {
     fn only_a_person_computer_session_without_wide_access_is_confined() {
         let dir = tempfile::tempdir().unwrap();
         let config = Config::default();
-        let root = |hosted, wide| {
-            session_runtime(&config, dir.path(), hosted, wide)
+        let root = |hosted, wide, shared| {
+            session_runtime(&config, dir.path(), hosted, wide, shared)
                 .unwrap()
                 .path_scope
                 .root()
                 .map(Path::to_path_buf)
         };
-        assert_eq!(root(false, false), Some(dir.path().canonicalize().unwrap()));
-        assert_eq!(root(false, true), None);
+        assert_eq!(
+            root(false, false, false),
+            Some(dir.path().canonicalize().unwrap())
+        );
+        assert_eq!(root(false, true, false), None);
+        // A container serving one conversation is its own boundary: its
+        // shell and file tools work across its workspace and the account's
+        // shared files, as before.
+        assert_eq!(root(true, false, false), None);
         // A hosted session, held by the kernel to its person's environment,
         // is also held to its own conversation's directory: documents of
         // the person's other conversations are not its to read, also for
         // someone the conversation is shared with.
-        assert_eq!(root(true, false), Some(dir.path().canonicalize().unwrap()));
+        assert_eq!(
+            root(true, false, true),
+            Some(dir.path().canonicalize().unwrap())
+        );
     }
 }

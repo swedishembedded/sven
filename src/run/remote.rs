@@ -220,6 +220,8 @@ pub(crate) async fn run_hosted_host(start: HostedStart) -> anyhow::Result<()> {
         login,
         place,
     } = start;
+    // A sandbox serves every conversation of its person; a container one.
+    let shared_workdir = matches!(place, HostedPlace::Sandbox(_));
     let (working_dir, kept) = match place {
         HostedPlace::Sandbox(sandbox) => (sandbox.join("work"), sandbox.join("sessions")),
         HostedPlace::Container { egress, state } => {
@@ -250,6 +252,7 @@ pub(crate) async fn run_hosted_host(start: HostedStart) -> anyhow::Result<()> {
         sessions: sven_remote::SessionStore::new(kept),
         hosted: true,
         wide_access: false,
+        shared_workdir,
     })
     .await
 }
@@ -283,6 +286,7 @@ pub(crate) async fn run_remote_host(
         sessions: sven_remote::SessionStore::new(sessions),
         hosted: false,
         wide_access,
+        shared_workdir: false,
     })
     .await
 }

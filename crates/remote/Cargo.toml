@@ -47,6 +47,9 @@ uuid       = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+# The hosted tool set as the sven binary ships it: with the document and
+# media tools, so the tests that pin it do not depend on what else is built.
+sven-bootstrap = { path = "../bootstrap", default-features = false, features = ["document", "media"] }
 tempfile = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

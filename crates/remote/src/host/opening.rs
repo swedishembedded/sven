@@ -25,7 +25,11 @@ impl SessionActor {
     /// Where this conversation's tools, attachments and files live
     /// ([`super::hosted::conversation_dir`]).
     pub(super) fn conversation_dir(&self) -> anyhow::Result<std::path::PathBuf> {
-        super::hosted::conversation_dir(&self.context.working_dir, self.context.hosted, self.id)
+        super::hosted::conversation_dir(
+            &self.context.working_dir,
+            self.context.shared_workdir,
+            self.id,
+        )
     }
 
     /// The model this conversation talks to, through the server.
@@ -61,6 +65,7 @@ impl SessionActor {
             &dir,
             self.context.hosted,
             self.context.wide_access,
+            self.context.shared_workdir,
         )?;
         // What its tools write, such as a converted document, can become a
         // file of this conversation, and of no other.

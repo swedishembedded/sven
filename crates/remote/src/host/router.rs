@@ -223,7 +223,7 @@ async fn route(
                     }
                     super::hosted::forget_conversation_files(
                         &context.working_dir,
-                        context.hosted,
+                        context.shared_workdir,
                         session_id,
                     );
                 }
@@ -406,6 +406,7 @@ mod tests {
             working_dir: dir.path().to_path_buf(),
             hosted: false,
             wide_access: true,
+            shared_workdir: false,
             openai_base_url: String::new(),
             token: String::new(),
             client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),
