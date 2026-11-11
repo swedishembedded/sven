@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **media**: a video model's own options (OpenRouter's `allowed_passthrough_parameters`) are listed (`options: ...`) and offered by `model_schema` as `provider_options`; given in `run_model`'s video `params` as `provider_options: {"<provider>": {...}}`, they are sent as `provider.options` beside any brain action, which they can never replace.
 - **media**: a chat run asked for JSON (`response_format` in `run_model`'s `params`) is told when the service found the answer not to be that JSON, or could not check it against the schema; only an answer the service checked is taken as the JSON asked for.
 - **media**: a chat run takes a PDF, a sound (wav, mp3, ogg, flac, m4a) or a video (mp4, webm, mov) in `inputs` for a model whose input includes it; `pdf_engine: "pdf-text"` gives a PDF as its text to a model that reads no files.
+- **document**: a served (confined) run is offered `document_locate` and `document_convert`: both read the document and write the Markdown and its manifest only through the session's race-free scope, and the converter works on private copies, so a large or scanned PDF is converted page by page (and resumed from its manifest) in the hosted service too.
 
 ## [4.11.0] - 2026-11-11
 

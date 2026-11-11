@@ -635,8 +635,9 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     // process can still rearrange the workspace while these tools run. The
     // tools that open a file (read, write, edit) do so through a race-free
     // scope. Those that hand a path to a library, a walker or another
-    // process cannot, so they are not offered there: find_file, grep, the
-    // document tools, attach_file, the context tool and gdb.
+    // process cannot, so they are not offered there: find_file, grep,
+    // attach_file, the context tool and gdb. The document tools read and
+    // write through the scope and give the converter private copies.
     let confined = cfg.tools.confine.is_some();
     let paths = &runtime.path_scope;
     if let Some(scope) = tool_scope(cfg, paths) {
@@ -651,11 +652,13 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     // ── PDF to Markdown ───────────────────────────────────────────────────────
     // Page text goes from the OCR model to the file; the model gets a record.
     // document_locate finds the pages (outline, text search) to convert.
+    // Both read and write only through the scope (race-free where commands
+    // are confined), so a served run is offered them too.
     #[cfg(feature = "document")]
-    if !confined {
-        reg.register_with_display(DocumentLocateTool::new(paths.clone()));
+    if let Some(scope) = tool_scope(cfg, paths) {
+        reg.register_with_display(DocumentLocateTool::new(scope.clone()));
         reg.register_with_display(DocumentConvertTool::new(
-            paths.clone(),
+            scope,
             Arc::new(crate::ConfigOcrModels::new(cfg.clone())),
             crate::convert_options(&cfg.ocr),
         ));
@@ -899,9 +902,9 @@ mod tests {
     }
 
     /// Where the shell's commands are confined (a served run), the tools that
-    /// open a file by name are offered with a race-free scope, and the ones
-    /// that hand a path to a walker, a library or another process are not
-    /// offered at all.
+    /// open a file by name (and the document tools, which work on private
+    /// copies) are offered with a race-free scope, and the ones that hand a
+    /// path to a walker, a library or another process are not offered at all.
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_confined_run_offers_only_the_file_tools_that_open_race_free() {
@@ -933,16 +936,13 @@ mod tests {
         for offered in ["read_file", "write_file", "edit_file", "shell"] {
             assert!(names.iter().any(|n| n == offered), "{offered} in {names:?}");
         }
-        for withheld in [
-            "find_file",
-            "grep",
-            "attach_file",
-            "document_locate",
-            "document_convert",
-            "context",
-            "gdb",
-            "task",
-        ] {
+        // The document tools read and write through the scope too.
+        if cfg!(feature = "document") {
+            for offered in ["document_locate", "document_convert"] {
+                assert!(names.iter().any(|n| n == offered), "{offered} in {names:?}");
+            }
+        }
+        for withheld in ["find_file", "grep", "attach_file", "context", "gdb", "task"] {
             assert!(
                 !names.iter().any(|n| n == withheld),
                 "{withheld} in {names:?}"

@@ -105,15 +105,17 @@ impl Tool for DocumentLocateTool {
             Ok(r) => r,
             Err(e) => return ToolOutput::err(&call.id, e),
         };
-        let path = match self.scope.resolve_for(call, &request.source) {
-            Ok(p) => p,
-            Err(refused) => return refused,
-        };
-        let data = match tokio::fs::read(&path).await {
-            Ok(d) => d,
-            Err(e) => {
-                return ToolOutput::err(&call.id, format!("cannot read {}: {e}", path.display()))
+        if let Err(refused) = self.scope.resolve_for(call, &request.source) {
+            return refused;
+        }
+        // Read through the scope, never by a path a confined process could
+        // swap for a link (`scoped`).
+        let data = match crate::scoped::read(&self.scope, &request.source, false).await {
+            Ok(Some(d)) => d,
+            Ok(None) => {
+                return ToolOutput::err(&call.id, format!("cannot read {}", request.source))
             }
+            Err(why) => return ToolOutput::err(&call.id, why),
         };
         match tokio::task::spawn_blocking(move || locate(data, &request)).await {
             Ok(Ok(record)) => ToolOutput::ok(&call.id, record.to_string()),

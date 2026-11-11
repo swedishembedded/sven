@@ -17,7 +17,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sven_document::{ConvertOptions, Converter, DocumentError, OcrMode, Report, StandardBackend};
+use sven_document::{
+    manifest_path, ConvertOptions, Converter, DocumentError, OcrMode, Report, StandardBackend,
+};
 use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
@@ -25,6 +27,7 @@ use sven_tool_api::PathScope;
 use sven_vocab::AgentMode;
 
 use crate::models::{NoOcrModel, OcrModels};
+use crate::scoped;
 
 /// Warnings returned in the record; the manifest holds all of them.
 const MAX_WARNINGS: usize = 8;
@@ -90,7 +93,7 @@ impl Tool for DocumentConvertTool {
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let arg = |name: &str| call.args.get(name).and_then(Value::as_str);
-        let (Some(source), Some(destination)) = (arg("source"), arg("destination")) else {
+        let (Some(source_arg), Some(destination_arg)) = (arg("source"), arg("destination")) else {
             return ToolOutput::err(
                 &call.id,
                 "Missing required parameters: source, destination.",
@@ -100,11 +103,10 @@ impl Tool for DocumentConvertTool {
             Ok(mode) => mode.unwrap_or_default(),
             Err(e) => return ToolOutput::err(&call.id, e),
         };
-        let source = match self.scope.resolve_for(call, source) {
-            Ok(p) => p,
-            Err(refused) => return refused,
-        };
-        let destination = match self.scope.resolve_for(call, destination) {
+        if let Err(refused) = self.scope.resolve_for(call, source_arg) {
+            return refused;
+        }
+        let destination = match self.scope.resolve_for(call, destination_arg) {
             Ok(p) => p,
             Err(refused) => return refused,
         };
@@ -123,14 +125,86 @@ impl Tool for DocumentConvertTool {
             model_spec: spec.clone(),
             ..self.defaults.clone()
         };
+        // The converter works on private copies: the source and any earlier
+        // run's manifest are read through the scope, the results written
+        // back through it (`scoped`).
+        let data = match scoped::read(&self.scope, source_arg, false).await {
+            Ok(Some(data)) => data,
+            Ok(None) => {
+                return ToolOutput::err(
+                    &call.id,
+                    failure_text(&format!("cannot read {source_arg}")),
+                )
+            }
+            Err(why) => return ToolOutput::err(&call.id, failure_text(&why)),
+        };
+        let manifest_arg = format!("{destination_arg}.manifest.json");
+        let earlier = match scoped::read(&self.scope, &manifest_arg, true).await {
+            Ok(earlier) => earlier,
+            Err(why) => return ToolOutput::err(&call.id, failure_text(&why)),
+        };
+        let work = match tempfile::tempdir() {
+            Ok(work) => work,
+            Err(e) => {
+                return ToolOutput::err(
+                    &call.id,
+                    failure_text(&format!("no private working directory: {e}")),
+                )
+            }
+        };
+        // The copy keeps the source's extension, which says a picture from a PDF.
+        let extension = std::path::Path::new(source_arg)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("pdf");
+        let (private_source, private_output) = (
+            work.path().join(format!("source.{extension}")),
+            work.path().join("output.md"),
+        );
+        let staged = std::fs::write(&private_source, &data).and_then(|()| match &earlier {
+            Some(manifest) => std::fs::write(manifest_path(&private_output), manifest),
+            None => Ok(()),
+        });
+        if let Err(e) = staged {
+            return ToolOutput::err(
+                &call.id,
+                failure_text(&format!("cannot stage {source_arg}: {e}")),
+            );
+        }
+        drop(data);
         let converter = Converter::new(Arc::new(StandardBackend), providers);
-        match converter.convert(&source, &destination, &options).await {
-            Ok(report) => ToolOutput::ok(&call.id, record(&report, &spec, unavailable.as_deref())),
+        let converted = converter
+            .convert(&private_source, &private_output, &options)
+            .await;
+        // What the run made goes back, even when it stopped part way: the
+        // manifest lets a later run resume.
+        for (private, requested) in [
+            (manifest_path(&private_output), manifest_arg.as_str()),
+            (private_output.clone(), destination_arg),
+        ] {
+            if let Ok(bytes) = std::fs::read(&private) {
+                if let Err(why) = scoped::write(&self.scope, requested, bytes).await {
+                    return ToolOutput::err(&call.id, failure_text(&why));
+                }
+            }
+        }
+        match converted {
+            Ok(mut report) => {
+                report.output = destination.clone();
+                report.manifest = manifest_path(&destination);
+                ToolOutput::ok(&call.id, record(&report, &spec, unavailable.as_deref()))
+            }
             Err(DocumentError::NoModel) => ToolOutput::ok(
                 &call.id,
                 no_ocr_model_record(&unavailable.unwrap_or_default()),
             ),
-            Err(e) => ToolOutput::err(&call.id, failure_text(&e.to_string())),
+            Err(e) => ToolOutput::err(
+                &call.id,
+                failure_text(
+                    &e.to_string()
+                        .replace(&work.path().display().to_string(), "<private copy>"),
+                ),
+            ),
         }
     }
 }
@@ -329,6 +403,45 @@ mod tests {
         assert!(std::fs::read_to_string(dir.path().join("out/a.md"))
             .unwrap()
             .contains("committee"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_confined_run_converts_through_the_race_free_scope_and_resumes_from_its_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.pdf"),
+            build_pdf(&[FixturePage::Text(PROSE.to_vec())]),
+        )
+        .unwrap();
+        let t = DocumentConvertTool::new(
+            PathScope::confined(dir.path())
+                .unwrap()
+                .race_free()
+                .unwrap(),
+            Arc::new(Fixed(model())),
+            ConvertOptions::default(),
+        );
+        let args = json!({"source": "a.pdf", "destination": "out/a.md", "ocr": "never"});
+        let out = t.execute(&call(args.clone())).await;
+        assert!(!out.is_error, "{}", out.content);
+        let record: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(record["output"], json!(dir.path().join("out/a.md")));
+        assert!(std::fs::read_to_string(dir.path().join("out/a.md"))
+            .unwrap()
+            .contains("committee"));
+        assert!(dir.path().join("out/a.md.manifest.json").is_file());
+        // Run again: every page is taken from the manifest it left.
+        let again: Value = serde_json::from_str(&t.execute(&call(args)).await.content).unwrap();
+        assert_eq!(again["pages"]["reused"], 1, "{again}");
+        // A source reached through a link out of the workspace is refused.
+        std::os::unix::fs::symlink("/etc", dir.path().join("etc")).unwrap();
+        let out = t
+            .execute(&call(
+                json!({"source": "etc/hostname", "destination": "b.md"}),
+            ))
+            .await;
+        assert!(out.is_error, "{}", out.content);
     }
 
     #[tokio::test]

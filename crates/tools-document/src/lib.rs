@@ -6,6 +6,7 @@
 
 mod locate;
 mod models;
+mod scoped;
 mod tool;
 
 pub use locate::DocumentLocateTool;
