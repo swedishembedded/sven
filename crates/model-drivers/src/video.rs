@@ -83,6 +83,9 @@ pub struct VideoModel {
     /// The frames it can start or end on (`first_frame`, `last_frame`);
     /// empty when it takes none.
     pub frame_images: Vec<String>,
+    /// The provider's own options it takes, by name
+    /// (`allowed_passthrough_parameters`), sent as `provider.options`.
+    pub passthrough: Vec<String>,
     /// Its price per second, by the listing's own key, as listed.
     pub pricing: Vec<(String, String)>,
 }
@@ -195,6 +198,10 @@ fn parse_models(value: &Value) -> Vec<VideoModel> {
                         seed: m["seed"].as_bool().unwrap_or(false),
                         supported_reference_types: strings(&m["supported_reference_types"]),
                         frame_images: strings(&m["supported_frame_images"]),
+                        passthrough: strings(&m["allowed_passthrough_parameters"])
+                            .into_iter()
+                            .filter(|name| name != "brain")
+                            .collect(),
                         actions: m["actions"]
                             .as_array()
                             .map(|a| {
@@ -448,6 +455,7 @@ mod tests {
             {"id": "brain/mock-video", "supported_durations": [1, 2], "supported_resolutions": ["480p"], "seed": true,
              "supported_reference_types": ["image", "audio"],
              "supported_frame_images": ["first_frame", "last_frame"],
+             "allowed_passthrough_parameters": ["watermark", "brain"],
              "actions": [{"action": "t2v", "edits": false}, {"action": "extend", "edits": true}],
              "pricing_skus": {"duration_seconds": "0.01"}},
             {"id": ""},
@@ -457,6 +465,8 @@ mod tests {
         assert_eq!(models[0].actions, ["t2v"]);
         assert_eq!(models[0].supported_reference_types, ["image", "audio"]);
         assert_eq!(models[0].frame_images, ["first_frame", "last_frame"]);
+        // Brain's own options are its actions, never a provider option.
+        assert_eq!(models[0].passthrough, ["watermark"]);
         assert_eq!(models[0].durations, [1, 2]);
         assert_eq!(
             models[0].pricing,

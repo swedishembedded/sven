@@ -164,6 +164,9 @@ fn describe(model: &VideoModel) -> String {
     if !model.actions.is_empty() {
         parts.push(format!("actions: {}", model.actions.join(", ")));
     }
+    if !model.passthrough.is_empty() {
+        parts.push(format!("options: {}", model.passthrough.join(", ")));
+    }
     if !model.edits.is_empty() {
         parts.push(format!("edits: {}", model.edits.join(", ")));
     }
@@ -201,6 +204,16 @@ fn video_parameters(model: &VideoModel) -> Value {
     }
     if model.seed {
         parameters.insert("seed".into(), json!({ "type": "integer" }));
+    }
+    if !model.passthrough.is_empty() {
+        parameters.insert(
+            "provider_options".into(),
+            json!({
+                "type": "object",
+                "options": model.passthrough,
+                "description": "the provider's own options, under its name on the router (e.g. {\"google-vertex\": {\"parameters\": {\"personGeneration\": \"allow\"}}}, {\"seed\": {\"watermark\": false}}); only the options named here",
+            }),
+        );
     }
     for frame in &model.frame_images {
         parameters.insert(

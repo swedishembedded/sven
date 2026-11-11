@@ -210,6 +210,40 @@ async fn a_clip_starts_and_ends_on_frames_by_path_or_by_the_conversation_s_handl
 }
 
 #[test]
+fn a_provider_s_own_options_go_beside_brain_s_and_never_replace_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let planned = plan(
+        &json!({"model": "m", "prompt": "p", "provider_options": {"google-vertex": {"parameters": {"personGeneration": "allow"}}}}),
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!(
+        planned.body["provider"],
+        json!({"options": {"google-vertex": {"parameters": {"personGeneration": "allow"}}}})
+    );
+    let both = plan(
+        &json!({"model": "m", "prompt": "p", "action": "ref2v", "provider_options": {"seed": {"watermark": false}}}),
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!(
+        both.body["provider"]["options"],
+        json!({"seed": {"watermark": false}, "brain": {"action": "ref2v", "params": {}}})
+    );
+    let refused = |options: Value| {
+        plan(
+            &json!({"model": "m", "prompt": "p", "provider_options": options}),
+            dir.path(),
+        )
+        .err()
+        .unwrap_or_default()
+    };
+    assert!(refused(json!({"brain": {"action": "x"}})).contains("`action`"));
+    assert!(refused(json!({"seed": "on"})).contains("provider_options"));
+    assert!(refused(json!("on")).contains("provider_options"));
+}
+
+#[test]
 fn a_frame_is_an_image_by_path_or_a_handle_of_one() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("clip.mp4"), b"mp4").unwrap();

@@ -226,6 +226,7 @@ pub(crate) fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
         "first_frame",
         "last_frame",
         "params",
+        "provider_options",
         "output",
     ];
     if let Some(unknown) = args.keys().find(|k| !known.contains(&k.as_str())) {
@@ -289,21 +290,43 @@ pub(crate) fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
     if edit.is_some() && action.is_some() {
         return Err("`edit` and `action` both choose the model's action: give one".into());
     }
+    // A provider's own options, under its name; the service checks each
+    // against the model's listing.
+    let mut options = match args.get("provider_options") {
+        None => Map::new(),
+        Some(Value::Object(options)) => options.clone(),
+        Some(_) => {
+            return Err("`provider_options` must be an object of options by provider".into())
+        }
+    };
+    if options.contains_key("brain") {
+        return Err(
+            "brain's options are chosen by `action` or `edit`, not `provider_options`".into(),
+        );
+    }
+    if let Some((name, _)) = options.iter().find(|(_, value)| !value.is_object()) {
+        return Err(format!(
+            "`provider_options.{name}` must be an object of that provider's options"
+        ));
+    }
     match edit.or(action) {
         Some(chosen) => {
             let params = args.get("params").cloned().unwrap_or_else(|| json!({}));
             if !params.is_object() {
                 return Err("`params` must be an object".into());
             }
-            body.insert(
-                "provider".into(),
-                json!({ "options": { "brain": { "action": chosen, "params": params } } }),
+            options.insert(
+                "brain".into(),
+                json!({ "action": chosen, "params": params }),
             );
         }
         None if args.contains_key("params") => {
             return Err("`params` belong to an edit or an action".into());
         }
         None => {}
+    }
+    if !options.is_empty() {
+        body.insert("provider".into(), json!({ "options": options }));
     }
     Ok(Planned {
         body,
