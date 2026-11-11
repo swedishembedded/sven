@@ -12,6 +12,11 @@
 //! A reference is an image, a clip or a sound of the working directory that
 //! the prompt points at by order within its kind (`<Picture 1>`, `<Video 1>`,
 //! `<Audio 1>`), so the order the call lists them in is part of the request.
+//!
+//! A frame (`first_frame`, `last_frame`) is an image the clip starts or ends
+//! on: a file of the working directory, sent inline, or a handle of the
+//! conversation (`mcp-file://files/<id>`), whose bytes stay with the service
+//! that resolves it, for its own files only.
 
 use std::path::{Path, PathBuf};
 
@@ -70,6 +75,64 @@ impl Kind {
     }
 }
 
+/// An image a clip starts or ends on.
+#[derive(Debug, Clone, PartialEq)]
+enum FrameSource {
+    /// A file of the working directory, sent inline.
+    Path {
+        path: PathBuf,
+        media_type: &'static str,
+    },
+    /// A handle of the conversation, which the service resolves.
+    Handle(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Frame {
+    /// `first_frame` or `last_frame`, as the video API names it.
+    kind: &'static str,
+    source: FrameSource,
+}
+
+/// The frames a model may start or end on, as the video API names them.
+pub(crate) const FRAME_KINDS: [&str; 2] = ["first_frame", "last_frame"];
+
+/// A handle of the conversation: its prefix and a file id, nothing else.
+fn is_handle(text: &str) -> bool {
+    text.strip_prefix(sven_model_drivers::invoke::HANDLE_PREFIX)
+        .is_some_and(|id| id.len() == 36 && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
+}
+
+fn frame(value: &Value, kind: &'static str, workdir: &Path) -> Result<Frame, String> {
+    let named = value.as_str().filter(|s| !s.is_empty()).ok_or_else(|| {
+        format!("`{kind}` is an image: a handle (mcp-file://files/<id>) or a path")
+    })?;
+    if named.starts_with(sven_model_drivers::invoke::HANDLE_PREFIX) {
+        if !is_handle(named) {
+            return Err(format!(
+                "`{kind}` is not a handle of the conversation: {named}"
+            ));
+        }
+        return Ok(Frame {
+            kind,
+            source: FrameSource::Handle(named.to_owned()),
+        });
+    }
+    let path = file_to_read(workdir, named, kind)?;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let media_type = Kind::Image
+        .media_type(&ext)
+        .ok_or_else(|| format!("`{kind}` {named} is not an image (png, jpg or webp)"))?;
+    Ok(Frame {
+        kind,
+        source: FrameSource::Path { path, media_type },
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct Reference {
     kind: Kind,
@@ -85,6 +148,7 @@ pub(crate) struct Planned {
     pub(crate) body: Map<String, Value>,
     input: Option<PathBuf>,
     references: Vec<Reference>,
+    frames: Vec<Frame>,
     pub(crate) output: Option<PathBuf>,
 }
 
@@ -159,6 +223,8 @@ pub(crate) fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
         "action",
         "input_video",
         "references",
+        "first_frame",
+        "last_frame",
         "params",
         "output",
     ];
@@ -206,6 +272,10 @@ pub(crate) fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
         Some(value) => references(value, workdir)?,
         None => Vec::new(),
     };
+    let frames = FRAME_KINDS
+        .iter()
+        .filter_map(|kind| args.get(*kind).map(|value| frame(value, kind, workdir)))
+        .collect::<Result<Vec<_>, String>>()?;
     let output = match args.get("output") {
         Some(Value::String(path)) => Some(file_to_write(workdir, path, "output")?),
         Some(_) => return Err("`output` must be a path".into()),
@@ -239,6 +309,7 @@ pub(crate) fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
         body,
         input,
         references,
+        frames,
         output,
     })
 }
@@ -305,6 +376,27 @@ impl Planned {
                 digests.push(format!("{}:{digest}", reference.kind.name()));
             }
             body.insert("input_references".into(), Value::Array(parts));
+        }
+        if !self.frames.is_empty() {
+            let mut parts = Vec::with_capacity(self.frames.len());
+            for frame in &self.frames {
+                let url = match &frame.source {
+                    FrameSource::Path { path, media_type } => {
+                        let (bytes, digest) = load(path).await?;
+                        digests.push(format!("{}:{digest}", frame.kind));
+                        data_url(media_type, &bytes)
+                    }
+                    // Named by the handle: the file behind it never changes.
+                    FrameSource::Handle(handle) => {
+                        digests.push(format!("{}:{handle}", frame.kind));
+                        handle.clone()
+                    }
+                };
+                let mut part = Kind::Image.part(url);
+                part["frame_type"] = json!(frame.kind);
+                parts.push(part);
+            }
+            body.insert("frame_images".into(), Value::Array(parts));
         }
         Ok((body, digests))
     }

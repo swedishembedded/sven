@@ -80,6 +80,9 @@ pub struct VideoModel {
     /// What it takes as references (`image`, `video`, `audio`); empty when the
     /// listing does not say.
     pub supported_reference_types: Vec<String>,
+    /// The frames it can start or end on (`first_frame`, `last_frame`);
+    /// empty when it takes none.
+    pub frame_images: Vec<String>,
     /// Its price per second, by the listing's own key, as listed.
     pub pricing: Vec<(String, String)>,
 }
@@ -191,6 +194,7 @@ fn parse_models(value: &Value) -> Vec<VideoModel> {
                         generate_audio: m["generate_audio"].as_bool(),
                         seed: m["seed"].as_bool().unwrap_or(false),
                         supported_reference_types: strings(&m["supported_reference_types"]),
+                        frame_images: strings(&m["supported_frame_images"]),
                         actions: m["actions"]
                             .as_array()
                             .map(|a| {
@@ -443,6 +447,7 @@ mod tests {
         let models = parse_models(&json!({"data": [
             {"id": "brain/mock-video", "supported_durations": [1, 2], "supported_resolutions": ["480p"], "seed": true,
              "supported_reference_types": ["image", "audio"],
+             "supported_frame_images": ["first_frame", "last_frame"],
              "actions": [{"action": "t2v", "edits": false}, {"action": "extend", "edits": true}],
              "pricing_skus": {"duration_seconds": "0.01"}},
             {"id": ""},
@@ -451,6 +456,7 @@ mod tests {
         assert_eq!(models[0].edits, ["extend"]);
         assert_eq!(models[0].actions, ["t2v"]);
         assert_eq!(models[0].supported_reference_types, ["image", "audio"]);
+        assert_eq!(models[0].frame_images, ["first_frame", "last_frame"]);
         assert_eq!(models[0].durations, [1, 2]);
         assert_eq!(
             models[0].pricing,

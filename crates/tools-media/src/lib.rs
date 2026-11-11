@@ -152,6 +152,9 @@ fn describe(model: &VideoModel) -> String {
     if model.generate_audio == Some(true) {
         parts.push("sound".into());
     }
+    if !model.frame_images.is_empty() {
+        parts.push(format!("frames: {}", model.frame_images.join("/")));
+    }
     if !model.supported_reference_types.is_empty() {
         parts.push(format!(
             "references: {}",
@@ -168,6 +171,44 @@ fn describe(model: &VideoModel) -> String {
         parts.push(format!("${price}/s ({key})"));
     }
     parts.join(", ")
+}
+
+/// A video model's parameters, as an image model's are described: each by
+/// name with the values it takes, so `model_schema` answers how to run it.
+fn video_parameters(model: &VideoModel) -> Value {
+    let mut parameters = serde_json::Map::new();
+    let choice = |values: Vec<Value>| json!({ "type": "enum", "values": values });
+    if !model.durations.is_empty() {
+        parameters.insert(
+            "duration".into(),
+            choice(model.durations.iter().map(|d| json!(d)).collect()),
+        );
+    }
+    if !model.resolutions.is_empty() {
+        parameters.insert(
+            "resolution".into(),
+            choice(model.resolutions.iter().map(|r| json!(r)).collect()),
+        );
+    }
+    if !model.aspect_ratios.is_empty() {
+        parameters.insert(
+            "aspect_ratio".into(),
+            choice(model.aspect_ratios.iter().map(|r| json!(r)).collect()),
+        );
+    }
+    if model.generate_audio == Some(true) {
+        parameters.insert("generate_audio".into(), json!({ "type": "boolean" }));
+    }
+    if model.seed {
+        parameters.insert("seed".into(), json!({ "type": "integer" }));
+    }
+    for frame in &model.frame_images {
+        parameters.insert(
+            frame.clone(),
+            json!({ "type": "image", "description": "an image to start or end on: a handle (mcp-file://files/<id>) or a path in the working directory" }),
+        );
+    }
+    Value::Object(parameters)
 }
 
 // ------------------------------------------------------------------ models
@@ -193,12 +234,18 @@ async fn every_model(endpoint: &MediaEndpoint) -> Result<Vec<ListedModel>, Strin
             name: video.name.clone(),
             description: Some(describe(&video)),
             input: std::iter::once("text".to_owned())
+                .chain((!video.frame_images.is_empty()).then(|| "image".to_owned()))
                 .chain(video.supported_reference_types.iter().cloned())
-                .collect(),
+                .fold(Vec::new(), |mut kinds, kind| {
+                    if !kinds.contains(&kind) {
+                        kinds.push(kind);
+                    }
+                    kinds
+                }),
             output: vec!["video".into()],
             pricing: video.pricing.clone(),
             voices: Vec::new(),
-            parameters: Value::Null,
+            parameters: video_parameters(&video),
         });
     }
     Ok(models)

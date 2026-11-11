@@ -185,6 +185,51 @@ async fn references_an_action_and_an_exact_size_reach_the_server_in_order() {
 }
 
 #[tokio::test]
+async fn a_clip_starts_and_ends_on_frames_by_path_or_by_the_conversation_s_handle() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("frame1.png"), b"png-bytes").unwrap();
+    let handle = "mcp-file://files/0f0e0d0c-0b0a-4908-8706-050403020102";
+    let out = run(
+        &tool(&fake, dir.path()),
+        json!({"model": "google/veo-3.1", "prompt": "from one to the other", "duration": 5,
+               "first_frame": "frame1.png", "last_frame": handle, "output": "film.mp4"}),
+    )
+    .await;
+    assert!(!out.is_error, "{}", out.content);
+    let body = fake.created.lock().unwrap()[0].1.clone();
+    let b64 = base64::engine::general_purpose::STANDARD.encode(b"png-bytes");
+    assert_eq!(
+        body["frame_images"],
+        json!([
+            {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{b64}")}, "frame_type": "first_frame"},
+            // A handle's bytes stay with the service, which reads them as its own file.
+            {"type": "image_url", "image_url": {"url": handle}, "frame_type": "last_frame"},
+        ])
+    );
+}
+
+#[test]
+fn a_frame_is_an_image_by_path_or_a_handle_of_one() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("clip.mp4"), b"mp4").unwrap();
+    let refused = |frame: Value| {
+        plan(
+            &json!({"model": "m", "prompt": "p", "first_frame": frame}),
+            dir.path(),
+        )
+        .err()
+        .unwrap_or_default()
+    };
+    assert!(
+        refused(json!("clip.mp4")).contains("first_frame"),
+        "a clip is not a frame"
+    );
+    assert!(refused(json!("mcp-file://files/../../etc")).contains("first_frame"));
+    assert!(refused(json!(3)).contains("first_frame"));
+}
+
+#[tokio::test]
 async fn a_changed_reference_is_a_new_request_and_an_unchanged_one_is_not() {
     let fake = serve(0).await;
     let dir = with_references();
