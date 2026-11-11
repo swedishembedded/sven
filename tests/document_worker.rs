@@ -48,3 +48,51 @@ fn a_document_reads_the_same_in_confined_worker_processes() {
         Err(sven_document::DocumentError::Unsupported(_))
     ));
 }
+
+/// Spec: a hosted host, itself confined to its sandbox, starts its document
+/// workers (each confined further) and reads a document through them. The
+/// confined part runs in a child of this test binary, so nothing else in the
+/// test process is confined.
+#[test]
+fn a_confined_hosted_host_starts_its_document_workers() {
+    const CHILD: &str = "SVEN_TEST_CONFINED_HOST";
+    if let Some(sandbox) = std::env::var_os(CHILD) {
+        let sandbox = std::path::Path::new(&sandbox);
+        sven_remote::sandbox::confine(sandbox, &[]).unwrap();
+        let pdf = Arc::new(build_pdf_with_outline(
+            &[FixturePage::Text(PROSE.to_vec())],
+            &[],
+        ));
+        // The host is this test binary; the sven it starts workers of is a
+        // copy in its sandbox, which it may run, as a hosted sven runs itself.
+        let workers = ProcessWorkers::new(sandbox.join("bin/sven"), 1024, 60);
+        let source = IsolatedBackend::new(Arc::new(workers), WorkerLimits::default())
+            .open(pdf)
+            .unwrap_or_else(|e| panic!("a confined host's worker: {e}"));
+        assert_eq!(source.page_count(), 1);
+        assert!(source.native_text()[0]
+            .as_deref()
+            .is_some_and(|t| t.contains("committee")));
+        return;
+    }
+    let sandbox = tempfile::tempdir().unwrap();
+    std::fs::create_dir(sandbox.path().join("bin")).unwrap();
+    let copy = sandbox.path().join("bin/sven");
+    if std::fs::hard_link(env!("CARGO_BIN_EXE_sven"), &copy).is_err() {
+        std::fs::copy(env!("CARGO_BIN_EXE_sven"), &copy).unwrap();
+    }
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_confined_hosted_host_starts_its_document_workers",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD, sandbox.path())
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "the confined host could not read through its workers"
+    );
+}

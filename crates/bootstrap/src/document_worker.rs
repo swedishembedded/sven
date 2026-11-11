@@ -91,7 +91,10 @@ impl WorkerSpawner for ProcessWorkers {
             .env("RAYON_NUM_THREADS", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            // Its rare complaint (it could not limit itself, a broken pipe)
+            // goes to this process's log. Nothing is opened for it: a hosted
+            // host may not open /dev/null for writing.
+            .stderr(Stdio::inherit());
         self.confinement()
             .restrict(&mut command)
             .map_err(std::io::Error::other)?;
