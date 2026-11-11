@@ -96,4 +96,7 @@ message is `[{type: image_url, image_url: {url: data:image/png;base64,...}},
   it again, is not built.
 - Multi-frame TIFF scans are refused (`PictureBackend` reads one frame);
   reading every frame as a page is the next source format.
+- **No live run yet.** The OpenRouter key on hand had expired (2026-11-11):
+  run `sven document convert --ocr always` on a scanned page with an
+  OpenRouter vision model and record its CER and cost here.
 
