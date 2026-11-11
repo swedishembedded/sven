@@ -1679,7 +1679,7 @@ mod tests {
         })
     }
 
-    /// Spec (whale's formal/tla/SharedTurns.tla): a message someone the
+    /// Spec (the server's model of shared turns): a message someone the
     /// conversation is shared with sent while the owner's turn runs never
     /// steers it: it is answered as a turn of its own, after it, and that
     /// turn puts even a file read to the server, naming its own answer; the
