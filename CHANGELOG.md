@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.11.0] - 2026-11-11
+
 ### Added
 - **tools**: `tools.preload: [names]` (and `--preload-tool NAME`, repeatable) starts a session with the named deferred tools loaded: offered in full from the first request, after the core tools, in the order listed, and never moved by later loads. An unknown or disabled name is warned about once and skipped. `agent.orchestration: plan` now preloads `plan_tasks`, so the "Parallel Work" paragraph no longer points at a tool the model had to load first (it never did: no sub-agents in 68 bench trials). Sub-agents do not inherit the list (`sven acp serve --no-preload`).
 - **orchestration**: `agent.orchestration: plan` (or `--orchestration plan`) offers the agent `plan_tasks`. The model submits a task graph (briefs, owned files, acceptance criteria, dependencies, a verification command); sven refuses a graph with a cycle, an unknown dependency, an empty brief, too many tasks, or concurrent tasks that own the same files, then runs it as writing sub-agents in isolated worktrees, at most `orchestration_max_parallel` at once and in dependency order, integrating each finished change. The model gets one structured result (integrated, conflict, failed or skipped per task, with kept branches, reports, tokens and wall time) and the verification command's output; the children's trajectories are embedded. Default `off` changes nothing. See docs/concepts/orchestration.md.
