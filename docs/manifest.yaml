@@ -94,6 +94,7 @@ navigation:
       - docs/internals/token-ledger.md
       - docs/internals/cost-model.md
       - docs/internals/trajectories.md
+      - docs/internals/media-artifacts.md
   - title: Contributing
     pages:
       - docs/contributing/index.md
