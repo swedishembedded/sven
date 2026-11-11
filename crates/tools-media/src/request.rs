@@ -227,6 +227,7 @@ pub(crate) fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
         "last_frame",
         "params",
         "provider_options",
+        "previous_job_id",
         "output",
     ];
     if let Some(unknown) = args.keys().find(|k| !known.contains(&k.as_str())) {
@@ -258,6 +259,16 @@ pub(crate) fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
     }
     if let Some(value) = args.get("size") {
         body.insert("size".into(), json!(size(value)?));
+    }
+    // A clip of an earlier run to continue, by the job id its answer gave.
+    match args.get("previous_job_id") {
+        None => {}
+        Some(Value::String(id)) if !id.is_empty() && id.len() <= 100 => {
+            body.insert("previous_job_id".into(), json!(id));
+        }
+        Some(_) => {
+            return Err("`previous_job_id` is the job id an earlier video's answer gave".into())
+        }
     }
     let named = |key: &str| match args.get(key) {
         None => Ok(None),

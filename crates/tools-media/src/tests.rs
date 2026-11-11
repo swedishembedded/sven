@@ -209,6 +209,34 @@ async fn a_clip_starts_and_ends_on_frames_by_path_or_by_the_conversation_s_handl
     );
 }
 
+#[tokio::test]
+async fn a_clip_says_its_job_and_a_later_run_continues_it_by_that_id() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let first = run(
+        &tool(&fake, dir.path()),
+        json!({"model": "brain/mock-video", "prompt": "a red ball", "duration": 1}),
+    )
+    .await;
+    assert!(!first.is_error, "{}", first.content);
+    assert!(first.content.contains("job job0"), "{}", first.content);
+    let next = run(
+        &tool(&fake, dir.path()),
+        json!({"model": "brain/mock-video", "prompt": "and it bounces", "duration": 1, "previous_job_id": "job0"}),
+    )
+    .await;
+    assert!(!next.is_error, "{}", next.content);
+    let body = fake.created.lock().unwrap().last().unwrap().1.clone();
+    assert_eq!(body["previous_job_id"], "job0");
+    assert!(plan(
+        &json!({"model": "m", "prompt": "p", "previous_job_id": 3}),
+        dir.path()
+    )
+    .err()
+    .unwrap_or_default()
+    .contains("previous_job_id"));
+}
+
 #[test]
 fn a_provider_s_own_options_go_beside_brain_s_and_never_replace_them() {
     let dir = tempfile::tempdir().unwrap();

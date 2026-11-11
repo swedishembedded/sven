@@ -52,6 +52,9 @@ pub struct Generated {
     /// The provider's own stored file of the clip, when it keeps one (the
     /// sven service: a file of the conversation the job was for).
     pub file_id: Option<String>,
+    /// The job that made it, which a later request names to continue it
+    /// (`previous_job_id`); none for a clip made before jobs were kept.
+    pub job_id: Option<String>,
 }
 
 impl Generated {
@@ -92,6 +95,7 @@ pub async fn generate(
                 .ok()
                 .and_then(|raw| serde_json::from_slice::<Sidecar>(&raw).ok());
             let seconds = sidecar.as_ref().and_then(|s| s.seconds);
+            let job_id = sidecar.as_ref().and_then(|s| s.job_id.clone());
             progress(&format!("the clip for request {key} is already made"));
             let path = save_as(&clip, planned.output.as_deref()).await?;
             return Ok(Generated {
@@ -102,6 +106,7 @@ pub async fn generate(
                 seconds,
                 cost: None,
                 file_id: sidecar.and_then(|s| s.file_id),
+                job_id,
             });
         }
         let mut status = video
@@ -143,6 +148,7 @@ pub async fn generate(
                         .to_owned(),
                     file_id: status.file_id.clone(),
                     seconds: status.seconds,
+                    job_id: Some(status.id.clone()),
                 };
                 let _ = tokio::fs::write(
                     sidecar_path(&clip),
@@ -158,6 +164,7 @@ pub async fn generate(
                     seconds: status.seconds,
                     cost: status.cost,
                     file_id: status.file_id.clone(),
+                    job_id: Some(status.id.clone()),
                 });
             }
             // A failed request is asked again under a fresh name: the same

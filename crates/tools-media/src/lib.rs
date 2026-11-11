@@ -609,6 +609,9 @@ struct Sidecar {
     model: String,
     file_id: Option<String>,
     seconds: Option<f64>,
+    /// The job that made the clip; absent in a sidecar from before.
+    #[serde(default)]
+    job_id: Option<String>,
 }
 
 fn sidecar_path(clip: &Path) -> PathBuf {
