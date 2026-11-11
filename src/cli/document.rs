@@ -8,7 +8,7 @@ use clap::{Args, Subcommand};
 /// `sven document` subcommands.
 #[derive(Subcommand, Debug)]
 pub enum DocumentCommands {
-    /// Convert a PDF to a Markdown file with an OCR model.
+    /// Convert a PDF or a picture of a page to a Markdown file with an OCR model.
     ///
     /// Pages with a good native text layer keep it; the others are rendered
     /// and read by the OCR model (`--ocr` changes that). The model is any
@@ -35,7 +35,7 @@ pub enum DocumentCommands {
 
 #[derive(Args, Debug)]
 pub struct ConvertArgs {
-    /// PDF to convert.
+    /// PDF, or picture of one page (PNG, JPEG, WebP, GIF, BMP), to convert.
     pub source: PathBuf,
     /// Markdown file to write (published atomically).
     pub destination: PathBuf,

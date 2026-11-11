@@ -14,7 +14,7 @@ use sven_model::{
 };
 use tokio::sync::Semaphore;
 
-use crate::backend::{PdfSource, RenderedPage};
+use crate::backend::{DocumentSource, RenderedPage};
 use crate::convert::{ConvertOptions, LayoutMode, OcrMode};
 use crate::error::DocumentError;
 use crate::layout::{merge_runs, reading_order, LayoutParser, Region};
@@ -47,7 +47,7 @@ const AUTO_LAYOUT_COLUMNS: usize = 2;
 const AUTO_LAYOUT_INK: f32 = 0.08;
 
 pub(crate) struct PageContext {
-    pub doc: Arc<dyn PdfSource>,
+    pub doc: Arc<dyn DocumentSource>,
     pub providers: Vec<Arc<dyn ModelProvider>>,
     pub limiter: Arc<Limiter>,
     pub options: ConvertOptions,
@@ -104,9 +104,7 @@ async fn render_target(
     .await
     {
         Ok(r) => r,
-        Err(e) => Err(DocumentError::InvalidPdf(format!(
-            "render worker failed: {e}"
-        ))),
+        Err(e) => Err(DocumentError::Invalid(format!("render worker failed: {e}"))),
     };
     (image, started.elapsed().as_millis() as u64)
 }
@@ -545,7 +543,7 @@ async fn render_blocks(
     let each = started.elapsed().as_millis() as u64 / n.max(1) as u64;
     let mut crops: Vec<_> = crops.into_iter().map(|c| (c, each)).collect();
     while crops.len() < n {
-        let failed = DocumentError::InvalidPdf("render worker failed".into());
+        let failed = DocumentError::Invalid("render worker failed".into());
         crops.push((Err(failed), each));
     }
     crops

@@ -57,13 +57,9 @@ pub fn outline(data: &[u8]) -> Result<Vec<OutlineEntry>, DocumentError> {
     }));
     let (toc, pages) = match parsed {
         Ok(Ok(v)) => v,
-        Ok(Err(e)) => {
-            return Err(DocumentError::InvalidPdf(format!(
-                "reading the outline: {e}"
-            )))
-        }
+        Ok(Err(e)) => return Err(DocumentError::Invalid(format!("reading the outline: {e}"))),
         Err(_) => {
-            return Err(DocumentError::InvalidPdf(
+            return Err(DocumentError::Invalid(
                 "reading the outline panicked".into(),
             ))
         }

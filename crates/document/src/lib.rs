@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! PDF to Markdown conversion that never routes page text through a chat
-//! model.
+//! Document (PDF or picture of a page) to Markdown conversion that never
+//! routes page text through a chat model.
 //!
 //! One implementation serves the `sven document convert` command and the
 //! `document_convert` agent tool. Pages are rendered with a pure-Rust
@@ -24,6 +24,7 @@ mod manifest;
 mod names;
 mod page;
 mod pages;
+mod picture;
 mod quality;
 mod query;
 mod score;
@@ -32,7 +33,7 @@ mod validate;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
-pub use backend::{HayroBackend, PdfBackend, PdfSource, RenderedPage};
+pub use backend::{DocumentBackend, DocumentSource, HayroBackend, RenderedPage, StandardBackend};
 pub use convert::{
     ConvertOptions, Converter, LayoutMode, OcrMode, Progress, Report, DEFAULT_LAYOUT_PROMPT,
     DEFAULT_PROMPT,
@@ -45,6 +46,7 @@ pub use locate::{find as find_text, outline, outline_matches, OutlineEntry, Page
 pub use manifest::{manifest_path, LayoutInfo, Manifest, Method, PageRecord, Status};
 pub use names::{match_model, Candidate, MatchError};
 pub use pages::parse_selection;
+pub use picture::{PictureBackend, PICTURE_DPI, PICTURE_FORMATS};
 pub use quality::{assess as assess_native_text, TextQuality};
 pub use query::{normalize as normalize_whitespace, Hit, Query, Syntax};
 pub use score::character_error_rate;

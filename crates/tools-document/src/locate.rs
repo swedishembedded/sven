@@ -22,8 +22,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use sven_document::{
-    assess_native_text, find_text, outline, outline_matches, parse_selection, HayroBackend,
-    OutlineEntry, PdfBackend, Query, Syntax, TextQuality,
+    assess_native_text, find_text, outline, outline_matches, parse_selection, DocumentBackend,
+    HayroBackend, OutlineEntry, Query, Syntax, TextQuality,
 };
 use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;

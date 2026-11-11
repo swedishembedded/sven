@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `document_convert` tool.
 //!
-//! It converts a PDF to a Markdown file and returns a control record: the page
+//! It converts a document (a PDF or a picture of a page) to a Markdown file
+//! and returns a control record: the page
 //! text goes from the OCR model to the file and never through the chat
 //! model's context.
 //!
@@ -16,7 +17,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sven_document::{ConvertOptions, Converter, DocumentError, HayroBackend, OcrMode, Report};
+use sven_document::{ConvertOptions, Converter, DocumentError, OcrMode, Report, StandardBackend};
 use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
@@ -51,20 +52,21 @@ impl Tool for DocumentConvertTool {
     }
 
     fn summary(&self) -> &str {
-        "Convert a PDF file to a Markdown file (OCR for scanned pages). Returns status, not text."
+        "Convert a PDF or page picture to a Markdown file (OCR for scans). Returns status, not text."
     }
 
     fn description(&self) -> &str {
-        "Convert a PDF (or the pages of it you select) to a Markdown file with an OCR model. \
-         Returns a status record, not the text; read the destination only if you need the \
-         content. To convert one chapter or section, select its page range from the PDF's outline."
+        "Convert a PDF (or the pages of it you select), or a photo or scan of one page (PNG, \
+         JPEG, WebP, GIF, BMP), to a Markdown file with an OCR model. Returns a status record, \
+         not the text; read the destination only if you need the content. To convert one \
+         chapter or section, select its page range from the PDF's outline."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "source": {"type": "string", "description": "PDF file"},
+                "source": {"type": "string", "description": "PDF or picture file"},
                 "destination": {"type": "string", "description": "Markdown file to write"},
                 "model": {"type": "string", "description": "OCR model, loose name ok: 'deepseek ocr v2'"},
                 "pages": {"type": "string", "description": "e.g. 1-5,9"},
@@ -122,7 +124,7 @@ impl Tool for DocumentConvertTool {
             model_spec: spec.clone(),
             ..self.defaults.clone()
         };
-        let converter = Converter::new(Arc::new(HayroBackend), providers);
+        let converter = Converter::new(Arc::new(StandardBackend), providers);
         match converter.convert(&source, &destination, &options).await {
             Ok(report) => ToolOutput::ok(&call.id, record(&report, &spec, unavailable.as_deref())),
             Err(DocumentError::NoModel) => ToolOutput::ok(

@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The PDF side of the converter behind two small traits, so another renderer
-//! or text extractor can replace the pure-Rust one without touching the
-//! pipeline.
+//! The document side of the converter behind two small traits, so another
+//! renderer or text extractor can replace the pure-Rust one without touching
+//! the pipeline. A document is a PDF or one picture of a page
+//! ([`crate::picture`]); [`StandardBackend`] opens either.
 //!
 //! Swedish Embedded AB implements document ingestion pipelines for its
 //! clients. If your team needs expertise in turning scanned archives into
@@ -23,6 +24,7 @@ use hayro::{render, render_into, PixmapSettings, RenderCache, RenderSettings};
 
 use crate::columns::column_profile;
 use crate::error::DocumentError;
+use crate::picture::PictureBackend;
 
 /// One rendered page, PNG encoded.
 pub struct RenderedPage {
@@ -38,15 +40,16 @@ pub struct RenderedPage {
     pub ink: f32,
 }
 
-/// Opens PDFs.
-pub trait PdfBackend: Send + Sync {
+/// Opens documents.
+pub trait DocumentBackend: Send + Sync {
     /// Parse `data`. Fails with [`DocumentError::Encrypted`] for a document
-    /// that needs a password.
-    fn open(&self, data: Arc<Vec<u8>>) -> Result<Arc<dyn PdfSource>, DocumentError>;
+    /// that needs a password, [`DocumentError::Unsupported`] for a format the
+    /// backend does not read.
+    fn open(&self, data: Arc<Vec<u8>>) -> Result<Arc<dyn DocumentSource>, DocumentError>;
 }
 
 /// An opened document. Methods block; callers run them on a blocking thread.
-pub trait PdfSource: Send + Sync {
+pub trait DocumentSource: Send + Sync {
     fn page_count(&self) -> usize;
     /// The native text layer of every page, `None` for a page (or a whole
     /// document) whose text could not be extracted.
@@ -78,14 +81,34 @@ pub trait PdfSource: Send + Sync {
 
 /// Longest rendered side in pixels; larger requests are scaled down. Keeps a
 /// poster-sized page from producing an image no model accepts.
-const MAX_SIDE_PX: f32 = 6000.0;
+pub(crate) const MAX_SIDE_PX: f32 = 6000.0;
+
+/// PDFs through [`HayroBackend`], pictures through [`PictureBackend`],
+/// told apart by their content, never by a file name.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct StandardBackend;
+
+impl DocumentBackend for StandardBackend {
+    fn open(&self, data: Arc<Vec<u8>>) -> Result<Arc<dyn DocumentSource>, DocumentError> {
+        if is_pdf(&data) {
+            HayroBackend.open(data)
+        } else {
+            PictureBackend.open(data)
+        }
+    }
+}
+
+/// A PDF starts with `%PDF-`, which readers accept within the first kilobyte.
+fn is_pdf(data: &[u8]) -> bool {
+    data.windows(5).take(1024).any(|w| w == b"%PDF-")
+}
 
 /// hayro for rendering, pdf-extract for text.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HayroBackend;
 
-impl PdfBackend for HayroBackend {
-    fn open(&self, data: Arc<Vec<u8>>) -> Result<Arc<dyn PdfSource>, DocumentError> {
+impl DocumentBackend for HayroBackend {
+    fn open(&self, data: Arc<Vec<u8>>) -> Result<Arc<dyn DocumentSource>, DocumentError> {
         let pages = parse(&data)?.pages().len();
         if pages == 0 {
             return Err(DocumentError::Empty);
@@ -97,7 +120,7 @@ impl PdfBackend for HayroBackend {
 fn parse(data: &Arc<Vec<u8>>) -> Result<Pdf, DocumentError> {
     Pdf::new(Arc::clone(data)).map_err(|e| match e {
         LoadPdfError::Decryption(_) => DocumentError::Encrypted,
-        LoadPdfError::Invalid => DocumentError::InvalidPdf("the file does not parse".into()),
+        LoadPdfError::Invalid => DocumentError::Invalid("the file does not parse".into()),
     })
 }
 
@@ -106,7 +129,7 @@ struct HayroSource {
     pages: usize,
 }
 
-impl PdfSource for HayroSource {
+impl DocumentSource for HayroSource {
     fn page_count(&self) -> usize {
         self.pages
     }
@@ -143,7 +166,7 @@ impl PdfSource for HayroSource {
         let page = pdf
             .pages()
             .get(index)
-            .ok_or_else(|| DocumentError::InvalidPdf(format!("no page {}", index + 1)))?;
+            .ok_or_else(|| DocumentError::Invalid(format!("no page {}", index + 1)))?;
         let (w, h) = page.render_dimensions();
         let mut scale = dpi / 72.0;
         let longest = w.max(h) * scale;
@@ -163,7 +186,7 @@ impl PdfSource for HayroSource {
                 },
             )
         }))
-        .map_err(|_| DocumentError::InvalidPdf(format!("rendering page {} panicked", index + 1)))?;
+        .map_err(|_| DocumentError::Invalid(format!("rendering page {} panicked", index + 1)))?;
         let (width, height) = (u32::from(rendered.width()), u32::from(rendered.height()));
         let blank = rendered
             .data_as_u8_slice()
@@ -176,7 +199,7 @@ impl PdfSource for HayroSource {
         };
         let png = rendered
             .into_png()
-            .map_err(|e| DocumentError::InvalidPdf(format!("PNG encoding failed: {e}")))?;
+            .map_err(|e| DocumentError::Invalid(format!("PNG encoding failed: {e}")))?;
         Ok(RenderedPage {
             png,
             width,
@@ -208,7 +231,7 @@ impl PdfSource for HayroSource {
             Err(e) => return fail(e),
         };
         let Some(page) = pdf.pages().get(index) else {
-            return fail(DocumentError::InvalidPdf(format!("no page {}", index + 1)));
+            return fail(DocumentError::Invalid(format!("no page {}", index + 1)));
         };
         // One cache for all regions: the page's images are decoded once.
         let cache = RenderCache::new();
@@ -222,7 +245,7 @@ impl PdfSource for HayroSource {
 fn clone_error(e: &DocumentError) -> DocumentError {
     match e {
         DocumentError::Encrypted => DocumentError::Encrypted,
-        other => DocumentError::InvalidPdf(other.to_string()),
+        other => DocumentError::Invalid(other.to_string()),
     }
 }
 
@@ -273,14 +296,14 @@ fn render_block<'a>(
         );
         pixmap
     }))
-    .map_err(|_| DocumentError::InvalidPdf(format!("rendering page {} panicked", index + 1)))?;
+    .map_err(|_| DocumentError::Invalid(format!("rendering page {} panicked", index + 1)))?;
     let blank = rendered
         .data_as_u8_slice()
         .iter()
         .all(|channel| *channel >= 250);
     let png = rendered
         .into_png()
-        .map_err(|e| DocumentError::InvalidPdf(format!("PNG encoding failed: {e}")))?;
+        .map_err(|e| DocumentError::Invalid(format!("PNG encoding failed: {e}")))?;
     Ok(RenderedPage {
         png,
         width: u32::from(cw),

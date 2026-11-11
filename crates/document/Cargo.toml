@@ -2,7 +2,7 @@
 name        = "sven-document"
 version.workspace = true
 edition     = "2021"
-description = "PDF to Markdown conversion: pure-Rust page rendering and text extraction, per-page OCR through any image-capable ModelProvider, validation, retry, resumable manifest. Services tier."
+description = "PDF and picture to Markdown conversion: pure-Rust page rendering and text extraction, per-page OCR through any image-capable ModelProvider, validation, retry, resumable manifest. Services tier."
 license     = "Apache-2.0"
 
 [features]
@@ -29,10 +29,11 @@ pdf-extract = "0.12"
 # Outline (bookmarks) of a PDF; the parser pdf-extract is built on (MIT).
 lopdf       = "0.42"
 regex       = { workspace = true }
+# Pictures of pages (PNG, JPEG, WebP, GIF, BMP) as one-page documents.
+image       = { workspace = true }
 
 [dev-dependencies]
 tempfile        = { workspace = true }
 tokio           = { workspace = true, features = ["test-util", "macros", "rt"] }
-image           = { workspace = true }
 async-trait     = { workspace = true }
 sven-document   = { path = ".", features = ["test-support"] }

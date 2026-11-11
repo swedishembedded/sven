@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use sven_bootstrap::{Config, ConfigOcrModels};
 use sven_document::{
-    character_error_rate, ConvertOptions, Converter, DocumentError, HayroBackend, OcrMode,
+    character_error_rate, ConvertOptions, Converter, DocumentError, OcrMode, StandardBackend,
 };
 use sven_tools_document::{NoOcrModel, OcrModels};
 
@@ -83,7 +83,7 @@ async fn convert(args: &ConvertArgs, config: &Config) -> anyhow::Result<i32> {
     };
     options.model_spec = spec;
 
-    let mut converter = Converter::new(Arc::new(HayroBackend), providers);
+    let mut converter = Converter::new(Arc::new(StandardBackend), providers);
     if !args.quiet {
         converter = converter.with_progress(Arc::new(|done, total, page| {
             eprintln!(

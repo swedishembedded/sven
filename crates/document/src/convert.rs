@@ -25,7 +25,7 @@ use sven_model::ModelProvider;
 use tokio::sync::Semaphore;
 
 use crate::assemble::{assemble, AssembleOptions};
-use crate::backend::{PdfBackend, PdfSource};
+use crate::backend::{DocumentBackend, DocumentSource};
 use crate::checkpoint::{Checkpoint, FlushOnDrop};
 use crate::error::DocumentError;
 use crate::layout::DeepseekGrounding;
@@ -180,7 +180,7 @@ pub struct Report {
 pub type Progress = Arc<dyn Fn(usize, usize, &PageRecord) + Send + Sync>;
 
 pub struct Converter {
-    backend: Arc<dyn PdfBackend>,
+    backend: Arc<dyn DocumentBackend>,
     /// Replicas of one model; requests are spread across them.
     providers: Vec<Arc<dyn ModelProvider>>,
     progress: Option<Progress>,
@@ -188,7 +188,7 @@ pub struct Converter {
 
 impl Converter {
     /// `providers` are interchangeable endpoints of the same model.
-    pub fn new(backend: Arc<dyn PdfBackend>, providers: Vec<Arc<dyn ModelProvider>>) -> Self {
+    pub fn new(backend: Arc<dyn DocumentBackend>, providers: Vec<Arc<dyn ModelProvider>>) -> Self {
         Self {
             backend,
             providers,
@@ -217,7 +217,7 @@ impl Converter {
                 })?,
         );
         let source_sha = sha256_hex(&data);
-        let doc: Arc<dyn PdfSource> = {
+        let doc: Arc<dyn DocumentSource> = {
             let (backend, data) = (Arc::clone(&self.backend), Arc::clone(&data));
             blocking(move || backend.open(data)).await??
         };
@@ -429,7 +429,7 @@ async fn blocking<T: Send + 'static>(
 ) -> Result<T, DocumentError> {
     tokio::task::spawn_blocking(f)
         .await
-        .map_err(|e| DocumentError::InvalidPdf(format!("worker failed: {e}")))
+        .map_err(|e| DocumentError::Invalid(format!("worker failed: {e}")))
 }
 
 // ── Planning ────────────────────────────────────────────────────────────────

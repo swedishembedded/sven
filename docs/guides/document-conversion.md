@@ -5,8 +5,8 @@ Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 
 # Converting PDFs to Markdown
 
-sven converts a PDF to a Markdown file without passing the pages through the
-chat model. One engine serves two entry points:
+sven converts a PDF, or a picture of a page, to a Markdown file without
+passing the pages through the chat model. One engine serves two entry points:
 
 - `sven document convert in.pdf out.md` on the command line, and
 - the `document_convert` tool, so that "convert paper.pdf to paper.md using
@@ -16,6 +16,12 @@ chat model. One engine serves two entry points:
 
 Nothing needs to be installed besides sven: pages are rendered and their native
 text is read by pure-Rust libraries.
+
+**Pictures.** A photo or scan of one page (PNG, JPEG, WebP, GIF or BMP; the
+format is read from the file's content, not its name) is a document of one
+page with no text layer, so it always goes to the OCR model. It is taken to be
+at 150 dpi: sent at its own size, and enlarged on a retry as a page would be.
+Pictures larger than 12,000 pixels on a side are refused rather than decoded.
 
 ## How a conversion runs
 

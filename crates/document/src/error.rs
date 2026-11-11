@@ -15,8 +15,11 @@ pub enum DocumentError {
         path: String,
         source: std::io::Error,
     },
-    #[error("not a readable PDF: {0}")]
-    InvalidPdf(String),
+    #[error("not a readable document: {0}")]
+    Invalid(String),
+    /// Neither a PDF nor a picture of a page.
+    #[error("{0}")]
+    Unsupported(String),
     #[error("the PDF is encrypted and cannot be opened without a password")]
     Encrypted,
     #[error("the PDF has no pages")]

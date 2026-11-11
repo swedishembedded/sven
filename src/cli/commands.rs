@@ -211,7 +211,7 @@ pub enum Commands {
         #[arg(long, short = 'f', required = true)]
         file: PathBuf,
     },
-    /// Convert PDFs to Markdown with an OCR model (`convert`, `score`).
+    /// Convert PDFs and pictures of pages to Markdown with an OCR model (`convert`, `score`).
     #[cfg(feature = "document")]
     Document {
         #[command(subcommand)]

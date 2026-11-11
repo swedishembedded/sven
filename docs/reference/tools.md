@@ -249,7 +249,7 @@ See [Converting one chapter](../guides/document-conversion.md#converting-one-cha
 
 | Parameter | Description |
 |-----------|-------------|
-| `source` (required) | PDF file |
+| `source` (required) | PDF, or picture of one page (PNG, JPEG, WebP, GIF, BMP) |
 | `query` | what to find; omit to list the outline |
 | `syntax` | `literal` (default), `regex` (Rust `regex`; `(?-i)` for case-sensitive), or `fzf` (extended search: `abc` fuzzy, `'abc` exact, `^abc` prefix, `abc$` suffix, `!abc` excludes, `a \| b` either, `\ ` a literal space; terms must all match one line; ranked best first) |
 | `pages` | search only these pages, e.g. `600-700` or `1-5,9` |
@@ -265,12 +265,12 @@ text layer are listed in a `warning`: their text was not searched.
 
 ### `document_convert`
 
-Convert a PDF to a Markdown file with an OCR model; the result is a control
-record, never the text. See [Converting PDFs to Markdown](../guides/document-conversion.md).
+Convert a PDF, or a picture of one page, to a Markdown file with an OCR
+model; the result is a control record, never the text. See [Converting PDFs to Markdown](../guides/document-conversion.md).
 
 | Parameter | Description |
 |-----------|-------------|
-| `source` (required) | PDF file |
+| `source` (required) | PDF, or picture of one page (PNG, JPEG, WebP, GIF, BMP) |
 | `destination` (required) | Markdown file to write; a manifest is written beside it |
 | `model` | OCR model: a spec, an `ocr.models` alias or a loose name ("deepseek ocr v2"); default `ocr.model` |
 | `pages` | 1-based selection such as `1-5,9` |
