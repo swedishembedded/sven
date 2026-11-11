@@ -130,6 +130,65 @@ fn image_urls(inputs: &[Value]) -> Result<Vec<String>, String> {
         .collect()
 }
 
+/// A speech run as the provider's `/audio/speech` request: the prompt, or
+/// several speakers' `turns`; a voice to clone from sound inputs (at most
+/// three, with `reference_transcript`) and a picture of the scene.
+fn speech_request(
+    body: &Value,
+    params: &serde_json::Map<String, Value>,
+    inputs: &[Value],
+) -> Result<Value, String> {
+    let mut request = params.clone();
+    let format = request
+        .remove("format")
+        .and_then(|f| f.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "mp3".into());
+    let said = request
+        .remove("turns")
+        .unwrap_or_else(|| body["prompt"].clone());
+    let transcript = request.remove("reference_transcript");
+    let mut references = Vec::new();
+    for input in inputs {
+        let (Some(data), Some(mime)) = (input["data"].as_str(), input["mimeType"].as_str()) else {
+            return Err(
+                "a provider of its own reads files of the working directory, by path, not handles"
+                    .to_owned(),
+            );
+        };
+        if mime.starts_with("audio/") {
+            references.push(json!({"type": "input_audio", "input_audio": {"data": format!("data:{mime};base64,{data}")}}));
+        } else if mime.starts_with("image/") {
+            references.push(json!({"type": "image_url", "image_url": {"url": format!("data:{mime};base64,{data}")}}));
+        } else {
+            return Err(format!(
+                "{} is not a sound or a picture to voice from",
+                input["name"].as_str().unwrap_or("an input")
+            ));
+        }
+    }
+    if references
+        .iter()
+        .filter(|r| r["type"] == "input_audio")
+        .count()
+        > 3
+    {
+        return Err("a voice is cloned from at most three sounds".into());
+    }
+    if let Some(text) = transcript {
+        if references.is_empty() {
+            return Err("a transcript goes with a voice sample given as an input".into());
+        }
+        references.push(json!({"type": "text", "text": text}));
+    }
+    request.insert("model".into(), body["model"].clone());
+    request.insert("input".into(), said);
+    request.insert("response_format".into(), Value::String(format));
+    if !references.is_empty() {
+        request.insert("input_references".into(), Value::Array(references));
+    }
+    Ok(Value::Object(request))
+}
+
 /// The chat parameters a provider's own `/chat/completions` is sent, as
 /// `run_model` names them; any other is refused, never dropped.
 const CHAT_PARAMS: [&str; 9] = [
@@ -246,16 +305,9 @@ async fn call(endpoint: &MediaEndpoint, body: &Value) -> Result<Made, String> {
             Ok(Made { text: None, files, finish_reason: None })
         }
         "speech" => {
-            if !inputs.is_empty() {
-                return Err("a speech run takes no inputs yet".into());
-            }
             let format = params.get("format").and_then(Value::as_str).unwrap_or("mp3").to_owned();
-            let mut request = params;
-            request.remove("format");
-            request.insert("model".into(), body["model"].clone());
-            request.insert("input".into(), body["prompt"].clone());
-            request.insert("response_format".into(), Value::String(format.clone()));
-            let (bytes, _) = post(endpoint, "/audio/speech", &Value::Object(request)).await?;
+            let request = speech_request(body, &params, &inputs)?;
+            let (bytes, _) = post(endpoint, "/audio/speech", &request).await?;
             let file = if format == "pcm" {
                 (wav_of(&bytes), "audio/wav", "wav")
             } else if bytes.starts_with(b"ID3") || (bytes.len() > 1 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0) {
@@ -419,6 +471,25 @@ mod tests {
         assert!(chat_request(&body, &serde_json::Map::new(), &zip)
             .unwrap_err()
             .contains("a.zip"));
+    }
+
+    #[test]
+    fn a_speech_run_voices_turns_in_a_voice_cloned_from_a_sound() {
+        let body = json!({"model": "fish/s2", "prompt": "the opening"});
+        let params = json!({"format": "pcm", "turns": [{"text": "Hi", "voice": "a"}, {"text": "Hey", "voice": "b"}], "reference_transcript": "sample words"});
+        let inputs = [json!({"data": "UklGRg==", "mimeType": "audio/wav", "name": "v.wav"})];
+        let request = speech_request(&body, params.as_object().unwrap(), &inputs).unwrap();
+        assert_eq!(request["input"], params["turns"]);
+        assert_eq!(request["response_format"], "pcm");
+        assert_eq!(
+            request["input_references"],
+            json!([{"type": "input_audio", "input_audio": {"data": "data:audio/wav;base64,UklGRg=="}}, {"type": "text", "text": "sample words"}])
+        );
+        assert!(request.get("turns").is_none() && request.get("reference_transcript").is_none());
+        let pdf = [json!({"data": "JVBERi0=", "mimeType": "application/pdf", "name": "a.pdf"})];
+        assert!(speech_request(&body, &serde_json::Map::new(), &pdf)
+            .unwrap_err()
+            .contains("a.pdf"));
     }
 
     #[test]
