@@ -301,11 +301,20 @@ async fn without_a_model_text_pages_convert_and_scans_fail_with_the_reason() {
 #[tokio::test]
 async fn blank_pages_cost_no_request() {
     let dir = tempfile::tempdir().unwrap();
-    let src = write_pdf(dir.path(), &[FixturePage::Blank, FixturePage::Scan(100)]);
+    // A white page, and a page of one flat tone (a grey scan of nothing):
+    // neither has anything to read, and a model shown one invents text.
+    let src = write_pdf(
+        dir.path(),
+        &[
+            FixturePage::Blank,
+            FixturePage::Flat(102),
+            FixturePage::Scan(100),
+        ],
+    );
     let out = dir.path().join("out.md");
     let (conv, calls) = converter(ScriptedOcr::new(|seen, _| Reply::text(page_of(seen.gray))));
     let r = conv.convert(&src, &out, &options()).await.unwrap();
-    assert_eq!((r.pages_blank, r.pages_ocr), (1, 1));
+    assert_eq!((r.pages_blank, r.pages_ocr), (2, 1));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
@@ -672,7 +681,10 @@ async fn auto_keeps_the_text_layer_when_recognised_digits_disagree_with_it() {
 #[tokio::test]
 async fn a_page_the_model_keeps_declining_fails_with_that_cause_and_keeps_no_text() {
     let dir = tempfile::tempdir().unwrap();
-    let src = write_pdf(dir.path(), &[FixturePage::Scan(100), FixturePage::Scan(120)]);
+    let src = write_pdf(
+        dir.path(),
+        &[FixturePage::Scan(100), FixturePage::Scan(120)],
+    );
     let out = dir.path().join("out.md");
     let (conv, calls) = converter(ScriptedOcr::new(|seen, _| {
         if seen.gray == 100 {
@@ -683,10 +695,16 @@ async fn a_page_the_model_keeps_declining_fails_with_that_cause_and_keeps_no_tex
     }));
     let report = conv.convert(&src, &out, &options()).await.unwrap();
     assert_eq!((report.pages_failed, report.pages_ocr), (1, 2));
-    assert!(report.failures.iter().any(|f| f.contains("declined")), "{:?}", report.failures);
-    assert!(calls.load(Ordering::SeqCst) >= 3, "the declined page was asked again");
+    assert!(
+        report.failures.iter().any(|f| f.contains("declined")),
+        "{:?}",
+        report.failures
+    );
+    assert!(
+        calls.load(Ordering::SeqCst) >= 3,
+        "the declined page was asked again"
+    );
     let md = std::fs::read_to_string(&out).unwrap();
     assert!(!md.contains("sorry"), "{md}");
     assert!(md.contains(&page_of(120)));
 }
-

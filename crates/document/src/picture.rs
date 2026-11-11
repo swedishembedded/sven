@@ -22,7 +22,7 @@ use image::imageops::FilterType;
 use image::{ImageFormat, ImageReader, Limits, RgbaImage};
 
 use crate::backend::{DocumentBackend, DocumentSource, RenderedPage, MAX_SIDE_PX};
-use crate::columns::column_profile;
+use crate::columns::{column_profile, featureless};
 use crate::error::DocumentError;
 use crate::locate::OutlineEntry;
 
@@ -109,11 +109,7 @@ impl PictureSource {
             image::imageops::resize(&crop, width, height, FilterType::Triangle)
         };
         let raw = page.as_raw();
-        let blank = raw
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .all(|px| px[..3].iter().all(|channel| *channel >= 250));
+        let blank = featureless(raw);
         let (columns, ink) = if blank || !with_columns {
             (1, 0.0)
         } else {

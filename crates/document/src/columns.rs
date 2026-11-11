@@ -18,6 +18,25 @@ const INK_BELOW: u32 = 140;
 /// Rows and columns looked at, at most; a sample is enough for a share.
 const MAX_SAMPLES: usize = 600;
 
+/// Least difference between a page's lightest and darkest pixel for it to
+/// hold anything to read; JPEG noise and a scanner's grain stay below it.
+const MIN_CONTRAST: u16 = 24;
+
+/// Whether an RGBA image holds nothing to read: one flat tone, white or not
+/// (a blank sheet, a scan of nothing). A model shown one invents text.
+pub fn featureless(rgba: &[u8]) -> bool {
+    let (mut lightest, mut darkest) = (0u16, u16::MAX);
+    for px in rgba.as_chunks::<4>().0 {
+        let luma = (u16::from(px[0]) + u16::from(px[1]) + u16::from(px[2])) / 3;
+        lightest = lightest.max(luma);
+        darkest = darkest.min(luma);
+        if lightest.saturating_sub(darkest) >= MIN_CONTRAST {
+            return false;
+        }
+    }
+    true
+}
+
 /// `(columns, ink)`: the column count and the share of dark pixels over the
 /// strips that hold text. Newspaper print is dense everywhere; the sparse rules
 /// of a table, a form or a figure page are not.
@@ -104,6 +123,19 @@ mod tests {
             let (px, w, h) = page(n);
             assert_eq!(column_profile(&px, w, h).0, n, "{n} columns");
         }
+    }
+
+    #[test]
+    fn a_page_of_one_tone_is_featureless_and_one_with_marks_is_not() {
+        let flat = |v: u8| [v, v, v, 255].repeat(64 * 64);
+        assert!(featureless(&flat(255)) && featureless(&flat(102)));
+        let mut marked = flat(240);
+        marked[400..404].copy_from_slice(&[40, 40, 40, 255]);
+        assert!(!featureless(&marked));
+        // Grain within a tone is still one tone.
+        let mut grain = flat(120);
+        grain[800..804].copy_from_slice(&[130, 130, 130, 255]);
+        assert!(featureless(&grain));
     }
 
     #[test]

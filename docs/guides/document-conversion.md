@@ -41,7 +41,8 @@ Pictures larger than 12,000 pixels on a side are refused rather than decoded.
    sat idle while pages remained. A request carries one page image and the
    prompt (default `Convert the document to markdown.`, deliberately without a
    grounding marker, which would switch a grounding-capable model to
-   bounding-box output), or several pages (below). Blank pages cost no request.
+   bounding-box output), or several pages (below). Blank pages cost no request: a page of one flat tone, white or not (a scan
+   of nothing), has nothing to read, and a model shown one invents text.
    **Several pages per request.** A model with a large output limit can read a
    handful of pages in one request: fewer round trips, though every page image
    is still billed. It is off by default; `pages_per_request`

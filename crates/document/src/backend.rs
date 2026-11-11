@@ -22,7 +22,7 @@ use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::vello_cpu::{Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit};
 use hayro::{render, render_into, PixmapSettings, RenderCache, RenderSettings};
 
-use crate::columns::column_profile;
+use crate::columns::{column_profile, featureless};
 use crate::error::DocumentError;
 use crate::locate::OutlineEntry;
 use crate::picture::PictureBackend;
@@ -32,7 +32,7 @@ pub struct RenderedPage {
     pub png: Vec<u8>,
     pub width: u32,
     pub height: u32,
-    /// No ink at all: nothing for a model to read.
+    /// One flat tone, white or not: nothing for a model to read.
     pub blank: bool,
     /// Text columns the page looks to have (1 for ordinary text).
     pub columns: usize,
@@ -196,10 +196,7 @@ impl DocumentSource for HayroSource {
         }))
         .map_err(|_| DocumentError::Invalid(format!("rendering page {} panicked", index + 1)))?;
         let (width, height) = (u32::from(rendered.width()), u32::from(rendered.height()));
-        let blank = rendered
-            .data_as_u8_slice()
-            .iter()
-            .all(|channel| *channel >= 250);
+        let blank = featureless(rendered.data_as_u8_slice());
         let (columns, ink) = if blank {
             (1, 0.0)
         } else {
@@ -305,6 +302,8 @@ fn render_block<'a>(
         pixmap
     }))
     .map_err(|_| DocumentError::Invalid(format!("rendering page {} panicked", index + 1)))?;
+    // A block is where the model located text: only a white one is empty
+    // (a whole page of one tone is caught before the model sees it).
     let blank = rendered
         .data_as_u8_slice()
         .iter()

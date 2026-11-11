@@ -104,8 +104,4 @@ message is `[{type: image_url, image_url: {url: data:image/png;base64,...}},
   and receipt number at the top were left out by the model. DeepSeek-VL-7B
   declined the page ("I'm sorry ..."), which is now a failed page and not
   its text. Not yet run against OpenRouter: the key on hand had expired.
-- **An empty page is read as invented text.** A flat grey page (no ink a
-  blank check counts) was answered with a paragraph the model made up; with
-  no text layer there is nothing to check it against. A cheap ink measure
-  before the request, or a second reading compared, would catch it.
 

@@ -11,7 +11,11 @@ use crate::common::{build_pdf, FixturePage, Reply, ScriptedOcr, PROSE};
 use sven_document::{ConvertOptions, Converter, DocumentError, StandardBackend};
 
 fn picture(gray: u8, format: image::ImageFormat) -> Vec<u8> {
-    let img = image::GrayImage::from_pixel(300, 400, image::Luma([gray]));
+    // A tone with dark lines across it, as text crosses a page; the centre
+    // pixel, the picture's identity here, is the tone.
+    let img = image::GrayImage::from_fn(300, 400, |_, y| {
+        image::Luma([if y % 40 == 7 { 0 } else { gray }])
+    });
     let mut out = std::io::Cursor::new(Vec::new());
     image::DynamicImage::ImageLuma8(img)
         .write_to(&mut out, format)

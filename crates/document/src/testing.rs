@@ -7,8 +7,13 @@
 pub enum FixturePage {
     /// Born-digital page with this text, one line per entry.
     Text(Vec<&'static str>),
-    /// Image-only page filled with this gray level (below 250, so not blank).
+    /// Image-only page of this gray level crossed by thin dark lines, as
+    /// text lines cross a scan: something to read in every part of it. The
+    /// gray level is the page's identity in tests (its centre pixel, which
+    /// no line crosses).
     Scan(u8),
+    /// Image-only page of one flat gray level: a scan of nothing.
+    Flat(u8),
     /// A page with nothing on it.
     Blank,
     /// Image-only page with this many dark vertical bars separated by white
@@ -60,7 +65,7 @@ pub fn build_pdf_with_outline(pages: &[FixturePage], outline: &[(usize, &str, us
                 c.push_str("ET");
                 (c, "/Font << /F1 3 0 R >>".to_string())
             }
-            FixturePage::Scan(_) | FixturePage::Bars(_) => (
+            FixturePage::Scan(_) | FixturePage::Flat(_) | FixturePage::Bars(_) => (
                 "q 612 0 0 792 0 0 cm /Im0 Do Q".to_string(),
                 format!("/XObject << /Im0 {} 0 R >>", 6 + 3 * n),
             ),
@@ -79,6 +84,10 @@ pub fn build_pdf_with_outline(pages: &[FixturePage], outline: &[(usize, &str, us
         ));
         objects.push(match page {
             FixturePage::Scan(gray) => stream(
+                "<< /Type /XObject /Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4096 >>",
+                &lined(*gray),
+            ),
+            FixturePage::Flat(gray) => stream(
                 "<< /Type /XObject /Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4096 >>",
                 &vec![*gray; 4096],
             ),
@@ -171,6 +180,20 @@ pub const PROSE: [&str; 3] = [
     "Funding will come from the regional grant, which was increased by three percent this year.",
     "Construction is expected to begin in the spring and finish before the end of next autumn.",
 ];
+
+/// 64 x 64 image of `gray` inside a black frame four pixels wide.
+fn lined(gray: u8) -> Vec<u8> {
+    (0..64usize)
+        .flat_map(|y| (0..64usize).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            if x < 4 || y < 4 || x >= 60 || y >= 60 {
+                0
+            } else {
+                gray
+            }
+        })
+        .collect()
+}
 
 /// 120 x 64 gray image: `n` dark bars with a white gutter between them and
 /// white margins.
