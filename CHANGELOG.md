@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **media**: a video's answer names the job that made it, and a later run continues that clip with `previous_job_id` in `run_model`'s video `params`, where the model sells continuations.
 - **media**: a chat run against a provider of one's own (a bring-your-own key) sends `system`, `temperature`, `top_p`, `seed`, `stop`, `response_format`, `reasoning` and `pdf_engine` as given, and a PDF, sound or video input as its part; it sent only `max_tokens` and images, and dropped the rest silently. A parameter it does not know is refused.
 - **media**: a speech run voices several speakers (`turns`: text, voice and delivery each) and speaks in a voice cloned from a sound given in `inputs` (with `reference_transcript`, and a picture of the scene), for a model that does; through the service and against a provider of one's own.
+- **media**: an image run passes one provider's own options (`provider_options: {"<provider>": {...}}`, as `model_schema` lists them under `provider_options`) to that provider only, through the service and against a provider of one's own.
 
 ## [4.11.0] - 2026-11-11
 

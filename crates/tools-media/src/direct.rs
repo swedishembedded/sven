@@ -130,6 +130,34 @@ fn image_urls(inputs: &[Value]) -> Result<Vec<String>, String> {
         .collect()
 }
 
+/// An image run as the provider's `/images` request: the parameters as
+/// given, and one provider's own options (`provider_options`) sent to that
+/// provider only, as the router reads them.
+fn image_request(
+    body: &Value,
+    mut params: serde_json::Map<String, Value>,
+) -> Result<serde_json::Map<String, Value>, String> {
+    if let Some(given) = params.remove("provider_options") {
+        let options = given
+            .as_object()
+            .filter(|o| o.len() == 1)
+            .ok_or("`provider_options` names one provider, whose options go to it")?;
+        let (slug, own) = options.iter().next().expect("one provider");
+        if !own.is_object() {
+            return Err(format!(
+                "`provider_options.{slug}` must be an object of that provider's options"
+            ));
+        }
+        params.insert(
+            "provider".into(),
+            json!({"only": [slug], "options": {slug: own}}),
+        );
+    }
+    params.insert("model".into(), body["model"].clone());
+    params.insert("prompt".into(), body["prompt"].clone());
+    Ok(params)
+}
+
 /// A speech run as the provider's `/audio/speech` request: the prompt, or
 /// several speakers' `turns`; a voice to clone from sound inputs (at most
 /// three, with `reference_transcript`) and a picture of the scene.
@@ -276,9 +304,7 @@ async fn call(endpoint: &MediaEndpoint, body: &Value) -> Result<Made, String> {
     let inputs = body["inputs"].as_array().cloned().unwrap_or_default();
     match body["operation"].as_str().unwrap_or("") {
         "image" => {
-            let mut request = params;
-            request.insert("model".into(), body["model"].clone());
-            request.insert("prompt".into(), body["prompt"].clone());
+            let mut request = image_request(body, params)?;
             let references = image_urls(&inputs)?;
             if !references.is_empty() {
                 request.insert(
@@ -490,6 +516,22 @@ mod tests {
         assert!(speech_request(&body, &serde_json::Map::new(), &pdf)
             .unwrap_err()
             .contains("a.pdf"));
+    }
+
+    #[test]
+    fn an_image_run_sends_one_provider_s_options_to_that_provider_only() {
+        let body = json!({"model": "openai/gpt-image-2", "prompt": "a whale"});
+        let params =
+            json!({"aspect_ratio": "1:1", "provider_options": {"openai": {"moderation": "low"}}});
+        let request = image_request(&body, params.as_object().unwrap().clone()).unwrap();
+        assert_eq!(
+            request["provider"],
+            json!({"only": ["openai"], "options": {"openai": {"moderation": "low"}}})
+        );
+        assert_eq!(request["aspect_ratio"], "1:1");
+        assert!(request.get("provider_options").is_none());
+        let two = json!({"provider_options": {"a": {}, "b": {}}});
+        assert!(image_request(&body, two.as_object().unwrap().clone()).is_err());
     }
 
     #[test]
