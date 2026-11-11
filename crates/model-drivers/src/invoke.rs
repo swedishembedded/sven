@@ -322,29 +322,7 @@ impl InvocationClient {
         }
         let response = post.send().await.context("running the model")?;
         let answer = Self::read(response, "running the model").await?;
-        let outputs = answer["outputs"]
-            .as_array()
-            .map(|o| {
-                o.iter()
-                    .take(64)
-                    .map(handle)
-                    .collect::<anyhow::Result<Vec<_>>>()
-            })
-            .transpose()?
-            .unwrap_or_default();
-        Ok(Invoked {
-            id: text(&answer["id"], 100).unwrap_or_default(),
-            text: text(&answer["text"], MAX_TEXT_CHARS),
-            outputs,
-            cost_micro_usd: answer["usage"]["cost_micro_usd"]
-                .as_str()
-                .and_then(|c| c.parse().ok()),
-            finish_reason: text(&answer["finish_reason"], 40),
-            warnings: answer["warnings"]
-                .as_array()
-                .map(|w| w.iter().take(8).filter_map(|w| text(w, 300)).collect())
-                .unwrap_or_default(),
-        })
+        invoked(&answer)
     }
 
     /// The bytes of file `uri` and its type, at most `max_bytes` of them.
@@ -386,6 +364,57 @@ impl InvocationClient {
     }
 }
 
+/// An invocation's answer as read: its text, its files (only the service's
+/// own), what it was charged, how it ended, and what to know about it. A
+/// chat asked for JSON that the service found not to be that JSON says so as
+/// a warning: only a `valid` check is taken as the JSON asked for.
+fn invoked(answer: &Value) -> anyhow::Result<Invoked> {
+    let outputs = answer["outputs"]
+        .as_array()
+        .map(|o| {
+            o.iter()
+                .take(64)
+                .map(handle)
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(Invoked {
+        id: text(&answer["id"], 100).unwrap_or_default(),
+        text: text(&answer["text"], MAX_TEXT_CHARS),
+        outputs,
+        cost_micro_usd: answer["usage"]["cost_micro_usd"]
+            .as_str()
+            .and_then(|c| c.parse().ok()),
+        finish_reason: text(&answer["finish_reason"], 40),
+        warnings: answer["warnings"]
+            .as_array()
+            .map(|w| {
+                w.iter()
+                    .take(8)
+                    .filter_map(|w| text(w, 300))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .chain(structured_warning(&answer["structured"]))
+            .collect(),
+    })
+}
+
+/// What a JSON answer's check says the caller must know, when it is not
+/// `valid`.
+fn structured_warning(check: &Value) -> Option<String> {
+    let error = text(&check["error"], 500).unwrap_or_default();
+    match check["status"].as_str()? {
+        "valid" => None,
+        "invalid" => Some(format!("the answer is not the JSON asked for ({error})")),
+        _ => Some(format!(
+            "the answer's JSON could not be checked against the schema ({error})"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +450,23 @@ mod tests {
         assert!(listed(&json!({ "id": "" })).is_none());
         let served = listed(&json!({ "id": "i", "supported_parameters": ["n"], "image_parameters": { "parameters": {}, "max_references": 14 } })).unwrap();
         assert_eq!(served.parameters["max_references"], json!(14));
+    }
+
+    #[test]
+    fn a_json_answer_the_service_found_wrong_is_said_to_be_so() {
+        let answer = |structured: Value| {
+            invoked(&json!({ "id": "inv_1", "text": "{}", "outputs": [], "warnings": [], "structured": structured })).unwrap()
+        };
+        assert!(answer(json!({ "status": "valid" })).warnings.is_empty());
+        assert_eq!(
+            answer(json!({ "status": "invalid", "error": "total: expected number" })).warnings,
+            ["the answer is not the JSON asked for (total: expected number)"]
+        );
+        assert!(
+            answer(json!({ "status": "unchecked", "error": "remote $ref" })).warnings[0]
+                .contains("could not be checked")
+        );
+        assert!(answer(Value::Null).warnings.is_empty());
     }
 
     #[test]
