@@ -27,6 +27,10 @@ use crate::access::DocumentAccess;
 use crate::models::{NoOcrModel, OcrModels};
 use crate::scoped;
 
+/// The longest one conversion may run before the executor's watchdog ends
+/// it (the next call resumes from the manifest).
+const LONGEST_CONVERSION: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
 /// Warnings returned in the record; the manifest holds all of them.
 const MAX_WARNINGS: usize = 8;
 
@@ -103,6 +107,13 @@ impl Tool for DocumentConvertTool {
 
     fn modes(&self) -> &[AgentMode] {
         &[AgentMode::Agent]
+    }
+
+    /// A document of hundreds of pages needs OCR on many of them; every
+    /// request has its own deadline, and an interrupted run resumes from its
+    /// manifest, so the watchdog only needs to catch one that never ends.
+    fn longest_run(&self) -> Option<std::time::Duration> {
+        Some(LONGEST_CONVERSION)
     }
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {

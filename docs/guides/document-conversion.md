@@ -216,6 +216,12 @@ against ground truth.
 
 ## The agent tool
 
+A conversion may run for hours on a document of many pages: the tool declares
+that bound (six hours) to the executor, whose watchdog otherwise ends a tool
+after about ten minutes. Each model request keeps its own deadline, and a
+conversion that is still ended resumes from its manifest on the next call.
+
+
 `document_convert(source, destination, model?, pages?, ocr?)` runs in `agent`
 mode and is gated as a file write. Both paths resolve through the session's
 workspace scope. It is deferred: the model loads it with the `tools` tool.

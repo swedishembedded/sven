@@ -70,6 +70,15 @@ pub trait Tool: sven_rt::MaybeSend + sven_rt::MaybeSync {
     /// would run where only reading is allowed, and never be asked about
     /// under manual approval.
     fn kernel_capability(&self) -> ToolCapability;
+
+    /// How long one call may legitimately run, when that is longer than the
+    /// executor's watchdog allows a tool (which only catches a hung one): a
+    /// tool that does long, bounded work of its own (converting a document
+    /// of many pages, each request under its own deadline) says so here.
+    /// `None`, the default, keeps the watchdog's limit.
+    fn longest_run(&self) -> Option<std::time::Duration> {
+        None
+    }
     /// The capability one call exercises, for a tool whose actions differ in
     /// effect (a memory tool that reads and writes). What the kernel gates
     /// that call under. Defaults to [`Self::kernel_capability`].

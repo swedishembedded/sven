@@ -353,7 +353,13 @@ impl EffectExecutor for ToolExecutor {
         let sink = sink.clone();
         let obs = obs.clone();
         let tool_result_token_cap = self.tool_result_token_cap;
-        let tool_timeout = self.tool_timeout;
+        // A tool that declares a longer bound for its own work gets it; the
+        // watchdog still ends one that runs past that.
+        let tool_timeout = self
+            .registry
+            .get(&name)
+            .and_then(|tool| tool.longest_run())
+            .map_or(self.tool_timeout, |own| own.max(self.tool_timeout));
         let cancel = self.cancel.clone();
         let chunks = self.chunks.clone();
         let instructions = self.instructions.clone();
@@ -1482,6 +1488,53 @@ mod watchdog_tests {
             run_tool_effect(&mut exec, effect("hangs")).await,
             "ToolFailed",
             "a hung tool must fail the call, not stall the machine"
+        );
+    }
+
+    /// Runs longer than the watchdog, within the bound it declares.
+    struct LongRunningTool;
+    #[async_trait::async_trait]
+    impl Tool for LongRunningTool {
+        fn name(&self) -> &str {
+            "long"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
+        fn description(&self) -> &str {
+            "takes a while, as it says"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        fn longest_run(&self) -> Option<Duration> {
+            Some(Duration::from_secs(5))
+        }
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            sven_tool_api::ToolOutput::ok(&call.id, "done")
+        }
+    }
+
+    /// A tool that says it runs long (a document of many pages) is given
+    /// that long; one that says nothing keeps the watchdog's.
+    #[tokio::test]
+    async fn a_tool_that_declares_a_longer_run_is_not_cut_off_by_the_watchdog() {
+        let mut registry = ToolRegistry::new();
+        registry.register(LongRunningTool);
+        registry.register(HangingTool);
+        let mut exec = ToolExecutor::new(Arc::new(registry), HashSet::new())
+            .with_tool_timeout(Duration::from_millis(50));
+        assert_eq!(
+            run_tool_effect(&mut exec, effect("long")).await,
+            "ToolSucceeded"
+        );
+        assert_eq!(
+            run_tool_effect(&mut exec, effect("hangs")).await,
+            "ToolFailed"
         );
     }
 
