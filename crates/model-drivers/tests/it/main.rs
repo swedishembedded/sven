@@ -23,4 +23,5 @@ mod response_format_wire;
 mod sampling_wire;
 mod tool_choice_wire;
 mod transcription_wire;
+mod user_agent_wire;
 mod wire_format_tests;

@@ -82,15 +82,19 @@ use sven_model_mock::{MockProvider, YamlMockProvider};
 ///   errors so the streaming loop can recover rather than hanging indefinitely.
 /// * **Connect timeout (30 s)** - prevents indefinite blocking if the API
 ///   endpoint is unreachable or DNS resolution stalls.
+/// * **User-Agent `sven/<version>`** - so a model service can tell which agent
+///   asked: one that marks what it generates names this version as the
+///   software that asked for it.
 ///
 /// No total request timeout is set because SSE streaming responses legitimately
 /// run for minutes (or hours for long agentic tasks).  The per-chunk idle
 /// timeout is enforced separately in the agent's streaming loop.
 pub(crate) fn build_http_client() -> reqwest::Client {
     // In a browser the request is the page's own `fetch`, which owns its
-    // connections and their timeouts.
+    // connections and their timeouts, and sends the browser's User-Agent.
     #[cfg(not(target_arch = "wasm32"))]
     let builder = sven_http::client_builder()
+        .user_agent(concat!("sven/", env!("CARGO_PKG_VERSION")))
         .tcp_keepalive(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(30));
     #[cfg(target_arch = "wasm32")]
