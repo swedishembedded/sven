@@ -38,6 +38,9 @@ pub(super) struct Input {
     pub attachments: Vec<sven_vocab::ArtifactRef>,
     /// Steers the running turn instead of waiting for it to end.
     pub steer: bool,
+    /// Its turn puts every tool call to the server (someone other than the
+    /// owner started it).
+    pub ask_every_tool: bool,
 }
 
 #[derive(Debug)]
@@ -161,6 +164,7 @@ mod tests {
             answer_id: Some(id.into()),
             attachments: Vec::new(),
             steer: false,
+            ask_every_tool: false,
         }
     }
 

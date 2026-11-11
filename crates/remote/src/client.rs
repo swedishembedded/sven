@@ -333,6 +333,12 @@ impl RemoteClient {
             .http
             .post(self.url("environment"))
             .bearer_auth(&self.token)
+            // What this host honours: a turn marked `ask_every_tool` puts
+            // every tool call to the server, so the server may send it one.
+            .header(
+                sven_control::HOST_CAPABILITIES_HEADER,
+                sven_control::HOST_CAPABILITIES,
+            )
             .timeout(REQUEST_TIMEOUT)
             .json(&AttachRequest {
                 path: path.to_string(),

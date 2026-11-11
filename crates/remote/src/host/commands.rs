@@ -108,6 +108,9 @@ impl SessionActor {
         if start_turn {
             self.state(SessionState::Running).await;
             self.asking = None;
+            // The site's own turn (a wake, a job done): the owner's, naming no
+            // answer of a person's.
+            self.start_turn(None, false);
             self.expect_ending();
         }
         let Some(controller) = &self.controller else {

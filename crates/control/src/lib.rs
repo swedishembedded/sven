@@ -90,6 +90,15 @@ pub enum ControlCommand {
         /// older host ignores the field and refuses it.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         steer: bool,
+        /// Someone other than the conversation's owner started this turn (a
+        /// person it is shared with): every tool call of the turn, its
+        /// sub-agents' included, is put to the server for approval, whatever
+        /// the tool's own policy, and nothing of another turn is joined to
+        /// it. A host that honours it says so when it attaches
+        /// ([`HOST_CAPABILITIES_HEADER`]); the server sends such a turn to no
+        /// other host.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        ask_every_tool: bool,
     },
 
     /// Tell a session something the system hosting it says: a job finished,
@@ -215,6 +224,12 @@ pub enum ControlEvent {
         call_id: String,
         tool_name: String,
         args: serde_json::Value,
+        /// The answer whose turn asks (the `answer_id` of the input that
+        /// started it): the server judges the request by that turn, never by
+        /// whichever is being answered when it arrives. Absent from an older
+        /// host, or for a turn the server named no answer for.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_id: Option<String>,
     },
 
     /// A tool call as a person reads it, for a surface that only has the
@@ -417,6 +432,13 @@ pub fn ui_event_to_control(ev: sven_hsm::UiEvent, session_id: Uuid) -> ControlEv
 /// Maps an inbound [`ControlCommand`] to the kernel [`Event`](sven_hsm::Event)
 /// that should be posted onto the session's event queue.
 ///
+/// The header a host sends when it attaches to an environment, naming what
+/// it can do (comma-separated): `ask-every-tool`, it honours
+/// [`ControlCommand::SendInput`]'s `ask_every_tool`.
+pub const HOST_CAPABILITIES_HEADER: &str = "x-sven-capabilities";
+/// The capabilities this host has, as [`HOST_CAPABILITIES_HEADER`] names them.
+pub const HOST_CAPABILITIES: &str = "ask-every-tool";
+
 /// This is the single source of truth for the steering side of the control
 /// protocol:
 ///
@@ -542,6 +564,7 @@ mod tests {
             answer_id: None,
             attachments: Vec::new(),
             steer: false,
+            ask_every_tool: false,
         };
         match control_command_to_kernel_event(&cmd) {
             Some(sven_hsm::Event::UserMessage { text }) => assert_eq!(text, "do the thing"),
@@ -572,9 +595,14 @@ mod tests {
             answer_id: None,
             attachments: Vec::new(),
             steer: false,
+            ask_every_tool: false,
         })
         .unwrap();
         assert!(plain.get("attachments").is_none());
+        assert!(
+            plain.get("ask_every_tool").is_none(),
+            "the owner's own turn says nothing"
+        );
         assert!(
             plain.get("steer").is_none(),
             "an input that does not steer says nothing"
@@ -590,6 +618,39 @@ mod tests {
             steering,
             ControlCommand::SendInput { steer: true, .. }
         ));
+    }
+
+    /// Spec: a turn someone other than the owner started is marked on the
+    /// wire, and the host's request for approval names the answer whose turn
+    /// asks, so the server judges it by that turn.
+    #[test]
+    fn a_shared_turn_asks_every_tool_and_requests_name_their_answer() {
+        let parsed: ControlCommand = serde_json::from_value(serde_json::json!({
+            "type": "send_input",
+            "session_id": "6f1c1d1e-6c1a-4d43-9a43-6f2a9d3b2a10",
+            "text": "read my key",
+            "answer_id": "a1",
+            "ask_every_tool": true,
+        }))
+        .unwrap();
+        assert!(matches!(
+            parsed,
+            ControlCommand::SendInput {
+                ask_every_tool: true,
+                ..
+            }
+        ));
+        let asked = serde_json::to_value(ControlEvent::ToolNeedsApproval {
+            session_id: Uuid::nil(),
+            call_id: "c1".into(),
+            tool_name: "read_file".into(),
+            args: serde_json::json!({}),
+            answer_id: Some("a1".into()),
+        })
+        .unwrap();
+        assert_eq!(asked["type"], "tool_needs_approval");
+        assert_eq!(asked["answer_id"], "a1");
+        assert_eq!(HOST_CAPABILITIES, "ask-every-tool");
     }
 
     /// Spec: a notice is its own command on the wire, with an optional ask
@@ -733,6 +794,7 @@ mod tests {
                 answer_id: None,
                 attachments: Vec::new(),
                 steer: false,
+                ask_every_tool: false,
             }),
             Some(sid)
         );

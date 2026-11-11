@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **rc**: a message the server marks `ask_every_tool` (sent by someone a conversation is shared with, answered on its owner's computer) puts every tool call of its turn to the server for approval, a read and a sub-agent's call included, whatever the tool's own policy; it never steers or is joined to a turn of another authority. Requests for approval name their answer (`answer_id`), so the server judges each by the turn it belongs to. `sven rc` says it honours this when it attaches (`x-sven-capabilities: ask-every-tool`).
+
 ## [4.10.0] - 2026-11-10
 
 ### Added

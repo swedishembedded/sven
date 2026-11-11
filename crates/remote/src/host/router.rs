@@ -158,6 +158,7 @@ async fn route(
             answer_id,
             attachments,
             steer,
+            ask_every_tool,
         } => (
             session_id,
             SessionCommand::Input(Input {
@@ -165,6 +166,7 @@ async fn route(
                 answer_id,
                 attachments,
                 steer,
+                ask_every_tool,
             }),
         ),
         ControlCommand::Notify {

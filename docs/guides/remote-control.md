@@ -130,6 +130,19 @@ right after a stop waits until the stopped turn has ended (ten seconds at
 most); one sent while an answer is still running is refused with a note,
 since the session would not see it.
 
+A conversation can be shared with people who may also write into it. A
+message one of them sent is answered on the owner's computer, so the server
+marks it (`ask_every_tool` on `send_input`): its turn puts every tool call to
+the server for approval, a file read or a sub-agent's call included, whatever
+the tool's own policy, and only the owner approves it there. A request for
+approval (`tool_needs_approval`) names the answer whose turn asks
+(`answer_id`), so the server judges it by that turn and never by whichever it
+is answering when the request arrives. Such a message never steers a turn of
+the owner's, nor the owner's a turn of theirs: it waits and is answered as a
+turn of its own. `sven rc` says it honours this when it attaches
+(`x-sven-capabilities: ask-every-tool`); a server sends no such message to a
+host that does not.
+
 A server also tells a session things that are not the person speaking - a job
 finished, a file arrived - with `notify` (`session_id`, `event: {"kind":
 "job.finished", "text": "..."}`, and `start_turn`). `kind` is the server's own

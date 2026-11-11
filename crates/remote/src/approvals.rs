@@ -9,8 +9,14 @@
 //! `ToolNeedsApproval` and waits for the server's `ApproveTool` or
 //! `DenyTool`. A call nobody answers within [`APPROVAL_TIMEOUT`] is denied:
 //! silence is never consent.
+//!
+//! Each request names the turn it belongs to ([`TurnAuthority`]): the answer
+//! the server showed for the input that started it, so the server judges it
+//! by that turn, never by whichever it is answering when the request
+//! arrives. A turn someone other than the owner started asks about every
+//! call, a tool that would run unasked included.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -56,6 +62,35 @@ impl PendingApprovals {
     }
 }
 
+/// The turn a session runs: the answer it writes, and whether it puts every
+/// tool call to the server. Set by the session as each turn starts, read by
+/// its requester as each call asks.
+#[derive(Clone, Default)]
+pub struct TurnAuthority(Arc<Mutex<Turn>>);
+
+/// What [`TurnAuthority`] holds.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Turn {
+    pub answer_id: Option<String>,
+    pub ask_every_tool: bool,
+}
+
+impl TurnAuthority {
+    pub fn set(&self, turn: Turn) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = turn;
+    }
+
+    pub fn get(&self) -> Turn {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
 /// Asks the server about one session's calls.
 pub struct RemoteApprovals {
     pub(crate) session_id: Uuid,
@@ -63,17 +98,32 @@ pub struct RemoteApprovals {
     /// Where the request goes: the host's uploader.
     pub(crate) ask: mpsc::Sender<ControlEvent>,
     pub(crate) timeout: Duration,
+    /// The turn the calls belong to.
+    pub(crate) turn: TurnAuthority,
+    /// Calls the server already approved: one asked of it twice (by the
+    /// session's approval mode, then by the tool registry under
+    /// [`Turn::ask_every_tool`]) is not asked again.
+    pub(crate) approved: Arc<Mutex<HashSet<String>>>,
 }
 
 #[async_trait::async_trait]
 impl PermissionRequester for RemoteApprovals {
     async fn request_permission(&self, call: &ToolCall, _capability: ToolCapability) -> bool {
+        if self
+            .approved
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&call.id)
+        {
+            return true;
+        }
         let answer = self.pending.wait(&call.id);
         let request = ControlEvent::ToolNeedsApproval {
             session_id: self.session_id,
             call_id: call.id.clone(),
             tool_name: call.name.clone(),
             args: call.args.clone(),
+            answer_id: self.turn.get().answer_id,
         };
         println!(
             "[{}]   {} waits for approval in the conversation",
@@ -85,12 +135,24 @@ impl PermissionRequester for RemoteApprovals {
             return false;
         }
         match tokio::time::timeout(self.timeout, answer).await {
-            Ok(Ok(approved)) => approved,
+            Ok(Ok(approved)) => {
+                if approved {
+                    self.approved
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(call.id.clone());
+                }
+                approved
+            }
             _ => {
                 self.pending.forget(&call.id);
                 false
             }
         }
+    }
+
+    fn asks_every_call(&self) -> bool {
+        self.turn.get().ask_every_tool
     }
 }
 
@@ -105,6 +167,8 @@ mod tests {
             pending: PendingApprovals::default(),
             ask,
             timeout,
+            turn: TurnAuthority::default(),
+            approved: Arc::default(),
         };
         (approvals, asked)
     }
@@ -158,6 +222,49 @@ mod tests {
         assert!(
             !pending.decide("c2", true),
             "a late answer finds nothing waiting"
+        );
+    }
+
+    /// Spec: a request names the answer of the turn it belongs to, a turn
+    /// someone other than the owner started asks about every call, and a
+    /// call the server approved is not asked about again.
+    #[tokio::test]
+    async fn a_request_names_its_turn_and_a_shared_turn_asks_every_call() {
+        let (approvals, mut asked) = requester(Duration::from_secs(5));
+        assert!(
+            !approvals.asks_every_call(),
+            "the owner's turn asks as its tools say"
+        );
+        approvals.turn.set(Turn {
+            answer_id: Some("a1".into()),
+            ask_every_tool: true,
+        });
+        assert!(approvals.asks_every_call());
+        let pending = approvals.pending.clone();
+        let approvals = Arc::new(approvals);
+        let asking = approvals.clone();
+        let decision = tokio::spawn(async move {
+            asking
+                .request_permission(&call("c3"), ToolCapability::ReadFile)
+                .await
+        });
+        match asked.recv().await.expect("asked") {
+            ControlEvent::ToolNeedsApproval { answer_id, .. } => {
+                assert_eq!(answer_id.as_deref(), Some("a1"));
+            }
+            other => panic!("expected ToolNeedsApproval, got {other:?}"),
+        }
+        assert!(pending.decide("c3", true));
+        assert!(decision.await.unwrap());
+        // Asked again (the registry after the approval mode): not put twice.
+        assert!(
+            approvals
+                .request_permission(&call("c3"), ToolCapability::ReadFile)
+                .await
+        );
+        assert!(
+            asked.try_recv().is_err(),
+            "an approved call is not asked twice"
         );
     }
 }

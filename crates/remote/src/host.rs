@@ -34,7 +34,7 @@ use sven_vocab::AgentMode;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::approvals::{PendingApprovals, RemoteApprovals, APPROVAL_TIMEOUT};
+use crate::approvals::{PendingApprovals, RemoteApprovals, Turn, TurnAuthority, APPROVAL_TIMEOUT};
 use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused, UnreadableCommand};
 use crate::login::RemoteLogin;
 use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
@@ -309,6 +309,11 @@ struct SessionActor {
     activity: Arc<router::Activity>,
     /// This session's tool calls waiting for the server's permission.
     approvals: PendingApprovals,
+    /// The turn running: its answer, and whether it asks about every call.
+    turn: TurnAuthority,
+    /// Whether the input being handled asks about every call: someone other
+    /// than the conversation's owner sent it.
+    asking_every_tool: bool,
     /// Each running tool call's description and when it started, to tell
     /// the server how long it ran.
     running: HashMap<String, (Instant, describe::Described)>,
@@ -341,6 +346,8 @@ struct SessionActor {
 #[derive(Debug)]
 struct Steer {
     answer_id: Option<String>,
+    /// Its turn asks about every call ([`Turn::ask_every_tool`]).
+    ask_every_tool: bool,
     input: attachments::Attached,
 }
 
@@ -361,6 +368,8 @@ impl SessionActor {
             released: false,
             activity,
             approvals: PendingApprovals::default(),
+            turn: TurnAuthority::default(),
+            asking_every_tool: false,
             running: HashMap::new(),
             answers: Answers::default(),
             held_notices: std::collections::VecDeque::new(),
@@ -570,10 +579,15 @@ impl SessionActor {
             }
         };
         if self.working {
-            if self.steering_input && self.steer(&input).await {
+            // A message steers the running turn only when it carries the same
+            // authority: one someone else sent never rides on the owner's
+            // turn, nor the owner's on theirs. Otherwise it waits its turn.
+            let same_authority = self.turn.get().ask_every_tool == self.asking_every_tool;
+            if self.steering_input && same_authority && self.steer(&input).await {
                 println!("[{}]   steering the running turn", self.short());
                 self.steering.push_back(Steer {
                     answer_id: self.asking.clone(),
+                    ask_every_tool: self.asking_every_tool,
                     input,
                 });
                 return;
@@ -584,10 +598,12 @@ impl SessionActor {
             println!("[{}]   queued behind the running turn", self.short());
             self.queued.push_back(Steer {
                 answer_id: self.asking.clone(),
+                ask_every_tool: self.asking_every_tool,
                 input,
             });
             return;
         }
+        self.start_turn(self.asking.clone(), self.asking_every_tool);
         if let Err(e) = self.submit(input).await {
             self.fail(&format!("{e:#}")).await;
         }
@@ -634,6 +650,8 @@ impl SessionActor {
             pending: self.approvals.clone(),
             ask: self.context.asks.clone(),
             timeout: APPROVAL_TIMEOUT,
+            turn: self.turn.clone(),
+            approved: Arc::default(),
         }));
         // The first answer can already use the servers' tools, and a server
         // that lists them later (or changes them) still reaches the session:
@@ -707,11 +725,21 @@ impl SessionActor {
     /// Takes one input of the server's, as the answer it names.
     async fn take(&mut self, input: answers::Input) {
         self.asking = input.answer_id;
+        self.asking_every_tool = input.ask_every_tool;
         self.expecting = false;
         self.steering_input = input.steer;
         self.answer(input.text, &input.attachments).await;
         self.steering_input = false;
         self.asking = None;
+        self.asking_every_tool = false;
+    }
+
+    /// A turn starts, as the answer `answer_id`: what its calls are judged by.
+    fn start_turn(&self, answer_id: Option<String>, ask_every_tool: bool) {
+        self.turn.set(Turn {
+            answer_id,
+            ask_every_tool,
+        });
     }
 
     /// Hands `input` to the running turn, to take at its next safe point.
@@ -743,6 +771,9 @@ impl SessionActor {
             self.upload(AgentEvent::TurnComplete, earlier.answer_id)
                 .await;
         }
+        // The turn goes on as the last steering message's answer, of the
+        // same authority (only such a message steers it).
+        self.start_turn(last.answer_id.clone(), last.ask_every_tool);
         self.answers.expect(last.answer_id);
     }
 
@@ -769,6 +800,9 @@ impl SessionActor {
         input.join(last.input);
         self.asking = last.answer_id;
         self.expecting = false;
+        // Only messages of one authority steer one turn, so the joined ones
+        // are of `last`'s.
+        self.start_turn(self.asking.clone(), last.ask_every_tool);
         if let Err(e) = self.submit(input).await {
             self.fail(&format!("{e:#}")).await;
         }
@@ -786,6 +820,7 @@ impl SessionActor {
         };
         self.asking = next.answer_id;
         self.expecting = false;
+        self.start_turn(self.asking.clone(), next.ask_every_tool);
         if let Err(e) = self.submit(next.input).await {
             self.fail(&format!("{e:#}")).await;
         }
@@ -1620,6 +1655,7 @@ mod tests {
                 answer_id: Some(id.into()),
                 attachments: Vec::new(),
                 steer: false,
+                ask_every_tool: false,
             })
         };
         commands
@@ -1724,6 +1760,7 @@ mod tests {
             answer_id: Some(id.into()),
             attachments: Vec::new(),
             steer,
+            ask_every_tool: false,
         })
     }
 
@@ -1785,6 +1822,121 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn typed_by_another(text: &str, id: &str, steer: bool) -> SessionCommand {
+        SessionCommand::Input(answers::Input {
+            text: text.into(),
+            answer_id: Some(id.into()),
+            attachments: Vec::new(),
+            steer,
+            ask_every_tool: true,
+        })
+    }
+
+    /// Spec (whale's formal/tla/SharedTurns.tla): a message someone the
+    /// conversation is shared with sent while the owner's turn runs never
+    /// steers it: it is answered as a turn of its own, after it, and that
+    /// turn puts even a file read to the server, naming its own answer; the
+    /// owner's turn reads unasked as before.
+    #[tokio::test]
+    async fn another_persons_message_never_rides_on_the_owners_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "owner's notes").unwrap();
+        let (actor, mut sent, mut asked) = scripted_session(
+            dir.path(),
+            r#"
+responses:
+  - match_type: contains
+    pattern: "show me the notes"
+    tool_calls:
+      - id: theirs
+        tool: read_file
+        args:
+          path: "notes.txt"
+    after_tool_reply: "their answer"
+  - match_type: contains
+    pattern: "tidy the notes"
+    tool_calls:
+      - id: mine
+        tool: read_file
+        args:
+          path: "notes.txt"
+      - id: slow
+        tool: shell
+        args:
+          shell_command: "sleep 2"
+    after_tool_reply: "owner answer"
+"#,
+        )
+        .await;
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        commands
+            .send(typed("tidy the notes", "a", false))
+            .await
+            .unwrap();
+        let mut sent_theirs = false;
+        let mut asks: Vec<(String, String, Option<String>)> = Vec::new();
+        let mut seen = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let upload = tokio::select! {
+                upload = sent.recv() => upload.expect("the session is alive"),
+                Some(ask) = asked.recv() => {
+                    if let ControlEvent::ToolNeedsApproval { call_id, tool_name, answer_id, .. } = ask {
+                        asks.push((call_id.clone(), tool_name, answer_id));
+                        commands.send(SessionCommand::Decide { call_id, approved: true }).await.unwrap();
+                    }
+                    continue;
+                }
+                () = tokio::time::sleep_until(deadline) => panic!("b did not end in time: {seen:?}"),
+            };
+            let Upload::Event(event) = upload else {
+                continue;
+            };
+            let ControlEvent::Session {
+                event, answer_id, ..
+            } = *event
+            else {
+                continue;
+            };
+            if matches!(event, AgentEvent::ToolCallStarted(_))
+                && !std::mem::replace(&mut sent_theirs, true)
+            {
+                // Sent to steer, by someone else, while the owner's tool runs.
+                commands
+                    .send(typed_by_another("show me the notes", "b", true))
+                    .await
+                    .unwrap();
+            }
+            let done =
+                matches!(event, AgentEvent::TurnComplete) && answer_id.as_deref() == Some("b");
+            seen.push((answer_id, event));
+            if done {
+                break;
+            }
+        }
+        task.abort();
+        assert_eq!(
+            endings(&seen),
+            ["a", "b"],
+            "answered after the owner's turn, as its own: {seen:?}"
+        );
+        assert!(text_of(&seen, "a").contains("owner answer"));
+        assert!(text_of(&seen, "b").contains("their answer"));
+        let reads: Vec<_> = asks
+            .iter()
+            .filter(|(_, tool, _)| tool == "read_file")
+            .collect();
+        assert_eq!(
+            reads
+                .iter()
+                .map(|(call, _, answer)| (call.as_str(), answer.as_deref()))
+                .collect::<Vec<_>>(),
+            [("theirs", Some("b"))],
+            "only the other person's read asks, naming their answer: {asks:?}"
+        );
     }
 
     /// The person sends a message while a tool runs, to steer the turn. The

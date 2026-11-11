@@ -43,4 +43,12 @@ pub trait PermissionRequester: Send + Sync {
         call: &crate::ToolCall,
         capability: crate::ToolCapability,
     ) -> bool;
+
+    /// `true` while every call must be put to this requester, a tool's
+    /// [`ApprovalPolicy::Auto`] included: the turn running was started by
+    /// someone other than the session's owner, and nothing of the owner's
+    /// may run on it unasked.
+    fn asks_every_call(&self) -> bool {
+        false
+    }
 }

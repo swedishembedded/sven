@@ -277,7 +277,9 @@ impl ToolRegistry {
     /// Runs `call`. A tool whose policy is [`ApprovalPolicy::Deny`] never
     /// runs; one whose policy is [`ApprovalPolicy::Ask`] is put to the
     /// registry's permission requester when a host set one (an IDE over ACP)
-    /// and runs only if it allows it; otherwise the call runs. Whether a
+    /// and runs only if it allows it, as is every call while that requester
+    /// [asks about every call](PermissionRequester::asks_every_call);
+    /// otherwise the call runs. Whether a
     /// person approves a call in an agent session is the kernel's decision
     /// (the session's approval mode), not this one.
     pub async fn execute(&self, call: &ToolCall) -> ToolOutput {
@@ -296,7 +298,15 @@ impl ToolRegistry {
             Some(t) => t,
             None => return ToolOutput::err(&call.id, format!("unknown tool: {}", call.name)),
         };
-        match tool.default_policy() {
+        // A turn whose requester asks about every call puts even an
+        // `Auto` tool to it.
+        let policy = match (tool.default_policy(), &self.permission_requester) {
+            (ApprovalPolicy::Auto, Some(requester)) if requester.asks_every_call() => {
+                ApprovalPolicy::Ask
+            }
+            (policy, _) => policy,
+        };
+        match policy {
             ApprovalPolicy::Auto => {}
             ApprovalPolicy::Deny => {
                 return ToolOutput::err(
@@ -852,6 +862,84 @@ mod tests {
             reg.set_permission_requester(Arc::new(FixedRequester(allow)));
             let out = reg.execute(&call("ask_tool")).await;
             assert_eq!(out.is_error, !allow, "{}", out.content);
+        }
+    }
+
+    /// A tool that runs without asking: a file read.
+    struct AutoReadTool;
+
+    #[async_trait]
+    impl Tool for AutoReadTool {
+        fn name(&self) -> &str {
+            "auto_read"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
+        fn description(&self) -> &str {
+            "reads without asking"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, "read")
+        }
+    }
+
+    /// Asks about every call while `every` is set, answering `allow`.
+    struct EveryCall {
+        every: bool,
+        allow: bool,
+        asked: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl sven_tool_api::policy::PermissionRequester for EveryCall {
+        async fn request_permission(
+            &self,
+            _call: &ToolCall,
+            _capability: sven_tool_api::ToolCapability,
+        ) -> bool {
+            self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.allow
+        }
+        fn asks_every_call(&self) -> bool {
+            self.every
+        }
+    }
+
+    /// Spec: while the requester asks about every call (a turn someone other
+    /// than the owner started), even a tool that runs without asking is put to
+    /// it, and runs only if allowed; otherwise it runs unasked as before.
+    #[tokio::test]
+    async fn an_auto_tool_asks_while_the_requester_asks_about_every_call() {
+        for (every, allow, runs, asked) in [
+            (true, false, false, 1),
+            (true, true, true, 1),
+            (false, false, true, 0),
+        ] {
+            let requester = Arc::new(EveryCall {
+                every,
+                allow,
+                asked: Default::default(),
+            });
+            let mut reg = ToolRegistry::new();
+            reg.register(AutoReadTool);
+            reg.set_permission_requester(requester.clone());
+            let out = reg.execute(&call("auto_read")).await;
+            assert_eq!(
+                !out.is_error, runs,
+                "every={every} allow={allow}: {}",
+                out.content
+            );
+            assert_eq!(
+                requester.asked.load(std::sync::atomic::Ordering::SeqCst),
+                asked
+            );
         }
     }
 
