@@ -58,7 +58,10 @@ fn type_of(path: &Path) -> &'static str {
         Some("mp3") => "audio/mpeg",
         Some("ogg") => "audio/ogg",
         Some("flac") => "audio/flac",
+        Some("m4a") => "audio/mp4",
         Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mov") => "video/quicktime",
         Some("pdf") => "application/pdf",
         _ => "application/octet-stream",
     }
