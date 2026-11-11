@@ -21,7 +21,7 @@ heading and a `Scope: <one sentence>` line under it, then run
 |---|---|---|
 | [`android-ui-test`](android-ui-test.md) | android-ui-test | Android UI-test workflows: the `android` tool (`sven-tools-android`), the `ui-test` mode and `sven agent-dispatch`. |
 | [`continual-learning`](continual-learning.md) | experience-memory | Recording which memory units and skills were in play for a step and its outcome, so an embedding application can learn from them. |
-| [`document-conversion`](document-conversion.md) | document-conversion | Open work and measured numbers for PDF to Markdown conversion (`sven document`, `document_convert`). |
+| [`document-conversion`](document-conversion.md) | document-conversion | Open work and measured numbers for PDF and picture to Markdown conversion (`sven document`, `document_convert`), and reading documents through the sven service's models. |
 | [`goals`](goals.md) | goals | standing goals (`/goal`): what is left after the supervised goal loop, its check commands and its terminal and `sven rc` surfaces shipped. |
 | [`harness-performance`](harness-performance.md) | harness-performance | Making sven a fast, efficient, precise and robust coding harness for any model, and proving it with measured runs. |
 | [`harness-workflows`](harness-workflows.md) | harness-workflows | Open work on the harness workflow language and runtime (`sven-harness-spec`, `sven-harness-runtime`, `sven harness`). |

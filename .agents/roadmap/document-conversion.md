@@ -1,6 +1,6 @@
 # document-conversion
 
-Scope: Open work and measured numbers for PDF to Markdown conversion (`sven document`, `document_convert`).
+Scope: Open work and measured numbers for PDF and picture to Markdown conversion (`sven document`, `document_convert`), and reading documents through the sven service's models.
 
 The behaviour is described in `docs/guides/document-conversion.md`; this ledger
 holds what is measured and what is not done.
@@ -76,3 +76,25 @@ message is `[{type: image_url, image_url: {url: data:image/png;base64,...}},
   articles); articles that wrap around a picture or a sidebar are not modelled.
 - Handwriting (19th-century German, IAM) was not scored: the available OCR
   model is not a handwriting model.
+- **Several pages per request has no measured model yet.** `pages_per_request`
+  is off by default; record, per model, CER and cost per page read alone and
+  in batches of 2 and 4 on the same pages before recommending a batch size
+  anywhere (configuration examples, a hosted default).
+- **A hosted session cannot read a PDF.** Its tools have no file system, so
+  `document_convert` and `document_locate` are not in `HOSTED_TOOLS`. Needed:
+  a source given as a handle (fetched by the media endpoint, bounded), the
+  output published as a conversation file by the service instead of written
+  to a chosen path, and bounds that fit a hosted host (pages, bytes, decoded
+  pixels per page). The service's side is its `documents` ledger.
+- **Very large documents** rewrite one growing manifest after every page; a
+  job of thousands of pages wants chunk checkpoints (a page range per file,
+  assembled in page order at the end) so a resumed or remote run neither
+  rewrites nor re-reads what is done.
+- **Fields with where they were read.** "Extract every field as JSON" goes
+  through the chat model today (`run_model` with `keep_as: json` and a
+  schema, page by page); a converter mode that keeps each value's page and
+  the text it came from, and reuses an earlier OCR run instead of paying for
+  it again, is not built.
+- Multi-frame TIFF scans are refused (`PictureBackend` reads one frame);
+  reading every frame as a page is the next source format.
+
