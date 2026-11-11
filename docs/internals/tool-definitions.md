@@ -30,8 +30,8 @@ per-tool table with `--nocapture`:
 cargo test -p sven-sdk --test tool_footprint -- --nocapture
 ```
 
-The test fails when the total exceeds its ceiling: `CODING_CEILING` (3,990
-estimated tokens) and `RESEARCH_CEILING` (2,680). The ceilings sit just above
+The test fails when the total exceeds its ceiling: `CODING_CEILING` (4,170
+estimated tokens) and `RESEARCH_CEILING` (2,850). The ceilings sit just above
 the totals of the default build, which has the most tool text (image-capable
 `read_file` and `attach_file`); a build with fewer features is smaller. A
 definition can only grow if the change raises the ceiling too, which makes the

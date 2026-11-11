@@ -56,10 +56,9 @@ impl Tool for DocumentConvertTool {
     }
 
     fn description(&self) -> &str {
-        "Convert a PDF (or the pages of it you select), or a photo or scan of one page (PNG, \
-         JPEG, WebP, GIF, BMP), to a Markdown file with an OCR model. Returns a status record, \
-         not the text; read the destination only if you need the content. To convert one \
-         chapter or section, select its page range from the PDF's outline."
+        "Convert a PDF (or chosen pages), or a photo or scan of one page, to a Markdown file \
+         with an OCR model. Returns a status record, not the text; read the destination only if \
+         you need it. For one chapter, choose its pages from the PDF's outline."
     }
 
     fn parameters_schema(&self) -> Value {

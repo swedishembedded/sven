@@ -29,11 +29,13 @@ use sven_turn::ledger::schema_tokens;
 /// ~300 tokens beside `document_convert`'s ~170), and from 3 520 when every
 /// session gained standing goals (`update_goal` ~190, `set_goal` ~120), and
 /// from 3 810 when the coding set gained joining clips into a film
-/// (`join_videos` ~175).
-const CODING_CEILING: u32 = 3_990;
+/// (`join_videos` ~175), and from 3 990 when `task` gained isolated
+/// worktree writers and per-action handles (~616 now).
+const CODING_CEILING: u32 = 4_170;
 /// Estimated tokens of every definition `Toolset::research()` offers. Raised
-/// from 2 390 for the same two goal tools.
-const RESEARCH_CEILING: u32 = 2_680;
+/// from 2 390 for the same two goal tools, and from 2 680 for the same
+/// growth of `task`.
+const RESEARCH_CEILING: u32 = 2_850;
 
 /// The definitions the model was offered on its first request.
 async fn offered(toolset: Toolset, home: &std::path::Path) -> Vec<ToolSchema> {
