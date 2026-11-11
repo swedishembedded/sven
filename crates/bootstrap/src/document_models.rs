@@ -247,12 +247,15 @@ impl ConfigOcrModels {
         let mut providers: Vec<Arc<dyn ModelProvider>> = Vec::new();
         for spec in specs {
             let cfg = self.config.resolve_model(spec);
-            let provider: Arc<dyn ModelProvider> =
-                Arc::from(sven_model_drivers::from_config(&cfg).map_err(|e| {
-                    NoOcrModel::Unavailable {
+            // What the model reads is its listing's to say (OpenRouter's
+            // `input_modalities`), read when nothing else has said it.
+            let provider: Arc<dyn ModelProvider> = Arc::from(
+                sven_model_drivers::from_config_probed(&cfg)
+                    .await
+                    .map_err(|e| NoOcrModel::Unavailable {
                         reason: format!("model '{spec}' cannot be set up: {e}"),
-                    }
-                })?);
+                    })?,
+            );
             if !provider.supports_images() {
                 return Err(NoOcrModel::Unavailable {
                     reason: format!(
@@ -328,6 +331,24 @@ mod tests {
         }
         // A model that reads no images (speech) does not read documents.
         assert!(models.resolve(Some("openai/tts")).await.is_err());
+    }
+
+    /// A model of a configured provider (OpenRouter, say) whose listing
+    /// says it reads images is an OCR model as named, with nothing declared
+    /// by hand.
+    #[tokio::test]
+    async fn a_provider_model_its_listing_says_reads_images_reads_documents_as_named() {
+        let fake = sven_tools_media::fake::serve(0).await;
+        let config: Config = serde_yaml::from_str(&format!(
+            "providers:\n  or:\n    name: openai\n    base_url: {}\n    api_key: k\n",
+            fake.base_url
+        ))
+        .unwrap();
+        let model = ConfigOcrModels::new(config)
+            .resolve(Some("or/vision/a"))
+            .await
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(model.providers[0].supports_images());
     }
 
     #[tokio::test]

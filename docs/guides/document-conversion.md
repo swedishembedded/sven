@@ -174,7 +174,8 @@ providers report serving. An ambiguous or unknown name is refused with the
 list of choices. Without any of these the default is DeepSeek-OCR-2 on a
 provider that serves it.
 
-A model the catalog does not know as image-capable needs
+Whether a model reads images is read from its provider's listing
+(OpenRouter's `input_modalities`); a model whose listing does not say needs
 `input_modalities: [text, image]` on its provider entry. Several endpoints that
 serve the same model (one server per GPU) are listed as
 `models: {pool: [a/m, b/m]}`; requests go to the endpoint with the most headroom, so work spreads in proportion to what each can take.
