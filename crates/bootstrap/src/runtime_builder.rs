@@ -60,7 +60,7 @@ pub type ToolExecutorFactory = Box<
         + Send,
 >;
 
-pub use crate::session_handles::{KernelChannels, RuntimeHandle};
+pub use crate::session_handles::{KernelChannels, RuntimeHandle, SessionBundle};
 
 // ── RuntimeBuilder ────────────────────────────────────────────────────────────
 
@@ -969,29 +969,6 @@ impl RuntimeBuilder {
             mcp_event_rx,
         })
     }
-}
-
-// ── SessionBundle ─────────────────────────────────────────────────────────────
-
-/// All the moving parts of one live kernel session.
-///
-/// Owns the [`ErasedRuntime`] (keeping the consumer task alive), the cheap
-/// [`RuntimeHandle`] for posting events and subscribing to observations, and
-/// the [`KernelChannels`] carrying user-question / approval requests.
-pub struct SessionBundle {
-    /// The running kernel. Dropping it shuts the session down.
-    pub runtime: ErasedRuntime,
-    /// Cheap, cloneable handle for posting events / subscribing to UiEvents.
-    pub handle: RuntimeHandle,
-    /// Question / approval request receivers for the frontend.
-    pub channels: KernelChannels,
-    /// MCP manager for the session. Frontends that display MCP slash-commands
-    /// or toast notifications should call `McpManager::tools()` after startup
-    /// and subscribe to `mcp_event_rx` for server events.
-    pub mcp_manager: Arc<McpManager>,
-    /// Receiver for MCP server events (tools changed, server health, etc.).
-    /// Consume in the frontend or drop to silence.
-    pub mcp_event_rx: mpsc::Receiver<McpEvent>,
 }
 
 #[cfg(test)]

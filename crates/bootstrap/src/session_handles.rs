@@ -17,7 +17,8 @@ use sven_executors::ThreadStore;
 use sven_executors::{ApprovalRequest, UserQuestion};
 use sven_hsm::ToolCapability;
 use sven_hsm::{Event, RuntimeStatus};
-use sven_kernel::EventSink;
+use sven_kernel::{ErasedRuntime, EventSink};
+use sven_mcp_client::{McpEvent, McpManager};
 use sven_model::Message;
 use sven_tool_registry::ToolRegistry;
 
@@ -442,6 +443,29 @@ fn read_store<T>(store: &std::sync::Mutex<ThreadStore>, read: impl FnOnce(&Threa
         poisoned.into_inner()
     });
     read(&guard)
+}
+
+// ── SessionBundle ─────────────────────────────────────────────────────────────
+
+/// All the moving parts of one live kernel session.
+///
+/// Owns the [`ErasedRuntime`] (keeping the consumer task alive), the cheap
+/// [`RuntimeHandle`] for posting events and subscribing to observations, and
+/// the [`KernelChannels`] carrying user-question / approval requests.
+pub struct SessionBundle {
+    /// The running kernel. Dropping it shuts the session down.
+    pub runtime: ErasedRuntime,
+    /// Cheap, cloneable handle for posting events / subscribing to UiEvents.
+    pub handle: RuntimeHandle,
+    /// Question / approval request receivers for the frontend.
+    pub channels: KernelChannels,
+    /// MCP manager for the session. Frontends that display MCP slash-commands
+    /// or toast notifications should call `McpManager::tools()` after startup
+    /// and subscribe to `mcp_event_rx` for server events.
+    pub mcp_manager: Arc<McpManager>,
+    /// Receiver for MCP server events (tools changed, server health, etc.).
+    /// Consume in the frontend or drop to silence.
+    pub mcp_event_rx: mpsc::Receiver<McpEvent>,
 }
 
 #[cfg(test)]

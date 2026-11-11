@@ -25,16 +25,15 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use sven_bootstrap::Config;
 use sven_control::{ControlCommand, ControlEvent, HistoryEntry, SessionState};
-use sven_frontend::{SessionController, SessionOptions, SessionSpec};
+use sven_frontend::SessionController;
 use sven_machines::AgentEvent;
 use sven_model::Message;
-use sven_model_drivers::ModelConfig;
-use sven_vocab::goal::{Goal, GoalCommand};
+use sven_vocab::goal::Goal;
 use sven_vocab::AgentMode;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::approvals::{PendingApprovals, RemoteApprovals, Turn, TurnAuthority, APPROVAL_TIMEOUT};
+use crate::approvals::{PendingApprovals, Turn, TurnAuthority};
 use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused, UnreadableCommand};
 use crate::login::RemoteLogin;
 use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
@@ -46,12 +45,13 @@ mod attachments;
 mod commands;
 mod describe;
 mod hosted;
+mod opening;
 mod router;
 mod services;
 mod slash;
+mod steering;
 mod upload;
 
-use hosted::session_runtime;
 pub use hosted::{restrict_to_hosted, restrict_to_working_dir, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
 use router::{list_slash_commands, router};
 use services::use_server_services;
@@ -337,7 +337,7 @@ struct SessionActor {
     queued: std::collections::VecDeque<Steer>,
     /// The model a test scripts in place of the server's.
     #[cfg(test)]
-    scripted_model: Option<ModelConfig>,
+    scripted_model: Option<sven_model_drivers::ModelConfig>,
     events_tx: mpsc::Sender<AgentEvent>,
     events_rx: mpsc::Receiver<AgentEvent>,
 }
@@ -609,71 +609,6 @@ impl SessionActor {
         }
     }
 
-    /// The model this conversation talks to, through the server.
-    fn model_config(&self) -> anyhow::Result<ModelConfig> {
-        #[cfg(test)]
-        if let Some(model) = &self.scripted_model {
-            return Ok(model.clone());
-        }
-        let name = self
-            .model
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("no model was chosen for this conversation"))?;
-        Ok(ModelConfig {
-            provider: "openai".into(),
-            name,
-            base_url: Some(self.context.openai_base_url.clone()),
-            api_key: Some(self.context.token.clone()),
-            // Each call names this conversation, so the server records what
-            // it cost under it.
-            session: Some(self.id.to_string()),
-            ..ModelConfig::default()
-        })
-    }
-
-    /// Opens the live session on the conversation kept so far.
-    async fn open_controller(&mut self, model: ModelConfig) -> anyhow::Result<SessionController> {
-        let runtime = session_runtime(
-            &self.context.config,
-            &self.context.working_dir,
-            self.context.hosted,
-            self.context.wide_access,
-        )?;
-        let mut options = SessionOptions::new(
-            attachments::for_session(&self.context.config, self.id, &self.context.working_dir),
-            runtime,
-            self.events_tx.clone(),
-        );
-        // A tool that asks first asks the person at the server.
-        options.permission_requester = Some(Arc::new(RemoteApprovals {
-            session_id: self.id,
-            pending: self.approvals.clone(),
-            ask: self.context.asks.clone(),
-            timeout: APPROVAL_TIMEOUT,
-            turn: self.turn.clone(),
-            approved: Arc::default(),
-        }));
-        // The first answer can already use the servers' tools, and a server
-        // that lists them later (or changes them) still reaches the session:
-        // nothing here shows MCP events, so nothing else would pick them up.
-        options.wait_for_mcp_tools_ms = Some(self.context.mcp_tools_wait_ms);
-        let spec = SessionSpec::for_mode(self.mode, model);
-        let history = std::mem::take(&mut self.history);
-        let (controller, _notices) = SessionController::open(options, spec, history).await?;
-        controller.follow_mcp_tools();
-        // A goal kept from before the session was let go (a restart, a
-        // replaced conversation) comes back; an active one comes back paused.
-        if let Some(goal) = self.goal.clone() {
-            let restore = GoalCommand::Restore {
-                goal: Box::new(goal),
-            };
-            if let Err(e) = controller.goal(restore, false).await {
-                tracing::debug!("session {}: its goal is not restored: {e}", self.id);
-            }
-        }
-        Ok(controller)
-    }
-
     /// Posts the person's input: its text, and with it the images the model
     /// takes, as one message.
     async fn submit(&mut self, input: attachments::Attached) -> anyhow::Result<()> {
@@ -740,98 +675,6 @@ impl SessionActor {
             answer_id,
             ask_every_tool,
         });
-    }
-
-    /// Hands `input` to the running turn, to take at its next safe point.
-    /// False when there is no live session to take it.
-    async fn steer(&self, input: &attachments::Attached) -> bool {
-        let Some(controller) = &self.controller else {
-            return false;
-        };
-        let paths = input
-            .image_paths
-            .iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect();
-        controller.steer(input.text.clone(), paths).await
-    }
-
-    /// The turn took every steering message sent so far: the answer it was
-    /// writing ends here, and from now on it writes the last steering
-    /// message's answer. Ones sent before that are answered together with
-    /// it, so theirs end empty.
-    async fn steered(&mut self) {
-        let Some(last) = self.steering.pop_back() else {
-            return;
-        };
-        let ended = self.answers.current();
-        self.upload(AgentEvent::TurnComplete, ended).await;
-        self.answers.ended();
-        for earlier in std::mem::take(&mut self.steering) {
-            self.upload(AgentEvent::TurnComplete, earlier.answer_id)
-                .await;
-        }
-        // The turn goes on as the last steering message's answer, of the
-        // same authority (only such a message steers it).
-        self.start_turn(last.answer_id.clone(), last.ask_every_tool);
-        self.answers.expect(last.answer_id);
-    }
-
-    /// The turn ended without taking the steering messages sent to it: they
-    /// are the next message, as one, answered as the last one's answer. After
-    /// a stop they are not: the person stopped the work, so theirs end.
-    async fn steer_left_over(&mut self, stopped: bool) {
-        let Some(last) = self.steering.pop_back() else {
-            return;
-        };
-        let mut earlier = std::mem::take(&mut self.steering);
-        if stopped {
-            earlier.push_back(last);
-            for steer in earlier {
-                self.upload(AgentEvent::TurnComplete, steer.answer_id).await;
-            }
-            return;
-        }
-        let mut input = attachments::Attached::default();
-        for steer in earlier {
-            self.upload(AgentEvent::TurnComplete, steer.answer_id).await;
-            input.join(steer.input);
-        }
-        input.join(last.input);
-        self.asking = last.answer_id;
-        self.expecting = false;
-        // Only messages of one authority steer one turn, so the joined ones
-        // are of `last`'s.
-        self.start_turn(self.asking.clone(), last.ask_every_tool);
-        if let Err(e) = self.submit(input).await {
-            self.fail(&format!("{e:#}")).await;
-        }
-        self.asking = None;
-    }
-
-    /// The next message sent while a turn ran, now that it ended: answered
-    /// as its own answer. The rest wait for the turn this one starts.
-    async fn answer_queued(&mut self) {
-        if self.working {
-            return;
-        }
-        let Some(next) = self.queued.pop_front() else {
-            return;
-        };
-        self.asking = next.answer_id;
-        self.expecting = false;
-        self.start_turn(self.asking.clone(), next.ask_every_tool);
-        if let Err(e) = self.submit(next.input).await {
-            self.fail(&format!("{e:#}")).await;
-        }
-        self.asking = None;
-    }
-
-    /// The inputs held behind a stopped answer, once it ended.
-    async fn release_held(&mut self) {
-        while let Some(input) = self.answers.release() {
-            self.take(input).await;
-        }
     }
 
     /// The session is asked for the answer of the input being handled.
@@ -1051,8 +894,10 @@ mod tests {
         );
     }
 
+    use super::hosted::session_runtime;
     use super::*;
     use sven_control::HistoryRole;
+    use sven_model_drivers::ModelConfig;
 
     /// A command this host cannot read is passed over: the server sends it
     /// again from the same place on every reconnect, so retrying it would

@@ -95,7 +95,7 @@ use sven_tool_api::{
 };
 use sven_tools_fs::{BufferSource, OutputBufferStore};
 use sven_vocab::{AgentMode, ApprovalMode};
-use sven_workspace::{AgentInfo, SharedAgents};
+use sven_workspace::SharedAgents;
 mod admission;
 mod approver;
 mod brief;
@@ -104,19 +104,25 @@ mod handback;
 mod inspect;
 mod isolation;
 pub(crate) mod orchestrate;
+mod permission_client;
 mod report;
+mod resolve;
 mod runner;
 mod session;
 mod subgoals;
+mod terms;
 mod updates;
 mod voi;
 mod weigh;
 mod worktree;
 pub use approver::ChildApprover;
 use isolation::Isolation;
+pub(crate) use resolve::child_mode_allowed;
+use resolve::{child_contract, child_workdir, effective_model, resolve_mode_and_prompt};
 use runner::{AcpProcessRunner, ChildRunner};
 use session::{CancelGuard, SpawnArgs};
 pub(crate) use subgoals::NearMatch;
+pub use terms::{ParentTerms, TermsEndpoint};
 
 /// Environment variable set when running as a subagent (depth 0).
 ///
@@ -134,150 +140,6 @@ pub const CAPABILITY_META_KEY: &str = "sven.capability";
 /// the files the call made or names, by handle (`ArtifactRef`s), so the
 /// parent relays them with its own result and its client shows them.
 pub const ARTIFACTS_META_KEY: &str = "sven.artifacts";
-
-/// What a parent held to an allow list (`tools.only`: a hosted session)
-/// hands its sub-agent before anything else, as one JSON line on its stdin
-/// (`sven acp serve --parent-terms-stdin`): the same allow list without
-/// `task`, the same web and location limits, no MCP server of its own, and
-/// the endpoints and key the parent itself works with. A child is never
-/// given more than its parent has, and the key never reaches a file or an
-/// environment variable.
-#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ParentTerms {
-    pub only_tools: Vec<String>,
-    pub web_public_only: bool,
-    pub hide_locations: bool,
-    pub system_prompt: Option<String>,
-    /// The parent's model endpoint (an OpenAI-style base URL and its key).
-    pub model: Option<TermsEndpoint>,
-    /// The provider the parent names its models under (`openai/<model>`),
-    /// which a model the child is told to use is named without.
-    pub model_provider: String,
-    /// Where the parent runs other models, and the conversation it names.
-    pub media: Option<TermsEndpoint>,
-    pub media_session: Option<String>,
-    /// The service the parent searches the web through.
-    pub search: Option<TermsEndpoint>,
-}
-
-/// An endpoint and its key, as [`ParentTerms`] carries one.
-#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct TermsEndpoint {
-    pub base_url: String,
-    pub api_key: String,
-}
-
-impl std::fmt::Debug for TermsEndpoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TermsEndpoint")
-            .field("base_url", &self.base_url)
-            .finish_non_exhaustive()
-    }
-}
-
-impl std::fmt::Debug for ParentTerms {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ParentTerms")
-            .field("only_tools", &self.only_tools)
-            .finish_non_exhaustive()
-    }
-}
-
-impl ParentTerms {
-    /// The terms `config` (a session's own) holds its sub-agents to, when it
-    /// is held to an allow list; none otherwise, and the child reads its own.
-    #[must_use]
-    pub fn of(config: &crate::Config) -> Option<Self> {
-        let only = config.tools.only.as_ref()?;
-        let endpoint =
-            |base_url: &Option<String>, api_key: &Option<String>| match (base_url, api_key) {
-                (Some(base_url), Some(api_key)) => Some(TermsEndpoint {
-                    base_url: base_url.clone(),
-                    api_key: api_key.clone(),
-                }),
-                _ => None,
-            };
-        let media = config.media_endpoint();
-        Some(Self {
-            only_tools: only
-                .iter()
-                .filter(|name| name.as_str() != "task")
-                .cloned()
-                .collect(),
-            web_public_only: config.tools.web.public_only,
-            hide_locations: config.tools.hide_locations,
-            system_prompt: config.agent.system_prompt.clone(),
-            model: endpoint(&config.model.base_url, &config.model.api_key),
-            model_provider: config.model.provider.clone(),
-            media: media.as_ref().map(|(e, _)| TermsEndpoint {
-                base_url: e.base_url.clone(),
-                api_key: e.api_key.clone(),
-            }),
-            media_session: media.and_then(|(_, c)| c.session),
-            search: config
-                .tools
-                .web
-                .search
-                .sven
-                .as_ref()
-                .map(|e| TermsEndpoint {
-                    base_url: e.base_url.clone(),
-                    api_key: e.api_key.clone(),
-                }),
-        })
-    }
-
-    /// The name `model` (as a parent names it, perhaps `provider/model`) has
-    /// at the parent's endpoint.
-    #[must_use]
-    pub fn model_name<'a>(&self, model: &'a str) -> &'a str {
-        model
-            .strip_prefix(&format!("{}/", self.model_provider))
-            .unwrap_or(model)
-    }
-
-    /// `config` (the child's) held to these terms: each only narrows what it
-    /// would have, and the endpoints are the parent's.
-    pub fn apply(&self, config: &mut crate::Config) {
-        config.tools.only = Some(
-            self.only_tools
-                .iter()
-                .filter(|name| name.as_str() != "task")
-                .cloned()
-                .collect(),
-        );
-        config.mcp_servers.clear();
-        config.tools.web.public_only |= self.web_public_only;
-        config.tools.hide_locations |= self.hide_locations;
-        if self.system_prompt.is_some() {
-            config.agent.system_prompt.clone_from(&self.system_prompt);
-        }
-        if let Some(model) = &self.model {
-            config.model.provider = "openai".into();
-            config.model.base_url = Some(model.base_url.clone());
-            config.model.api_key = Some(model.api_key.clone());
-            // Its model calls are the parent's conversation's, as its media
-            // calls are.
-            config.model.session.clone_from(&self.media_session);
-        }
-        if let Some(media) = &self.media {
-            config.tools.media.provider = None;
-            config.tools.media.service = Some(sven_tools_media::MediaEndpoint {
-                base_url: media.base_url.clone(),
-                api_key: media.api_key.clone(),
-            });
-        }
-        config.tools.media.session.clone_from(&self.media_session);
-        if let Some(search) = &self.search {
-            config.tools.web.search.sven = Some(sven_tools_web::SvenEndpoint {
-                base_url: search.base_url.clone(),
-                api_key: search.api_key.clone(),
-            });
-        }
-    }
-}
 
 // ── TaskTool ─────────────────────────────────────────────────────────────────
 
@@ -493,129 +355,6 @@ impl TaskTool {
         self.scope = scope;
         self
     }
-}
-
-/// Whether a parent in `parent` mode may start a child in ACP mode `child`.
-///
-/// The child mode's own policy - including what its tools do without asking
-/// anyone - must stay within what the parent holds in every state (the
-/// contract's ceiling, `mode_policy::session_ceiling`). An `agent` child
-/// writes, so only an `agent` parent may start one; an SDLC parent holds only
-/// reads in every state, so it may start no child at all. This check is what
-/// makes the tool's `ReadFile` kernel capability honest: the kernel admits a
-/// `task` call wherever reads are allowed, so the tool itself must not turn a
-/// read into more.
-pub(crate) fn child_mode_allowed(parent: AgentMode, child: &str) -> Result<(), String> {
-    use crate::mode_policy::{exceeds, session_ceiling};
-    let child_mode = match child {
-        "research" => AgentMode::Research,
-        "plan" => AgentMode::Plan,
-        _ => AgentMode::Agent,
-    };
-    match exceeds(&session_ceiling(child_mode), &session_ceiling(parent)) {
-        None => Ok(()),
-        Some(capability) => Err(format!(
-            "a {parent:?} session cannot delegate to a '{child}' sub-agent: the sub-agent \
-             would hold {capability:?}, which this session does not"
-        )),
-    }
-}
-
-/// The contract a child of a session in `parent` mode under `approval` runs
-/// under, started at `now`.
-fn child_contract(
-    parent: AgentMode,
-    approval: ApprovalMode,
-    wall_clock: Option<Duration>,
-    now: Instant,
-) -> ChildRunContract {
-    let ceiling = crate::mode_policy::session_ceiling(parent);
-    let contract = ChildRunContract::new(crate::mode_policy::with_approval(ceiling, approval));
-    match wall_clock {
-        Some(budget) => contract.with_deadline_after(now, budget),
-        None => contract,
-    }
-}
-
-/// The directory the child runs in: `requested` resolved through `session`,
-/// the scope it must stay inside, or the scope's root when none is named. A
-/// child confined to the parent's tree cannot be pointed at another
-/// repository by the model.
-fn child_workdir(requested: Option<&str>, session: &PathScope) -> Result<PathBuf, String> {
-    let requested = requested.unwrap_or(".");
-    let dir = session.resolve(requested).map_err(|e| e.to_string())?;
-    if dir.is_dir() {
-        Ok(dir)
-    } else {
-        Err(format!(
-            "workdir '{requested}' is not an existing directory"
-        ))
-    }
-}
-
-/// What a requested `mode` resolves to: the ACP session mode to run, the
-/// prompt actually sent to the sub-agent, and the model the persona asks for.
-#[derive(Debug)]
-struct Resolved {
-    /// Built-in ACP session mode (`research` / `plan` / `agent`).
-    acp_mode: String,
-    /// Prompt with the persona's system prompt prepended, if any.
-    prompt: String,
-    /// Persona's `model:` front-matter, already normalised (`inherit` -> `None`).
-    model: Option<String>,
-}
-
-/// Resolve a requested `mode` against the three built-in modes and any
-/// discovered subagent persona.
-///
-/// A persona match prepends its `content` (system prompt) to `prompt`, carries
-/// its `model` through for [`effective_model`], and maps `readonly` to an ACP
-/// mode: `true` -> `research` (read-only tool profile), `false` -> `agent`
-/// (full read/write tool profile). Built-in mode names always take priority
-/// over a same-named persona.
-fn resolve_mode_and_prompt(
-    mode: &str,
-    prompt: &str,
-    agents: &[AgentInfo],
-) -> Result<Resolved, String> {
-    if matches!(mode, "research" | "plan" | "agent") {
-        return Ok(Resolved {
-            acp_mode: mode.to_string(),
-            prompt: prompt.to_string(),
-            model: None,
-        });
-    }
-
-    if let Some(persona) = agents.iter().find(|a| a.name == mode) {
-        let acp_mode = if persona.readonly {
-            "research"
-        } else {
-            "agent"
-        };
-        return Ok(Resolved {
-            acp_mode: acp_mode.to_string(),
-            prompt: format!("{}\n\n---\n\n## Task\n\n{prompt}", persona.content.trim()),
-            model: persona.model.clone(),
-        });
-    }
-
-    let mut valid: Vec<&str> = vec!["research", "plan", "agent"];
-    valid.extend(agents.iter().map(|a| a.name.as_str()));
-    Err(format!(
-        "unknown mode '{mode}'. Valid options: {}",
-        valid.join(", ")
-    ))
-}
-
-/// Pick the model a sub-agent runs on, most specific wins: the caller's
-/// explicit `model` argument, then the persona's `model:` front-matter, then
-/// the session's own model.  `None` leaves the child to its own default.
-fn effective_model(
-    explicit: Option<String>,
-    persona: Option<String>,
-    session_default: Option<String>,
-) -> Option<String> {
-    explicit.or(persona).or(session_default)
 }
 
 #[async_trait]

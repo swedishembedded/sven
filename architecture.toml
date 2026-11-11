@@ -366,7 +366,7 @@ path = "crates/executors/tests/it/pipeline_integration.rs"
 lines = 1066
 [[allow.large_file]]
 path = "crates/bootstrap/src/runtime_builder.rs"
-lines = 995
+lines = 973
 [[allow.large_file]]
 path = "crates/tools-ctx/src/context/store.rs"
 lines = 885
@@ -377,17 +377,8 @@ lines = 850
 path = "crates/mcp-client/tests/conformance.rs"
 lines = 1022
 [[allow.large_file]]
-path = "crates/remote/src/host.rs"
-lines = 865
-[[allow.large_file]]
 path = "crates/machines/src/machines/loop_core.rs"
 lines = 844
 [[allow.large_file]]
 path = "crates/machines/src/machines/reactive_agent.rs"
 lines = 833
-[[allow.large_file]]
-path = "crates/bootstrap/src/registry.rs"
-lines = 805
-[[allow.large_file]]
-path = "crates/vocab/src/lib.rs"
-lines = 802
