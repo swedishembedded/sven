@@ -327,6 +327,9 @@ struct SessionActor {
     /// oldest first: a `Steered` takes them all; the turn's end leaves them
     /// to be answered next.
     steering: std::collections::VecDeque<Steer>,
+    /// Messages sent while a turn ran, each answered in order once the
+    /// turn before it ends ([`Self::answer_queued`]).
+    queued: std::collections::VecDeque<Steer>,
     /// The model a test scripts in place of the server's.
     #[cfg(test)]
     scripted_model: Option<ModelConfig>,
@@ -365,6 +368,7 @@ impl SessionActor {
             expecting: false,
             steering_input: false,
             steering: std::collections::VecDeque::new(),
+            queued: std::collections::VecDeque::new(),
             #[cfg(test)]
             scripted_model: None,
             events_tx,
@@ -492,6 +496,12 @@ impl SessionActor {
         self.events_rx = events_rx;
         self.answers.forget();
         self.held_notices.clear();
+        // The turns they waited behind are taken back with the conversation:
+        // their answers end, empty.
+        for queued in std::mem::take(&mut self.queued) {
+            self.upload(AgentEvent::TurnComplete, queued.answer_id)
+                .await;
+        }
         if self.working {
             self.state(SessionState::Idle).await;
         }
@@ -568,10 +578,14 @@ impl SessionActor {
                 });
                 return;
             }
-            // The session ignores a message while its turn runs, and the
-            // answer would never end: refused, not lost.
-            self.reply("A turn is running. Stop it or wait for it to finish, then send again.")
-                .await;
+            // The session takes no message while its turn runs (one being
+            // stopped may still be winding a long tool down): it waits, and
+            // is answered as soon as the turn ends, never refused.
+            println!("[{}]   queued behind the running turn", self.short());
+            self.queued.push_back(Steer {
+                answer_id: self.asking.clone(),
+                input,
+            });
             return;
         }
         if let Err(e) = self.submit(input).await {
@@ -761,6 +775,23 @@ impl SessionActor {
         self.asking = None;
     }
 
+    /// The next message sent while a turn ran, now that it ended: answered
+    /// as its own answer. The rest wait for the turn this one starts.
+    async fn answer_queued(&mut self) {
+        if self.working {
+            return;
+        }
+        let Some(next) = self.queued.pop_front() else {
+            return;
+        };
+        self.asking = next.answer_id;
+        self.expecting = false;
+        if let Err(e) = self.submit(next.input).await {
+            self.fail(&format!("{e:#}")).await;
+        }
+        self.asking = None;
+    }
+
     /// The inputs held behind a stopped answer, once it ended.
     async fn release_held(&mut self) {
         while let Some(input) = self.answers.release() {
@@ -849,6 +880,7 @@ impl SessionActor {
             self.answers.ended();
             self.state(SessionState::Idle).await;
             self.steer_left_over(stopped).await;
+            self.answer_queued().await;
             self.release_held().await;
             self.tell_held_notices().await;
         }
@@ -1817,6 +1849,52 @@ responses:
             "everything before it is the first answer's: {seen:?}"
         );
         assert_eq!(text_of(&seen, "b"), "lexer answer");
+        assert!(
+            !seen.iter().any(
+                |(_, e)| matches!(e, AgentEvent::TextDelta(t) if t.contains("A turn is running"))
+            ),
+            "never refused: {seen:?}"
+        );
+    }
+
+    /// A message sent while a turn still runs (one stopped, winding a long
+    /// tool down; or one that never stopped) is queued, not refused: it is
+    /// answered as soon as that turn ends, and its answer ends once.
+    #[tokio::test]
+    async fn a_message_sent_while_a_turn_runs_is_answered_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut actor, mut sent, mut asked) = scripted_session(
+            dir.path(),
+            r#"
+responses:
+  - match_type: contains
+    pattern: "do not use the toolkit"
+    reply: "running it as asked"
+"#,
+        )
+        .await;
+        actor.asking = Some("a".into());
+        actor.expect_ending();
+        actor.asking = None;
+        actor.state(SessionState::Running).await;
+        let events = actor.events_tx.clone();
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        commands
+            .send(typed("do not use the toolkit", "b", false))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        events.send(AgentEvent::TurnComplete).await.unwrap();
+        let seen = events_until_ended(&mut sent, &mut asked, &commands, |_| None, "b").await;
+        task.abort();
+
+        assert_eq!(
+            endings(&seen),
+            ["a", "b"],
+            "each answer ends once, in order: {seen:?}"
+        );
+        assert_eq!(text_of(&seen, "b"), "running it as asked");
         assert!(
             !seen.iter().any(
                 |(_, e)| matches!(e, AgentEvent::TextDelta(t) if t.contains("A turn is running"))

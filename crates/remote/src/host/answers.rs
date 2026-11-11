@@ -17,10 +17,11 @@
 //!
 //! A stop is the one place the order needs help. The server ends a stopped
 //! answer at once and may send the next input before the session has wound
-//! the stopped turn down; posted then, the session would ignore it (a turn is
-//! still running) and its answer would never end. So an input arriving
-//! behind a stopped answer is held until that answer's ending comes, or for
-//! [`HOLD_LIMIT`] when it never does (the turn ended without one).
+//! the stopped turn down, and the stopped answer's late ending must not end
+//! it. So an input arriving behind a stopped answer is held until that
+//! answer's ending comes, or for [`HOLD_LIMIT`] when it never does (the turn
+//! ended without one); one taken while the turn still winds down (a long
+//! tool) waits behind it in the host's queue and is answered when it ends.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
