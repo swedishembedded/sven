@@ -76,6 +76,9 @@ pub struct RuntimeContext {
     /// no `semantic_memory` tool. Only detection resolves the user's real
     /// home; a session built any other way is given its home or has none.
     pub memory_home: Option<PathBuf>,
+    /// Where tools publish files they wrote as files of the conversation, in
+    /// a session of a service that keeps them (`sven rc`).
+    pub conversation_files: Option<sven_tool_api::files::ConversationFiles>,
 }
 
 impl RuntimeContext {
@@ -151,6 +154,7 @@ impl RuntimeContext {
             knowledge_drift_note,
             path_scope: PathScope::unconfined(),
             memory_home: dirs::home_dir(),
+            conversation_files: None,
         }
     }
 
@@ -185,6 +189,7 @@ impl RuntimeContext {
             knowledge: self.knowledge.clone(),
             knowledge_drift_note: self.knowledge_drift_note.clone(),
             path_scope: self.path_scope.clone(),
+            conversation_files: self.conversation_files.clone(),
             ..AgentRuntimeContext::default()
         }
     }

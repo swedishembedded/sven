@@ -27,6 +27,13 @@ pub const HOSTED_TOOLS: &[&str] = &[
     "models",
     "model_schema",
     "run_model",
+    // Documents (PDFs, pictures of pages) to Markdown through OCR models:
+    // read from the conversation's files or its directory, parsed only in
+    // confined worker processes (no network, nothing writable, hard
+    // memory, CPU and time limits; `ocr.isolate`), the Markdown published as
+    // a file of the conversation.
+    "document_locate",
+    "document_convert",
     // Sub-agents: this binary again, inside the same confinement, held to
     // this allow list (without `task`) and this session's endpoints and key,
     // handed over on its stdin.
@@ -63,7 +70,10 @@ pub(super) fn session_runtime(
 ) -> anyhow::Result<RuntimeContext> {
     let mut runtime = RuntimeContext::auto_detect_at(Some(working_dir.to_path_buf()));
     runtime.project_root = Some(working_dir.to_path_buf());
-    if !hosted && !wide_access {
+    // A hosted session is held by the kernel to its person's environment,
+    // which holds every conversation of theirs; its path-taking tools are
+    // held to its own conversation's directory as well.
+    if hosted || !wide_access {
         runtime.path_scope = confined_scope(working_dir, &protected_locations())?;
     }
     if hosted {
@@ -79,6 +89,46 @@ pub(super) fn session_runtime(
         runtime.system_prompt_override = config.agent.system_prompt.clone();
     }
     Ok(runtime)
+}
+
+/// Where a hosted host keeps each conversation's files, below its working
+/// directory.
+const CONVERSATIONS: &str = ".sven/conversations";
+
+/// The directory conversation `id`'s tools, attachments and files live in,
+/// created when missing. Hosted, a directory of its own: the host's working
+/// directory is shared by all of its person's conversations, and one
+/// conversation (or someone it is shared with) must not reach another's
+/// files by path. On a person's computer, the directory `sven rc` runs in.
+///
+/// # Errors
+///
+/// It cannot be created.
+pub(super) fn conversation_dir(
+    working_dir: &Path,
+    hosted: bool,
+    id: uuid::Uuid,
+) -> anyhow::Result<PathBuf> {
+    if !hosted {
+        return Ok(working_dir.to_path_buf());
+    }
+    let dir = working_dir.join(CONVERSATIONS).join(id.to_string());
+    std::fs::create_dir_all(&dir).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+/// A closed hosted conversation's files removed with it. Nothing on a
+/// person's computer is removed.
+pub(super) fn forget_conversation_files(working_dir: &Path, hosted: bool, id: uuid::Uuid) {
+    if !hosted {
+        return;
+    }
+    let dir = working_dir.join(CONVERSATIONS).join(id.to_string());
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!("conversation {id}: its files were not removed: {e}"),
+    }
 }
 
 /// What no tool of a remotely driven session may read or write, even when it
@@ -137,7 +187,8 @@ pub fn restrict_to_working_dir(config: &mut Config) {
 /// metadata service). No configured MCP server is started or reached: an
 /// allow list hides a server's tools, but a stdio server would still run on
 /// the host and an HTTP one still be called. Tools are disclosed on demand
-/// (the discovery tool), whatever the configuration says.
+/// (the discovery tool), whatever the configuration says, and documents are
+/// parsed only in confined workers (`ocr.isolate`).
 pub fn restrict_to_hosted(config: &mut Config) {
     config.mcp_servers.clear();
     config.tools.only = Some(
@@ -153,11 +204,14 @@ pub fn restrict_to_hosted(config: &mut Config) {
     // Connector tools change while sessions run: disclosed on demand, a
     // change leaves what each request carries, and the cached prefix, alone.
     config.tools.disclosure.mode = sven_bootstrap::Disclosure::Deferred;
+    // A document someone sent is parsed only in a confined worker.
+    config.ocr.isolate = Some(true);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     /// A hosted session's connectors may grow to hundreds of tools and change
     /// while it runs: it always discloses them on demand, so a change leaves
@@ -278,6 +332,59 @@ mod tests {
     }
 
     #[test]
+    fn each_hosted_conversation_has_a_directory_of_its_own_that_goes_with_it() {
+        let work = tempfile::tempdir().unwrap();
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let dir_a = conversation_dir(work.path(), true, a).unwrap();
+        let dir_b = conversation_dir(work.path(), true, b).unwrap();
+        assert!(dir_a.is_dir() && dir_b.is_dir() && dir_a != dir_b);
+        assert!(dir_a.starts_with(work.path()) && dir_b.starts_with(work.path()));
+        // One conversation's tools cannot reach the other's files.
+        std::fs::write(dir_b.join("invoice.pdf"), "x").unwrap();
+        let scope_a = session_runtime(&Config::default(), &dir_a, true, false)
+            .unwrap()
+            .path_scope;
+        assert!(scope_a.resolve("../").is_err());
+        assert!(scope_a.resolve(dir_b.join("invoice.pdf")).is_err());
+        // On a person's computer the conversation works in the directory
+        // `sven rc` runs in.
+        assert_eq!(
+            conversation_dir(work.path(), false, a).unwrap(),
+            work.path()
+        );
+        // A closed hosted conversation's files go with it; nothing else does.
+        forget_conversation_files(work.path(), true, b);
+        assert!(!dir_b.exists() && dir_a.exists());
+        forget_conversation_files(work.path(), false, a);
+        assert!(dir_a.exists(), "a person's own directory is never removed");
+    }
+
+    #[test]
+    fn a_hosted_host_reads_documents_only_in_confined_workers_and_runs_nothing() {
+        let mut config: Config = serde_yaml::from_str("tools: {}\n").unwrap();
+        restrict_to_hosted(&mut config);
+        for tool in ["document_convert", "document_locate", "run_model"] {
+            assert!(config.tools.offers(tool), "{tool}");
+        }
+        for tool in [
+            "shell",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "grep",
+            "gdb",
+            "attach_file",
+        ] {
+            assert!(!config.tools.offers(tool), "{tool} must not be offered");
+        }
+        assert_eq!(config.ocr.isolate, Some(true));
+        // Whatever the configuration says.
+        let mut lax: Config = serde_yaml::from_str("ocr: {isolate: false}\n").unwrap();
+        restrict_to_hosted(&mut lax);
+        assert_eq!(lax.ocr.isolate, Some(true));
+    }
+
+    #[test]
     fn only_a_person_computer_session_without_wide_access_is_confined() {
         let dir = tempfile::tempdir().unwrap();
         let config = Config::default();
@@ -290,7 +397,10 @@ mod tests {
         };
         assert_eq!(root(false, false), Some(dir.path().canonicalize().unwrap()));
         assert_eq!(root(false, true), None);
-        // A hosted host is held by the kernel and its tool list instead.
-        assert_eq!(root(true, false), None);
+        // A hosted session, held by the kernel to its person's environment,
+        // is also held to its own conversation's directory: documents of
+        // the person's other conversations are not its to read, also for
+        // someone the conversation is shared with.
+        assert_eq!(root(true, false), Some(dir.path().canonicalize().unwrap()));
     }
 }

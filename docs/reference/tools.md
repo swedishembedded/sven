@@ -249,7 +249,7 @@ See [Converting one chapter](../guides/document-conversion.md#converting-one-cha
 
 | Parameter | Description |
 |-----------|-------------|
-| `source` (required) | PDF, or picture of one page (PNG, JPEG, WebP, GIF, BMP) |
+| `source` (required) | PDF: a path, or a file handle of the conversation (`mcp-file://files/<id>`) in a session of the sven service |
 | `query` | what to find; omit to list the outline |
 | `syntax` | `literal` (default), `regex` (Rust `regex`; `(?-i)` for case-sensitive), or `fzf` (extended search: `abc` fuzzy, `'abc` exact, `^abc` prefix, `abc$` suffix, `!abc` excludes, `a \| b` either, `\ ` a literal space; terms must all match one line; ranked best first) |
 | `pages` | search only these pages, e.g. `600-700` or `1-5,9` |
@@ -270,11 +270,15 @@ model; the result is a control record, never the text. See [Converting PDFs to M
 
 | Parameter | Description |
 |-----------|-------------|
-| `source` (required) | PDF, or picture of one page (PNG, JPEG, WebP, GIF, BMP) |
-| `destination` (required) | Markdown file to write; a manifest is written beside it |
+| `source` (required) | PDF, or picture of one page (PNG, JPEG, WebP, GIF, BMP): a path, or a file handle of the conversation (`mcp-file://files/<id>`) in a session of the sven service |
+| `destination` | Markdown file to write, default the source's name with `.md`; a manifest is written beside it |
 | `model` | OCR model: a spec, an `ocr.models` alias or a loose name ("deepseek ocr v2"); default `ocr.model` |
 | `pages` | 1-based selection such as `1-5,9` |
 | `ocr` | `auto` (native text where good, default), `always`, `never` |
+
+In a conversation of the sven service (`sven rc`, hosted) the Markdown is also
+a file of the conversation: the record's `file` is its handle, the person sees
+it in the chat, and `run_model` passes it on by that handle.
 
 ### `web_fetch`
 

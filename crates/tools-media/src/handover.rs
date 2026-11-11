@@ -66,6 +66,8 @@ pub async fn fetch_to(
         "audio/mpeg" => "mp3",
         "audio/ogg" => "ogg",
         "audio/flac" => "flac",
+        "application/pdf" => "pdf",
+        "image/bmp" => "bmp",
         _ => "bin",
     };
     let relative = format!(".sven/files/{id}.{extension}");

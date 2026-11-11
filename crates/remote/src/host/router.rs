@@ -221,6 +221,11 @@ async fn route(
                     if let Err(e) = context.sessions.forget(session_id) {
                         tracing::warn!("session {session_id}: could not forget it: {e:#}");
                     }
+                    super::hosted::forget_conversation_files(
+                        &context.working_dir,
+                        context.hosted,
+                        session_id,
+                    );
                 }
             }
             return;
@@ -403,6 +408,7 @@ mod tests {
             wide_access: true,
             openai_base_url: String::new(),
             token: String::new(),
+            client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),
             uploads,
             sessions: SessionStore::new(dir.path().join("kept")),
             asks,

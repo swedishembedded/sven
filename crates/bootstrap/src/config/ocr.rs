@@ -65,6 +65,13 @@ pub struct OcrConfig {
     /// The instruction sent with each page image.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    /// Parse and render documents in confined worker processes (no network,
+    /// nothing writable, hard memory, CPU and time limits) rather than in the
+    /// session's own process: for documents someone else gave the session.
+    /// Always on in a hosted host. Where a worker cannot be confined, the
+    /// document tools are not offered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isolate: Option<bool>,
 }
 
 impl OcrConfig {
@@ -79,6 +86,7 @@ impl OcrConfig {
             "pages_per_request",
             "layout",
             "prompt",
+            "isolate",
         ])
         .with("models", Schema::entries(Schema::value()))
     }

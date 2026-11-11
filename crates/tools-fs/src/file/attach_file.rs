@@ -43,19 +43,8 @@ const DESCRIPTION: &str = description!("otherwise transcribed to text.");
 #[cfg(not(all(target_os = "linux", feature = "asr")))]
 const DESCRIPTION: &str = description!("otherwise refused.");
 
-/// Fetches a file a service keeps for the conversation, named by its handle
-/// (`mcp-file://files/<id>`), into the working directory.
-#[async_trait]
-pub trait HandleFetcher: Send + Sync {
-    /// Where the file was saved, as a path `attach_file` reads.
-    ///
-    /// # Errors
-    /// The file cannot be fetched or saved; the message says why.
-    async fn fetch(&self, handle: &str) -> Result<String, String>;
-}
-
-/// The scheme of a handle a service keeps.
-const HANDLE_PREFIX: &str = "mcp-file://";
+pub use sven_tool_api::files::HandleFetcher;
+use sven_tool_api::files::HANDLE_PREFIX;
 
 pub struct AttachFileTool {
     /// Fetches a handle's file before it is read; none where no service is.

@@ -93,6 +93,9 @@ gdb = ["sven-tools-gdb/mi"]
 
 [dev-dependencies]
 serde_yaml = { workspace = true }
+# The sven service's model list and invocations, faked, for OCR models a
+# session of the service reaches.
+sven-tools-media = { path = "../tools-media", features = ["fake-server"] }
 tempfile = { workspace = true }
 sven-model-mock = { path = "../model-mock" }
 # tests/memory_import.rs writes a database in the previous store's format and

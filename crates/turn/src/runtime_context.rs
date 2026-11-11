@@ -87,6 +87,10 @@ pub struct AgentRuntimeContext {
     /// directory. Independent of `project_root`, which drives discovery and
     /// the prompt but confines nothing.
     pub path_scope: PathScope,
+    /// Where a tool publishes a file it wrote as a file of the conversation,
+    /// in a session of a service that keeps them (`sven rc`); `None`
+    /// elsewhere.
+    pub conversation_files: Option<sven_tool_api::files::ConversationFiles>,
 }
 
 impl AgentRuntimeContext {

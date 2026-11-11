@@ -19,16 +19,16 @@
 
 use std::sync::Arc;
 
+use crate::access::DocumentAccess;
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use sven_document::{
-    assess_native_text, find_text, outline, outline_matches, parse_selection, DocumentBackend,
-    HayroBackend, OutlineEntry, Query, Syntax, TextQuality,
+    assess_native_text, find_text, outline_matches, parse_selection, DocumentBackend, OutlineEntry,
+    Query, Syntax, TextQuality,
 };
 use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
-use sven_tool_api::PathScope;
 
 /// Outline levels the overview lists unless `depth` says otherwise.
 const OVERVIEW_DEPTH: usize = 2;
@@ -47,12 +47,12 @@ const PARAMETERS: [&str; 8] = [
 ];
 
 pub struct DocumentLocateTool {
-    scope: PathScope,
+    access: DocumentAccess,
 }
 
 impl DocumentLocateTool {
-    pub fn new(scope: PathScope) -> Self {
-        Self { scope }
+    pub fn new(access: DocumentAccess) -> Self {
+        Self { access }
     }
 }
 
@@ -105,19 +105,19 @@ impl Tool for DocumentLocateTool {
             Ok(r) => r,
             Err(e) => return ToolOutput::err(&call.id, e),
         };
-        if let Err(refused) = self.scope.resolve_for(call, &request.source) {
-            return refused;
-        }
+        let source = match self.access.source(call, &request.source).await {
+            Ok(p) => p,
+            Err(refused) => return refused,
+        };
         // Read through the scope, never by a path a confined process could
         // swap for a link (`scoped`).
-        let data = match crate::scoped::read(&self.scope, &request.source, false).await {
+        let data = match crate::scoped::read(self.access.scope(), &source, false).await {
             Ok(Some(d)) => d,
-            Ok(None) => {
-                return ToolOutput::err(&call.id, format!("cannot read {}", request.source))
-            }
+            Ok(None) => return ToolOutput::err(&call.id, format!("cannot read {source}")),
             Err(why) => return ToolOutput::err(&call.id, why),
         };
-        match tokio::task::spawn_blocking(move || locate(data, &request)).await {
+        let backend = self.access.backend();
+        match tokio::task::spawn_blocking(move || locate(&*backend, data, &request)).await {
             Ok(Ok(record)) => ToolOutput::ok(&call.id, record.to_string()),
             Ok(Err(e)) => ToolOutput::err(&call.id, e),
             Err(e) => ToolOutput::err(&call.id, format!("locating failed: {e}")),
@@ -241,11 +241,13 @@ fn page_ranges(pages: &[usize]) -> String {
 
 /// The located record: outline matches with page ranges and text hits, or the
 /// outline overview. Never page text beyond a snippet.
-fn locate(data: Vec<u8>, request: &Request) -> Result<Value, String> {
-    let entries = outline(&data).map_err(|e| e.to_string())?;
-    let source = HayroBackend
-        .open(Arc::new(data))
-        .map_err(|e| e.to_string())?;
+fn locate(
+    backend: &dyn DocumentBackend,
+    data: Vec<u8>,
+    request: &Request,
+) -> Result<Value, String> {
+    let source = backend.open(Arc::new(data)).map_err(|e| e.to_string())?;
+    let entries = source.outline().map_err(|e| e.to_string())?;
     let page_count = source.page_count();
     let selected = parse_selection(request.pages.as_deref().unwrap_or(""), page_count)
         .map_err(|e| e.to_string())?;
@@ -351,6 +353,7 @@ impl ToolDisplay for DocumentLocateTool {
 mod tests {
     use super::*;
     use sven_document::testing::{build_pdf_with_outline, FixturePage};
+    use sven_tool_api::PathScope;
 
     fn manual() -> Vec<u8> {
         let page = |t: &'static str| FixturePage::Text(vec![t]);
@@ -375,7 +378,7 @@ mod tests {
 
     fn run(args: Value) -> Result<Value, String> {
         let request = Request::parse(&args)?;
-        locate(manual(), &request)
+        locate(&sven_document::HayroBackend, manual(), &request)
     }
 
     #[test]
@@ -435,7 +438,7 @@ mod tests {
 
     #[test]
     fn the_definition_stays_small() {
-        let t = DocumentLocateTool::new(PathScope::unconfined());
+        let t = DocumentLocateTool::new(DocumentAccess::local(PathScope::unconfined()));
         assert!(t.summary().chars().count() <= sven_tool_api::SUMMARY_MAX_CHARS);
         assert!(t.parameters_schema().to_string().len() < 1200);
     }

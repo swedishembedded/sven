@@ -15,11 +15,19 @@ use sven_frontend::{SessionController, SessionOptions, SessionSpec};
 use sven_model_drivers::ModelConfig;
 use sven_vocab::goal::GoalCommand;
 
+use super::conversation_files::ConversationUpload;
 use super::hosted::session_runtime;
 use super::{attachments, SessionActor};
 use crate::approvals::{RemoteApprovals, APPROVAL_TIMEOUT};
+use sven_tool_api::files::ConversationFiles;
 
 impl SessionActor {
+    /// Where this conversation's tools, attachments and files live
+    /// ([`super::hosted::conversation_dir`]).
+    pub(super) fn conversation_dir(&self) -> anyhow::Result<std::path::PathBuf> {
+        super::hosted::conversation_dir(&self.context.working_dir, self.context.hosted, self.id)
+    }
+
     /// The model this conversation talks to, through the server.
     pub(super) fn model_config(&self) -> anyhow::Result<ModelConfig> {
         #[cfg(test)]
@@ -47,14 +55,22 @@ impl SessionActor {
         &mut self,
         model: ModelConfig,
     ) -> anyhow::Result<SessionController> {
-        let runtime = session_runtime(
+        let dir = self.conversation_dir()?;
+        let mut runtime = session_runtime(
             &self.context.config,
-            &self.context.working_dir,
+            &dir,
             self.context.hosted,
             self.context.wide_access,
         )?;
+        // What its tools write, such as a converted document, can become a
+        // file of this conversation, and of no other.
+        runtime.conversation_files = Some(ConversationFiles(Arc::new(ConversationUpload {
+            client: self.context.client.clone(),
+            conversation: self.id,
+            working_dir: dir.clone(),
+        })));
         let mut options = SessionOptions::new(
-            attachments::for_session(&self.context.config, self.id, &self.context.working_dir),
+            attachments::for_session(&self.context.config, self.id, &dir),
             runtime,
             self.events_tx.clone(),
         );

@@ -752,6 +752,10 @@ fn media_type(path: &std::path::Path) -> &'static str {
         "svg" => "image/svg+xml",
         "tif" | "tiff" => "image/tiff",
         "ico" => "image/x-icon",
+        "md" => "text/markdown",
+        "json" => "application/json",
+        "txt" => "text/plain",
+        "pdf" => "application/pdf",
         _ => "application/octet-stream",
     }
 }

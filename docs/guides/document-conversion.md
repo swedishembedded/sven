@@ -97,6 +97,44 @@ Pictures larger than 12,000 pixels on a side are refused rather than decoded.
 Native text is plain text: it keeps reading order but not headings or tables.
 Use `--ocr always` when the structure matters.
 
+## In a conversation of the sven service
+
+In a conversation `sven rc` answers (a hosted conversation, or one on a
+computer signed in to the service) a document is a file of the conversation:
+
+- `source` may be the file's handle (`mcp-file://files/<id>`), as an attached
+  file or a model's output is named; it is fetched into the conversation's
+  directory first. An attachment of the message is also already there by
+  path.
+- Without a `destination` the Markdown is named after the source. It is
+  published to the conversation: the person sees and downloads it, and the
+  record's `file` is its handle, which `run_model` passes to another model
+  (to pull fields out as JSON, say) without the text passing through the
+  agent's own model.
+- `model` may be any model the service lists that reads images and writes
+  text, by its id or a loose name (`models` lists them), reached with the
+  session's own key and charged to its conversation. Unasked, only a model
+  made for OCR is picked, never a general vision model whose cost nobody
+  chose; without one the record asks the agent to name a model.
+
+## Documents someone else sent
+
+A document is input from whoever sent it, and a crafted PDF can make a
+renderer loop or allocate without end. With `ocr.isolate` (always on in a
+hosted host) documents are parsed and rendered only in worker processes:
+this binary again (`sven document worker`), started with nothing it may
+write, no TCP at all, an environment that holds only its thread count, and
+hard memory and CPU limits it sets on itself before it reads a byte. The
+document reaches a worker over a pipe; page images, text and the outline come
+back, and only the session's own process talks to the OCR model. Every
+request has a deadline (90 s for a page, 5 min for the text layer); a worker
+that misses one, dies or answers nonsense is killed and replaced, and that
+page fails with the reason while the rest of the document converts. Reading
+one document is bounded as a whole too (an hour of requests), and a worker is
+replaced after 200 requests so a long document never meets its CPU limit.
+Where the kernel cannot confine a worker (Landlock ABI 6, Linux 6.12), the
+document tools are not offered at all rather than run unconfined.
+
 ## The manifest and resuming
 
 Beside the output, `<out>.manifest.json` records for every page how it was

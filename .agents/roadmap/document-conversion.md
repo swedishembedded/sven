@@ -80,12 +80,11 @@ message is `[{type: image_url, image_url: {url: data:image/png;base64,...}},
   is off by default; record, per model, CER and cost per page read alone and
   in batches of 2 and 4 on the same pages before recommending a batch size
   anywhere (configuration examples, a hosted default).
-- **A hosted session cannot read a PDF.** Its tools have no file system, so
-  `document_convert` and `document_locate` are not in `HOSTED_TOOLS`. Needed:
-  a source given as a handle (fetched by the media endpoint, bounded), the
-  output published as a conversation file by the service instead of written
-  to a chosen path, and bounds that fit a hosted host (pages, bytes, decoded
-  pixels per page). The service's side is its `documents` ledger.
+- **Isolated workers are not measured.** The worker's memory limit (1 GiB,
+  less where the host has less) and the per-request deadlines are chosen, not
+  measured: record peak memory and render time per page of a large scanned
+  document through `ocr.isolate`, and the cost of a worker's start, before
+  tuning them.
 - **Very large documents** rewrite one growing manifest after every page; a
   job of thousands of pages wants chunk checkpoints (a page range per file,
   assembled in page order at the end) so a resumed or remote run neither

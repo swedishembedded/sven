@@ -28,6 +28,10 @@ use crate::Config;
 /// What is tried when neither the request nor `ocr.model` names a model.
 const DEFAULT_QUERY: &str = "deepseek ocr 2";
 
+/// Marks a candidate that is a model of the service the session is signed
+/// in to (`sven rc`), reached with the session's own endpoint and key.
+const SERVICE: &str = "service:";
+
 /// Conversion options with the `ocr` section's values over the defaults.
 pub fn convert_options(ocr: &OcrConfig) -> sven_document::ConvertOptions {
     let mut o = sven_document::ConvertOptions::default();
@@ -76,6 +80,14 @@ impl ConfigOcrModels {
                 })
             })
             .collect();
+        // A session of the sven service: every model it lists that reads
+        // images and writes text reads documents, by its id or a loose name.
+        for id in self.service_readers().await {
+            out.push(Candidate {
+                spec: format!("{SERVICE}{id}"),
+                alias: None,
+            });
+        }
         let found = sven_model_drivers::reachable::reachable_models(&self.config.providers).await;
         for m in found.models {
             if m.id.to_lowercase().contains("ocr") && !out.iter().any(|c| c.spec == m.reference) {
@@ -111,7 +123,9 @@ impl ConfigOcrModels {
                 }
             }
             // A full spec the providers do not list (an OpenRouter model, say).
-            Err(MatchError::NoMatch { .. }) if wanted.contains('/') => {
+            Err(MatchError::NoMatch { .. })
+                if wanted.contains('/') && self.config.tools.media.service.is_none() =>
+            {
                 self.build(wanted, &[wanted]).await
             }
             Err(MatchError::NoMatch { .. }) if candidates.is_empty() => {
@@ -130,11 +144,25 @@ impl ConfigOcrModels {
                 reason: unavailable_reason(&problems),
             });
         }
-        let pick = match_model(DEFAULT_QUERY, &candidates)
+        // Only a model made for OCR is picked unasked: never one of the
+        // service's general vision models, whose cost the person did not
+        // choose.
+        let ocr: Vec<Candidate> = candidates
+            .into_iter()
+            .filter(|c| c.alias.is_some() || c.spec.to_lowercase().contains("ocr"))
+            .collect();
+        if ocr.is_empty() {
+            return Err(NoOcrModel::Unavailable {
+                reason: "no OCR model is configured or served by name; name a model that reads \
+                         images"
+                    .into(),
+            });
+        }
+        let pick = match_model(DEFAULT_QUERY, &ocr)
             .cloned()
             .or_else(|_| {
                 // No OCR-2: any one OCR model is what the user has on offer.
-                candidates.first().cloned().ok_or(MatchError::NoMatch {
+                ocr.first().cloned().ok_or(MatchError::NoMatch {
                     query: String::new(),
                     choices: vec![],
                 })
@@ -143,9 +171,79 @@ impl ConfigOcrModels {
         self.build(&pick.spec, &[pick.spec.as_str()]).await
     }
 
+    /// The models of the service the session is signed in to that read
+    /// images and write text; none outside such a session, or when the
+    /// service cannot be asked.
+    async fn service_readers(&self) -> Vec<String> {
+        let Some(service) = &self.config.tools.media.service else {
+            return Vec::new();
+        };
+        let client = sven_model_drivers::invoke::InvocationClient::new(
+            &service.base_url,
+            &service.api_key,
+            self.config.tools.media.session.clone(),
+        );
+        match client.models().await {
+            Ok(models) => models
+                .into_iter()
+                .filter(|m| {
+                    m.input.iter().any(|i| i == "image") && m.output.iter().any(|o| o == "text")
+                })
+                .map(|m| m.id)
+                .collect(),
+            Err(e) => {
+                tracing::warn!("the service's models could not be listed: {e:#}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Model `id` of the service the session is signed in to, reached with
+    /// the session's endpoint and key, its calls recorded under the session.
+    async fn build_service(&self, id: &str) -> Result<OcrModel, NoOcrModel> {
+        let service =
+            self.config
+                .tools
+                .media
+                .service
+                .as_ref()
+                .ok_or_else(|| NoOcrModel::Unavailable {
+                    reason: "this session is not signed in to a service".into(),
+                })?;
+        let cfg = sven_model_drivers::ModelConfig {
+            provider: "openai".into(),
+            name: id.to_string(),
+            base_url: Some(service.base_url.clone()),
+            api_key: Some(service.api_key.clone()),
+            session: self.config.tools.media.session.clone(),
+            ..sven_model_drivers::ModelConfig::default()
+        };
+        let provider: Arc<dyn ModelProvider> = Arc::from(
+            sven_model_drivers::from_config_probed(&cfg)
+                .await
+                .map_err(|e| NoOcrModel::Unavailable {
+                    reason: format!("model '{id}' cannot be set up: {e}"),
+                })?,
+        );
+        if !provider.supports_images() {
+            return Err(NoOcrModel::Unavailable {
+                reason: format!("model '{id}' does not read images"),
+            });
+        }
+        Ok(OcrModel {
+            spec: id.to_string(),
+            providers: vec![provider],
+        })
+    }
+
     /// Providers for `specs` (replicas of one model), checked to take images
     /// and, when local, to be answering.
     async fn build(&self, identity: &str, specs: &[&str]) -> Result<OcrModel, NoOcrModel> {
+        if let [one] = specs {
+            if let Some(id) = one.strip_prefix(SERVICE) {
+                return self.build_service(id).await;
+            }
+        }
         let mut providers: Vec<Arc<dyn ModelProvider>> = Vec::new();
         for spec in specs {
             let cfg = self.config.resolve_model(spec);
@@ -193,6 +291,53 @@ impl OcrModels for ConfigOcrModels {
         match requested.or(self.config.ocr.model.as_deref()) {
             Some(wanted) => self.named(wanted).await,
             None => self.discovered().await,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A session of the sven service (as `sven rc` gives one): its endpoint
+    /// and key, and the conversation its calls are for.
+    async fn signed_in() -> (sven_tools_media::fake::Fake, Config) {
+        let fake = sven_tools_media::fake::serve(0).await;
+        let mut config = Config::default();
+        config.tools.media.service = Some(sven_tools_media::MediaEndpoint {
+            base_url: fake.base_url.clone(),
+            api_key: "k".into(),
+        });
+        config.tools.media.session = Some("conv-1".into());
+        (fake, config)
+    }
+
+    #[tokio::test]
+    async fn a_session_of_the_service_reads_documents_with_a_vision_model_it_lists() {
+        let (_fake, config) = signed_in().await;
+        let models = ConfigOcrModels::new(config);
+        // By its id, as `models` lists it, and by a loose name.
+        for wanted in ["vision/a", "vision a"] {
+            let model = models
+                .resolve(Some(wanted))
+                .await
+                .unwrap_or_else(|e| panic!("{wanted}: {e:?}"));
+            assert_eq!(model.spec, "vision/a", "{wanted}");
+            assert_eq!(model.providers.len(), 1);
+            assert!(model.providers[0].supports_images());
+        }
+        // A model that reads no images (speech) does not read documents.
+        assert!(models.resolve(Some("openai/tts")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn without_a_name_a_session_of_the_service_never_picks_an_arbitrary_vision_model() {
+        let (_fake, config) = signed_in().await;
+        match ConfigOcrModels::new(config).resolve(None).await {
+            Err(NoOcrModel::Unavailable { reason }) => {
+                assert!(reason.contains("name a model"), "{reason}");
+            }
+            other => panic!("expected no model, got {:?}", other.map(|m| m.spec)),
         }
     }
 }

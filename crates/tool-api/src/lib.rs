@@ -15,6 +15,7 @@ mod beneath;
 pub mod call_records;
 pub mod display;
 pub mod events;
+pub mod files;
 pub mod grep_match;
 pub mod params;
 pub mod path_scope;

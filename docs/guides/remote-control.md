@@ -278,11 +278,26 @@ A server that answers conversations nobody's machine runs starts `sven rc
 --hosted` for them, one per conversation, each with a sandbox directory of
 its own that it never shares. Two walls keep a hosted host to itself:
 
-- **Its tools.** Its sessions have only tools that never touch the machine
-  the host runs on - web search, web fetch and finding skills. It is an
-  allow list: any other tool, including one added to sven later, is never
-  offered. MCP servers in its configuration are ignored: none is started
-  or called.
+- **Its tools.** Its sessions have only tools that never run anything on
+  the machine the host runs on: web search, web fetch, finding skills,
+  running models at its server (`models`, `model_schema`, `run_model`),
+  sub-agents held to the same list, and reading documents
+  (`document_locate`, `document_convert`). It is an allow list: any other
+  tool, including one added to sven later, is never offered. MCP servers in
+  its configuration are ignored: none is started or called. A document is
+  parsed and rendered only in a worker process of its own (`ocr.isolate`,
+  always on here): this binary again, with nothing it may write, no TCP at
+  all, an empty environment and hard memory and CPU limits it sets on
+  itself, every request under a deadline after which the worker is killed
+  and replaced. Only page images, text and the outline come back; only the
+  host talks to the OCR model.
+- **Each conversation's files.** A host serves all of its person's
+  conversations from one working directory, so each conversation works in
+  a directory of its own below it (`work/.sven/conversations/<id>`): its
+  attachments are saved there, its tools' paths are held there, and it is
+  removed when the conversation is archived or deleted. Another
+  conversation's files are reached only by handle, which the server checks
+  belong to the conversation asking.
 - **The kernel.** Before it starts anything, the host confines itself with
   Linux Landlock to its sandbox: it can read, write and create only inside
   that directory, plus read what any program needs to run and reach the
@@ -314,7 +329,7 @@ its own that it never shares. Two walls keep a hosted host to itself:
   read before the confinement; it is never in a file.
 
 Everything it keeps is in the sandbox: its kept sessions (`sessions/`) and
-where its sessions work (`work/`).
+where its sessions work (`work/`, one directory per conversation).
 
 Only one `sven rc` serves a directory (or a hosted account) at a time. A
 second is refused while the first is connected. A host checks in every 15 s

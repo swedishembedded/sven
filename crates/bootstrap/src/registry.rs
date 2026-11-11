@@ -52,6 +52,7 @@ use crate::task_tool::{ChildApprover, TaskTool};
 use crate::GdbTool;
 
 mod completion;
+mod documents;
 pub(crate) use completion::{complete, Completion, DeferredDisclosure};
 
 // ── Integration tool providers ────────────────────────────────────────────────
@@ -577,23 +578,6 @@ fn build_profile_subagent(
     reg
 }
 
-/// The sven service's files of the session's conversation, fetched by handle
-/// for `attach_file`.
-#[cfg(feature = "media")]
-struct ServiceFiles {
-    endpoint: sven_tools_media::MediaEndpoint,
-    config: sven_tools_media::MediaConfig,
-    workdir: std::path::PathBuf,
-}
-
-#[cfg(feature = "media")]
-#[async_trait::async_trait]
-impl sven_tools_fs::HandleFetcher for ServiceFiles {
-    async fn fetch(&self, handle: &str) -> Result<String, String> {
-        sven_tools_media::fetch_to(&self.endpoint, &self.config, &self.workdir, handle).await
-    }
-}
-
 /// What [`register_base_tools`] registers the shared tool set from.
 struct BaseTools<'a> {
     cfg: &'a Config,
@@ -656,12 +640,23 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     // are confined), so a served run is offered them too.
     #[cfg(feature = "document")]
     if let Some(scope) = tool_scope(cfg, paths) {
-        reg.register_with_display(DocumentLocateTool::new(scope.clone()));
-        reg.register_with_display(DocumentConvertTool::new(
-            scope,
-            Arc::new(crate::ConfigOcrModels::new(cfg.clone())),
-            crate::convert_options(&cfg.ocr),
-        ));
+        match documents::document_access(cfg, runtime, scope) {
+            Ok(access) => {
+                reg.register_with_display(DocumentLocateTool::new(access.clone()));
+                let mut convert = DocumentConvertTool::new(
+                    access,
+                    Arc::new(crate::ConfigOcrModels::new(cfg.clone())),
+                    crate::convert_options(&cfg.ocr),
+                );
+                if !cfg.tools.offers("shell") {
+                    convert = convert.without_commands();
+                }
+                reg.register_with_display(convert);
+            }
+            // Documents that must be read confined are not read at all
+            // where they cannot be.
+            Err(why) => tracing::warn!("document tools are not offered: {why}"),
+        }
     }
 
     // ── Multimodal attachments ───────────────────────────────────────────────
@@ -675,7 +670,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
         // A file of the conversation, named by handle, is fetched from the
         // service that keeps it into the working directory first.
         if let Some((endpoint, config)) = cfg.media_endpoint() {
-            attach = attach.with_fetcher(Arc::new(ServiceFiles {
+            attach = attach.with_fetcher(Arc::new(documents::ServiceFiles {
                 endpoint,
                 config,
                 workdir: paths.root().map_or_else(

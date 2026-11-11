@@ -1160,6 +1160,7 @@ The OCR model behind `document_convert` and `sven document convert`. See
 | `pages_per_request` | `1` | Pages read in one request, at most 8 and no more than the model's listed output limit holds `max_tokens` allowances. Choose more only for a model measured to read pages together as well as apart |
 | `layout` | `auto` | `auto`, `off` or `regions`: whether pages are read block by block from their layout (newspapers, columns) |
 | `prompt` | `Convert the document to markdown.` | Instruction sent with each page image |
+| `isolate` | `false` (`true` in a hosted host, whatever is set) | Parse and render documents in confined worker processes: nothing writable, no TCP, hard memory and CPU limits, a deadline on every request. Where a worker cannot be confined (no Landlock ABI 6), the document tools are not offered |
 
 ---
 

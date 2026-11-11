@@ -17,15 +17,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sven_document::{
-    manifest_path, ConvertOptions, Converter, DocumentError, OcrMode, Report, StandardBackend,
-};
+use sven_document::{manifest_path, ConvertOptions, Converter, DocumentError, OcrMode, Report};
 use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
-use sven_tool_api::PathScope;
 use sven_vocab::AgentMode;
 
+use crate::access::DocumentAccess;
 use crate::models::{NoOcrModel, OcrModels};
 use crate::scoped;
 
@@ -33,18 +31,34 @@ use crate::scoped;
 const MAX_WARNINGS: usize = 8;
 
 pub struct DocumentConvertTool {
-    scope: PathScope,
+    access: DocumentAccess,
     models: Arc<dyn OcrModels>,
     defaults: ConvertOptions,
+    /// Whether the session can run commands, so offering installed
+    /// command-line converters when no OCR model exists makes sense.
+    commands: bool,
 }
 
 impl DocumentConvertTool {
-    pub fn new(scope: PathScope, models: Arc<dyn OcrModels>, defaults: ConvertOptions) -> Self {
+    pub fn new(
+        access: DocumentAccess,
+        models: Arc<dyn OcrModels>,
+        defaults: ConvertOptions,
+    ) -> Self {
         Self {
-            scope,
+            access,
             models,
             defaults,
+            commands: true,
         }
+    }
+
+    /// For a session that cannot run commands: no command-line converter
+    /// is offered when there is no OCR model.
+    #[must_use]
+    pub fn without_commands(mut self) -> Self {
+        self.commands = false;
+        self
     }
 }
 
@@ -68,13 +82,13 @@ impl Tool for DocumentConvertTool {
         json!({
             "type": "object",
             "properties": {
-                "source": {"type": "string", "description": "PDF or picture file"},
-                "destination": {"type": "string", "description": "Markdown file to write"},
+                "source": {"type": "string", "description": "PDF or picture: a path, or a file handle (mcp-file://...)"},
+                "destination": {"type": "string", "description": "Markdown file to write; default <source name>.md"},
                 "model": {"type": "string", "description": "OCR model, loose name ok: 'deepseek ocr v2'"},
                 "pages": {"type": "string", "description": "e.g. 1-5,9"},
                 "ocr": {"type": "string", "enum": ["auto", "always", "never"]}
             },
-            "required": ["source", "destination"],
+            "required": ["source"],
             "additionalProperties": false
         })
     }
@@ -93,20 +107,31 @@ impl Tool for DocumentConvertTool {
 
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
         let arg = |name: &str| call.args.get(name).and_then(Value::as_str);
-        let (Some(source_arg), Some(destination_arg)) = (arg("source"), arg("destination")) else {
-            return ToolOutput::err(
-                &call.id,
-                "Missing required parameters: source, destination.",
-            );
+        let Some(source_arg) = arg("source") else {
+            return ToolOutput::err(&call.id, "Missing required parameter: source.");
         };
         let ocr = match arg("ocr").map(str::parse::<OcrMode>).transpose() {
             Ok(mode) => mode.unwrap_or_default(),
             Err(e) => return ToolOutput::err(&call.id, e),
         };
-        if let Err(refused) = self.scope.resolve_for(call, source_arg) {
-            return refused;
-        }
-        let destination = match self.scope.resolve_for(call, destination_arg) {
+        let source_arg = match self.access.source(call, source_arg).await {
+            Ok(path) => path,
+            Err(refused) => return refused,
+        };
+        let source_arg = source_arg.as_str();
+        // Without a destination, the Markdown is named after the source, in
+        // the working directory.
+        let destination_arg = match arg("destination") {
+            Some(destination) => destination.to_owned(),
+            None => format!(
+                "{}.md",
+                std::path::Path::new(source_arg)
+                    .file_stem()
+                    .map_or_else(|| "document".into(), |s| s.to_string_lossy())
+            ),
+        };
+        let destination_arg = destination_arg.as_str();
+        let destination = match self.access.scope().resolve_for(call, destination_arg) {
             Ok(p) => p,
             Err(refused) => return refused,
         };
@@ -128,7 +153,7 @@ impl Tool for DocumentConvertTool {
         // The converter works on private copies: the source and any earlier
         // run's manifest are read through the scope, the results written
         // back through it (`scoped`).
-        let data = match scoped::read(&self.scope, source_arg, false).await {
+        let data = match scoped::read(self.access.scope(), source_arg, false).await {
             Ok(Some(data)) => data,
             Ok(None) => {
                 return ToolOutput::err(
@@ -139,7 +164,7 @@ impl Tool for DocumentConvertTool {
             Err(why) => return ToolOutput::err(&call.id, failure_text(&why)),
         };
         let manifest_arg = format!("{destination_arg}.manifest.json");
-        let earlier = match scoped::read(&self.scope, &manifest_arg, true).await {
+        let earlier = match scoped::read(self.access.scope(), &manifest_arg, true).await {
             Ok(earlier) => earlier,
             Err(why) => return ToolOutput::err(&call.id, failure_text(&why)),
         };
@@ -172,7 +197,7 @@ impl Tool for DocumentConvertTool {
             );
         }
         drop(data);
-        let converter = Converter::new(Arc::new(StandardBackend), providers);
+        let converter = Converter::new(self.access.backend(), providers);
         let converted = converter
             .convert(&private_source, &private_output, &options)
             .await;
@@ -183,35 +208,56 @@ impl Tool for DocumentConvertTool {
             (private_output.clone(), destination_arg),
         ] {
             if let Ok(bytes) = std::fs::read(&private) {
-                if let Err(why) = scoped::write(&self.scope, requested, bytes).await {
+                if let Err(why) = scoped::write(self.access.scope(), requested, bytes).await {
                     return ToolOutput::err(&call.id, failure_text(&why));
                 }
             }
         }
-        match converted {
+        let report = match converted {
             Ok(mut report) => {
                 report.output = destination.clone();
                 report.manifest = manifest_path(&destination);
-                ToolOutput::ok(&call.id, record(&report, &spec, unavailable.as_deref()))
+                report
             }
-            Err(DocumentError::NoModel) => ToolOutput::ok(
-                &call.id,
-                no_ocr_model_record(&unavailable.unwrap_or_default()),
-            ),
-            Err(e) => ToolOutput::err(
-                &call.id,
-                failure_text(
-                    &e.to_string()
-                        .replace(&work.path().display().to_string(), "<private copy>"),
-                ),
-            ),
-        }
+            Err(DocumentError::NoModel) => {
+                return ToolOutput::ok(
+                    &call.id,
+                    no_ocr_model_record(&unavailable.unwrap_or_default(), self.commands),
+                )
+            }
+            Err(e) => {
+                return ToolOutput::err(
+                    &call.id,
+                    failure_text(
+                        &e.to_string()
+                            .replace(&work.path().display().to_string(), "<private copy>"),
+                    ),
+                )
+            }
+        };
+        let mut record = record(&report, &spec, unavailable.as_deref());
+        // In a conversation of a service, the Markdown is its file: the
+        // person sees it, and a model reads it by handle.
+        let published = match self.access.publish(&report.output, "text/markdown").await {
+            Some(Ok(file)) => {
+                record["file"] = json!(file.uri);
+                vec![file]
+            }
+            Some(Err(e)) => {
+                record["not_published"] = json!(format!(
+                    "the Markdown was written but not added to the conversation: {e}"
+                ));
+                Vec::new()
+            }
+            None => Vec::new(),
+        };
+        ToolOutput::ok(&call.id, record.to_string()).with_artifacts(published)
     }
 }
 
 /// The control record: counts, hashes and paths, never page text.
 /// `no_model` is why no OCR model was available, when none was.
-fn record(report: &Report, model: &str, no_model: Option<&str>) -> String {
+fn record(report: &Report, model: &str, no_model: Option<&str>) -> Value {
     let status = if report.pages_failed == report.pages_total {
         "failed"
     } else if report.pages_failed > 0 {
@@ -257,7 +303,7 @@ fn record(report: &Report, model: &str, no_model: Option<&str>) -> String {
             ));
         }
     }
-    record.to_string()
+    record
 }
 
 /// What the chat model is told after pages failed: say so, give the cause,
@@ -297,7 +343,21 @@ const FALLBACK_TOOLS: [&str; 5] = ["pdftotext", "mutool", "pandoc", "ocrmypdf", 
 
 /// The result when no OCR model is available. It carries instructions for the
 /// chat model: say so, and ask before trying anything else. Nothing is run.
-fn no_ocr_model_record(reason: &str) -> String {
+fn no_ocr_model_record(reason: &str, commands: bool) -> String {
+    if !commands {
+        return json!({
+            "status": "no_ocr_model",
+            "converted": false,
+            "reason": reason,
+            "instruction_for_assistant": format!(
+                "The document was NOT converted: no OCR model was chosen or found ({reason}). \
+                 Pick a model that reads images (`models` with input image and output text; \
+                 prefer one made for documents or OCR), say which, and call document_convert \
+                 again with it as `model`. If none is listed, tell the user so."
+            ),
+        })
+        .to_string();
+    }
     let found: Vec<&str> = FALLBACK_TOOLS
         .into_iter()
         .filter(|t| sven_workspace::skills::which_available(t))
@@ -345,6 +405,7 @@ mod tests {
     use crate::models::OcrModel;
     use sven_document::testing::{build_pdf, FixturePage, PROSE};
     use sven_model_mock::MockProvider;
+    use sven_tool_api::PathScope;
 
     struct Fixed(Result<OcrModel, NoOcrModel>);
 
@@ -357,10 +418,108 @@ mod tests {
 
     fn tool(dir: &std::path::Path, models: Result<OcrModel, NoOcrModel>) -> DocumentConvertTool {
         DocumentConvertTool::new(
-            PathScope::confined(dir).unwrap(),
+            DocumentAccess::local(PathScope::confined(dir).unwrap()),
             Arc::new(Fixed(models)),
             ConvertOptions::default(),
         )
+    }
+
+    /// A service that keeps one PDF under a handle and takes what is
+    /// published, as a conversation's files.
+    struct Service {
+        dir: std::path::PathBuf,
+        published: std::sync::Mutex<Vec<(std::path::PathBuf, String)>>,
+    }
+
+    #[async_trait]
+    impl sven_tool_api::files::HandleFetcher for Service {
+        async fn fetch(&self, handle: &str) -> Result<String, String> {
+            if handle != "mcp-file://files/7b1d" {
+                return Err("no such file".into());
+            }
+            std::fs::create_dir_all(self.dir.join(".sven/files")).unwrap();
+            std::fs::write(
+                self.dir.join(".sven/files/7b1d.pdf"),
+                build_pdf(&[FixturePage::Text(PROSE.to_vec())]),
+            )
+            .unwrap();
+            Ok(".sven/files/7b1d.pdf".into())
+        }
+    }
+
+    #[async_trait]
+    impl sven_tool_api::files::FilePublisher for Service {
+        async fn publish(
+            &self,
+            path: &std::path::Path,
+            mime_type: &str,
+        ) -> Result<sven_tool_api::files::ArtifactRef, String> {
+            self.published
+                .lock()
+                .unwrap()
+                .push((path.to_path_buf(), mime_type.to_owned()));
+            Ok(sven_tool_api::files::ArtifactRef {
+                uri: "mcp-file://files/md-1".into(),
+                name: path.file_name().unwrap().to_string_lossy().into_owned(),
+                mime_type: mime_type.to_owned(),
+                size: std::fs::metadata(path).unwrap().len(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_file_of_the_conversation_is_converted_by_handle_and_its_markdown_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = Arc::new(Service {
+            dir: dir.path().to_path_buf(),
+            published: std::sync::Mutex::default(),
+        });
+        let access = DocumentAccess::local(PathScope::confined(dir.path()).unwrap())
+            .with_service(service.clone(), service.clone());
+        let tool =
+            DocumentConvertTool::new(access, Arc::new(Fixed(model())), ConvertOptions::default());
+        let out = tool
+            .execute(&call(
+                json!({"source": "mcp-file://files/7b1d", "ocr": "never"}),
+            ))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        let record: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(record["file"], "mcp-file://files/md-1");
+        assert_eq!(out.artifacts.len(), 1);
+        assert_eq!(out.artifacts[0].mime_type, "text/markdown");
+        let published = service.published.lock().unwrap().clone();
+        assert_eq!(published.len(), 1);
+        // Named after the source, beside nothing the agent chose.
+        assert!(published[0].0.ends_with("7b1d.md"), "{:?}", published[0].0);
+        assert!(!out.content.contains("committee"));
+        // A handle the service does not keep is refused before anything runs.
+        let missing = tool
+            .execute(&call(json!({"source": "mcp-file://files/nope"})))
+            .await;
+        assert!(
+            missing.is_error && missing.content.contains("no such file"),
+            "{}",
+            missing.content
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_destination_the_markdown_is_named_after_its_source() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("in")).unwrap();
+        std::fs::write(
+            dir.path().join("in/report.pdf"),
+            build_pdf(&[FixturePage::Text(PROSE.to_vec())]),
+        )
+        .unwrap();
+        let out = tool(dir.path(), model())
+            .execute(&call(json!({"source": "in/report.pdf", "ocr": "never"})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(dir.path().join("report.md").exists());
+        // No service, nothing published.
+        assert!(out.artifacts.is_empty());
     }
 
     fn call(args: Value) -> ToolCall {
@@ -415,10 +574,12 @@ mod tests {
         )
         .unwrap();
         let t = DocumentConvertTool::new(
-            PathScope::confined(dir.path())
-                .unwrap()
-                .race_free()
-                .unwrap(),
+            DocumentAccess::local(
+                PathScope::confined(dir.path())
+                    .unwrap()
+                    .race_free()
+                    .unwrap(),
+            ),
             Arc::new(Fixed(model())),
             ConvertOptions::default(),
         );

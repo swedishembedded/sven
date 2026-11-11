@@ -43,6 +43,7 @@ use upload::{upload_loop, Upload};
 mod answers;
 mod attachments;
 mod commands;
+mod conversation_files;
 mod describe;
 mod hosted;
 mod opening;
@@ -148,6 +149,7 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
         wide_access: options.wide_access,
         openai_base_url: options.login.openai_base_url,
         token: options.login.token,
+        client: client.clone(),
         uploads: uploads.clone(),
         sessions: options.sessions,
         asks,
@@ -239,6 +241,9 @@ struct SessionContext {
     wide_access: bool,
     openai_base_url: String,
     token: String,
+    /// The server, for the files a session's tools publish to its
+    /// conversation.
+    client: RemoteClient,
     uploads: mpsc::Sender<Upload>,
     /// Where each session's own conversation is kept between turns.
     sessions: SessionStore,
@@ -484,6 +489,11 @@ impl SessionActor {
                 if let Err(e) = self.context.sessions.forget(self.id) {
                     tracing::warn!("session {}: could not forget it: {e:#}", self.id);
                 }
+                hosted::forget_conversation_files(
+                    &self.context.working_dir,
+                    self.context.hosted,
+                    self.id,
+                );
                 println!("[{}] closed", self.short());
             }
         }
@@ -844,9 +854,18 @@ mod tests {
         let mut names = handle.tool_registry().names();
         runtime.abort();
         names.sort();
+        // The document tools read documents only in confined worker
+        // processes (`ocr.isolate`), never in the host.
         assert_eq!(
             names,
-            ["skill", "task", "web_fetch", "web_search"],
+            [
+                "document_convert",
+                "document_locate",
+                "skill",
+                "task",
+                "web_fetch",
+                "web_search"
+            ],
             "every hosted tool is a real one, and nothing else is offered"
         );
     }
@@ -883,6 +902,8 @@ mod tests {
         assert_eq!(
             names,
             [
+                "document_convert",
+                "document_locate",
                 "model_schema",
                 "models",
                 "run_model",
@@ -987,10 +1008,10 @@ mod tests {
     /// path, git or tool index, which are the site's internals.
     #[test]
     fn a_hosted_session_is_prompted_with_its_configured_prompt_alone() {
-        let dir = std::path::Path::new("hosted/acct/conv/work");
+        let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.agent.system_prompt = Some("You are a helpful assistant.".into());
-        let runtime = session_runtime(&config, dir, true, false).unwrap();
+        let runtime = session_runtime(&config, dir.path(), true, false).unwrap();
         assert!(
             runtime.no_system,
             "the built-in prompt and its context sections are left out"
@@ -1003,8 +1024,8 @@ mod tests {
 
     #[test]
     fn a_hosted_session_without_a_configured_prompt_gets_one_that_names_no_path() {
-        let dir = std::path::Path::new("hosted/acct/conv/work");
-        let runtime = session_runtime(&Config::default(), dir, true, false).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = session_runtime(&Config::default(), dir.path(), true, false).unwrap();
         assert!(runtime.no_system);
         let prompt = runtime
             .system_prompt_override
@@ -1086,6 +1107,7 @@ mod tests {
             wide_access: true,
             openai_base_url: String::new(),
             token: String::new(),
+            client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),
             uploads,
             sessions: SessionStore::new(dir.join("kept")),
             asks,
@@ -1438,6 +1460,7 @@ mod tests {
             wide_access: true,
             openai_base_url: String::new(),
             token: String::new(),
+            client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),
             uploads,
             sessions: SessionStore::new(dir.path().join("kept")),
             asks,
@@ -1480,6 +1503,7 @@ mod tests {
             wide_access: true,
             openai_base_url: String::new(),
             token: String::new(),
+            client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),
             uploads,
             sessions: SessionStore::new(dir.path().join("kept")),
             asks,
@@ -1581,6 +1605,7 @@ mod tests {
             wide_access: true,
             openai_base_url: String::new(),
             token: String::new(),
+            client: crate::client::RemoteClient::new("http://127.0.0.1:9/api", "token").unwrap(),
             uploads,
             sessions: SessionStore::new(dir.join("kept")),
             asks,

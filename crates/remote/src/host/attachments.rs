@@ -193,7 +193,7 @@ impl SessionActor {
         };
         Ok(attach(
             &mcp,
-            &self.context.working_dir,
+            &self.conversation_dir()?,
             text,
             attached,
             opts.as_ref(),

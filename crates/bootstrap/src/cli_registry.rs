@@ -43,11 +43,11 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     // ── PDF to Markdown ───────────────────────────────────────────────────────
     #[cfg(feature = "document")]
     reg.register_with_display(DocumentLocateTool::new(
-        sven_tool_api::PathScope::unconfined(),
+        sven_tools_document::DocumentAccess::local(sven_tool_api::PathScope::unconfined()),
     ));
     #[cfg(feature = "document")]
     reg.register_with_display(DocumentConvertTool::new(
-        sven_tool_api::PathScope::unconfined(),
+        sven_tools_document::DocumentAccess::local(sven_tool_api::PathScope::unconfined()),
         Arc::new(crate::ConfigOcrModels::new(cfg.clone())),
         crate::convert_options(&cfg.ocr),
     ));

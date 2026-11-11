@@ -106,6 +106,17 @@ pub struct ToolsConfig {
 }
 
 impl ToolsConfig {
+    /// Whether a session may be offered tool `name`: not disabled, and in
+    /// `only` when there is one.
+    #[must_use]
+    pub fn offers(&self, name: &str) -> bool {
+        !self.disabled.iter().any(|t| t == name)
+            && self
+                .only
+                .as_ref()
+                .is_none_or(|only| only.iter().any(|t| t == name))
+    }
+
     /// The keys of the `tools:` section.
     #[must_use]
     pub fn schema() -> Schema {
