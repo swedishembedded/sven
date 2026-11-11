@@ -67,6 +67,9 @@ pub struct PathScope {
     /// Names refused as any component beneath the root (see
     /// [`PathScope::denying_names`]).
     denied_names: Arc<Vec<std::ffi::OsString>>,
+    /// Canonical directories beneath a denied name that are reachable all
+    /// the same (see [`PathScope::allowing_beneath`]).
+    allowed: Arc<Vec<PathBuf>>,
     /// The root held open for race-free lookups (see [`PathScope::race_free`]).
     anchor: Anchor,
 }
@@ -240,6 +243,7 @@ impl PathScope {
             root: Some(Arc::new(canonical)),
             denied: Arc::default(),
             denied_names: Arc::default(),
+            allowed: Arc::default(),
             anchor: Anchor::default(),
         })
     }
@@ -321,6 +325,29 @@ impl PathScope {
         self
     }
 
+    /// This scope, reaching the absolute directory `location` (and what is
+    /// beneath it) although a denied name leads to it: where a host keeps the
+    /// conversation's own files below its denied configuration directory
+    /// (`.sven/attachments`). Denied names below `location` stay denied.
+    /// Ignored when unconfined, relative, or outside the root.
+    #[must_use]
+    pub fn allowing_beneath(mut self, location: impl AsRef<Path>) -> Self {
+        let location = location.as_ref();
+        if !location.is_absolute() {
+            return self;
+        }
+        if let Ok(resolved) = follow_existing_prefix(&normalise(location)) {
+            if self
+                .root
+                .as_deref()
+                .is_some_and(|root| resolved.starts_with(root.as_path()))
+            {
+                Arc::make_mut(&mut self.allowed).push(resolved);
+            }
+        }
+        self
+    }
+
     /// The canonical root, or `None` when unconfined.
     #[must_use]
     pub fn root(&self) -> Option<&Path> {
@@ -359,7 +386,15 @@ impl PathScope {
         root: &Path,
         resolved: PathBuf,
     ) -> Result<PathBuf, PathScopeError> {
-        let named = resolved.strip_prefix(root).is_ok_and(|inside| {
+        // Names are judged below the deepest allowed directory the path is
+        // in, else below the root.
+        let base = self
+            .allowed
+            .iter()
+            .filter(|dir| resolved.starts_with(dir))
+            .max_by_key(|dir| dir.components().count())
+            .map_or(root, PathBuf::as_path);
+        let named = resolved.strip_prefix(base).is_ok_and(|inside| {
             inside.components().any(|part| {
                 self.denied_names
                     .iter()
@@ -664,6 +699,36 @@ mod tests {
         }
         for path in [".gitignore", "sven.yaml.md", "notes/.git-tips"] {
             assert_eq!(s.resolve(path).unwrap(), canonical.join(path), "{path}");
+        }
+    }
+
+    /// A directory a host keeps the conversation's own files in, below a
+    /// denied name (`.sven/attachments`), is reachable; what else carries
+    /// the name is not, and neither is a denied name below that directory.
+    #[test]
+    fn a_directory_allowed_beneath_a_denied_name_opens_that_directory_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join(".sven/attachments/f1")).unwrap();
+        let canonical = root.canonicalize().unwrap();
+        let s = scope(&root)
+            .denying_names([".sven", ".git"])
+            .allowing_beneath(root.join(".sven/attachments"));
+        assert_eq!(
+            s.resolve(".sven/attachments/f1/invoice.pdf").unwrap(),
+            canonical.join(".sven/attachments/f1/invoice.pdf")
+        );
+        for path in [
+            ".sven/config.yaml",
+            ".sven/attachments/../config.yaml",
+            ".sven/attachments/f1/.git/hooks/pre-commit",
+            ".sven/attachments/f1/.sven/config.yaml",
+            "other/.sven/attachments/x.pdf",
+        ] {
+            assert!(
+                matches!(s.resolve(path), Err(PathScopeError::Denied { .. })),
+                "{path}"
+            );
         }
     }
 

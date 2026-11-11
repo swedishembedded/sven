@@ -76,7 +76,10 @@ pub(super) fn session_runtime(
     // path-taking tools are held to their own conversation's directory as
     // well. A container serving one conversation is its own boundary.
     if shared_workdir || (!hosted && !wide_access) {
-        runtime.path_scope = confined_scope(working_dir, &protected_locations())?;
+        runtime.path_scope = conversation_files(config, working_dir).into_iter().fold(
+            confined_scope(working_dir, &protected_locations())?,
+            PathScope::allowing_beneath,
+        );
     }
     if hosted {
         runtime.no_system = true;
@@ -166,6 +169,22 @@ fn confined_scope(working_dir: &Path, protected: &[PathBuf]) -> anyhow::Result<P
     Ok(protected
         .iter()
         .fold(scope, |scope, location| scope.denying(location)))
+}
+
+/// The directories sven itself fills with the conversation's files, below
+/// its denied configuration directory: the person's attachments, files
+/// fetched by handle, and what models made. A session's tools reach them;
+/// nothing else of `.sven` (and no denied name below them).
+fn conversation_files(config: &Config, working_dir: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![
+        working_dir.join(super::attachments::DIR),
+        working_dir.join(sven_tools_media::FETCHED_DIR),
+    ];
+    let media = &config.tools.media.dir;
+    if media.is_relative() {
+        dirs.push(working_dir.join(media));
+    }
+    dirs
 }
 
 /// What a remotely driven session on a person's computer may reach unless
@@ -360,6 +379,27 @@ mod tests {
         assert!(!dir_b.exists() && dir_a.exists());
         forget_conversation_files(work.path(), false, a);
         assert!(dir_a.exists(), "a person's own directory is never removed");
+    }
+
+    /// The files sven keeps for the conversation below `.sven` are its
+    /// tools' to read: the attachment the person's message names by path
+    /// opens; sven's configuration beside it does not.
+    #[test]
+    fn a_session_reads_its_attachments_but_never_sven_s_configuration() {
+        let work = tempfile::tempdir().unwrap();
+        let scope = session_runtime(&Config::default(), work.path(), true, false, true)
+            .unwrap()
+            .path_scope;
+        for path in [
+            ".sven/attachments/f1/invoice.pdf",
+            ".sven/files/7b1d.pdf",
+            ".sven/media/page-1.png",
+        ] {
+            assert!(scope.resolve(path).is_ok(), "{path}");
+        }
+        for path in [".sven/config.yaml", ".sven/attachments/f1/.git/config"] {
+            assert!(scope.resolve(path).is_err(), "{path}");
+        }
     }
 
     #[test]

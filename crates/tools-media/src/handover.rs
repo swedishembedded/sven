@@ -30,6 +30,9 @@ const RASTER: [(&str, &str); 5] = [
     ("webp", "image/webp"),
 ];
 
+/// Where files fetched by handle are saved, relative to the working directory.
+pub const FETCHED_DIR: &str = ".sven/files";
+
 /// The largest file fetched into the working directory by handle.
 const MAX_FETCHED_BYTES: u64 = 50 * 1024 * 1024;
 
@@ -70,7 +73,7 @@ pub async fn fetch_to(
         "image/bmp" => "bmp",
         _ => "bin",
     };
-    let relative = format!(".sven/files/{id}.{extension}");
+    let relative = format!("{FETCHED_DIR}/{id}.{extension}");
     let target = super::file_to_write(workdir, &relative, "path")?;
     std::fs::write(&target, bytes).map_err(|e| format!("saving {relative}: {e}"))?;
     Ok(relative)

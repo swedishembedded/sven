@@ -50,7 +50,7 @@ pub use held::{remember_held, HELD};
 pub mod fake;
 
 pub use generate::{generate, Generated};
-pub use handover::{fetch_to, hand_over, Handover};
+pub use handover::{fetch_to, hand_over, Handover, FETCHED_DIR};
 pub use run_model::RunModelTool;
 
 use std::path::{Path, PathBuf};
