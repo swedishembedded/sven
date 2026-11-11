@@ -96,7 +96,16 @@ message is `[{type: image_url, image_url: {url: data:image/png;base64,...}},
   it again, is not built.
 - Multi-frame TIFF scans are refused (`PictureBackend` reads one frame);
   reading every frame as a page is the next source format.
-- **No live run yet.** The OpenRouter key on hand had expired (2026-11-11):
-  run `sven document convert --ocr always` on a scanned page with an
-  OpenRouter vision model and record its CER and cost here.
+- **Live runs, 2026-11-11** (`sven document convert` against `brain serve` on
+  one Tesla P40, MiniCPM-V as `brain/minicpmv`): a receipt as PNG, as a
+  rotated 80%-quality JPEG and as an image-only scanned PDF each became a
+  Markdown table with every amount and the total right (7.8 s and 8.3 s a
+  page once the model was resident; the first, cold, 179 s); the shop name
+  and receipt number at the top were left out by the model. DeepSeek-VL-7B
+  declined the page ("I'm sorry ..."), which is now a failed page and not
+  its text. Not yet run against OpenRouter: the key on hand had expired.
+- **An empty page is read as invented text.** A flat grey page (no ink a
+  blank check counts) was answered with a paragraph the model made up; with
+  no text layer there is nothing to check it against. A cheap ink measure
+  before the request, or a second reading compared, would catch it.
 
