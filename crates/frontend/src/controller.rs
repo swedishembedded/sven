@@ -213,7 +213,7 @@ pub enum RequestError {
     Unsupported {
         /// The machine the session runs.
         machine: String,
-        /// What was asked, as "cannot <request>" reads.
+        /// What was asked, as "cannot `<request>`" reads.
         request: &'static str,
     },
     /// The kernel's event queue is closed: the session is over.

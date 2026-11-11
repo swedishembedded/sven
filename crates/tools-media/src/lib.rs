@@ -15,7 +15,7 @@
 //! - `model_schema` says everything needed to run one: its operations, the
 //!   parameters each takes (enums and ranges), its voices and prices.
 //! - `run_model` runs one once. Inputs and outputs are files by handle
-//!   ([`invocation`]): in a conversation of the sven service a model's output
+//!   (the `invocation` module): in a conversation of the sven service a model's output
 //!   stays there and is shown to the person, and the next model reads it by
 //!   the same handle; elsewhere outputs are fetched into the working
 //!   directory. Video is a durable job ([`generate`]) written to a file.

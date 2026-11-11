@@ -122,7 +122,7 @@ fn confined_scope(working_dir: &Path, protected: &[PathBuf]) -> anyhow::Result<P
 /// reaches only the public internet (never this machine's network or a cloud
 /// metadata service), and gdb runs no host program the model spells out.
 /// Nor can the file tools leave behind what runs later outside the directory
-/// (git hooks, a sven configuration: [`protected_names`]).
+/// (git hooks, a sven configuration: `protected_names`).
 /// The `shell` tool is not confined to the directory; `tools.only` and
 /// `tools.disabled` remove it.
 pub fn restrict_to_working_dir(config: &mut Config) {

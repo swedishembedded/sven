@@ -19,7 +19,7 @@ pub enum DocumentCommands {
     ///
     ///   sven document convert paper.pdf paper.md
     ///   sven document convert scan.pdf scan.md --model "deepseek ocr v2" --ocr always
-    Convert(ConvertArgs),
+    Convert(Box<ConvertArgs>),
 
     /// Character error rate of a conversion against a reference text.
     ///
