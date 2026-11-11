@@ -130,6 +130,80 @@ fn image_urls(inputs: &[Value]) -> Result<Vec<String>, String> {
         .collect()
 }
 
+/// The chat parameters a provider's own `/chat/completions` is sent, as
+/// `run_model` names them; any other is refused, never dropped.
+const CHAT_PARAMS: [&str; 9] = [
+    "system",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "seed",
+    "stop",
+    "response_format",
+    "reasoning",
+    "pdf_engine",
+];
+
+/// A chat run as the provider's `/chat/completions` request: the prompt with
+/// each input as its part (an image, a PDF, a sound, a video), the system
+/// message, and every parameter given.
+fn chat_request(
+    body: &Value,
+    params: &serde_json::Map<String, Value>,
+    inputs: &[Value],
+) -> Result<Value, String> {
+    if let Some(unknown) = params.keys().find(|k| !CHAT_PARAMS.contains(&k.as_str())) {
+        return Err(format!(
+            "a chat run takes {}, not `{unknown}`",
+            CHAT_PARAMS.join(", ")
+        ));
+    }
+    let mut content = vec![json!({"type": "text", "text": body["prompt"]})];
+    for input in inputs {
+        let (Some(data), Some(mime)) = (input["data"].as_str(), input["mimeType"].as_str()) else {
+            return Err(
+                "a provider of its own reads files of the working directory, by path, not handles"
+                    .to_owned(),
+            );
+        };
+        let name = input["name"].as_str().unwrap_or("input");
+        content.push(match mime {
+            m if m.starts_with("image/") => json!({"type": "image_url", "image_url": {"url": format!("data:{mime};base64,{data}")}}),
+            "application/pdf" => json!({"type": "file", "file": {"filename": name, "file_data": format!("data:{mime};base64,{data}")}}),
+            m if m.starts_with("video/") => json!({"type": "video_url", "video_url": {"url": format!("data:{mime};base64,{data}")}}),
+            "audio/wav" => json!({"type": "input_audio", "input_audio": {"data": data, "format": "wav"}}),
+            "audio/mpeg" => json!({"type": "input_audio", "input_audio": {"data": data, "format": "mp3"}}),
+            "audio/flac" => json!({"type": "input_audio", "input_audio": {"data": data, "format": "flac"}}),
+            "audio/ogg" => json!({"type": "input_audio", "input_audio": {"data": data, "format": "ogg"}}),
+            "audio/mp4" => json!({"type": "input_audio", "input_audio": {"data": data, "format": "m4a"}}),
+            _ => return Err(format!("{name} ({mime}) is not an image, a PDF, a sound or a video a chat model reads")),
+        });
+    }
+    let mut messages = Vec::new();
+    if let Some(system) = params.get("system") {
+        messages.push(json!({"role": "system", "content": system}));
+    }
+    messages.push(json!({"role": "user", "content": content}));
+    let mut request = json!({"model": body["model"], "messages": messages});
+    for key in [
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "seed",
+        "stop",
+        "response_format",
+        "reasoning",
+    ] {
+        if let Some(value) = params.get(key) {
+            request[key] = value.clone();
+        }
+    }
+    if let Some(engine) = params.get("pdf_engine") {
+        request["plugins"] = json!([{"id": "file-parser", "pdf": {"engine": engine}}]);
+    }
+    Ok(request)
+}
+
 /// What one direct call made: its text, and its files as bytes with type
 /// and extension.
 struct Made {
@@ -192,12 +266,7 @@ async fn call(endpoint: &MediaEndpoint, body: &Value) -> Result<Made, String> {
             Ok(Made { text: None, files: vec![file], finish_reason: None })
         }
         "chat" => {
-            let mut content = vec![json!({"type": "text", "text": body["prompt"]})];
-            content.extend(image_urls(&inputs)?.into_iter().map(|url| json!({"type": "image_url", "image_url": {"url": url}})));
-            let mut request = json!({"model": body["model"], "messages": [{"role": "user", "content": content}]});
-            if let Some(max) = params.get("max_tokens") {
-                request["max_tokens"] = max.clone();
-            }
+            let request = chat_request(body, &params, &inputs)?;
             let (bytes, _) = post(endpoint, "/chat/completions", &request).await?;
             let answer = json_of(&bytes)?;
             Ok(Made {
@@ -307,6 +376,50 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chat_run_sends_every_parameter_and_each_input_as_its_part() {
+        let body = json!({"model": "m", "prompt": "read it"});
+        let params = json!({"system": "be brief", "temperature": 0.2, "top_p": 0.9, "seed": 7, "max_tokens": 50,
+                            "response_format": {"type": "json_object"}, "reasoning": {"effort": "low"}, "pdf_engine": "pdf-text"});
+        let inputs = [
+            json!({"data": "JVBERi0=", "mimeType": "application/pdf", "name": "a.pdf"}),
+            json!({"data": "UklGRg==", "mimeType": "audio/wav", "name": "a.wav"}),
+        ];
+        let request = chat_request(&body, params.as_object().unwrap(), &inputs).unwrap();
+        assert_eq!(
+            request["messages"][0],
+            json!({"role": "system", "content": "be brief"})
+        );
+        assert_eq!(request["messages"][1]["content"][1]["type"], "file");
+        assert_eq!(
+            request["messages"][1]["content"][2],
+            json!({"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}})
+        );
+        for key in [
+            "temperature",
+            "top_p",
+            "seed",
+            "max_tokens",
+            "response_format",
+            "reasoning",
+        ] {
+            assert_eq!(request[key], params[key], "{key}");
+        }
+        assert_eq!(
+            request["plugins"],
+            json!([{"id": "file-parser", "pdf": {"engine": "pdf-text"}}])
+        );
+        // A parameter the provider's chat would not take is refused, not dropped.
+        let unknown = json!({"frequency": 1});
+        assert!(chat_request(&body, unknown.as_object().unwrap(), &[])
+            .unwrap_err()
+            .contains("`frequency`"));
+        let zip = [json!({"data": "UEs=", "mimeType": "application/zip", "name": "a.zip"})];
+        assert!(chat_request(&body, &serde_json::Map::new(), &zip)
+            .unwrap_err()
+            .contains("a.zip"));
+    }
 
     #[test]
     fn raw_speech_becomes_a_wav_that_plays() {
