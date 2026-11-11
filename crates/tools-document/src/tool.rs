@@ -21,6 +21,7 @@ use sven_document::{manifest_path, ConvertOptions, Converter, DocumentError, Ocr
 use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
+use sven_tool_api::ToolEvent;
 use sven_vocab::AgentMode;
 
 use crate::access::DocumentAccess;
@@ -41,6 +42,8 @@ pub struct DocumentConvertTool {
     /// Whether the session can run commands, so offering installed
     /// command-line converters when no OCR model exists makes sense.
     commands: bool,
+    /// Where it says how far a conversion is, and at most how often.
+    progress: Option<(tokio::sync::mpsc::Sender<ToolEvent>, std::time::Duration)>,
 }
 
 impl DocumentConvertTool {
@@ -54,7 +57,21 @@ impl DocumentConvertTool {
             models,
             defaults,
             commands: true,
+            progress: None,
         }
+    }
+
+    /// Reports how far each conversion is on `events`, at most every
+    /// `every`: a long conversion is then seen working (and its answer kept
+    /// open) rather than silent for an hour.
+    #[must_use]
+    pub fn with_progress(
+        mut self,
+        events: tokio::sync::mpsc::Sender<ToolEvent>,
+        every: std::time::Duration,
+    ) -> Self {
+        self.progress = Some((events, every));
+        self
     }
 
     /// For a session that cannot run commands: no command-line converter
@@ -208,7 +225,11 @@ impl Tool for DocumentConvertTool {
             );
         }
         drop(data);
-        let converter = Converter::new(self.access.backend(), providers);
+        let mut converter = Converter::new(self.access.backend(), providers);
+        if let Some((events, every)) = &self.progress {
+            converter =
+                converter.with_progress(progress_reporter(events.clone(), *every, &call.id));
+        }
         let converted = converter
             .convert(&private_source, &private_output, &options)
             .await;
@@ -272,6 +293,29 @@ impl Tool for DocumentConvertTool {
         ToolOutput::ok(&call.id, self.access.shown_in(&record.to_string()))
             .with_artifacts(published)
     }
+}
+
+/// A converter's per-page callback that says "page N of M" on `events` for
+/// call `call_id`, at most every `every`, and always for the last page.
+fn progress_reporter(
+    events: tokio::sync::mpsc::Sender<ToolEvent>,
+    every: std::time::Duration,
+    call_id: &str,
+) -> sven_document::Progress {
+    let call_id = call_id.to_owned();
+    let last = std::sync::Mutex::new(None::<std::time::Instant>);
+    Arc::new(move |done, total, _page| {
+        let mut last = last.lock().unwrap();
+        let due = last.is_none_or(|at| at.elapsed() >= every) || done == total;
+        if due {
+            *last = Some(std::time::Instant::now());
+            // A full channel drops a report: the next one says more.
+            let _ = events.try_send(ToolEvent::Progress {
+                call_id: call_id.clone(),
+                message: format!("page {done} of {total}"),
+            });
+        }
+    })
 }
 
 /// The control record: counts, hashes and paths, never page text.
@@ -520,6 +564,35 @@ mod tests {
             missing.is_error && missing.content.contains("no such file"),
             "{}",
             missing.content
+        );
+    }
+
+    #[tokio::test]
+    async fn a_conversion_reports_how_far_it_is_while_it_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.pdf"),
+            build_pdf(&[
+                FixturePage::Text(PROSE.to_vec()),
+                FixturePage::Text(PROSE.to_vec()),
+            ]),
+        )
+        .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let out = tool(dir.path(), model())
+            .with_progress(tx, std::time::Duration::ZERO)
+            .execute(&call(json!({"source": "a.pdf", "ocr": "never"})))
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        let mut said = Vec::new();
+        while let Ok(sven_tool_api::ToolEvent::Progress { call_id, message }) = rx.try_recv() {
+            assert_eq!(call_id, "c1");
+            said.push(message);
+        }
+        assert_eq!(
+            said.last().map(String::as_str),
+            Some("page 2 of 2"),
+            "{said:?}"
         );
     }
 

@@ -219,7 +219,9 @@ against ground truth.
 
 A conversion may run for hours on a document of many pages: the tool declares
 that bound (six hours) to the executor, whose watchdog otherwise ends a tool
-after about ten minutes. Each model request keeps its own deadline, and a
+after about ten minutes, and says how far it is ("page 40 of 480") every
+30 seconds, which a server shows on the call and takes as the answer still
+being written. Each model request keeps its own deadline, and a
 conversion that is still ended resumes from its manifest on the next call.
 
 

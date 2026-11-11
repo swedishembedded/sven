@@ -578,6 +578,11 @@ fn build_profile_subagent(
     reg
 }
 
+/// How often a document conversion says how far it is: well inside the
+/// silence after which a server ends an answer nothing writes to.
+#[cfg(feature = "document")]
+const DOCUMENT_PROGRESS_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// What [`register_base_tools`] registers the shared tool set from.
 struct BaseTools<'a> {
     cfg: &'a Config,
@@ -651,6 +656,9 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
                 if !cfg.tools.offers("shell") {
                     convert = convert.without_commands();
                 }
+                // How far it is, now and then: a long conversion is seen
+                // working, and a server keeps its answer open.
+                convert = convert.with_progress(tool_event_tx.clone(), DOCUMENT_PROGRESS_EVERY);
                 reg.register_with_display(convert);
             }
             // Documents that must be read confined are not read at all
