@@ -229,13 +229,20 @@ impl Tool for DocumentConvertTool {
                 return ToolOutput::err(
                     &call.id,
                     failure_text(
-                        &e.to_string()
-                            .replace(&work.path().display().to_string(), "<private copy>"),
+                        &self.access.shown_in(
+                            &e.to_string()
+                                .replace(&work.path().display().to_string(), "<private copy>"),
+                        ),
                     ),
                 )
             }
         };
         let mut record = record(&report, &spec, unavailable.as_deref());
+        // Paths as the agent names them: relative to where the session
+        // works, never where that is on the machine.
+        for (key, path) in [("output", &report.output), ("manifest", &report.manifest)] {
+            record[key] = json!(self.access.shown(path));
+        }
         // In a conversation of a service, the Markdown is its file: the
         // person sees it, and a model reads it by handle.
         let published = match self.access.publish(&report.output, "text/markdown").await {
@@ -251,7 +258,8 @@ impl Tool for DocumentConvertTool {
             }
             None => Vec::new(),
         };
-        ToolOutput::ok(&call.id, record.to_string()).with_artifacts(published)
+        ToolOutput::ok(&call.id, self.access.shown_in(&record.to_string()))
+            .with_artifacts(published)
     }
 }
 
@@ -520,6 +528,17 @@ mod tests {
         assert!(dir.path().join("report.md").exists());
         // No service, nothing published.
         assert!(out.artifacts.is_empty());
+        // Where the session works is not said: a hosted host's directory
+        // tells how the server lays out every account's.
+        let record: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(record["output"], "report.md");
+        assert_eq!(record["manifest"], "report.md.manifest.json");
+        let root = dir.path().canonicalize().unwrap();
+        assert!(
+            !out.content.contains(&*root.to_string_lossy()),
+            "{}",
+            out.content
+        );
     }
 
     fn call(args: Value) -> ToolCall {
@@ -587,7 +606,7 @@ mod tests {
         let out = t.execute(&call(args.clone())).await;
         assert!(!out.is_error, "{}", out.content);
         let record: Value = serde_json::from_str(&out.content).unwrap();
-        assert_eq!(record["output"], json!(dir.path().join("out/a.md")));
+        assert_eq!(record["output"], json!("out/a.md"));
         assert!(std::fs::read_to_string(dir.path().join("out/a.md"))
             .unwrap()
             .contains("committee"));
@@ -758,6 +777,13 @@ mod tests {
         assert!(out.is_error);
         assert!(
             out.content.contains("cannot read") && out.content.contains("then stop"),
+            "{}",
+            out.content
+        );
+        // Named as the agent named it, not where the session works.
+        let root = dir.path().canonicalize().unwrap();
+        assert!(
+            !out.content.contains(&*root.to_string_lossy()),
             "{}",
             out.content
         );

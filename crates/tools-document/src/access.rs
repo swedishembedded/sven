@@ -61,6 +61,38 @@ impl DocumentAccess {
         &self.scope
     }
 
+    /// `text` (an error, a warning) with every mention of the scope's root
+    /// made relative, as [`Self::shown`] does for one path.
+    pub(crate) fn shown_in(&self, text: &str) -> String {
+        let Some(root) = self.scope.root() else {
+            return text.to_owned();
+        };
+        let mut out = text.to_owned();
+        for root in [root.canonicalize().ok(), Some(root.to_path_buf())]
+            .into_iter()
+            .flatten()
+        {
+            let root = root.display().to_string();
+            out = out.replace(&format!("{root}/"), "").replace(&root, ".");
+        }
+        out
+    }
+
+    /// `path` as the agent and the person name it: relative to the scope's
+    /// root when it is below it, as it is otherwise.
+    pub(crate) fn shown(&self, path: &std::path::Path) -> String {
+        let below = self.scope.root().and_then(|root| {
+            let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+            path.strip_prefix(&root)
+                .ok()
+                .map(std::path::Path::to_path_buf)
+        });
+        below
+            .unwrap_or_else(|| path.to_path_buf())
+            .display()
+            .to_string()
+    }
+
     /// `source` as a path of the scope to read (through [`crate::scoped`]):
     /// itself, or where a handle of the conversation was fetched to.
     pub(crate) async fn source(&self, call: &ToolCall, source: &str) -> Result<String, ToolOutput> {
