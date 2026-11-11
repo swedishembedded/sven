@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn an_image_run_sends_one_provider_s_options_to_that_provider_only() {
-        let body = json!({"model": "openai/gpt-image-2", "prompt": "a whale"});
+        let body = json!({"model": "openai/gpt-image-2", "prompt": "a fox"});
         let params =
             json!({"aspect_ratio": "1:1", "provider_options": {"openai": {"moderation": "low"}}});
         let request = image_request(&body, params.as_object().unwrap().clone()).unwrap();
