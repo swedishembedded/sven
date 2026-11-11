@@ -774,3 +774,86 @@ async fn a_video_for_a_conversation_is_its_file_too() {
                 > 0
     );
 }
+
+#[tokio::test]
+async fn a_chat_answer_kept_as_a_file_is_answered_by_handle_and_its_text_stays_out_of_the_session()
+{
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tool = invoking(&fake, dir.path(), Some("conv-1"));
+    let page = handle_of(7);
+    let read = call(&tool, "call_1", json!({"model": "vision/a", "operation": "chat", "prompt": "Transcribe this page to Markdown", "inputs": [page], "keep_as": "markdown", "name": "page-3"})).await;
+    assert!(!read.is_error, "{}", read.content);
+    let ran = fake.invoked.lock().unwrap().clone();
+    assert_eq!(
+        ran[0].body["delivery"],
+        json!({"mode": "artifact", "mimeType": "text/markdown", "name": "page-3"})
+    );
+    assert_eq!(read.artifacts.len(), 1);
+    assert_eq!(read.artifacts[0].mime_type, "text/markdown");
+    assert!(
+        read.content.contains(&read.artifacts[0].uri),
+        "{}",
+        read.content
+    );
+    assert!(
+        !read.content.contains("sees a red car"),
+        "the text is not answered: {}",
+        read.content
+    );
+    assert!(!read
+        .parts
+        .iter()
+        .any(|p| matches!(p, ToolOutputPart::Image(_))));
+
+    // An answer cut off at the model's output limit says so.
+    let cut = call(&tool, "call_2", json!({"model": "vision/a", "operation": "chat", "prompt": "#cutoff a dense page", "keep_as": "markdown"})).await;
+    assert!(cut.content.contains("cut off"), "{}", cut.content);
+
+    // Only a chat answer is kept this way, and only as one of three kinds.
+    for (args, why) in [
+        (
+            json!({"model": "m", "operation": "image", "prompt": "x", "keep_as": "markdown"}),
+            "chat",
+        ),
+        (
+            json!({"model": "m", "operation": "chat", "prompt": "x", "keep_as": "pdf"}),
+            "markdown, json or text",
+        ),
+    ] {
+        let refused = call(&tool, "call_x", args).await;
+        assert!(
+            refused.is_error && refused.content.contains(why),
+            "{}",
+            refused.content
+        );
+    }
+    assert_eq!(
+        fake.invoked.lock().unwrap().len(),
+        2,
+        "nothing refused is sent"
+    );
+}
+
+#[tokio::test]
+async fn a_provider_of_its_own_keeps_a_chat_answer_as_a_file_here() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tool = RunModelTool::new(
+        endpoint(&fake),
+        MediaConfig {
+            provider: Some("openrouter".into()),
+            ..MediaConfig::default()
+        },
+        dir.path().to_path_buf(),
+    );
+    let read = call(&tool, "c1", json!({"model": "vision/a", "operation": "chat", "prompt": "Extract every field as JSON", "keep_as": "text", "output": "out/fields.txt"})).await;
+    assert!(!read.is_error, "{}", read.content);
+    assert_eq!(read.artifacts[0].uri, "out/fields.txt");
+    assert_eq!(read.artifacts[0].mime_type, "text/plain");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("out/fields.txt")).unwrap(),
+        "vision/a sees a red car"
+    );
+    assert!(!read.content.contains("sees a red car"), "{}", read.content);
+}

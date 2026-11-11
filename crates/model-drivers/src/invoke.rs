@@ -108,6 +108,11 @@ pub struct Invoked {
     pub outputs: Vec<MadeFile>,
     /// What it was charged, in micro-USD, when the service says.
     pub cost_micro_usd: Option<u64>,
+    /// A chat's: why the model stopped; `length` is a cut-off at its output
+    /// limit.
+    pub finish_reason: Option<String>,
+    /// What the service says the caller should know about the answer.
+    pub warnings: Vec<String>,
 }
 
 /// A service's invocation API at its OpenAI-style base URL (ending in `/v1`).
@@ -334,6 +339,11 @@ impl InvocationClient {
             cost_micro_usd: answer["usage"]["cost_micro_usd"]
                 .as_str()
                 .and_then(|c| c.parse().ok()),
+            finish_reason: text(&answer["finish_reason"], 40),
+            warnings: answer["warnings"]
+                .as_array()
+                .map(|w| w.iter().take(8).filter_map(|w| text(w, 300)).collect())
+                .unwrap_or_default(),
         })
     }
 

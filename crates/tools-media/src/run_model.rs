@@ -134,7 +134,7 @@ impl RunModelTool {
 }
 
 /// The arguments `run_model` takes.
-const RUN_ARGUMENTS: [&str; 7] = [
+const RUN_ARGUMENTS: [&str; 8] = [
     "model",
     "operation",
     "prompt",
@@ -142,6 +142,7 @@ const RUN_ARGUMENTS: [&str; 7] = [
     "params",
     "output",
     "name",
+    "keep_as",
 ];
 
 #[async_trait]
@@ -165,7 +166,8 @@ impl Tool for RunModelTool {
                 "inputs": { "type": "array", "items": { "type": "string" }, "description": "Files it reads: handles (mcp-file://files/...) or paths in the working directory" },
                 "params": { "type": "object", "description": "The operation's parameters, as the model lists them" },
                 "output": { "type": "string", "description": "Also save the first file at this path in the working directory" },
-                "name": { "type": "string", "description": "A short name for what it makes, e.g. sven-slap-1; the file's extension is added" }
+                "name": { "type": "string", "description": "A short name for what it makes, e.g. sven-slap-1; the file's extension is added" },
+                "keep_as": { "type": "string", "enum": ["markdown", "json", "text"], "description": "chat only: keep the answer as a file and get its handle, not its text (a page's OCR, extracted fields)" }
             },
             "required": ["model", "operation", "prompt"],
             "additionalProperties": false

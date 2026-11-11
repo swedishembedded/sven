@@ -368,6 +368,11 @@ again in another call is another picture.
 | `inputs` | Files it reads: handles from the conversation or an earlier call, or paths in the working directory (sent inline, at most 15 MiB each) |
 | `params` | The operation's parameters by name, as `model_schema` lists them (e.g. `aspect_ratio`, `resolution`, `voice`, `format`) |
 | `output` | Also save the first file at this path in the working directory |
+| `name` | A short name for what it makes; the file's extension is added |
+| `keep_as` | `chat` only: `markdown`, `json` or `text` keeps the answer as a file (a page's OCR, extracted fields) and answers its handle or path instead of its text, so the text never passes through the session's own model unless the agent reads it. JSON is kept as JSON only when it parses, otherwise as text with a note |
+
+A `chat` answer cut off at the model's output limit says so, so the agent can
+ask for less at once rather than trust a truncated page.
 
 **Video** is a durable job written to a file. Its `params` are the video
 API's: `duration` (seconds), `resolution`, `aspect_ratio`, `generate_audio`,

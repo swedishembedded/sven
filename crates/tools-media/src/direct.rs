@@ -135,6 +135,7 @@ fn image_urls(inputs: &[Value]) -> Result<Vec<String>, String> {
 struct Made {
     text: Option<String>,
     files: Vec<(Vec<u8>, &'static str, &'static str)>,
+    finish_reason: Option<String>,
 }
 
 async fn call(endpoint: &MediaEndpoint, body: &Value) -> Result<Made, String> {
@@ -168,7 +169,7 @@ async fn call(endpoint: &MediaEndpoint, body: &Value) -> Result<Made, String> {
                 })
                 .transpose()?
                 .unwrap_or_default();
-            Ok(Made { text: None, files })
+            Ok(Made { text: None, files, finish_reason: None })
         }
         "speech" => {
             if !inputs.is_empty() {
@@ -188,7 +189,7 @@ async fn call(endpoint: &MediaEndpoint, body: &Value) -> Result<Made, String> {
             } else {
                 return Err("the provider sent audio that is not MP3".into());
             };
-            Ok(Made { text: None, files: vec![file] })
+            Ok(Made { text: None, files: vec![file], finish_reason: None })
         }
         "chat" => {
             let mut content = vec![json!({"type": "text", "text": body["prompt"]})];
@@ -199,7 +200,11 @@ async fn call(endpoint: &MediaEndpoint, body: &Value) -> Result<Made, String> {
             }
             let (bytes, _) = post(endpoint, "/chat/completions", &request).await?;
             let answer = json_of(&bytes)?;
-            Ok(Made { text: answer["choices"][0]["message"]["content"].as_str().map(str::to_owned), files: Vec::new() })
+            Ok(Made {
+                text: answer["choices"][0]["message"]["content"].as_str().map(str::to_owned),
+                files: Vec::new(),
+                finish_reason: answer["choices"][0]["finish_reason"].as_str().map(str::to_owned),
+            })
         }
         other => Err(format!("`{other}` runs only through the sven service; a provider of its own runs chat, image and speech")),
     }
@@ -215,10 +220,24 @@ pub(crate) async fn run(
     body: &Value,
     output: Option<&str>,
 ) -> ToolOutput {
-    let made = match call(endpoint, body).await {
+    let mut made = match call(endpoint, body).await {
         Ok(made) => made,
         Err(error) => return ToolOutput::err(call_id, format!("The model did not run: {error}")),
     };
+    // A chat answer asked for as a file is one, written here like the files
+    // other operations make; its text is not answered.
+    let kept_as = body["delivery"]["mimeType"].as_str();
+    if let Some(mime) = kept_as {
+        let (mime, ext) = match mime {
+            "application/json" => ("application/json", "json"),
+            "text/plain" => ("text/plain", "txt"),
+            _ => ("text/markdown", "md"),
+        };
+        if let Some(answer) = made.text.take().filter(|t| !t.trim().is_empty()) {
+            made.files.push((answer.into_bytes(), mime, ext));
+        }
+    }
+    let ending = super::invocation::ending_note(made.finish_reason.as_deref(), &[]);
     let stem =
         hex::encode(Sha256::digest(format!("{call_id}\0{body}").as_bytes()))[..12].to_owned();
     let mut text = made
@@ -233,8 +252,10 @@ pub(crate) async fn run(
             "{}-{}.{ext}",
             if mime.starts_with("audio/") {
                 "audio"
-            } else {
+            } else if mime.starts_with("image/") {
                 "image"
+            } else {
+                "answer"
             },
             index + 1
         );
@@ -274,6 +295,7 @@ pub(crate) async fn run(
     if !artifacts.is_empty() {
         text.push_str("Pass a path in `inputs` to work on one.\n");
     }
+    text.push_str(&ending);
     let text = text.trim_end().to_owned();
     let mut parts = vec![ToolOutputPart::Text(text.clone())];
     parts.extend(images.into_iter().map(ToolOutputPart::Image));

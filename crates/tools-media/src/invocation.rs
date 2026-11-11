@@ -8,7 +8,10 @@
 // sending an email to info@swedishembedded.com.
 //! One invocation of any model but video (`run_model` with `operation`
 //! chat, image, speech, ...), and what the agent and the person get back:
-//! the model's text, and every file it made by handle.
+//! the model's text, and every file it made by handle. A chat answer asked
+//! for as a file (`keep_as`: a page's OCR, extracted fields) is kept by the
+//! service and answered by handle like any other file, so its text never
+//! reaches the session's own model unless the agent reads it.
 //!
 //! Inside a conversation of the service the files stay there: the tool
 //! answers their handles (`mcp-file://files/<id>`), the person sees them in
@@ -154,10 +157,61 @@ pub(crate) fn request(
                 .and_then(|name| name.to_str())
                 .map(str::to_owned)
         });
-    if let Some(name) = named {
-        body["name"] = Value::String(name);
+    match keep_as(args, operation)? {
+        // A chat answer kept as a file is named in its delivery.
+        Some(mime) => {
+            let mut delivery = json!({ "mode": "artifact", "mimeType": mime });
+            if let Some(name) = named {
+                delivery["name"] = Value::String(name);
+            }
+            body["delivery"] = delivery;
+        }
+        None => {
+            if let Some(name) = named {
+                body["name"] = Value::String(name);
+            }
+        }
     }
     Ok(body)
+}
+
+/// The type a chat answer is kept as a file of (`keep_as`), or `None` when
+/// it is answered as text.
+pub(crate) fn keep_as(
+    args: &Map<String, Value>,
+    operation: &str,
+) -> Result<Option<&'static str>, String> {
+    let Some(kind) = args.get("keep_as") else {
+        return Ok(None);
+    };
+    if operation != "chat" {
+        return Err(
+            "`keep_as` keeps a chat answer as a file; other operations make files of their own"
+                .into(),
+        );
+    }
+    match kind.as_str() {
+        Some("markdown") => Ok(Some("text/markdown")),
+        Some("json") => Ok(Some("application/json")),
+        Some("text") => Ok(Some("text/plain")),
+        _ => Err("`keep_as` is one of markdown, json or text".into()),
+    }
+}
+
+/// What the agent is told about how the model's answer ended, when there is
+/// something to tell.
+pub(crate) fn ending_note(finish_reason: Option<&str>, warnings: &[String]) -> String {
+    let mut note = String::new();
+    if finish_reason == Some("length") {
+        note.push_str(
+            "The answer was cut off at the model's output limit: ask for less at once (fewer \
+             pages, part of a page) or use a model with a larger limit.\n",
+        );
+    }
+    for warning in warnings {
+        note.push_str(&format!("Note: {warning}.\n"));
+    }
+    note
 }
 
 /// A file made, put where the agent can find it: by handle in a
@@ -266,6 +320,10 @@ pub(crate) async fn run(
     if invoked.outputs.is_empty() && invoked.text.is_none() {
         text.push_str("The model answered nothing.\n");
     }
+    text.push_str(&ending_note(
+        invoked.finish_reason.as_deref(),
+        &invoked.warnings,
+    ));
     if !artifacts.is_empty() {
         text.push_str(if client.in_conversation() {
             "They are shown in the conversation; pass a handle in `inputs` to work on one.\n"

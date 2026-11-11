@@ -63,7 +63,30 @@ pub fn handle_of(index: usize) -> String {
 fn invoked_answer(index: usize, body: &Value) -> Value {
     match body["operation"].as_str() {
         Some("chat") => {
-            json!({"id": format!("inv{index}"), "status": "completed", "text": format!("{} sees a red car", body["model"].as_str().unwrap_or("?")), "outputs": [], "usage": {"cost_micro_usd": "300"}})
+            let text = format!("{} sees a red car", body["model"].as_str().unwrap_or("?"));
+            // `#cutoff` in the prompt: the model ran into its output limit.
+            let finish = if body["prompt"].as_str().unwrap_or("").contains("#cutoff") {
+                "length"
+            } else {
+                "stop"
+            };
+            if body["delivery"]["mode"] == "artifact" {
+                let mime = body["delivery"]["mimeType"]
+                    .as_str()
+                    .unwrap_or("text/markdown");
+                let ext = if mime == "application/json" {
+                    "json"
+                } else if mime == "text/plain" {
+                    "txt"
+                } else {
+                    "md"
+                };
+                let stem = body["delivery"]["name"].as_str().unwrap_or("answer");
+                json!({"id": format!("inv{index}"), "status": "completed", "text": null, "finish_reason": finish,
+                    "outputs": [{"uri": handle_of(index), "name": format!("{stem}.{ext}"), "mimeType": mime, "size": text.len()}], "usage": {"cost_micro_usd": "300"}})
+            } else {
+                json!({"id": format!("inv{index}"), "status": "completed", "text": text, "finish_reason": finish, "outputs": [], "usage": {"cost_micro_usd": "300"}})
+            }
         }
         Some("speech") => json!({"id": format!("inv{index}"), "status": "completed", "text": null,
             "outputs": [{"uri": handle_of(index), "name": "audio-1.wav", "mimeType": "audio/wav", "size": 48}], "usage": {"cost_micro_usd": "250"}}),
