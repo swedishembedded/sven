@@ -67,6 +67,9 @@ async fn convert(args: &ConvertArgs, config: &Config) -> anyhow::Result<i32> {
     if let Some(v) = args.max_tokens {
         options.max_tokens = v;
     }
+    if let Some(v) = args.pages_per_request {
+        options.pages_per_request = v;
+    }
     if let Some(v) = &args.prompt {
         options.prompt = v.clone();
     }
@@ -116,11 +119,12 @@ async fn convert(args: &ConvertArgs, config: &Config) -> anyhow::Result<i32> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "{}  {} pages: {} native, {} ocr, {} blank, {} reused, {} warning, {} failed  {:.1}s\nrequests: peak {} in flight, backend idle {} ms, per endpoint {:?}\nsha256 {}\nmanifest {}",
+            "{}  {} pages: {} native, {} ocr ({} read with others), {} blank, {} reused, {} warning, {} failed  {:.1}s\nrequests: peak {} in flight, backend idle {} ms, per endpoint {:?}\nsha256 {}\nmanifest {}",
             report.output.display(),
             report.pages_total,
             report.pages_native,
             report.pages_ocr,
+            report.pages_batched,
             report.pages_blank,
             report.pages_reused,
             report.pages_warning,
@@ -132,6 +136,9 @@ async fn convert(args: &ConvertArgs, config: &Config) -> anyhow::Result<i32> {
             report.sha256,
             report.manifest.display(),
         );
+        for note in &report.notes {
+            eprintln!("note: {note}");
+        }
         for w in &report.warnings {
             eprintln!("warning: {w}");
         }

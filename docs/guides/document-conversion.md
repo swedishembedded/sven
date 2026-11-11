@@ -38,10 +38,24 @@ Pictures larger than 12,000 pixels on a side are refused rather than decoded.
    429/503, a full queue or a timeout, then grows again). Only about twice that
    many page images exist at any time, so memory does not grow with the
    document, and the report states the peak in flight and how long the backend
-   sat idle while pages remained. Each request carries one page image
-   and the prompt (default `Convert the document to markdown.`, deliberately
-   without a grounding marker, which would switch a grounding-capable model to
-   bounding-box output). Blank pages cost no request.
+   sat idle while pages remained. A request carries one page image and the
+   prompt (default `Convert the document to markdown.`, deliberately without a
+   grounding marker, which would switch a grounding-capable model to
+   bounding-box output), or several pages (below). Blank pages cost no request.
+   **Several pages per request.** A model with a large output limit can read a
+   handful of pages in one request: fewer round trips, though every page image
+   is still billed. It is off by default; `pages_per_request`
+   (`--pages-per-request`) chooses it for a model measured to read pages
+   together as well as apart, at most 8 and never more than the listed output
+   limit holds `max_tokens` allowances (a 16,384-token limit holds 4 pages of
+   4,096). The request names each page and asks for its reading to begin with
+   a line `=== PAGE N ===`; the answer is cut there and every page is checked
+   on its own, exactly as a page read alone, and one that does not pass is
+   read again alone with the usual retries. The first batch of a run goes
+   alone: a model that does not keep the pages apart costs that one request,
+   and the rest of the run reads a page per request, as the report's notes
+   say. Pages read by their layout always
+   go alone. The manifest records how many pages each page's request carried.
    **Columns and articles.** Whole-page OCR reads a newspaper badly: columns
    interleave and a model loses its place after the first column. With
    `--layout auto` (the default) a page that looks like columns is sent to the

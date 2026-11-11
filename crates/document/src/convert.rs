@@ -26,6 +26,7 @@ use tokio::sync::Semaphore;
 
 use crate::assemble::{assemble, AssembleOptions};
 use crate::backend::{DocumentBackend, DocumentSource};
+use crate::batch::{fitted_size, process_chunk, Batching};
 use crate::checkpoint::{Checkpoint, FlushOnDrop};
 use crate::error::DocumentError;
 use crate::layout::DeepseekGrounding;
@@ -34,7 +35,7 @@ use crate::manifest::{
     manifest_path, page_key, sha256_hex, write_atomic, Manifest, Method, PageRecord, Status,
     MANIFEST_VERSION,
 };
-use crate::page::{process_page, render, PageContext, PageWork, Prepared};
+use crate::page::{render, PageContext, PageWork, Prepared};
 use crate::pages::parse_selection;
 use crate::quality::{assess, TextQuality};
 
@@ -124,6 +125,11 @@ pub struct ConvertOptions {
     pub resume: bool,
     /// Names the model in page identities and the manifest.
     pub model_spec: String,
+    /// Pages read in one request (at most
+    /// [`crate::MAX_PAGES_PER_REQUEST`], and no more than the model's listed
+    /// output limit holds `max_tokens` allowances); `1`, the default, reads
+    /// every page alone.
+    pub pages_per_request: usize,
 }
 
 impl Default for ConvertOptions {
@@ -145,6 +151,7 @@ impl Default for ConvertOptions {
             dedupe_headers: false,
             resume: true,
             model_spec: String::new(),
+            pages_per_request: 1,
         }
     }
 }
@@ -174,6 +181,10 @@ pub struct Report {
     pub backend_idle_ms: u64,
     /// Requests answered by each endpoint.
     pub requests_per_endpoint: Vec<u64>,
+    /// Pages accepted from a request that carried several.
+    pub pages_batched: usize,
+    /// What the run as a whole has to say (not about one page).
+    pub notes: Vec<String>,
 }
 
 /// Called after each page settles with `(done, total, record)`.
@@ -233,7 +244,12 @@ impl Converter {
             .resume
             .then(|| Manifest::load_matching(destination, &source_sha))
             .flatten();
-        let plan = plan_pages(&selected, &native, options, &source_sha);
+        let batching_size = fitted_size(
+            options.pages_per_request,
+            &self.providers,
+            options.max_tokens,
+        );
+        let plan = plan_pages(&selected, &native, options, &source_sha, batching_size);
         let needs_ocr = plan.iter().any(|p| p.method == Method::Ocr);
         // Without a model the pages that have a good text layer still
         // convert and the rest fail with that cause; refused only when no
@@ -279,6 +295,7 @@ impl Converter {
             }
         }
         let workers = options.concurrency.max(1) * self.providers.len().max(1);
+        let batch = batching_size;
         let ocr_pages = todo.iter().filter(|w| w.method == Method::Ocr).count();
         let limiter = Limiter::new(self.providers.len(), options.concurrency, ocr_pages);
         let ctx = Arc::new(PageContext {
@@ -288,6 +305,7 @@ impl Converter {
             options: options.clone(),
             render_slots: Semaphore::new(options.render_workers.max(1)),
             parser: Arc::new(DeepseekGrounding),
+            batching: Batching::new(batching_size),
         });
         let done = Arc::new(Mutex::new(reused));
         // Stage one renders up to `workers` pages ahead of the model; stage
@@ -309,18 +327,16 @@ impl Converter {
                 }
             })
             .buffer_unordered(workers)
-            .map(|(work, native, prepared)| {
+            // Pages go to the model a batch at a time; a batch is one
+            // request when the model reads pages together, else its pages
+            // go side by side. Either way `workers` pages are at the model.
+            .chunks(batch)
+            .map(|chunk| {
                 let ctx = Arc::clone(&ctx);
-                async move {
-                    let is_ocr = prepared.is_some();
-                    let record = process_page(&ctx, work, native, prepared).await;
-                    if is_ocr {
-                        ctx.limiter.page_done();
-                    }
-                    record
-                }
+                async move { process_chunk(&ctx, chunk).await }
             })
-            .buffer_unordered(workers);
+            .buffer_unordered((workers / batch).max(1))
+            .flat_map(futures::stream::iter);
         while let Some(record) = results.next().await {
             let n = {
                 let mut d = done.lock().unwrap();
@@ -351,14 +367,10 @@ impl Converter {
             cp.flush()?;
         }
         write_atomic(destination, markdown.as_bytes())?;
-        Ok(summarise(
-            destination,
-            &pages,
-            output_sha,
-            reused,
-            started,
-            stats,
-        ))
+        let mut report = summarise(destination, &pages, output_sha, reused, started, stats);
+        report.pages_batched = ctx.batching.pages_batched();
+        report.notes = ctx.batching.notes();
+        Ok(report)
     }
 }
 
@@ -397,6 +409,8 @@ fn summarise(
         max_in_flight: stats.peak_in_flight,
         backend_idle_ms: stats.idle_ms,
         requests_per_endpoint: stats.requests_per_endpoint,
+        pages_batched: 0,
+        notes: Vec::new(),
     }
 }
 
@@ -439,7 +453,11 @@ fn plan_pages(
     native: &[Option<String>],
     options: &ConvertOptions,
     source_sha: &str,
+    pages_per_request: usize,
 ) -> Vec<PageWork> {
+    // Reading pages together changes the request, so it is part of a page's
+    // identity; a page read alone keeps the identity earlier runs gave it.
+    let together = (pages_per_request > 1).then(|| format!("batch {pages_per_request}"));
     selected
         .iter()
         .map(|&index| {
@@ -452,18 +470,27 @@ fn plan_pages(
                 OcrMode::Auto => Method::Ocr,
             };
             let key = match method {
-                Method::Ocr => page_key(&[
-                    source_sha,
-                    &page.to_string(),
-                    "ocr",
-                    &options.dpi.to_string(),
-                    &options.model_spec,
-                    &options.prompt,
-                    &options.max_tokens.to_string(),
-                    &format!("{:?}", options.layout),
-                    &options.layout_prompt,
-                    &options.region_dpi.to_string(),
-                ]),
+                Method::Ocr => {
+                    let page = page.to_string();
+                    let dpi = options.dpi.to_string();
+                    let max_tokens = options.max_tokens.to_string();
+                    let layout = format!("{:?}", options.layout);
+                    let region_dpi = options.region_dpi.to_string();
+                    let mut parts = vec![
+                        source_sha,
+                        page.as_str(),
+                        "ocr",
+                        dpi.as_str(),
+                        options.model_spec.as_str(),
+                        options.prompt.as_str(),
+                        max_tokens.as_str(),
+                        layout.as_str(),
+                        options.layout_prompt.as_str(),
+                        region_dpi.as_str(),
+                    ];
+                    parts.extend(together.as_deref());
+                    page_key(&parts)
+                }
                 _ => page_key(&[source_sha, &page.to_string(), "native"]),
             };
             PageWork {

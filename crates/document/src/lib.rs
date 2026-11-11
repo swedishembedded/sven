@@ -13,6 +13,7 @@
 
 mod assemble;
 mod backend;
+mod batch;
 mod checkpoint;
 mod columns;
 mod convert;
@@ -27,6 +28,7 @@ mod pages;
 mod picture;
 mod quality;
 mod query;
+mod request;
 mod score;
 mod validate;
 
@@ -34,6 +36,7 @@ mod validate;
 pub mod testing;
 
 pub use backend::{DocumentBackend, DocumentSource, HayroBackend, RenderedPage, StandardBackend};
+pub use batch::{batch_separator, MAX_PAGES_PER_REQUEST};
 pub use convert::{
     ConvertOptions, Converter, LayoutMode, OcrMode, Progress, Report, DEFAULT_LAYOUT_PROMPT,
     DEFAULT_PROMPT,

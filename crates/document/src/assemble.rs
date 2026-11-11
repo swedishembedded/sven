@@ -114,6 +114,7 @@ mod tests {
             ocr_ms: 0,
             input_tokens: 0,
             output_tokens: 0,
+            pages_in_request: None,
         }
     }
 

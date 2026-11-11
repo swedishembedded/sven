@@ -7,24 +7,21 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use base64::Engine as _;
 use futures::StreamExt;
-use sven_model::{
-    CompletionRequest, ContentPart, Message, ModelProvider, ResponseEvent, SamplingParams,
-};
+use sven_model::ModelProvider;
 use tokio::sync::Semaphore;
 
 use crate::backend::{DocumentSource, RenderedPage};
+use crate::batch::Batching;
 use crate::convert::{ConvertOptions, LayoutMode, OcrMode};
 use crate::error::DocumentError;
 use crate::layout::{merge_runs, reading_order, LayoutParser, Region};
-use crate::limiter::{is_pushback, Limiter};
+use crate::limiter::Limiter;
 use crate::manifest::{sha256_hex, LayoutInfo, Method, PageRecord, Status};
 use crate::quality::plausible_share;
+use crate::request::ask_patiently;
 use crate::validate::{check, clean, Problem};
 
-/// Server pushbacks one request waits out before they count as failures.
-const MAX_PUSHBACKS: u32 = 8;
 /// Blocks of one page read at the same time; the limiter bounds the model
 /// side, this bounds the crops waiting in memory.
 const BLOCKS_AT_ONCE: usize = 8;
@@ -53,6 +50,7 @@ pub(crate) struct PageContext {
     pub options: ConvertOptions,
     pub render_slots: Semaphore,
     pub parser: Arc<dyn LayoutParser>,
+    pub batching: Batching,
 }
 
 pub(crate) struct PageWork {
@@ -109,13 +107,9 @@ async fn render_target(
     (image, started.elapsed().as_millis() as u64)
 }
 
-pub(crate) async fn process_page(
-    ctx: &PageContext,
-    work: PageWork,
-    native: Option<String>,
-    prepared: Option<Prepared>,
-) -> PageRecord {
-    let mut record = PageRecord {
+/// The record of `work` before anything is known about its text.
+pub(crate) fn new_record(work: &PageWork) -> PageRecord {
+    PageRecord {
         page: work.page,
         key: work.key.clone(),
         method: work.method,
@@ -131,7 +125,17 @@ pub(crate) async fn process_page(
         ocr_ms: 0,
         input_tokens: 0,
         output_tokens: 0,
-    };
+        pages_in_request: None,
+    }
+}
+
+pub(crate) async fn process_page(
+    ctx: &PageContext,
+    work: PageWork,
+    native: Option<String>,
+    prepared: Option<Prepared>,
+) -> PageRecord {
+    let mut record = new_record(&work);
     match (work.method, prepared) {
         (Method::Ocr, Some(prepared)) => {
             record.model = Some(ctx.options.model_spec.clone());
@@ -167,15 +171,12 @@ async fn recognise(
     record: &mut PageRecord,
 ) {
     let opts = &ctx.options;
-    let (columns, ink) = prepared
+    let layout_first = prepared
         .image
         .as_ref()
-        .map_or((1, 0.0), |i| (i.columns, i.ink));
-    let layout_first = match opts.layout {
-        LayoutMode::Off => false,
-        LayoutMode::Regions => true,
-        LayoutMode::Auto => columns >= AUTO_LAYOUT_COLUMNS && ink >= AUTO_LAYOUT_INK,
-    };
+        .map_or(opts.layout == LayoutMode::Regions, |i| {
+            layout_first(opts, i)
+        });
     let reference = native.filter(|_| work.reference);
     let mut image = Some(prepared.image);
     let force = opts.layout == LayoutMode::Regions;
@@ -221,6 +222,16 @@ async fn recognise(
         }
     }
     keep_text_layer_for_digits(opts, native, record);
+}
+
+/// Whether `image` is read by its layout before it is read whole: always in
+/// `regions`, never in `off`, and in `auto` when it looks like dense columns.
+pub(crate) fn layout_first(opts: &ConvertOptions, image: &RenderedPage) -> bool {
+    match opts.layout {
+        LayoutMode::Off => false,
+        LayoutMode::Regions => true,
+        LayoutMode::Auto => image.columns >= AUTO_LAYOUT_COLUMNS && image.ink >= AUTO_LAYOUT_INK,
+    }
 }
 
 /// In `auto`, a page whose recognised numbers still disagree with the page's
@@ -623,7 +634,6 @@ async fn read(
     };
     let mut first = first;
     let mut best: Option<(Vec<Problem>, String, f32)> = None;
-    let mut pushbacks = 0;
     let mut attempt = 0;
     while attempt < opts.max_attempts.max(1) {
         attempt += 1;
@@ -650,25 +660,8 @@ async fn read(
             return reading;
         }
         // The same image is asked again after a pushback, without spending an attempt.
-        let answer = loop {
-            let slot = ctx.limiter.acquire().await;
-            let started = Instant::now();
-            let outcome = ask(ctx, slot.endpoint(), &image, request.prompt, max_tokens).await;
-            reading.ocr_ms += started.elapsed().as_millis() as u64;
-            match outcome {
-                Ok(a) => {
-                    slot.succeeded();
-                    break Ok(a);
-                }
-                Err(e) if is_pushback(&e) && pushbacks < MAX_PUSHBACKS => {
-                    slot.overloaded();
-                    drop(slot);
-                    pushbacks += 1;
-                    tokio::time::sleep(Duration::from_millis(500 << pushbacks.min(5))).await;
-                }
-                Err(e) => break Err(e),
-            }
-        };
+        let (answer, ocr_ms) = ask_patiently(ctx, &[&image], request.prompt, max_tokens).await;
+        reading.ocr_ms += ocr_ms;
         match answer {
             Ok(answer) => {
                 reading.input_tokens += answer.input_tokens;
@@ -720,71 +713,6 @@ async fn read(
         reading.error = None;
     }
     reading
-}
-
-struct Answer {
-    text: String,
-    cutoff: bool,
-    input_tokens: u64,
-    output_tokens: u64,
-}
-
-async fn ask(
-    ctx: &PageContext,
-    endpoint: usize,
-    page: &RenderedPage,
-    prompt: &str,
-    max_tokens: u32,
-) -> Result<Answer, String> {
-    let url = format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(&page.png)
-    );
-    let request = CompletionRequest {
-        messages: vec![Message::user_with_parts(vec![
-            ContentPart::image(url),
-            ContentPart::text(prompt.to_string()),
-        ])],
-        stream: true,
-        max_output_tokens_override: Some(max_tokens),
-        sampling: SamplingParams {
-            temperature: Some(0.0),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let exchange = async {
-        let mut stream = ctx.providers[endpoint]
-            .complete(request)
-            .await
-            .map_err(|e| format!("model request failed: {e:#}"))?;
-        let mut answer = Answer {
-            text: String::new(),
-            cutoff: false,
-            input_tokens: 0,
-            output_tokens: 0,
-        };
-        while let Some(event) = stream.next().await {
-            match event.map_err(|e| format!("model stream failed: {e:#}"))? {
-                ResponseEvent::TextDelta(t) => answer.text.push_str(&t),
-                ResponseEvent::MaxTokens => answer.cutoff = true,
-                ResponseEvent::Usage {
-                    input_tokens,
-                    output_tokens,
-                    ..
-                } => {
-                    answer.input_tokens += u64::from(input_tokens);
-                    answer.output_tokens += u64::from(output_tokens);
-                }
-                ResponseEvent::Error(e) => return Err(format!("model error: {e}")),
-                _ => {}
-            }
-        }
-        Ok(answer)
-    };
-    tokio::time::timeout(ctx.options.request_timeout, exchange)
-        .await
-        .map_err(|_| "model request timed out".to_string())?
 }
 
 #[cfg(test)]

@@ -35,8 +35,9 @@ impl Specs {
 #[serde(default)]
 pub struct OcrConfig {
     /// The OCR model `document_convert` and `sven document convert` use when
-    /// none is named: a spec, an `models` alias or a loose name. Without
-    /// it the session's model is used if it accepts images.
+    /// none is named: a spec, an `models` alias or a loose name. Without it
+    /// an OCR model a reachable provider serves is used; never the session's
+    /// chat model.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Named OCR models: alias to spec, or to a list of specs that serve the
@@ -51,6 +52,12 @@ pub struct OcrConfig {
     /// Output-token limit per page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// Pages read in one request, at most 8 and no more than the model's
+    /// listed output limit holds `max_tokens` allowances; 1 (the default)
+    /// reads every page alone. Choose more only for a model measured to read
+    /// pages together as well as apart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pages_per_request: Option<usize>,
     /// `auto`, `off` or `regions`: whether pages are read block by block from
     /// their layout.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,6 +76,7 @@ impl OcrConfig {
             "concurrency",
             "dpi",
             "max_tokens",
+            "pages_per_request",
             "layout",
             "prompt",
         ])

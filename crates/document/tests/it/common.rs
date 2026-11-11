@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! Test fixtures: a small PDF writer and a scripted OCR model.
+//! Test fixtures: a small PDF writer and a scripted OCR model that sees every
+//! page image of a request.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -16,8 +17,10 @@ use sven_model::{
 
 /// What the scripted model sees of a request.
 pub struct Seen {
-    /// The gray level of the page image (its identity in these tests).
+    /// The gray level of the (first) page image (its identity in these tests).
     pub gray: u8,
+    /// The gray level of every image of the request, in order.
+    pub grays: Vec<u8>,
     pub width: u32,
     /// The instruction sent with the image.
     pub prompt: String,
@@ -53,6 +56,7 @@ pub struct ScriptedOcr {
     pub calls: Arc<AtomicUsize>,
     script: Script,
     images: bool,
+    max_output_tokens: Option<u32>,
 }
 
 impl ScriptedOcr {
@@ -62,7 +66,14 @@ impl ScriptedOcr {
             calls: Arc::new(AtomicUsize::new(0)),
             script: Box::new(script),
             images: true,
+            max_output_tokens: None,
         }
+    }
+
+    /// The output limit the model's listing states.
+    pub fn listing_max_output(mut self, tokens: u32) -> Self {
+        self.max_output_tokens = Some(tokens);
+        self
     }
 
     pub fn text_only(mut self) -> Self {
@@ -86,24 +97,39 @@ impl ModelProvider for ScriptedOcr {
             vec![InputModality::Text]
         }
     }
+    fn catalog_max_output_tokens(&self) -> Option<u32> {
+        self.max_output_tokens
+    }
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
-        let url = req
+        let urls: Vec<String> = req
             .messages
             .iter()
-            .find_map(|m| match &m.content {
-                MessageContent::ContentParts(parts) => parts.iter().find_map(|p| match p {
-                    ContentPart::Image { image_url, .. } => Some(image_url.clone()),
-                    _ => None,
-                }),
-                _ => None,
+            .flat_map(|m| match &m.content {
+                MessageContent::ContentParts(parts) => parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        ContentPart::Image { image_url, .. } => Some(image_url.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
             })
-            .expect("the request carries a page image");
-        let b64 = url
-            .strip_prefix("data:image/png;base64,")
-            .expect("a PNG data URL");
-        let png = base64::engine::general_purpose::STANDARD.decode(b64)?;
-        let img = image::load_from_memory(&png)?.to_rgb8();
+            .collect();
+        assert!(!urls.is_empty(), "the request carries a page image");
+        let mut images = Vec::new();
+        for url in &urls {
+            let b64 = url
+                .strip_prefix("data:image/png;base64,")
+                .expect("a PNG data URL");
+            let png = base64::engine::general_purpose::STANDARD.decode(b64)?;
+            images.push(image::load_from_memory(&png)?.to_rgb8());
+        }
+        let grays = images
+            .iter()
+            .map(|img| img.get_pixel(img.width() / 2, img.height() / 2)[0])
+            .collect::<Vec<_>>();
+        let img = &images[0];
         let prompt = req
             .messages
             .iter()
@@ -117,7 +143,8 @@ impl ModelProvider for ScriptedOcr {
             .unwrap_or_default();
         let seen = Seen {
             prompt,
-            gray: img.get_pixel(img.width() / 2, img.height() / 2)[0],
+            gray: grays[0],
+            grays,
             width: img.width(),
         };
         let reply = (self.script)(&seen, call);

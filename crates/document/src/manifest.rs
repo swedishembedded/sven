@@ -81,6 +81,10 @@ pub struct PageRecord {
     pub input_tokens: u64,
     #[serde(default)]
     pub output_tokens: u64,
+    /// How many pages the request that read this one carried, when it carried
+    /// more than one; their tokens are shared out evenly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages_in_request: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

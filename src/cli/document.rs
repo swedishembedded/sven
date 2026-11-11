@@ -70,6 +70,10 @@ pub struct ConvertArgs {
     /// Output-token limit per page.
     #[arg(long)]
     pub max_tokens: Option<u32>,
+    /// Pages read in one request (default 1), at most 8 and no more than the
+    /// model's listed output limit holds --max-tokens allowances.
+    #[arg(long)]
+    pub pages_per_request: Option<usize>,
     /// Instruction sent with each page image.
     #[arg(long)]
     pub prompt: Option<String>,
