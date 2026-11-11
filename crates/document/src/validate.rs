@@ -25,6 +25,8 @@ pub enum Problem {
     /// Numbers and codes of the page's text layer are not in the answer: a
     /// misread digit in a register value or a table cell.
     NumbersDiffer,
+    /// The model declined to read the page and said so instead.
+    Refusal,
 }
 
 impl Problem {
@@ -36,6 +38,7 @@ impl Problem {
             Self::SpecialTokens => "model control tokens in the output",
             Self::LowCoverage => "output misses much of the native text",
             Self::NumbersDiffer => "numbers differ from the text layer",
+            Self::Refusal => "the model declined to read the page",
         }
     }
 }
@@ -73,6 +76,40 @@ pub fn clean(answer: &str) -> String {
 
 /// Check a cleaned answer. `native` is the page's text layer when it is good
 /// enough to compare against.
+/// The longest answer read as a model declining the page: a refusal is a
+/// sentence or two, a page's text is not.
+const MAX_REFUSAL_CHARS: usize = 240;
+
+/// How a model's answer begins when it declines the page instead of reading
+/// it, lowercased with typographic apostrophes made plain.
+const REFUSALS: [&str; 10] = [
+    "i'm sorry",
+    "i am sorry",
+    "sorry, i",
+    "i cannot",
+    "i can't",
+    "i can not",
+    "i am unable",
+    "i'm unable",
+    "as an ai",
+    "i won't",
+];
+
+/// Whether `text` is a model declining the page: short, and beginning as a
+/// refusal does. A page that only mentions an apology is long enough, or
+/// begins otherwise, and is not one.
+fn declines(text: &str) -> bool {
+    let text = text.trim();
+    if text.chars().count() > MAX_REFUSAL_CHARS {
+        return false;
+    }
+    let start = text
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
+        .replace('\u{2019}', "'");
+    REFUSALS.iter().any(|refusal| start.starts_with(refusal))
+}
+
 pub fn check(
     text: &str,
     cutoff: bool,
@@ -89,6 +126,9 @@ pub fn check(
     }
     if has_special_tokens(text) {
         problems.push(Problem::SpecialTokens);
+    }
+    if declines(text) {
+        problems.push(Problem::Refusal);
     }
     if repeats(text) {
         problems.push(Problem::Repetition);
@@ -208,6 +248,28 @@ mod tests {
         assert_eq!(check(&tail, false, None, None), vec![Problem::Repetition]);
         let table = "| a | b |\n|---|---|\n".to_string() + &"|---|---|\n".repeat(10);
         assert!(check(&table, false, None, None).is_empty());
+    }
+
+    /// A model that declines to read the page answered nothing of it: the
+    /// page is read again, and kept with a warning if it never is, never as
+    /// its text. A page that merely mentions an apology is not a refusal.
+    #[test]
+    fn a_model_declining_the_page_is_not_its_text() {
+        for refusal in [
+            "I'm sorry, but I cannot assist with that request.",
+            "I can't help with that.",
+            "Sorry, I am unable to read this image.",
+            "As an AI model, I cannot transcribe this document.",
+        ] {
+            assert!(
+                check(refusal, false, None, None).contains(&Problem::Refusal),
+                "{refusal}"
+            );
+        }
+        let letter = "# Letter\n\nDear Ms. Lund,\n\nI'm sorry I could not attend the meeting on \
+                      Tuesday. The minutes are attached, with the budget for the new library \
+                      and the schedule for its construction next spring.";
+        assert!(!check(letter, false, None, None).contains(&Problem::Refusal));
     }
 
     #[test]

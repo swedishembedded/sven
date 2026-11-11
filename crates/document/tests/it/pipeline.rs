@@ -668,3 +668,25 @@ async fn auto_keeps_the_text_layer_when_recognised_digits_disagree_with_it() {
     assert!(std::fs::read_to_string(&out).unwrap().contains("Ox4OO2"));
     assert_eq!(r.pages_ocr, 1);
 }
+
+#[tokio::test]
+async fn a_page_the_model_keeps_declining_fails_with_that_cause_and_keeps_no_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = write_pdf(dir.path(), &[FixturePage::Scan(100), FixturePage::Scan(120)]);
+    let out = dir.path().join("out.md");
+    let (conv, calls) = converter(ScriptedOcr::new(|seen, _| {
+        if seen.gray == 100 {
+            Reply::text("I'm sorry, but I cannot assist with that request.")
+        } else {
+            Reply::text(page_of(seen.gray))
+        }
+    }));
+    let report = conv.convert(&src, &out, &options()).await.unwrap();
+    assert_eq!((report.pages_failed, report.pages_ocr), (1, 2));
+    assert!(report.failures.iter().any(|f| f.contains("declined")), "{:?}", report.failures);
+    assert!(calls.load(Ordering::SeqCst) >= 3, "the declined page was asked again");
+    let md = std::fs::read_to_string(&out).unwrap();
+    assert!(!md.contains("sorry"), "{md}");
+    assert!(md.contains(&page_of(120)));
+}
+

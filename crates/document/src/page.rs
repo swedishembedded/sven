@@ -707,9 +707,15 @@ async fn read(
         }
     }
     if let Some((problems, text, dpi)) = best {
+        reading.dpi = dpi;
+        if problems.contains(&Problem::Refusal) {
+            // The model said why it would not read the page: that is no
+            // text of the page, kept or shown.
+            reading.error = Some(Problem::Refusal.describe().to_string());
+            return reading;
+        }
         reading.problems = problems;
         reading.text = text;
-        reading.dpi = dpi;
         reading.error = None;
     }
     reading

@@ -80,7 +80,9 @@ Pictures larger than 12,000 pixels on a side are refused rather than decoded.
    that does not return locations reads the page whole, with a note.
    `--layout regions` reads every OCR page by blocks, `--layout off` never.
 4. **Validate and retry.** An answer is checked for a cut-off (token limit),
-   emptiness, degenerate repetition, leaked model control tokens, and against the page's own text layer: coverage
+   emptiness, degenerate repetition, leaked model control tokens, a model
+   declining the page ("I'm sorry, I cannot ...": a page it keeps declining
+   fails with that cause and keeps no text), and against the page's own text layer: coverage
    of its words where the layer is good, and the numbers and codes (register
    values, bit patterns, amounts) wherever the layer has enough of them. A page that fails is
    rendered again at a higher resolution, up to `--max-attempts`. In `auto`,
