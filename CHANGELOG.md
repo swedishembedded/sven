@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.12.0] - 2026-11-11
+
 ### Added
 - **media**: a video can start and end on images: `first_frame` and `last_frame` (in `run_model`'s video `params`), each a path in the working directory (sent inline) or a handle of the conversation (`mcp-file://files/<id>`, resolved by the service from its own files). The video model list says which frames each model takes (`frames: first_frame/last_frame`), reads them as images, and `model_schema` answers a video model's controls (duration, resolution, aspect ratio, sound, seed, frames) as an image model's are.
 - **media**: a video model's own options (OpenRouter's `allowed_passthrough_parameters`) are listed (`options: ...`) and offered by `model_schema` as `provider_options`; given in `run_model`'s video `params` as `provider_options: {"<provider>": {...}}`, they are sent as `provider.options` beside any brain action, which they can never replace.
