@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **tools**: `tools.preload` starts chosen deferred tools loaded; the orchestration plan preloads `plan_tasks`, which runs a validated task graph as parallel isolated writers.
+
+### Fixed
+- **rc**: a message sent while a turn is still running (one just stopped and still winding a long tool down) is queued and answered as soon as that turn ends; it was refused with "A turn is running" and lost.
+
 ### Security
 - **rc**: a message the server marks `ask_every_tool` (sent by someone a conversation is shared with, answered on its owner's computer) puts every tool call of its turn to the server for approval, a read and a sub-agent's call included, whatever the tool's own policy; it never steers or is joined to a turn of another authority. Requests for approval name their answer (`answer_id`), so the server judges each by the turn it belongs to. `sven rc` says it honours this when it attaches (`x-sven-capabilities: ask-every-tool`).
 
