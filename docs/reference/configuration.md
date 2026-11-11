@@ -1161,6 +1161,7 @@ The OCR model behind `document_convert` and `sven document convert`. See
 | `layout` | `auto` | `auto`, `off` or `regions`: whether pages are read block by block from their layout (newspapers, columns) |
 | `prompt` | `Convert the document to markdown.` | Instruction sent with each page image |
 | `isolate` | `false` (`true` in a hosted host, whatever is set) | Parse and render documents in confined worker processes: nothing writable, no TCP, hard memory and CPU limits, a deadline on every request. Where a worker cannot be confined (no Landlock ABI 6), the document tools are not offered |
+| `confirm_above_pages` | `20` | Pages `document_convert` OCRs in one call without asking: past it, it answers how many pages need OCR (`needs_confirmation`) and converts only once the person agreed (`confirmed: true`) or narrowed `pages` |
 
 ---
 

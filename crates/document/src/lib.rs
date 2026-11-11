@@ -39,8 +39,8 @@ pub mod testing;
 pub use backend::{DocumentBackend, DocumentSource, HayroBackend, RenderedPage, StandardBackend};
 pub use batch::{batch_separator, MAX_PAGES_PER_REQUEST};
 pub use convert::{
-    ConvertOptions, Converter, LayoutMode, OcrMode, Progress, Report, DEFAULT_LAYOUT_PROMPT,
-    DEFAULT_PROMPT,
+    ConvertOptions, Converter, LayoutMode, OcrMode, PageCounts, Progress, Report,
+    DEFAULT_LAYOUT_PROMPT, DEFAULT_PROMPT,
 };
 pub use error::DocumentError;
 pub use layout::{

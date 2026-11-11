@@ -275,6 +275,11 @@ model; the result is a control record, never the text. See [Converting PDFs to M
 | `model` | OCR model: a spec, an `ocr.models` alias or a loose name ("deepseek ocr v2"); default `ocr.model` |
 | `pages` | 1-based selection such as `1-5,9` |
 | `ocr` | `auto` (native text where good, default), `always`, `never` |
+| `confirmed` | The person agreed: convert although more pages need OCR than `ocr.confirm_above_pages` (20) |
+
+More pages to OCR than `ocr.confirm_above_pages` are paid requests the person
+agrees to first: without `confirmed` the tool answers `needs_confirmation` with
+the page counts and sends nothing to the model.
 
 In a conversation of the sven service (`sven rc`, hosted) the Markdown is also
 a file of the conversation: the record's `file` is its handle, the person sees

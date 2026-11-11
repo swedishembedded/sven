@@ -72,6 +72,11 @@ pub struct OcrConfig {
     /// document tools are not offered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub isolate: Option<bool>,
+    /// Pages `document_convert` OCRs in one call without asking: past it,
+    /// it answers how many pages need OCR and converts only once the person
+    /// agreed (`confirmed`). Default 20.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirm_above_pages: Option<usize>,
 }
 
 impl OcrConfig {
@@ -87,6 +92,7 @@ impl OcrConfig {
             "layout",
             "prompt",
             "isolate",
+            "confirm_above_pages",
         ])
         .with("models", Schema::entries(Schema::value()))
     }

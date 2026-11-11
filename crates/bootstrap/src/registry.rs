@@ -659,6 +659,9 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
                 // How far it is, now and then: a long conversion is seen
                 // working, and a server keeps its answer open.
                 convert = convert.with_progress(tool_event_tx.clone(), DOCUMENT_PROGRESS_EVERY);
+                if let Some(pages) = cfg.ocr.confirm_above_pages {
+                    convert = convert.asking_above(pages);
+                }
                 reg.register_with_display(convert);
             }
             // Documents that must be read confined are not read at all

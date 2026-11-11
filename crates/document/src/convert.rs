@@ -187,6 +187,16 @@ pub struct Report {
     pub notes: Vec<String>,
 }
 
+/// How a conversion would read its pages ([`Converter::count`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PageCounts {
+    pub total: usize,
+    /// Pages whose own text layer is kept: no model request.
+    pub native: usize,
+    /// Pages that would go to the OCR model.
+    pub ocr: usize,
+}
+
 /// Called after each page settles with `(done, total, record)`.
 pub type Progress = Arc<dyn Fn(usize, usize, &PageRecord) + Send + Sync>;
 
@@ -210,6 +220,43 @@ impl Converter {
     pub fn with_progress(mut self, progress: Progress) -> Self {
         self.progress = Some(progress);
         self
+    }
+
+    /// How the selected pages of `source` would be read, without asking the
+    /// model anything: how many keep their text layer and how many would go
+    /// to the OCR model (blank ones among them cost nothing, which shows only
+    /// once they are rendered).
+    pub async fn count(
+        &self,
+        source: &Path,
+        options: &ConvertOptions,
+    ) -> Result<PageCounts, DocumentError> {
+        let data = Arc::new(
+            tokio::fs::read(source)
+                .await
+                .map_err(|e| DocumentError::Read {
+                    path: source.display().to_string(),
+                    source: e,
+                })?,
+        );
+        let doc: Arc<dyn DocumentSource> = {
+            let (backend, data) = (Arc::clone(&self.backend), Arc::clone(&data));
+            blocking(move || backend.open(data)).await??
+        };
+        let selected = parse_selection(&options.pages, doc.page_count())?;
+        let native: Vec<Option<String>> = if options.ocr == OcrMode::Always {
+            vec![None; doc.page_count()]
+        } else {
+            let doc = Arc::clone(&doc);
+            blocking(move || doc.native_text()).await?
+        };
+        let plan = plan_pages(&selected, &native, options, &sha256_hex(&data), 1);
+        let ocr = plan.iter().filter(|p| p.method == Method::Ocr).count();
+        Ok(PageCounts {
+            total: plan.len(),
+            native: plan.len() - ocr,
+            ocr,
+        })
     }
 
     pub async fn convert(

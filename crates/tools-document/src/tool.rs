@@ -28,6 +28,10 @@ use crate::access::DocumentAccess;
 use crate::models::{NoOcrModel, OcrModels};
 use crate::scoped;
 
+/// Pages a conversion OCRs without asking: past it, every page is a paid
+/// request the person agrees to first.
+pub const DEFAULT_ASK_ABOVE_PAGES: usize = 20;
+
 /// The longest one conversion may run before the executor's watchdog ends
 /// it (the next call resumes from the manifest).
 const LONGEST_CONVERSION: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
@@ -44,6 +48,9 @@ pub struct DocumentConvertTool {
     commands: bool,
     /// Where it says how far a conversion is, and at most how often.
     progress: Option<(tokio::sync::mpsc::Sender<ToolEvent>, std::time::Duration)>,
+    /// More pages than this to OCR are paid requests the person agrees to
+    /// first (`confirmed`).
+    ask_above: usize,
 }
 
 impl DocumentConvertTool {
@@ -58,7 +65,15 @@ impl DocumentConvertTool {
             defaults,
             commands: true,
             progress: None,
+            ask_above: DEFAULT_ASK_ABOVE_PAGES,
         }
+    }
+
+    /// Asks the person before OCRing more than `pages` pages in one call.
+    #[must_use]
+    pub fn asking_above(mut self, pages: usize) -> Self {
+        self.ask_above = pages;
+        self
     }
 
     /// Reports how far each conversion is on `events`, at most every
@@ -95,19 +110,20 @@ impl Tool for DocumentConvertTool {
 
     fn description(&self) -> &str {
         "Convert a PDF (or chosen pages), or a photo or scan of one page, to a Markdown file \
-         with an OCR model. Returns a status record, not the text; read the destination only if \
-         you need it. For one chapter, choose its pages from the PDF's outline."
+         by OCR. Returns a status record, not the text; read the output only if you need it. \
+         For one chapter, choose its pages from the PDF's outline."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "source": {"type": "string", "description": "PDF or picture: a path, or a file handle (mcp-file://...)"},
-                "destination": {"type": "string", "description": "Markdown file to write; default <source name>.md"},
-                "model": {"type": "string", "description": "OCR model, loose name ok: 'deepseek ocr v2'"},
+                "source": {"type": "string", "description": "PDF or picture: path or file handle"},
+                "destination": {"type": "string", "description": "Markdown file; default <source>.md"},
+                "model": {"type": "string", "description": "OCR model; loose name ok"},
                 "pages": {"type": "string", "description": "e.g. 1-5,9"},
-                "ocr": {"type": "string", "enum": ["auto", "always", "never"]}
+                "ocr": {"type": "string", "enum": ["auto", "always", "never"]},
+                "confirmed": {"type": "boolean", "description": "the person agreed"}
             },
             "required": ["source"],
             "additionalProperties": false
@@ -226,6 +242,22 @@ impl Tool for DocumentConvertTool {
         }
         drop(data);
         let mut converter = Converter::new(self.access.backend(), providers);
+        // Many pages to OCR are many paid requests: the person agrees first.
+        let confirmed = call.args.get("confirmed").and_then(Value::as_bool) == Some(true);
+        if !confirmed && unavailable.is_none() {
+            match converter.count(&private_source, &options).await {
+                Ok(counts) if counts.ocr > self.ask_above => {
+                    return ToolOutput::ok(&call.id, confirmation_record(&counts, &spec));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    return ToolOutput::err(
+                        &call.id,
+                        failure_text(&self.access.shown_in(&e.to_string())),
+                    )
+                }
+            }
+        }
         if let Some((events, every)) = &self.progress {
             converter =
                 converter.with_progress(progress_reporter(events.clone(), *every, &call.id));
@@ -316,6 +348,24 @@ fn progress_reporter(
             });
         }
     })
+}
+
+/// The answer when a conversion needs the person's agreement first.
+fn confirmation_record(counts: &sven_document::PageCounts, model: &str) -> String {
+    json!({
+        "status": "needs_confirmation",
+        "converted": false,
+        "model": model,
+        "pages": {"total": counts.total, "native": counts.native, "ocr": counts.ocr},
+        "instruction_for_assistant": format!(
+            "Nothing was converted yet. {} pages need OCR, each a paid request to {model} \
+             ({} keep their own text and cost nothing). Ask the person whether to go ahead, \
+             or which pages they need. Call document_convert again with `confirmed: true` \
+             only once they agreed, or with `pages` narrowed to what they need.",
+            counts.ocr, counts.native
+        ),
+    })
+    .to_string()
 }
 
 /// The control record: counts, hashes and paths, never page text.
@@ -565,6 +615,62 @@ mod tests {
             "{}",
             missing.content
         );
+    }
+
+    /// Many pages to OCR are many paid requests: the person is asked first,
+    /// and nothing is sent to the model until they agree.
+    #[tokio::test]
+    async fn many_pages_to_ocr_are_asked_about_before_any_is_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("scan.pdf"),
+            build_pdf(&[
+                FixturePage::Scan(100),
+                FixturePage::Scan(110),
+                FixturePage::Scan(120),
+                FixturePage::Text(PROSE.to_vec()),
+            ]),
+        )
+        .unwrap();
+        let ask = |args: Value| {
+            let dir = dir.path().to_path_buf();
+            async move {
+                let tool = DocumentConvertTool::new(
+                    DocumentAccess::local(PathScope::confined(&dir).unwrap()),
+                    Arc::new(Fixed(model())),
+                    ConvertOptions::default(),
+                )
+                .asking_above(2);
+                tool.execute(&call(args)).await
+            }
+        };
+        let asked = ask(json!({"source": "scan.pdf"})).await;
+        assert!(!asked.is_error, "{}", asked.content);
+        let record: Value = serde_json::from_str(&asked.content).unwrap();
+        assert_eq!(record["status"], "needs_confirmation");
+        assert_eq!(record["pages"]["ocr"], 3);
+        assert_eq!(record["pages"]["native"], 1);
+        assert!(record["instruction_for_assistant"]
+            .as_str()
+            .unwrap()
+            .contains("confirmed"));
+        assert!(
+            !dir.path().join("scan.md").exists(),
+            "nothing was converted"
+        );
+        // Fewer pages, or the person's yes, and it goes on to convert (this
+        // mock model then refuses the scans, which is past the question).
+        for args in [
+            json!({"source": "scan.pdf", "pages": "1-2"}),
+            json!({"source": "scan.pdf", "confirmed": true}),
+        ] {
+            let out = ask(args.clone()).await;
+            assert!(
+                !out.content.contains("needs_confirmation"),
+                "{args}: {}",
+                out.content
+            );
+        }
     }
 
     #[tokio::test]

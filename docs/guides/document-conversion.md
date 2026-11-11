@@ -244,6 +244,12 @@ retry or work around it; an error that ends the whole conversion (an unreadable
 source) is worded the same way. Cancelling the tool stops the requests in flight and leaves the
 manifest consistent.
 
+More pages to OCR than `ocr.confirm_above_pages` (20) are paid requests the
+person agrees to first: the pages are counted as a conversion would read them
+(those with a good text layer cost nothing), and without `confirmed: true`
+the tool answers `needs_confirmation` with the counts and sends nothing to the
+model. A narrower `pages` within the limit runs at once.
+
 ### Converting one chapter
 
 `document_locate(source, query?)` finds where something is without reading it.
