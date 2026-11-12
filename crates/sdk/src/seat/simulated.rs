@@ -176,6 +176,15 @@ impl SeatSpec {
 }
 
 /// The marker a seat's model ends the conversation with.
+/// The start of the note [`SimulatedSeat`] appends to every message. A model
+/// sometimes echoes it; the learner must never read the seat's hidden state.
+const NOTE_MARKER: &str = "[What you understand right now";
+
+/// `reply` up to any echo of the state note.
+fn without_note(reply: &str) -> &str {
+    reply.find(NOTE_MARKER).map_or(reply, |at| &reply[..at])
+}
+
 const END_MARKER: &str = "[END]";
 
 struct State {
@@ -188,6 +197,7 @@ struct State {
 
 /// A seat played by an agent of its own, from a [`SeatSpec`].
 pub struct SimulatedSeat {
+    engine: Engine,
     spec: SeatSpec,
     spec_sha256: String,
     state: Mutex<State>,
@@ -206,6 +216,7 @@ impl SimulatedSeat {
             .map(|c| (c.id.clone(), c.mastery))
             .collect();
         Self {
+            engine: engine.clone(),
             spec,
             spec_sha256,
             state: Mutex::new(State {
@@ -250,10 +261,7 @@ impl SimulatedSeat {
                 }
             })
             .collect();
-        format!(
-            "{message}\n\n[What you understand right now - {}]",
-            parts.join("; ")
-        )
+        format!("{message}\n\n{NOTE_MARKER} - {}]", parts.join("; "))
     }
 }
 
@@ -273,19 +281,31 @@ impl Seat for SimulatedSeat {
         self.learn(&mut state, learner);
         let message = self.with_note(&state, learner);
         let outcome = state.agent.send(&message).await?;
-        let violations = check_reply(&self.spec, &state.learner_said, &outcome.reply);
+        let reply = without_note(&outcome.reply);
+        let violations = check_reply(&self.spec, &state.learner_said, reply);
         state.checks.record(violations);
-        let done = outcome.reply.contains(END_MARKER);
+        let done = reply.contains(END_MARKER);
         Ok(SeatReply {
-            text: outcome.reply.replace(END_MARKER, "").trim().to_string(),
+            text: reply.replace(END_MARKER, "").trim().to_string(),
             done,
         })
     }
 
+    /// A test question is answered by a fresh instance of the persona that
+    /// knows only the note on what it understands now, not the conversation:
+    /// a model that read the lesson would otherwise answer from the lesson,
+    /// and the test would measure its reading instead of the modelled state.
+    /// Without concepts the seat answers inside the conversation.
     async fn probe(&self, question: &str) -> Result<String, CallError> {
-        let mut state = self.state.lock().await;
+        let state = self.state.lock().await;
+        if self.spec.concepts.is_empty() {
+            drop(state);
+            return Ok(self.reply(question).await?.text);
+        }
         let message = self.with_note(&state, question);
-        Ok(state.agent.send(&message).await?.reply)
+        let mut fresh = self.engine.agent_with_role("agent", self.spec.briefing());
+        let outcome = fresh.send(&message).await?;
+        Ok(without_note(&outcome.reply).trim().to_string())
     }
 
     fn provenance(&self) -> Provenance {

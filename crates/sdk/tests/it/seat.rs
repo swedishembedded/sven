@@ -398,3 +398,27 @@ async fn an_agents_role_is_its_system_prompt_when_it_is_sent_a_message() {
     );
     assert!(!seen.contains("You are Sven"), "{seen}");
 }
+
+#[tokio::test]
+async fn a_test_question_is_answered_without_the_lesson_and_an_echoed_note_is_cut() {
+    let (seat, seen) = student_seat(&[
+        "ok",
+        "115 [What you understand right now - series: confused (you believe x)]",
+    ]);
+    let lesson = "In series the resistances add: 47 + 68 = 115 ohm.";
+    seat.reply(lesson).await.expect("replies");
+    let answer = seat
+        .probe("What is 47 + 68 in series?")
+        .await
+        .expect("probes");
+    assert_eq!(
+        answer, "115",
+        "the echoed hidden state never reaches the learner"
+    );
+    let seen = seen.lock().unwrap().join("\n");
+    assert_eq!(
+        seen.matches(lesson).count(),
+        1,
+        "the test did not see the lesson"
+    );
+}
