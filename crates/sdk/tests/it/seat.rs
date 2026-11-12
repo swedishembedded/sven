@@ -303,6 +303,18 @@ fn benign_replies_that_share_a_few_words_are_not_flagged() {
     }
 }
 
+const OHM_STUDENT: &str = r#"
+id: ohm
+persona: A student.
+goals: [pass]
+opening: "Hi."
+concepts:
+  - id: ohm
+    taught_by: ["ohm"]
+    evidence: quotient
+    believes: "x"
+"#;
+
 const STUDENT: &str = r#"
 id: student
 persona: A student.
@@ -421,4 +433,22 @@ async fn a_test_question_is_answered_without_the_lesson_and_an_echoed_note_is_cu
         1,
         "the test did not see the lesson"
     );
+}
+
+#[tokio::test]
+async fn a_trivial_quotient_is_not_a_worked_example() {
+    let provider = ScriptedMockProvider::new(vec![say("ok"); 3]);
+    let engine = Engine::builder()
+        .model_provider(Arc::new(provider))
+        .toolset(Toolset::none())
+        .build()
+        .expect("an engine builds");
+    let (spec, sha) = SeatSpec::parse(OHM_STUDENT).expect("parses");
+    let seat = SimulatedSeat::new(&engine, spec, sha);
+    seat.reply("Ohm: 100 / 100 = 1, and 7 / 1 = 7.")
+        .await
+        .expect("replies");
+    assert_eq!(seat.mastery().unwrap()["ohm"], 0.0);
+    seat.reply("Ohm: 12 / 4 = 3.").await.expect("replies");
+    assert_eq!(seat.mastery().unwrap()["ohm"], 0.5);
 }

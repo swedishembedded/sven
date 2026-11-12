@@ -19,7 +19,7 @@ pub enum Evidence {
     Sum,
     /// `a * b / (a + b) = c`: two resistors in parallel.
     Parallel,
-    /// `a / b = c` with `b` not 1: Ohm's law solved for a quantity.
+    /// `a / b = c` with `b` not 1 and `a` not `b` (so x/x = 1 is no example): Ohm's law solved for a quantity.
     Quotient,
 }
 
@@ -94,7 +94,11 @@ fn relations(evidence: Evidence, sentence: &str) -> BTreeSet<String> {
                 let hit = match evidence {
                     Evidence::Sum => i < j && close(a + b, c),
                     Evidence::Parallel => i < j && close(a * b / (a + b), c),
-                    Evidence::Quotient => (b - 1.0).abs() > f64::EPSILON && close(a / b, c),
+                    Evidence::Quotient => {
+                        (b - 1.0).abs() > f64::EPSILON
+                            && (a - b).abs() > f64::EPSILON
+                            && close(a / b, c)
+                    }
                 };
                 if hit {
                     // One example per set of three numbers, however it is read.
