@@ -154,6 +154,11 @@ impl Seat for SimulatedSeat {
         })
     }
 
+    async fn probe(&self, question: &str) -> Result<String, CallError> {
+        let mut state = self.state.lock().await;
+        Ok(state.agent.send(question).await?.reply)
+    }
+
     fn provenance(&self) -> Provenance {
         Provenance::Simulated {
             spec_id: self.spec.id.clone(),

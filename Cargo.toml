@@ -80,6 +80,7 @@ members = [
     # how a sample rots into something that no longer compiles.
     "samples/study/svf",
     "samples/agent/task",
+    "samples/agent/seat",
     "samples/host/sessions",
 ]
 # A patched copy of a dependency, not a member (third_party/rmcp/PATCHED.md).

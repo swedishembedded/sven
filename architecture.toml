@@ -11,7 +11,7 @@
 #     not be reachable from `from` over normal dependencies, at any depth.
 #   - Every [[allow.*]] entry below is a REVIEWED, TEMPORARY exception with a
 #     `why` explaining what it is and when it goes away. A stale entry (the
-#     violation it names no longer exists) is itself a failure — delete it when
+#     violation it names no longer exists) is itself a failure - delete it when
 #     you fix the underlying issue, don't leave it behind.
 #   - `[[allow.large_file]]` entries are a high-water mark: `lines` may only
 #     shrink release over release. `cargo run -p xtask -- arch --bless`
@@ -134,6 +134,7 @@ sven-ablation = "composite"
 # reading the manifest. Both gates run in `make check`.
 sample-study-svf = "sample"
 sample-agent-task = "sample"
+sample-agent-seat = "sample"
 sample-host-sessions = "sample"
 
 # ── Forbidden reachability. Checked transitively over normal dependencies. ─

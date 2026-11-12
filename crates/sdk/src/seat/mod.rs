@@ -91,6 +91,19 @@ pub trait Seat: Send + Sync {
     /// As [`Self::open`].
     async fn reply(&self, learner: &str) -> Result<SeatReply, CallError>;
 
+    /// The seat's answer to a question put outside the conversation, such as
+    /// a test taken before or after it. It reaches the seat's memory like
+    /// anything it was asked, but it is not part of the conversation: it
+    /// neither unlocks hidden facts nor is counted in the checks. A seat with
+    /// no memory to keep answers as it would any reply.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    async fn probe(&self, question: &str) -> Result<String, CallError> {
+        Ok(self.reply(question).await?.text)
+    }
+
     /// Where the seat's words come from. For the record only.
     fn provenance(&self) -> Provenance;
 

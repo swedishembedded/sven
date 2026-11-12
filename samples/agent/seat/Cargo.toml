@@ -1,0 +1,22 @@
+[package]
+# Package names under samples/ are derived from the path:
+# `samples/agent/seat` -> `sample-agent-seat`.
+name = "sample-agent-seat"
+version.workspace = true
+edition = "2021"
+license = "Apache-2.0"
+description = "Sample: an agent works a task with a counterpart, a person or a simulated user, and the conversation is recorded with its provenance and checks"
+publish = false
+
+[dependencies]
+# The ONLY sven dependency a sample may have is the SDK facade - see
+# samples/README.md rule 1, enforced by `make check/gates/samples`.
+sven-sdk   = { path = "../../../crates/sdk" }
+anyhow     = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tokio      = { workspace = true }
+
+[dev-dependencies]
+tempfile   = { workspace = true }
