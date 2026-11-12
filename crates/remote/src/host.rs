@@ -1679,6 +1679,65 @@ mod tests {
         })
     }
 
+    /// Spec: a turn the person stops while a tool of it is still running
+    /// ends at once, with `Aborted`: the tool is stopped with it rather than
+    /// waited for, so the server, which stops a host whose stopped turn does
+    /// not end within its grace (and every answer that host is writing with
+    /// it), never has to.
+    #[tokio::test]
+    async fn a_turn_stopped_while_its_tool_runs_ends_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (actor, mut sent, mut asked) = scripted_session(
+            dir.path(),
+            r#"
+responses:
+  - match_type: contains
+    pattern: "wait for it"
+    tool_calls:
+      - id: hangs
+        tool: shell
+        args:
+          shell_command: "sleep 600"
+    after_tool_reply: "never"
+"#,
+        )
+        .await;
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        commands.send(typed("wait for it", "a", false)).await.unwrap();
+        let started = tokio::time::Instant::now();
+        let mut stopped_at = None;
+        let seen = tokio::time::timeout(
+            Duration::from_secs(20),
+            events_until_ended(
+                &mut sent,
+                &mut asked,
+                &commands,
+                |event| match event {
+                    AgentEvent::ToolCallStarted(_) if stopped_at.is_none() => {
+                        stopped_at = Some(tokio::time::Instant::now());
+                        Some(SessionCommand::Cancel)
+                    }
+                    _ => None,
+                },
+                "a",
+            ),
+        )
+        .await
+        .expect("the stopped turn ends");
+        task.abort();
+        let stopped_at = stopped_at.expect("the tool started");
+        assert!(
+            matches!(seen.last(), Some((_, AgentEvent::Aborted { .. }))),
+            "the turn ended stopped: {seen:?}"
+        );
+        assert!(
+            stopped_at.elapsed() < Duration::from_secs(5),
+            "it ended within 5 s of the stop, {:?} after it began",
+            started.elapsed()
+        );
+    }
+
     /// Spec (the server's model of shared turns): a message someone the
     /// conversation is shared with sent while the owner's turn runs never
     /// steers it: it is answered as a turn of its own, after it, and that
