@@ -31,6 +31,7 @@ sven-chain     = { path = "../chain" }
 sven-vocab     = { path = "../vocab" }
 sven-workspace = { path = "../workspace" }
 anyhow         = { workspace = true }
+async-trait    = { workspace = true }
 schemars       = { workspace = true }
 serde          = { workspace = true }
 serde_json     = { workspace = true }
@@ -65,4 +66,3 @@ schemars        = { workspace = true }
 sven-hsm        = { path = "../hsm" }
 sven-model-mock = { path = "../model-mock" }
 tempfile        = { workspace = true }
-

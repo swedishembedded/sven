@@ -58,6 +58,7 @@ mod method;
 mod run;
 mod run_support;
 pub mod search;
+pub mod seat;
 mod state;
 mod transcript;
 

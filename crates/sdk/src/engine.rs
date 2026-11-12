@@ -502,6 +502,26 @@ impl EngineBuilder {
         self
     }
 
+    /// Answers every question an agent asks from `seat`: the same
+    /// counterpart that [`crate::seat::converse`] talks to, whether a person
+    /// or a simulated one. A seat that fails or ends answers
+    /// [`NO_USER_ANSWER`](crate::tool::NO_USER_ANSWER).
+    #[must_use]
+    pub fn seat(self, seat: Arc<dyn crate::seat::Seat>) -> Self {
+        self.human_gates(move |gate| {
+            if let crate::HumanGate::Question { prompt, reply_tx } = gate {
+                let seat = Arc::clone(&seat);
+                tokio::spawn(async move {
+                    if let Ok(reply) = seat.reply(&prompt).await {
+                        if !reply.done {
+                            let _ = reply_tx.send(reply.text);
+                        }
+                    }
+                });
+            }
+        })
+    }
+
     /// Parks the run on a question the model asks with `ask_question`
     /// instead of answering it: the run ends [`RunConclusion::Waiting`](crate::RunConclusion::Waiting)
     /// with the question in [`RunOutcome::question`](crate::RunOutcome::question),

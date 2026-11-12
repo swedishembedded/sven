@@ -210,6 +210,25 @@ A gate also names its run: the `run_id` of a `HumanGate::Approval` is the
 `run_id` of the `RunEvent`s of the same run, so a host with one handler can
 route by it instead.
 
+### The user seat
+
+When the counterpart is a whole conversation partner (a client, a student)
+rather than a question, `sven_sdk::seat` puts it behind one `Seat` interface.
+`LiveSeat` is a person on a line-based terminal; `SimulatedSeat` is an agent
+played from a YAML `SeatSpec` (persona, goals, verbatim opening, hidden facts
+with disclosure keywords, answer key, role-break phrases, seed). The answer key
+is never given to the seat's model; it is only used to flag a reply that states
+it. `seat::converse(&mut learner, &seat, max_rounds)` runs the conversation and
+returns a `ConversationRecord`; `EngineBuilder::seat` answers the learner's
+`ask_question` from the same seat. The learner cannot tell the seats apart. The
+record carries `Provenance` (`live` with the consent and retention terms, or
+`simulated` with spec id, spec hash and seed) and, for a simulated seat, the
+`SeatChecks`: answer-key leaks, hidden facts told before they were asked for,
+and role breaks, as counts per reply. Live records must be scrubbed before
+training use (`Provenance::requires_scrub`) and never pooled with simulated
+ones. The checks are string matches: they catch verbatim leaks, not
+paraphrase. See [ADR 0007](../adr/0007-user-seat.md).
+
 The run waits for the reply, bounded by its cancel token and deadline. A gate
 dropped without a reply never leaves it waiting: a question is answered with
 `NO_USER_ANSWER`, and an approval is denied with the reason `handler_dropped`,

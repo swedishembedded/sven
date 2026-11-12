@@ -69,6 +69,7 @@ mod round_budget;
 mod run_bounds;
 mod run_decoding;
 mod search;
+mod seat;
 mod state_version;
 mod tool_rounds;
 mod toolsets;

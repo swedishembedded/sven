@@ -19,3 +19,4 @@ disagree, the reference is right.
 | [ADR 0004](0004-programmable-harnesses.md) | Define agent programs as YAML that compiles through the kernel |
 | [ADR 0005](0005-declarative-harness-v2.md) | Add a declarative harness v2 language that lowers tasks, gates and iteration onto the v1 machinery |
 | [ADR 0006](0006-v2-is-the-only-harness-language.md) | Make the workflow language the only harness language and remove the step-map document language |
+| [ADR 0007](0007-user-seat.md) | Make the counterpart of an interactive task a pluggable seat, live or simulated, with provenance and measured leakage |
