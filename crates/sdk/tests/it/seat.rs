@@ -310,8 +310,11 @@ goals: [pass]
 opening: "Hi, I do not get circuits."
 concepts:
   - id: series
-    taught_by: ["in series", "same current"]
+    taught_by: ["in series", "resistances add"]
+    evidence: sum
     min_hits: 2
+    step: 0.25
+    decay: 0.2
     believes: "series resistors use up current"
 "#;
 
@@ -330,22 +333,36 @@ fn student_seat(replies: &[&str]) -> (SimulatedSeat, Arc<Mutex<Vec<String>>>) {
     (SimulatedSeat::new(&engine, spec, sha), seen)
 }
 
+async fn series_mastery(seat: &SimulatedSeat, turns: &[&str]) -> f64 {
+    for turn in turns {
+        seat.reply(turn).await.expect("replies");
+    }
+    seat.mastery().unwrap()["series"]
+}
+
 #[tokio::test]
-async fn a_student_seat_learns_only_from_a_turn_that_addresses_the_concept() {
-    let (seat, seen) = student_seat(&["ok", "ok", "I see", "115"]);
-    // Giving an answer is not teaching: the concept stays unlearnt.
-    seat.reply("The answer is 115.").await.expect("replies");
-    assert_eq!(seat.mastery().unwrap()["series"], 0.0);
-    // One matching phrase is not enough either (min_hits is 2).
-    seat.reply("Things in series are common.")
-        .await
-        .expect("replies");
-    assert_eq!(seat.mastery().unwrap()["series"], 0.0);
-    // Two phrases are: the concept is learnt and the note says so.
-    seat.reply("In series the same current flows everywhere.")
-        .await
-        .expect("replies");
-    assert_eq!(seat.mastery().unwrap()["series"], 0.5);
+async fn reciting_phrases_or_getting_the_arithmetic_wrong_teaches_nothing() {
+    let (seat, _) = student_seat(&["ok"; 6]);
+    let turns = [
+        "The answer is 115.",
+        "In series the resistances add. In series the resistances add up. Same current.",
+        "In series the resistances add: 47 + 68 = 120.",
+        "47 + 68 = 115 but nothing about the topic.",
+        "In series 100 + 100 = 1 ohm.",
+    ];
+    assert_eq!(series_mastery(&seat, &turns).await, 0.0);
+}
+
+#[tokio::test]
+async fn a_correct_worked_example_teaches_once_and_the_student_answers_from_her_state() {
+    let (seat, seen) = student_seat(&["ok", "ok", "ok", "115"]);
+    let example = "In series the resistances add: 47 + 68 = 115 ohm.";
+    // Two phrases in the turn (min_hits) and a correct example beside one.
+    assert_eq!(series_mastery(&seat, &[example]).await, 0.25);
+    // The same example again is not new evidence.
+    assert_eq!(series_mastery(&seat, &[example]).await, 0.25);
+    let more = "In series the resistances add: 10 + 20 = 30 ohm.";
+    assert_eq!(series_mastery(&seat, &[more]).await, 0.5);
     let asked = seat
         .probe("What is 47 + 68 in series?")
         .await
@@ -353,7 +370,19 @@ async fn a_student_seat_learns_only_from_a_turn_that_addresses_the_concept() {
     assert_eq!(asked, "115");
     let seen = seen.lock().unwrap().join("\n");
     assert!(seen.contains("series: confused (you believe series resistors use up current)"));
-    assert!(seen.contains(
-        "What is 47 + 68 in series?\n\n[What you understand right now - series: understood]"
-    ));
+    assert!(seen.contains("[What you understand right now - series: understood]"));
+}
+
+#[tokio::test]
+async fn what_was_learnt_fades_with_time_but_never_below_the_prior() {
+    let (seat, _) = student_seat(&["ok", "ok"]);
+    let turns = [
+        "In series the resistances add: 47 + 68 = 115; in series the resistances add: 10 + 20 = 30.",
+    ];
+    assert_eq!(series_mastery(&seat, &turns).await, 0.5);
+    seat.elapse().await;
+    assert!((seat.mastery().unwrap()["series"] - 0.3).abs() < 1e-9);
+    seat.elapse().await;
+    seat.elapse().await;
+    assert_eq!(seat.mastery().unwrap()["series"], 0.0);
 }

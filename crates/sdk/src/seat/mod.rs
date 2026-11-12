@@ -19,6 +19,7 @@
 //! info@swedishembedded.com.
 
 mod checks;
+mod evidence;
 mod live;
 mod simulated;
 
@@ -28,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Agent, CallError, RunConclusion};
 
 pub use checks::{check_reply, SeatChecks, Violation};
+pub use evidence::Evidence;
 pub use live::{LiveSeat, LiveTerms};
 pub use simulated::{Concept, HiddenFact, SeatSpec, SimulatedSeat};
 
@@ -106,6 +108,11 @@ pub trait Seat: Send + Sync {
 
     /// Where the seat's words come from. For the record only.
     fn provenance(&self) -> Provenance;
+
+    /// Time passes without the learner: what the seat knows may fade (a
+    /// simulated student's mastery decays by its concepts' `decay`). Called
+    /// between tests that are meant to measure retention.
+    async fn elapse(&self) {}
 
     /// What the seat understands at the end, per concept, when its knowledge
     /// is modelled (a simulated student's is).

@@ -122,30 +122,41 @@ pub async fn run(
     let mut probes = std::collections::BTreeMap::new();
     probes.insert(
         "before".to_string(),
-        ask(seat.as_ref(), &plan.before).await?,
+        ask(seat.as_ref(), &plan.before, false).await?,
     );
     let record = converse(&mut learner, seat.as_ref(), rounds).await?;
-    probes.insert("after".to_string(), ask(seat.as_ref(), &plan.after).await?);
+    probes.insert(
+        "after".to_string(),
+        ask(seat.as_ref(), &plan.after, false).await?,
+    );
     probes.insert(
         "transfer".to_string(),
-        ask(seat.as_ref(), &plan.transfer).await?,
+        ask(seat.as_ref(), &plan.transfer, false).await?,
     );
-    ask(seat.as_ref(), &plan.distractors).await?;
+    ask(seat.as_ref(), &plan.distractors, true).await?;
     probes.insert(
         "delayed".to_string(),
-        ask(seat.as_ref(), &plan.delayed).await?,
+        ask(seat.as_ref(), &plan.delayed, false).await?,
     );
     probes.retain(|_, answers| !answers.is_empty());
     Ok(Output { record, probes })
 }
 
-async fn ask(seat: &dyn Seat, probes: &[Probe]) -> anyhow::Result<Vec<ProbeAnswer>> {
+/// Asks each probe; with `elapsing`, time passes for the seat after each.
+async fn ask(
+    seat: &dyn Seat,
+    probes: &[Probe],
+    elapsing: bool,
+) -> anyhow::Result<Vec<ProbeAnswer>> {
     let mut answers = Vec::new();
     for probe in probes {
         answers.push(ProbeAnswer {
             id: probe.id.clone(),
             answer: seat.probe(&probe.text).await?,
         });
+        if elapsing {
+            seat.elapse().await;
+        }
     }
     Ok(answers)
 }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! An agent played as the seat from a spec file.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 use super::checks::{check_reply, SeatChecks};
+use super::evidence::{self, Evidence};
 use super::{Provenance, Seat, SeatReply};
 use crate::{Agent, CallError, Engine};
 
@@ -26,14 +27,22 @@ pub struct HiddenFact {
 }
 
 /// One thing the seat can understand or be confused about, with the
-/// deterministic rule that moves it. The seat's mastery of a concept starts at
-/// `mastery` and rises by `step` (to at most 1) on each learner turn that
-/// contains at least `min_hits` of the `taught_by` phrases; nothing else
-/// changes it. The seat is told, with every message, whether it understands the
-/// concept (mastery at least `known_at`) or still believes `believes`.
+/// deterministic rule that moves it.
 ///
-/// The keyword rule is a deliberately simple, inspectable proxy for "the learner
-/// addressed this concept": a turn that only states answers does not move it.
+/// Mastery starts at `mastery`. It rises by `step` (to at most 1) for each new
+/// worked example the learner states: a sentence containing a `taught_by`
+/// phrase and three numbers that satisfy the concept's [`Evidence`] relation
+/// (at most two new examples per turn, each distinct example counted once). A
+/// turn must also contain at least `min_hits` distinct `taught_by` phrases.
+/// Reciting phrases, stating answers, or getting the arithmetic wrong moves
+/// nothing, so keyword stuffing earns no mastery. Mastery gained in the
+/// conversation (not the prior) falls by `decay` for each time-passing event
+/// ([`Seat::elapse`], e.g. unrelated questions between tests). The seat is
+/// told with every message whether it understands the concept (mastery at
+/// least `known_at`) or still believes `believes`.
+///
+/// The rule is a deliberately simple, inspectable proxy; how far a model
+/// playing the student departs from it is measured, not assumed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Concept {
     /// Names the concept in the state note and the record.
@@ -41,17 +50,22 @@ pub struct Concept {
     /// Mastery before the conversation, 0 to 1.
     #[serde(default)]
     pub mastery: f64,
-    /// Phrases (case-insensitive) that show a learner turn addresses it.
+    /// Phrases (case-insensitive) that mark a sentence as about the concept.
     pub taught_by: Vec<String>,
+    /// The relation a worked example must satisfy.
+    pub evidence: Evidence,
     /// How many distinct phrases a turn needs.
     #[serde(default = "one")]
     pub min_hits: usize,
-    /// Mastery gained per addressing turn.
+    /// Mastery gained per new worked example.
     #[serde(default = "half")]
     pub step: f64,
     /// Mastery at which the seat understands.
     #[serde(default = "half")]
     pub known_at: f64,
+    /// Mastery lost per [`Seat::elapse`], never below the prior.
+    #[serde(default)]
+    pub decay: f64,
     /// What the seat believes while it does not understand.
     pub believes: String,
 }
@@ -65,14 +79,14 @@ fn half() -> f64 {
 }
 
 impl Concept {
-    fn addressed_by(&self, learner: &str) -> bool {
+    /// The number of new verified worked examples in `learner`, recorded in `seen`.
+    fn learnt_from(&self, learner: &str, seen: &mut BTreeSet<String>) -> usize {
         let text = learner.to_lowercase();
-        let hits = self
-            .taught_by
-            .iter()
-            .filter(|p| text.contains(&p.to_lowercase()))
-            .count();
-        hits >= self.min_hits
+        let phrases: Vec<String> = self.taught_by.iter().map(|p| p.to_lowercase()).collect();
+        if phrases.iter().filter(|p| text.contains(p.as_str())).count() < self.min_hits {
+            return 0;
+        }
+        evidence::new_examples(self.evidence, &phrases, learner, seen)
     }
 }
 
@@ -167,6 +181,7 @@ const END_MARKER: &str = "[END]";
 struct State {
     agent: Agent,
     mastery: BTreeMap<String, f64>,
+    seen: BTreeMap<String, BTreeSet<String>>,
     learner_said: String,
     checks: SeatChecks,
 }
@@ -196,6 +211,7 @@ impl SimulatedSeat {
             state: Mutex::new(State {
                 agent,
                 mastery,
+                seen: BTreeMap::new(),
                 learner_said: String::new(),
                 checks: SeatChecks::default(),
             }),
@@ -206,14 +222,13 @@ impl SimulatedSeat {
 impl SimulatedSeat {
     /// Moves the seat's mastery by what the learner just said.
     fn learn(&self, state: &mut State, learner: &str) {
-        for concept in self
-            .spec
-            .concepts
-            .iter()
-            .filter(|c| c.addressed_by(learner))
-        {
-            let mastery = state.mastery.entry(concept.id.clone()).or_insert(0.0);
-            *mastery = (*mastery + concept.step).min(1.0);
+        for concept in &self.spec.concepts {
+            let seen = state.seen.entry(concept.id.clone()).or_default();
+            let gained = concept.learnt_from(learner, seen);
+            if gained > 0 {
+                let mastery = state.mastery.entry(concept.id.clone()).or_insert(0.0);
+                *mastery = (*mastery + concept.step * gained as f64).min(1.0);
+            }
         }
     }
 
@@ -278,6 +293,14 @@ impl Seat for SimulatedSeat {
             spec_id: self.spec.id.clone(),
             spec_sha256: self.spec_sha256.clone(),
             seed: self.spec.seed,
+        }
+    }
+
+    async fn elapse(&self) {
+        let mut state = self.state.lock().await;
+        for concept in &self.spec.concepts {
+            let mastery = state.mastery.entry(concept.id.clone()).or_insert(0.0);
+            *mastery = (*mastery - concept.decay).max(concept.mastery);
         }
     }
 

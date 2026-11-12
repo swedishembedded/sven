@@ -12,8 +12,8 @@ simulated seat, the checks (answer-key leaks, paraphrased leaks, facts told
 before they were asked for, role breaks); and the answers to optional tests put to the counterpart outside the
 conversation: `--probes` (the same questions before and after) or `--plan` (phases
 `before`, `after`, `transfer`, then `distractors`, then `delayed`). A spec with
-`concepts` models a student: each concept's mastery rises only on a learner turn
-containing its `taught_by` phrases, the seat is told its state with every message
+`concepts` models a student: each concept's mastery rises only for a correct worked
+numeric example beside one of its `taught_by` phrases (and decays after distractors), the seat is told its state with every message
 and the final `mastery` is in the record.
 
 ```sh

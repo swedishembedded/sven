@@ -39,14 +39,21 @@ Neither reads which kind of seat it has. The only reader of `Provenance` is the
 records with simulated ones, and must scrub live ones before training use
 (`Provenance::requires_scrub`).
 
-A simulated student may carry `concepts`: each has a mastery that starts at a
-given level and rises by a fixed step only on a learner turn containing at least
-`min_hits` of its `taught_by` phrases (deterministic, inspectable, a proxy for
-"the turn addressed the concept"). Every message to the seat ends with a note of
-what it understands, and it answers strictly from the note, so teaching changes
-its answers and stating answers does not. The final mastery is recorded in
-`ConversationRecord::mastery`. Tests put to the seat outside the conversation
-never move mastery.
+A simulated student may carry `concepts`. A concept's mastery starts at a given
+level and rises by a fixed step only for a new worked numeric example the
+learner states correctly (three numbers satisfying the concept's `evidence`
+relation: sum, parallel, quotient) in a sentence that also contains one of the
+concept's `taught_by` phrases; each distinct example counts once and a turn
+credits at most two. Reciting phrases, stating answers, or wrong arithmetic
+moves nothing, so a learner trained against the student cannot raise its
+mastery by keyword stuffing (a minimal correct example is still an example:
+that is the rule's known limit, and the fidelity of a model-played student to
+the rule is measured separately). Mastery gained in the conversation decays by
+`decay` per `Seat::elapse` (the sample calls it after each distractor
+question), never below the prior. Every message to the seat ends with a note of
+what it understands, and it answers strictly from the note. The final mastery
+is recorded in `ConversationRecord::mastery`. Tests put to the seat outside the
+conversation never move mastery.
 
 A simulated seat is measured: every reply is checked for an answer-key leak,
 for a hidden fact told before the learner asked, and for a role break, and the
