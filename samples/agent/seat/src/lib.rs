@@ -22,7 +22,7 @@ use sven_sdk::config::Config;
 use sven_sdk::seat::{
     converse, ConversationRecord, LiveSeat, LiveTerms, Seat, SeatSpec, SimulatedSeat,
 };
-use sven_sdk::Engine;
+use sven_sdk::{Engine, Toolset};
 
 /// A question put to the counterpart outside the conversation.
 #[derive(Clone, Debug, Deserialize)]
@@ -72,6 +72,10 @@ pub struct Output {
     /// Answers by phase: `before`, `after`, `transfer`, `delayed` (only
     /// the phases the plan had questions for).
     pub probes: std::collections::BTreeMap<String, Vec<ProbeAnswer>>,
+    /// The seat's mastery per concept when each phase's questions were asked
+    /// (`before`, `after`, `transfer`, `delayed`), for a modelled student:
+    /// what the update rule predicts the answers should reflect.
+    pub mastery: std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>>,
 }
 
 /// Which counterpart the learner works with.
@@ -100,7 +104,11 @@ pub async fn run(
     plan: &Plan,
     rounds: usize,
 ) -> anyhow::Result<Output> {
-    let learner_engine = Engine::builder().config(learner_config).build()?;
+    // A conversation, not a coding task: neither side has tools.
+    let learner_engine = Engine::builder()
+        .config(learner_config)
+        .toolset(Toolset::none())
+        .build()?;
     let mut learner = match learner_role {
         Some(role) => learner_engine.agent_with_role("agent", role),
         None => learner_engine.agent("agent"),
@@ -110,7 +118,10 @@ pub async fn run(
             let yaml = std::fs::read_to_string(spec)
                 .with_context(|| format!("reading {}", spec.display()))?;
             let (spec, sha) = SeatSpec::parse(&yaml)?;
-            let engine = Engine::builder().config(*config).build()?;
+            let engine = Engine::builder()
+                .config(*config)
+                .toolset(Toolset::none())
+                .build()?;
             Box::new(SimulatedSeat::new(&engine, spec, sha))
         }
         SeatChoice::Live(terms) => Box::new(LiveSeat::new(
@@ -120,11 +131,19 @@ pub async fn run(
         )),
     };
     let mut probes = std::collections::BTreeMap::new();
+    let mut mastery = std::collections::BTreeMap::new();
+    let mut phase = |name: &str, seat: &dyn Seat| {
+        if let Some(m) = seat.mastery() {
+            mastery.insert(name.to_string(), m);
+        }
+    };
+    phase("before", seat.as_ref());
     probes.insert(
         "before".to_string(),
         ask(seat.as_ref(), &plan.before, false).await?,
     );
     let record = converse(&mut learner, seat.as_ref(), rounds).await?;
+    phase("after", seat.as_ref());
     probes.insert(
         "after".to_string(),
         ask(seat.as_ref(), &plan.after, false).await?,
@@ -134,12 +153,17 @@ pub async fn run(
         ask(seat.as_ref(), &plan.transfer, false).await?,
     );
     ask(seat.as_ref(), &plan.distractors, true).await?;
+    phase("delayed", seat.as_ref());
     probes.insert(
         "delayed".to_string(),
         ask(seat.as_ref(), &plan.delayed, false).await?,
     );
     probes.retain(|_, answers| !answers.is_empty());
-    Ok(Output { record, probes })
+    Ok(Output {
+        record,
+        probes,
+        mastery,
+    })
 }
 
 /// Asks each probe; with `elapsing`, time passes for the seat after each.

@@ -386,3 +386,15 @@ async fn what_was_learnt_fades_with_time_but_never_below_the_prior() {
     seat.elapse().await;
     assert_eq!(seat.mastery().unwrap()["series"], 0.0);
 }
+
+#[tokio::test]
+async fn an_agents_role_is_its_system_prompt_when_it_is_sent_a_message() {
+    let (seat, seen) = student_seat(&["ok"]);
+    seat.reply("hello").await.expect("replies");
+    let seen = seen.lock().unwrap().join("\n");
+    assert!(
+        seen.contains("You play this person in a conversation"),
+        "{seen}"
+    );
+    assert!(!seen.contains("You are Sven"), "{seen}");
+}

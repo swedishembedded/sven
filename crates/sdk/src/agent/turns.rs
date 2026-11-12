@@ -47,12 +47,13 @@ impl Agent {
         text: &str,
         bounds: RunOptions,
     ) -> Result<RunOutcome, CallError> {
-        self.run(
-            Entry::Message(text.to_string()),
-            &TurnOptions::default(),
-            &bounds,
-        )
-        .await
+        // The agent's role, when it has one, is its system prompt on every turn.
+        let options = TurnOptions {
+            role: self.state.role.clone(),
+            ..TurnOptions::default()
+        };
+        self.run(Entry::Message(text.to_string()), &options, &bounds)
+            .await
     }
 
     /// Runs one turn that continues the conversation the agent already has,
