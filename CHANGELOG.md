@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **media**: an attachment the service holds is named by its file (`file:<id>`) in a video request while it is unchanged, instead of being sent inline, once for each use: a large picture used as a reference and as the first frame made a request too large for the service to take. The host records, beside each attachment it fetches, which file it is and what its bytes were (`.held.json`); one the agent changed is sent as it now is. A video's `inputs` and `references` also take handles of the conversation.
+- **media**: a video model's own options are given by name (`provider_options: {"negative_prompt": "..."}`, as `model_schema` lists them) and reach the provider serving the model: a server that names the model's providers places them; for a router that does not, they go under each provider the model's endpoints name, nested where Google's are, and the request only to those. Giving them alone was refused, and a guessed provider name lost them without an error.
+
 ### Added
 - **build**: `make install` installs this checkout's sven from its Debian package and is idempotent. As a user it builds the release package unless a current one exists and unpacks it under `PREFIX` (default `~/.local`), no sudo; under `sudo make install` it runs `dpkg -i` on the package already built and rebuilds nothing, so `target/` never gets root-owned files (`scripts/install-deb.sh`, spec `make test/package`). The remote installer stays `scripts/install.sh`.
 

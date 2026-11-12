@@ -214,7 +214,7 @@ fn video_parameters(model: &VideoModel) -> Value {
             json!({
                 "type": "object",
                 "options": model.passthrough,
-                "description": "the provider's own options, under its name on the router (e.g. {\"google-vertex\": {\"parameters\": {\"personGeneration\": \"allow\"}}}, {\"seed\": {\"watermark\": false}}); only the options named here",
+                "description": "the model's own options by name, e.g. {\"negative_prompt\": \"blurry\"}: they are sent to the provider serving it; only the options named here",
             }),
         );
     }
