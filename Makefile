@@ -117,6 +117,15 @@ build/wasm:
 	done
 	@echo "built target/wasm-pkg/web and target/wasm-pkg/node"
 
+## install - install this checkout's sven from its Debian package; idempotent
+##   As a user: builds the release package unless a current one exists and
+##   unpacks it under PREFIX (default ~/.local), no sudo. Under `sudo make install`:
+##   dpkg -i of the package already built, with nothing rebuilt (run it once as
+##   yourself first). A different, remote install is scripts/install.sh.
+install:
+	@bash scripts/install-deb.sh --deb-dir $(DEB_OUT) --version $(VERSION) \
+		--binary target/release/sven --make "$(MAKE)" $(if $(PREFIX),--prefix "$(PREFIX)")
+
 ## build/crate - lists the per-package build targets; builds nothing
 build/crate:
 	@bash scripts/make-help.sh build/crate
@@ -199,9 +208,9 @@ test/features:
 test/gates:
 	bats tests/gates/
 
-## test/package - the specs of the release publishing script and the install script, against scratch repositories, a fake gh and a fake GitHub (bats, no build)
+## test/package - the specs of the release publishing script and the two install scripts, against scratch repositories, a fake gh, a fake GitHub and a fake make (bats, no build)
 test/package:
-	bats tests/package/publish_deb.bats tests/package/install.bats
+	bats tests/package/publish_deb.bats tests/package/install.bats tests/package/install_deb.bats
 
 ## test/wasm - the portable tests compiled to wasm32 and run on a JavaScript
 ##   event loop (Node, through wasm-bindgen-test-runner): the kernel's
@@ -754,7 +763,7 @@ generate/roadmap/index:
 	python3 scripts/gen-roadmap-index.py
 
 # Declared last so every generated list above is already defined.
-.PHONY: all build build/debug build/release build/profiling $(BUILD_CRATE_TARGETS) build/crate \
+.PHONY: all install build build/debug build/release build/profiling $(BUILD_CRATE_TARGETS) build/crate \
         test test/features test/gates test/package test/e2e test/e2e/basic/deferred test/e2e/basic/instructions-deferred test/e2e/basic/demote $(E2E_SUITE_TARGETS) $(E2E_TEST_TARGETS) \
         test/benchmarks test/e2e/delegation test/e2e/delegation/local-model test/harness $(HARNESS_TARGETS) \
         generate \

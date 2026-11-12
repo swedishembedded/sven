@@ -48,7 +48,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export LC_ALL=C
 
-LEAVES=" all clean fmt help "
+LEAVES=" all clean fmt help install "
 
 help_args=()
 case "${1:-}" in

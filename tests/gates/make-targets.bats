@@ -65,7 +65,7 @@ a/b:'
   [[ "$output" == *"a/b: prefix 'a' is not a defined target"* ]]
 }
 
-@test "a bare leaf other than all, clean, fmt and help is flagged" {
+@test "a bare leaf other than all, clean, fmt, help and install is flagged" {
   write '##@ S
 ## deploy - x
 ## clean - x

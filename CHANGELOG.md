@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **build**: `make install` installs this checkout's sven from its Debian package and is idempotent. As a user it builds the release package unless a current one exists and unpacks it under `PREFIX` (default `~/.local`), no sudo; under `sudo make install` it runs `dpkg -i` on the package already built and rebuilds nothing, so `target/` never gets root-owned files (`scripts/install-deb.sh`, spec `make test/package`). The remote installer stays `scripts/install.sh`.
+
 ## [4.13.0] - 2026-11-12
 
 ### Added

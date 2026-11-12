@@ -123,6 +123,7 @@ Run `make help` for the full list.
 | `check` | `check/fmt`, `check/gates`, `check/arch`, `check/features`, `check/clippy`, `check/doc` |
 | `check/gates` | one `check/gates/<gate>` per `scripts/gates/check-<gate>.sh` (generated) |
 | `fmt` | `cargo fmt --all` |
+| `install` | Build the release `.deb` unless current, install it: under `~/.local` as a user, `dpkg -i` (no rebuild) under sudo |
 | `package/deb` | Build Debian package (`package` lists) |
 | `docs` / `docs/build` / `docs/check` / `docs/pdf` | Build manual and publication / publication only / verify it / PDF manual |
 | `test/formal` | Machine-check the TLA+ models |
