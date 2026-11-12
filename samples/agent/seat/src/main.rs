@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! sample-agent-seat --learner-config FILE (--spec FILE --seat-config FILE | --live)
-//!                   [--learner-role TEXT] [--probes FILE] [--rounds N]
+//!                   [--learner-role TEXT] [--probes FILE | --plan FILE] [--rounds N]
 //!                   [--consent] [--retention-days N]
 //! ```
 //! Prints the output as JSON on stdout; with `--live` the conversation is on
@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Context};
-use sample_agent_seat::{run, Probe, SeatChoice};
+use sample_agent_seat::{run, Plan, Probe, SeatChoice};
 use sven_sdk::seat::LiveTerms;
 
 fn main_args() -> anyhow::Result<std::collections::HashMap<String, String>> {
@@ -59,16 +59,25 @@ async fn main() -> anyhow::Result<()> {
             config: Box::new(load("seat-config")?),
         }
     };
-    let probes: Vec<Probe> = match args.get("probes") {
-        Some(path) => serde_yaml::from_str(&std::fs::read_to_string(path)?)?,
-        None => Vec::new(),
+    // `--probes` is a test asked before and after; `--plan` names every phase.
+    let plan: Plan = match (args.get("plan"), args.get("probes")) {
+        (Some(path), _) => serde_yaml::from_str(&std::fs::read_to_string(path)?)?,
+        (None, Some(path)) => {
+            let probes: Vec<Probe> = serde_yaml::from_str(&std::fs::read_to_string(path)?)?;
+            Plan {
+                before: probes.clone(),
+                after: probes,
+                ..Plan::default()
+            }
+        }
+        (None, None) => Plan::default(),
     };
     let rounds = args.get("rounds").map_or(Ok(8), |r| r.parse())?;
     let output = run(
         learner_config,
         args.get("learner-role").map(String::as_str),
         seat,
-        &probes,
+        &plan,
         rounds,
     )
     .await?;

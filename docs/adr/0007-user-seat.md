@@ -39,6 +39,15 @@ Neither reads which kind of seat it has. The only reader of `Provenance` is the
 records with simulated ones, and must scrub live ones before training use
 (`Provenance::requires_scrub`).
 
+A simulated student may carry `concepts`: each has a mastery that starts at a
+given level and rises by a fixed step only on a learner turn containing at least
+`min_hits` of its `taught_by` phrases (deterministic, inspectable, a proxy for
+"the turn addressed the concept"). Every message to the seat ends with a note of
+what it understands, and it answers strictly from the note, so teaching changes
+its answers and stating answers does not. The final mastery is recorded in
+`ConversationRecord::mastery`. Tests put to the seat outside the conversation
+never move mastery.
+
 A simulated seat is measured: every reply is checked for an answer-key leak,
 for a hidden fact told before the learner asked, and for a role break, and the
 counts travel in `ConversationRecord::checks`. A reply with a violation is still

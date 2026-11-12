@@ -29,7 +29,7 @@ use crate::{Agent, CallError, RunConclusion};
 
 pub use checks::{check_reply, SeatChecks, Violation};
 pub use live::{LiveSeat, LiveTerms};
-pub use simulated::{HiddenFact, SeatSpec, SimulatedSeat};
+pub use simulated::{Concept, HiddenFact, SeatSpec, SimulatedSeat};
 
 /// What the seat says, and whether it is the end of the conversation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +107,12 @@ pub trait Seat: Send + Sync {
     /// Where the seat's words come from. For the record only.
     fn provenance(&self) -> Provenance;
 
+    /// What the seat understands at the end, per concept, when its knowledge
+    /// is modelled (a simulated student's is).
+    fn mastery(&self) -> Option<std::collections::BTreeMap<String, f64>> {
+        None
+    }
+
     /// How the seat behaved, when it is measured (a simulated seat is).
     fn checks(&self) -> Option<SeatChecks> {
         None
@@ -157,6 +163,10 @@ pub struct ConversationRecord {
     pub ending: Ending,
     /// How the seat behaved, when it was measured.
     pub checks: Option<SeatChecks>,
+    /// What the seat understood at the end, per concept, for a modelled
+    /// student; the one place the update rule's outcome is recorded.
+    #[serde(default)]
+    pub mastery: Option<std::collections::BTreeMap<String, f64>>,
 }
 
 /// The current [`ConversationRecord::schema`].
@@ -210,5 +220,6 @@ pub async fn converse(
         exchanges,
         ending,
         checks: seat.checks(),
+        mastery: seat.mastery(),
     })
 }

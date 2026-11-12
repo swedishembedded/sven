@@ -302,3 +302,58 @@ fn benign_replies_that_share_a_few_words_are_not_flagged() {
         assert!(violations("hello", reply).is_empty(), "{reply}");
     }
 }
+
+const STUDENT: &str = r#"
+id: student
+persona: A student.
+goals: [pass]
+opening: "Hi, I do not get circuits."
+concepts:
+  - id: series
+    taught_by: ["in series", "same current"]
+    min_hits: 2
+    believes: "series resistors use up current"
+"#;
+
+fn student_seat(replies: &[&str]) -> (SimulatedSeat, Arc<Mutex<Vec<String>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let provider = Spy {
+        inner: ScriptedMockProvider::new(replies.iter().map(|r| say(r)).collect()),
+        seen: Arc::clone(&seen),
+    };
+    let engine = Engine::builder()
+        .model_provider(Arc::new(provider))
+        .toolset(Toolset::none())
+        .build()
+        .expect("an engine builds");
+    let (spec, sha) = SeatSpec::parse(STUDENT).expect("parses");
+    (SimulatedSeat::new(&engine, spec, sha), seen)
+}
+
+#[tokio::test]
+async fn a_student_seat_learns_only_from_a_turn_that_addresses_the_concept() {
+    let (seat, seen) = student_seat(&["ok", "ok", "I see", "115"]);
+    // Giving an answer is not teaching: the concept stays unlearnt.
+    seat.reply("The answer is 115.").await.expect("replies");
+    assert_eq!(seat.mastery().unwrap()["series"], 0.0);
+    // One matching phrase is not enough either (min_hits is 2).
+    seat.reply("Things in series are common.")
+        .await
+        .expect("replies");
+    assert_eq!(seat.mastery().unwrap()["series"], 0.0);
+    // Two phrases are: the concept is learnt and the note says so.
+    seat.reply("In series the same current flows everywhere.")
+        .await
+        .expect("replies");
+    assert_eq!(seat.mastery().unwrap()["series"], 0.5);
+    let asked = seat
+        .probe("What is 47 + 68 in series?")
+        .await
+        .expect("probes");
+    assert_eq!(asked, "115");
+    let seen = seen.lock().unwrap().join("\n");
+    assert!(seen.contains("series: confused (you believe series resistors use up current)"));
+    assert!(seen.contains(
+        "What is 47 + 68 in series?\n\n[What you understand right now - series: understood]"
+    ));
+}

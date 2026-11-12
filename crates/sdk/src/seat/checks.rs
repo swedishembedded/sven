@@ -16,7 +16,7 @@ pub enum Violation {
     /// The reply contains a string of the spec's answer key.
     AnswerKeyLeak(String),
     /// The reply restates an answer-key string in other words
-    /// (see [`paraphrases`]).
+    /// (see the `paraphrases` helper).
     AnswerKeyParaphrase(String),
     /// The reply states a hidden fact before the learner asked for it.
     PrematureDisclosure(String),

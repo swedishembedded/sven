@@ -42,15 +42,36 @@ pub struct ProbeAnswer {
     pub answer: String,
 }
 
+/// The tests put to the counterpart around the conversation. Every list is
+/// optional; the distractors are asked, and their answers dropped, between `after` and
+/// `delayed`, so the delayed test measures what lasted.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct Plan {
+    /// Before the conversation.
+    #[serde(default)]
+    pub before: Vec<Probe>,
+    /// Right after it.
+    #[serde(default)]
+    pub after: Vec<Probe>,
+    /// Right after it, on cases the conversation did not cover.
+    #[serde(default)]
+    pub transfer: Vec<Probe>,
+    /// Unrelated questions asked after the tests above.
+    #[serde(default)]
+    pub distractors: Vec<Probe>,
+    /// After the distractors.
+    #[serde(default)]
+    pub delayed: Vec<Probe>,
+}
+
 /// What a run produces.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Output {
-    /// The conversation, with provenance and the seat's checks.
+    /// The conversation, with provenance, the seat's checks and mastery.
     pub record: ConversationRecord,
-    /// Answers given before the conversation.
-    pub probes_before: Vec<ProbeAnswer>,
-    /// Answers given after it.
-    pub probes_after: Vec<ProbeAnswer>,
+    /// Answers by phase: `before`, `after`, `transfer`, `delayed` (only
+    /// the phases the plan had questions for).
+    pub probes: std::collections::BTreeMap<String, Vec<ProbeAnswer>>,
 }
 
 /// Which counterpart the learner works with.
@@ -76,7 +97,7 @@ pub async fn run(
     learner_config: Config,
     learner_role: Option<&str>,
     seat: SeatChoice<'_>,
-    probes: &[Probe],
+    plan: &Plan,
     rounds: usize,
 ) -> anyhow::Result<Output> {
     let learner_engine = Engine::builder().config(learner_config).build()?;
@@ -98,14 +119,24 @@ pub async fn run(
             terms,
         )),
     };
-    let probes_before = ask(seat.as_ref(), probes).await?;
+    let mut probes = std::collections::BTreeMap::new();
+    probes.insert(
+        "before".to_string(),
+        ask(seat.as_ref(), &plan.before).await?,
+    );
     let record = converse(&mut learner, seat.as_ref(), rounds).await?;
-    let probes_after = ask(seat.as_ref(), probes).await?;
-    Ok(Output {
-        record,
-        probes_before,
-        probes_after,
-    })
+    probes.insert("after".to_string(), ask(seat.as_ref(), &plan.after).await?);
+    probes.insert(
+        "transfer".to_string(),
+        ask(seat.as_ref(), &plan.transfer).await?,
+    );
+    ask(seat.as_ref(), &plan.distractors).await?;
+    probes.insert(
+        "delayed".to_string(),
+        ask(seat.as_ref(), &plan.delayed).await?,
+    );
+    probes.retain(|_, answers| !answers.is_empty());
+    Ok(Output { record, probes })
 }
 
 async fn ask(seat: &dyn Seat, probes: &[Probe]) -> anyhow::Result<Vec<ProbeAnswer>> {

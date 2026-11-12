@@ -5,7 +5,7 @@
 //! the record says simulated and carries the checks, and probes taken before
 //! and after the conversation do not count as conversation.
 
-use sample_agent_seat::{run, Probe, SeatChoice};
+use sample_agent_seat::{run, Plan, Probe, SeatChoice};
 use sven_sdk::config::Config;
 use sven_sdk::seat::{Ending, Provenance};
 
@@ -38,10 +38,15 @@ async fn a_scripted_learner_and_seat_leave_a_checked_simulated_record() {
         "id: t\npersona: a tenant\ngoals: [x]\nopening: My landlord kept my deposit.\nhidden_facts:\n  - {id: amount, value: 14000 SEK, disclose_when: [how much]}\nanswer_key: [deposit act section 12]\nseed: 3\n",
     )
     .unwrap();
-    let probes = [Probe {
+    let quiz = vec![Probe {
         id: "q".into(),
         text: "Quiz: what was the amount?".into(),
     }];
+    let plan = Plan {
+        before: quiz.clone(),
+        after: quiz,
+        ..Plan::default()
+    };
 
     let out = run(
         learner,
@@ -50,7 +55,7 @@ async fn a_scripted_learner_and_seat_leave_a_checked_simulated_record() {
             spec: &spec,
             config: Box::new(seat),
         },
-        &probes,
+        &plan,
         4,
     )
     .await
@@ -67,6 +72,7 @@ async fn a_scripted_learner_and_seat_leave_a_checked_simulated_record() {
         (1, 1),
         "the probes are not replies"
     );
-    assert_eq!(out.probes_before[0].answer, "I think it is 14000 SEK");
-    assert_eq!(out.probes_after, out.probes_before);
+    assert_eq!(out.probes["before"][0].answer, "I think it is 14000 SEK");
+    assert_eq!(out.probes["after"], out.probes["before"]);
+    assert!(!out.probes.contains_key("delayed"));
 }
