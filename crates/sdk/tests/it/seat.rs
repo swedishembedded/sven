@@ -112,20 +112,24 @@ fn texts(record: &ConversationRecord, who: Speaker) -> Vec<&str> {
 
 #[tokio::test]
 async fn the_same_learner_runs_against_either_seat_through_one_driver() {
-    for (seat, kind) in [
+    // A seat that leaves with words gets them answered; one that leaves
+    // silently does not.
+    for (seat, kind, answers) in [
         (
             Box::new(simulated(&["Seven days ago. [END]"])) as Box<dyn Seat>,
             "simulated",
+            vec!["When did it happen?", "Thank you, noted."],
         ),
         (
             Box::new(live("Seven days ago.\n/done\n")) as Box<dyn Seat>,
             "live",
+            vec!["When did it happen?"],
         ),
     ] {
-        let (mut agent, _) = learner(&["When did it happen?"]);
+        let (mut agent, _) = learner(&["When did it happen?", "Thank you, noted."]);
         let record = converse(&mut agent, seat.as_ref(), 5).await.expect("runs");
         assert_eq!(record.ending, Ending::SeatDone, "{kind}");
-        assert_eq!(texts(&record, Speaker::Learner), ["When did it happen?"]);
+        assert_eq!(texts(&record, Speaker::Learner), answers, "{kind}");
         let json = serde_json::to_value(&record).unwrap();
         assert_eq!(json["provenance"]["kind"], kind);
     }

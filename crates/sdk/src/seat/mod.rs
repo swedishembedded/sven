@@ -163,7 +163,8 @@ pub struct ConversationRecord {
 pub const RECORD_SCHEMA: u32 = 1;
 
 /// Runs `learner` against `seat`: the seat opens, the learner answers, and
-/// so on until the seat is done or `max_rounds` learner turns have run.
+/// so on until the seat is done  or
+/// `max_rounds` learner turns have run.
 ///
 /// # Errors
 ///
@@ -182,7 +183,9 @@ pub async fn converse(
             speaker: Speaker::Seat,
             text: said.text.clone(),
         });
-        if said.done {
+        // A seat that is leaving still gets its last words answered (the
+        // client says goodbye, the lawyer sums up), unless it said nothing.
+        if said.done && said.text.is_empty() {
             ending = Ending::SeatDone;
             break;
         }
@@ -193,6 +196,10 @@ pub async fn converse(
         });
         if outcome.conclusion != RunConclusion::Success {
             ending = Ending::LearnerStopped;
+            break;
+        }
+        if said.done {
+            ending = Ending::SeatDone;
             break;
         }
         said = seat.reply(&outcome.reply).await?;
