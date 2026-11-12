@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.0] - 2026-11-12
+
 ### Added
 - **model-drivers**: every request a model driver sends names the agent and its version (`User-Agent: sven/<version>`), so a model service can tell which agent asked for what it made (a service that marks generated files can name it as the software that asked). Native builds only; in a browser the page's own fetch sends the browser's.
 
