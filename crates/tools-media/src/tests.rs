@@ -12,7 +12,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use crate::fake::{self as fixture, handle_of, serve, Fake};
+use crate::fake::{self as fixture, handle_of, serve, Fake, ONE_PIXEL_PNG};
 use crate::request::{plan, request_key};
 use sven_tool_api::tool::ToolOutputPart;
 
@@ -267,8 +267,18 @@ fn a_provider_s_own_options_go_beside_brain_s_and_never_replace_them() {
         .unwrap_or_default()
     };
     assert!(refused(json!({"brain": {"action": "x"}})).contains("`action`"));
-    assert!(refused(json!({"seed": "on"})).contains("provider_options"));
     assert!(refused(json!("on")).contains("provider_options"));
+    // The model's options given alone are kept as given: where they go is
+    // decided before sending, by who serves the model.
+    let alone = plan(
+        &json!({"model": "m", "prompt": "p", "provider_options": {"negative_prompt": "blurry"}}),
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!(
+        alone.body["provider"],
+        json!({"options": {"negative_prompt": "blurry"}})
+    );
 }
 
 #[test]
@@ -352,7 +362,7 @@ async fn models_lists_what_each_model_renders_and_costs() {
     .await;
     assert_eq!(
         out.content,
-        "brain/mock-video: text -> video; run as video; duration_seconds $0.01"
+        "brain/mock-video: text -> video; run as video; duration_seconds $0.01\nalibaba/wan-2.7: text+image -> video; run as video\nsven/wan: text -> video; run as video"
     );
     let schema = ModelSchemaTool::new(MediaEndpoint {
         base_url: fake.base_url.clone(),
@@ -500,17 +510,31 @@ async fn a_generation_killed_while_polling_resumes_the_job_it_started() {
     let dir = tempfile::tempdir().unwrap();
     let args = json!({"model": "brain/mock-video", "prompt": "a red ball", "seed": 3});
     let config = MediaConfig::default();
-    let mut lines = Vec::new();
-    // The process dies after submitting, while it waits for the job.
-    let killed = tokio::time::timeout(
-        Duration::from_millis(600),
-        generate(&endpoint(&fake), &config, dir.path(), &args, &mut |line| {
-            lines.push(line.to_owned())
-        }),
-    )
-    .await;
-    assert!(killed.is_err(), "the job takes two polls");
-    assert!(lines.iter().any(|l| l.contains("job0")), "{lines:?}");
+    // The process dies after submitting, while it waits for the job: killed
+    // once the job is started, however long starting it took.
+    let started = {
+        let (endpoint, config, dir, args, created) = (
+            endpoint(&fake),
+            config.clone(),
+            dir.path().to_owned(),
+            args.clone(),
+            fake.created.clone(),
+        );
+        let run =
+            tokio::spawn(
+                async move { generate(&endpoint, &config, &dir, &args, &mut |_| {}).await },
+            );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        while created.lock().unwrap().is_empty() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let finished = run.is_finished();
+        run.abort();
+        assert!(!finished, "the job takes two polls");
+        let count = created.lock().unwrap().len();
+        count
+    };
+    assert_eq!(started, 1);
     assert!(!dir.path().join(".sven/media").exists());
 
     let done = generate(&endpoint(&fake), &config, dir.path(), &args, &mut |_| {})
@@ -533,3 +557,73 @@ async fn a_generation_killed_while_polling_resumes_the_job_it_started() {
 }
 
 mod invocations;
+
+/// The model's options given alone reach the provider serving the request:
+/// a router that does not place them gets them under each provider the
+/// model's endpoints name (it ignores any other provider's, silently); a
+/// server that names the model's providers places them itself.
+#[tokio::test]
+async fn options_given_alone_go_under_the_provider_serving_the_model() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let config = MediaConfig::default();
+    let run = |model: &str| json!({"model": model, "prompt": "a cat", "provider_options": {"negative_prompt": "blurry"}});
+    generate(
+        &endpoint(&fake),
+        &config,
+        dir.path(),
+        &run("alibaba/wan-2.7"),
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    generate(
+        &endpoint(&fake),
+        &config,
+        dir.path(),
+        &run("sven/wan"),
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    let created = fake.created.lock().unwrap().clone();
+    assert_eq!(
+        created[0].1["provider"],
+        json!({"only": ["atlas-cloud"], "options": {"atlas-cloud": {"negative_prompt": "blurry"}}})
+    );
+    assert_eq!(
+        created[1].1["provider"],
+        json!({"options": {"negative_prompt": "blurry"}})
+    );
+}
+
+/// A person's attachment the service holds is named by its file, not sent
+/// again: unchanged, as the file; changed by the agent, as it now is.
+#[tokio::test]
+async fn an_attachment_the_service_holds_is_sent_by_its_file() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let id = "11d1032e-7778-4003-9602-b0382067fde3";
+    let held = dir.path().join(".sven/attachments").join(id);
+    std::fs::create_dir_all(&held).unwrap();
+    let poster = held.join("poster.png");
+    std::fs::write(&poster, ONE_PIXEL_PNG).unwrap();
+    crate::remember_held(&poster, &format!("mcp-file://files/{id}"))
+        .await
+        .unwrap();
+    let config = MediaConfig::default();
+    let args = json!({"model": "alibaba/wan-2.7", "prompt": "fly", "first_frame": format!(".sven/attachments/{id}/poster.png")});
+    generate(&endpoint(&fake), &config, dir.path(), &args, &mut |_| {})
+        .await
+        .unwrap();
+    let sent = fake.created.lock().unwrap()[0].1["frame_images"][0]["image_url"]["url"].clone();
+    assert_eq!(sent, json!(format!("file:{id}")));
+    // Edited since: its bytes, inline.
+    std::fs::write(&poster, [ONE_PIXEL_PNG, b"x"].concat()).unwrap();
+    let args = json!({"model": "alibaba/wan-2.7", "prompt": "fly again", "first_frame": format!(".sven/attachments/{id}/poster.png")});
+    generate(&endpoint(&fake), &config, dir.path(), &args, &mut |_| {})
+        .await
+        .unwrap();
+    let sent = fake.created.lock().unwrap()[1].1["frame_images"][0]["image_url"]["url"].clone();
+    assert!(sent.as_str().unwrap().starts_with("data:image/png;base64,"));
+}

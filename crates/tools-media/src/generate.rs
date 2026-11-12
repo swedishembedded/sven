@@ -19,9 +19,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use sven_model_drivers::video::{VideoState, VideoStatus};
+use sven_model_drivers::video::{VideoClient, VideoState, VideoStatus};
 
 use super::request::{plan, request_key};
 use super::{client, shown, sidecar_path, MediaConfig, MediaEndpoint, Sidecar};
@@ -67,6 +67,77 @@ impl Generated {
     }
 }
 
+/// Providers that take their options nested in one object, not under their
+/// name directly: Google's (the video API's documentation: "Google Veo
+/// models are the only video models that nest options in a `parameters`
+/// object").
+const NESTED_UNDER: [(&str, &str); 2] = [
+    ("google-vertex", "parameters"),
+    ("google-ai-studio", "parameters"),
+];
+
+/// Where the model's own options given alone go. A provider ignores options
+/// under any other provider's name, silently, so they must go under the one
+/// serving the request. A server whose listing names the model's providers
+/// places them itself (and refuses what it cannot); for one that does not,
+/// they go under every provider its endpoints name, and the request only to
+/// those. Options already under a provider's name are sent as given.
+async fn place_options(video: &VideoClient, body: &mut Map<String, Value>) -> Result<(), String> {
+    let Some(Value::Object(options)) = body.get("provider").and_then(|p| p.get("options")).cloned()
+    else {
+        return Ok(());
+    };
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let listed = video
+        .models()
+        .await
+        .map_err(|e| format!("{e:#}"))?
+        .into_iter()
+        .find(|m| m.id == model);
+    let Some(listed) = listed else { return Ok(()) };
+    if listed.providers.is_some() {
+        return Ok(());
+    }
+    let (alone, named): (Map<String, Value>, Map<String, Value>) = options
+        .into_iter()
+        .partition(|(key, _)| listed.passthrough.contains(key));
+    if alone.is_empty() {
+        return Ok(());
+    }
+    let providers = video
+        .providers_of(&model)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    if providers.is_empty() {
+        return Err(format!(
+            "which providers serve {model} is not known: give its options under the provider's name in `provider_options`"
+        ));
+    }
+    let mut placed = named;
+    for slug in &providers {
+        let own = match NESTED_UNDER.iter().find(|(name, _)| name == slug) {
+            Some((_, under)) => json!({ *under: Value::Object(alone.clone()) }),
+            None => Value::Object(alone.clone()),
+        };
+        placed.insert(slug.clone(), own);
+    }
+    let only: Vec<Value> = placed
+        .keys()
+        .filter(|k| *k != "brain")
+        .cloned()
+        .map(Value::String)
+        .collect();
+    body.insert(
+        "provider".into(),
+        json!({ "only": only, "options": Value::Object(placed) }),
+    );
+    Ok(())
+}
+
 /// Run the request `args` names (the arguments of `run_model`) against
 /// `endpoint`, with paths relative to `workdir`, and write the clip.
 /// `progress` hears each change of the job's state.
@@ -83,8 +154,9 @@ pub async fn generate(
     progress: &mut (dyn FnMut(&str) + Send),
 ) -> Result<Generated, String> {
     let planned = plan(args, workdir)?;
-    let (body, digests) = planned.with_media().await?;
+    let (mut body, digests) = planned.with_media().await?;
     let video = client(endpoint).with_session(config.session.clone());
+    place_options(&video, &mut body).await?;
     let dir = workdir.join(&config.dir);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(config.timeout_secs);
     for attempt in 0..MAX_ATTEMPTS {

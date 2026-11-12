@@ -38,7 +38,7 @@ async fn models_answers_what_kinds_there_are_before_it_lists_any() {
         "- text (chat, and vision: reading images): 2",
         "- image (pictures): 1",
         "- speech (text to speech, voices): 1",
-        "- video (video clips): 1",
+        "- video (video clips): 3",
     ] {
         assert!(overview.contains(kind), "{kind} in {overview}");
     }

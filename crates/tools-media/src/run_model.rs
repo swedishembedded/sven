@@ -58,11 +58,11 @@ impl RunModelTool {
             let references = inputs
                 .iter()
                 .map(|input| {
-                    let path = input.as_str().ok_or("`inputs` holds paths")?;
+                    let path = input.as_str().ok_or("`inputs` holds paths or handles")?;
+                    // A handle of the conversation is an image reference (a
+                    // clip to continue is named by `previous_job_id`).
                     if path.starts_with(sven_model_drivers::invoke::HANDLE_PREFIX) {
-                        return Err(
-                            "a video's `inputs` are files of the working directory, by path; to start or end on an image of the conversation, give its handle as `params.first_frame` or `params.last_frame`".to_owned()
-                        );
+                        return Ok(json!({ "handle": path, "kind": "image" }));
                     }
                     let kind = match Path::new(path)
                         .extension()

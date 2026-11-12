@@ -86,6 +86,10 @@ pub struct VideoModel {
     /// The provider's own options it takes, by name
     /// (`allowed_passthrough_parameters`), sent as `provider.options`.
     pub passthrough: Vec<String>,
+    /// The providers serving it, by the name their options go under, when
+    /// the listing says (`providers`): such a server places options given
+    /// alone itself. None from a listing that does not say.
+    pub providers: Option<Vec<String>>,
     /// Its price per second, by the listing's own key, as listed.
     pub pricing: Vec<(String, String)>,
 }
@@ -202,6 +206,7 @@ fn parse_models(value: &Value) -> Vec<VideoModel> {
                             .into_iter()
                             .filter(|name| name != "brain")
                             .collect(),
+                        providers: m["providers"].as_array().map(|_| strings(&m["providers"])),
                         actions: m["actions"]
                             .as_array()
                             .map(|a| {
@@ -264,6 +269,42 @@ impl VideoClient {
             bail!("{what}: HTTP {}: {message}", status.as_u16());
         }
         json.ok_or_else(|| anyhow!("{what}: the answer is not JSON"))
+    }
+
+    /// The providers serving `model`, by the name their options go under:
+    /// the tags of its endpoints (`/models/<id>/endpoints`), an endpoint's
+    /// own part after `/` left off. Empty when the server lists none.
+    ///
+    /// # Errors
+    /// The server cannot be reached or answers an error other than "no such
+    /// model".
+    pub async fn providers_of(&self, model: &str) -> anyhow::Result<Vec<String>> {
+        let response = crate::build_http_client()
+            .get(format!("{}/models/{model}/endpoints", self.base_url))
+            .bearer_auth(&self.api_key)
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .context("listing the model's providers")?;
+        if response.status().as_u16() == 404 {
+            return Ok(Vec::new());
+        }
+        let answer = Self::read(response, "listing the model's providers").await?;
+        let mut providers: Vec<String> = answer["data"]["endpoints"]
+            .as_array()
+            .map(|endpoints| {
+                endpoints
+                    .iter()
+                    .filter_map(|e| e["tag"].as_str())
+                    .filter_map(|tag| tag.split('/').next())
+                    .filter(|slug| !slug.is_empty() && slug.len() <= 64)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        providers.sort();
+        providers.dedup();
+        Ok(providers)
     }
 
     /// Start a job. `idempotency_key` names it: the same key again answers the

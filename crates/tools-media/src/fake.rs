@@ -245,9 +245,16 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                         (404, "application/json", b"{}".to_vec())
                     }
                 } else if method == "GET" && path == "/v1/videos/models" {
+                    // `alibaba/wan-2.7` as a router lists it (no `providers`:
+                    // its endpoints say), `sven/wan` as the service does.
                     let models = json!({"data": [{"id": "brain/mock-video", "supported_durations": [1, 2, 3], "supported_resolutions": ["480p"],
-                        "generate_audio": false, "seed": true, "actions": [{"action": "extend", "edits": true}], "pricing_skus": {"duration_seconds": "0.01"}}]});
+                        "generate_audio": false, "seed": true, "actions": [{"action": "extend", "edits": true}], "pricing_skus": {"duration_seconds": "0.01"}},
+                        {"id": "alibaba/wan-2.7", "allowed_passthrough_parameters": ["negative_prompt"], "supported_frame_images": ["first_frame"]},
+                        {"id": "sven/wan", "allowed_passthrough_parameters": ["negative_prompt"], "providers": ["atlas-cloud"]}]});
                     (200, "application/json", models.to_string().into_bytes())
+                } else if method == "GET" && path == "/v1/models/alibaba/wan-2.7/endpoints" {
+                    let endpoints = json!({"data": {"endpoints": [{"provider_name": "AtlasCloud", "tag": "atlas-cloud"}]}});
+                    (200, "application/json", endpoints.to_string().into_bytes())
                 } else if let Some(rest) = path.strip_prefix("/v1/videos/job") {
                     let index: usize = rest.split(['/', '?']).next().unwrap().parse().unwrap();
                     if rest.contains("/content") {

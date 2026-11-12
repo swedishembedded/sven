@@ -217,6 +217,9 @@ async fn fetch(mcp: &McpManager, working_dir: &Path, file: &ArtifactRef) -> anyh
     let path = mcp
         .download_file(sven_bootstrap::connectors::SERVER, &file.uri, &dir)
         .await?;
+    // A request that reads it names the server's file while it is
+    // unchanged, rather than sending its bytes again.
+    sven_tools_media::remember_held(&path, &file.uri).await?;
     Ok(path
         .strip_prefix(working_dir)
         .unwrap_or(&path)

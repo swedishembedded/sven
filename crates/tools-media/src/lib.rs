@@ -38,10 +38,13 @@
 mod direct;
 mod generate;
 mod handover;
+mod held;
 mod invocation;
 pub mod mp4;
 mod request;
 mod run_model;
+
+pub use held::{remember_held, HELD};
 
 #[cfg(any(test, feature = "fake-server"))]
 pub mod fake;

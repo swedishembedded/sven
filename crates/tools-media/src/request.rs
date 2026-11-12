@@ -136,8 +136,20 @@ fn frame(value: &Value, kind: &'static str, workdir: &Path) -> Result<Frame, Str
 #[derive(Debug, Clone, PartialEq)]
 struct Reference {
     kind: Kind,
-    path: PathBuf,
-    media_type: &'static str,
+    source: ReferenceSource,
+}
+
+/// Where a reference's file is.
+#[derive(Debug, Clone, PartialEq)]
+enum ReferenceSource {
+    /// A file of the working directory, sent by reference when the service
+    /// holds it unchanged (`held`), else inline.
+    Path {
+        path: PathBuf,
+        media_type: &'static str,
+    },
+    /// A handle of the conversation, which the service resolves.
+    Handle(String),
 }
 
 /// The request a call makes, without the files it names (they are read when
@@ -173,18 +185,28 @@ fn references(value: &Value, workdir: &Path) -> Result<Vec<Reference>, String> {
     let list = value
         .as_array()
         .filter(|l| !l.is_empty())
-        .ok_or("`references` is a non-empty list of {path, kind}")?;
+        .ok_or("`references` is a non-empty list of {path or handle, kind}")?;
     list.iter()
         .map(|entry| {
-            let path = entry["path"]
-                .as_str()
-                .ok_or("each of `references` needs a `path`")?;
+            let named = entry["handle"].as_str().or_else(|| entry["path"].as_str());
+            let path = named.ok_or("each of `references` needs a `path` or a `handle`")?;
             let word = entry["kind"]
                 .as_str()
                 .ok_or_else(|| format!("reference {path} needs a `kind`: image, video or audio"))?;
             let kind = Kind::parse(word).ok_or_else(|| {
                 format!("reference {path}: unknown kind `{word}` (image, video or audio)")
             })?;
+            if path.starts_with(sven_model_drivers::invoke::HANDLE_PREFIX) {
+                if !is_handle(path) {
+                    return Err(format!(
+                        "reference {path} is not a handle of the conversation"
+                    ));
+                }
+                return Ok(Reference {
+                    kind,
+                    source: ReferenceSource::Handle(path.to_owned()),
+                });
+            }
             let resolved = file_to_read(workdir, path, "references")?;
             let ext = resolved
                 .extension()
@@ -199,8 +221,10 @@ fn references(value: &Value, workdir: &Path) -> Result<Vec<Reference>, String> {
             })?;
             Ok(Reference {
                 kind,
-                path: resolved,
-                media_type,
+                source: ReferenceSource::Path {
+                    path: resolved,
+                    media_type,
+                },
             })
         })
         .collect()
@@ -301,24 +325,21 @@ pub(crate) fn plan(args: &Value, workdir: &Path) -> Result<Planned, String> {
     if edit.is_some() && action.is_some() {
         return Err("`edit` and `action` both choose the model's action: give one".into());
     }
-    // A provider's own options, under its name; the service checks each
-    // against the model's listing.
+    // A provider's own options: the model's options alone (as its listing
+    // names them), or under a provider's name. Where they go is decided
+    // before sending, by who serves the model (`generate`); the service
+    // checks each against the model's listing.
     let mut options = match args.get("provider_options") {
         None => Map::new(),
         Some(Value::Object(options)) => options.clone(),
         Some(_) => {
-            return Err("`provider_options` must be an object of options by provider".into())
+            return Err("`provider_options` must be an object: the model's options by name".into())
         }
     };
     if options.contains_key("brain") {
         return Err(
             "brain's options are chosen by `action` or `edit`, not `provider_options`".into(),
         );
-    }
-    if let Some((name, _)) = options.iter().find(|(_, value)| !value.is_object()) {
-        return Err(format!(
-            "`provider_options.{name}` must be an object of that provider's options"
-        ));
     }
     match edit.or(action) {
         Some(chosen) => {
@@ -363,6 +384,16 @@ async fn load(path: &Path) -> Result<(Vec<u8>, String), String> {
     Ok((bytes, digest))
 }
 
+/// A file as a request names it: the service's own file when `path` is an
+/// unchanged copy of one it holds (`held`), sent by reference; else its
+/// bytes, inline.
+async fn inline_or_held(path: &Path, digest: &str, media_type: &str, bytes: &[u8]) -> String {
+    match super::held::held_file_id(path, digest).await {
+        Some(id) => format!("file:{id}"),
+        None => data_url(media_type, bytes),
+    }
+}
+
 fn data_url(media_type: &str, bytes: &[u8]) -> String {
     format!(
         "data:{media_type};base64,{}",
@@ -405,9 +436,19 @@ impl Planned {
         if !self.references.is_empty() {
             let mut parts = Vec::with_capacity(self.references.len());
             for reference in &self.references {
-                let (bytes, digest) = load(&reference.path).await?;
-                parts.push(reference.kind.part(data_url(reference.media_type, &bytes)));
-                digests.push(format!("{}:{digest}", reference.kind.name()));
+                let url = match &reference.source {
+                    ReferenceSource::Path { path, media_type } => {
+                        let (bytes, digest) = load(path).await?;
+                        digests.push(format!("{}:{digest}", reference.kind.name()));
+                        inline_or_held(path, &digest, media_type, &bytes).await
+                    }
+                    // Named by the handle: the file behind it never changes.
+                    ReferenceSource::Handle(handle) => {
+                        digests.push(format!("{}:{handle}", reference.kind.name()));
+                        handle.clone()
+                    }
+                };
+                parts.push(reference.kind.part(url));
             }
             body.insert("input_references".into(), Value::Array(parts));
         }
@@ -418,7 +459,7 @@ impl Planned {
                     FrameSource::Path { path, media_type } => {
                         let (bytes, digest) = load(path).await?;
                         digests.push(format!("{}:{digest}", frame.kind));
-                        data_url(media_type, &bytes)
+                        inline_or_held(path, &digest, media_type, &bytes).await
                     }
                     // Named by the handle: the file behind it never changes.
                     FrameSource::Handle(handle) => {
