@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Agent, CallError, RunConclusion};
 
-pub use checks::{SeatChecks, Violation};
+pub use checks::{check_reply, SeatChecks, Violation};
 pub use live::{LiveSeat, LiveTerms};
 pub use simulated::{HiddenFact, SeatSpec, SimulatedSeat};
 

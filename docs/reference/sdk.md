@@ -226,8 +226,9 @@ record carries `Provenance` (`live` with the consent and retention terms, or
 `SeatChecks`: answer-key leaks, hidden facts told before they were asked for,
 and role breaks, as counts per reply. Live records must be scrubbed before
 training use (`Provenance::requires_scrub`) and never pooled with simulated
-ones. The checks are string matches: they catch verbatim leaks, not
-paraphrase. See [ADR 0007](../adr/0007-user-seat.md).
+ones. The checks are deterministic: verbatim matches plus a token-overlap
+paraphrase check (75% of a secret's content tokens in one window); synonyms and
+inferences are not caught. See [ADR 0007](../adr/0007-user-seat.md).
 
 The run waits for the reply, bounded by its cancel token and deadline. A gate
 dropped without a reply never leaves it waiting: a question is answered with

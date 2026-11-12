@@ -52,8 +52,14 @@ delivered, so the record shows exactly what the learner saw; a run whose
   simulator's fidelity beyond these checks belong to the application that
   evaluates agents; what a record may be used for belongs to the application
   that trains.
-- The checks are string-based: they catch verbatim leaks and disclosures, not
-  paraphrase. Diversity of simulated users is not measured here.
+- The checks are deterministic and model-free. Verbatim matches are exact; a
+  restatement is caught when a window of the reply's content tokens (twice the
+  secret's length, stopwords dropped, crude stem, number words as digits) holds
+  at least 75% of the secret's distinct tokens (`PARAPHRASE_COVERAGE`), for
+  secrets of two or more content tokens. That catches reordering, inflection,
+  number words and padding; a true synonym or an inference slips through. A
+  model-based judge for those is a separate, opt-in measurement. Diversity of
+  simulated users is not measured here.
 - `seed` is recorded, not enforced: replies are as deterministic as the seat's
   model is; the opening is verbatim.
 - A live seat in the same loop is for demonstration and for collecting

@@ -244,3 +244,57 @@ async fn the_seat_answers_the_learners_ask_question_tool_too() {
     });
     assert!(answered, "{:?}", agent.state().history());
 }
+
+fn paraphrase_spec() -> SeatSpec {
+    SeatSpec::parse(
+        r#"
+id: p
+persona: x
+goals: []
+opening: hi
+hidden_facts:
+  - {id: when, value: "the goods arrived on the fourteenth of March", disclose_when: ["when"]}
+answer_key: ["the landlord must return the deposit within four weeks", "deposit act section 12"]
+"#,
+    )
+    .expect("parses")
+    .0
+}
+
+fn violations(learner: &str, reply: &str) -> Vec<Violation> {
+    sven_sdk::seat::check_reply(&paraphrase_spec(), learner, reply)
+}
+
+#[test]
+fn a_restated_answer_key_is_caught_without_a_model() {
+    for reply in [
+        "Within four weeks the deposit must be returned by the landlord.",
+        "It is section twelve of the Deposit Act.",
+        "Four weeks, that is how long a landlord must take to return a deposit.",
+    ] {
+        assert!(
+            violations("hello", reply)
+                .iter()
+                .any(|v| matches!(v, Violation::AnswerKeyParaphrase(_))),
+            "{reply}"
+        );
+    }
+}
+
+#[test]
+fn a_restated_hidden_fact_is_caught_until_it_is_asked_for() {
+    let reply = "Our goods arrived 14 March, the fourteenth.";
+    assert!(violations("hello", reply).contains(&Violation::PrematureParaphrase("when".into())));
+    assert!(violations("when was that?", reply).is_empty());
+}
+
+#[test]
+fn benign_replies_that_share_a_few_words_are_not_flagged() {
+    for reply in [
+        "I paid a deposit when I moved in and the landlord kept it.",
+        "The act of keeping it for four weeks was unfair.",
+        "My landlord is not returning my calls and I am worried.",
+    ] {
+        assert!(violations("hello", reply).is_empty(), "{reply}");
+    }
+}
