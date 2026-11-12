@@ -290,14 +290,19 @@ async fn a_resumed_runs_recording_replays_from_its_start_checkpoint() {
     let harness = engine.load_harness_from_str(GATED).expect("loads");
 
     let mut first = harness.start(json!({})).expect("starts").with_recording();
+    // The run is stopped once its tool is in flight, not after a wall-clock
+    // budget that a loaded machine can spend before the tool starts.
+    let stop = sven_sdk::CancelToken::new();
+    let stopper = stop.clone();
     let worker = tokio::spawn(async move {
         first
-            .execute(RunOptions::new().deadline(std::time::Duration::from_millis(200)))
+            .execute(RunOptions::new().suspend_on(stop))
             .await
             .expect("the run stops on the bound");
         first.checkpoint()
     });
     started_rx.await.expect("the run parks on its tool");
+    stopper.cancel();
     let checkpoint = worker
         .await
         .expect("ends")
@@ -341,13 +346,18 @@ async fn a_checkpoint_survives_json_and_resumes() {
     let harness = engine.load_harness_from_str(GATED).expect("loads");
 
     let mut run = harness.start(json!({})).expect("starts");
+    // The run is stopped once its tool is in flight, not after a wall-clock
+    // budget that a loaded machine can spend before the tool starts.
+    let stop = sven_sdk::CancelToken::new();
+    let stopper = stop.clone();
     let worker = tokio::spawn(async move {
-        run.execute(RunOptions::new().deadline(std::time::Duration::from_millis(200)))
+        run.execute(RunOptions::new().suspend_on(stop))
             .await
             .expect("the run stops on the bound");
         run.checkpoint()
     });
     started_rx.await.expect("the run parks on its tool");
+    stopper.cancel();
     let checkpoint = worker.await.expect("ends").expect("checkpoints");
     release.notify_waiters();
 

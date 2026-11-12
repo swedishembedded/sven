@@ -251,11 +251,15 @@ async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
 
     let mut run = harness.start(json!({})).expect("starts");
     let run_id = run.run_id().to_string();
+    // The run is stopped once its tool is in flight, not after a wall-clock
+    // budget that a loaded machine can spend before the tool starts.
+    let stop = CancelToken::new();
+    let stopper = stop.clone();
     let worker = tokio::spawn(async move {
         let outcome = run
-            // A deadline, not a cancel: the bound suspends the run where it
+            // A suspend, not a cancel: the token stops the run where it
             // rests, and the checkpoint is what a resume continues.
-            .execute(RunOptions::new().deadline(std::time::Duration::from_millis(200)))
+            .execute(RunOptions::new().suspend_on(stop))
             .await
             .expect("the run stops on the bound");
         (outcome, run.checkpoint())
@@ -264,6 +268,7 @@ async fn a_bounded_run_checkpoints_and_resumes_under_the_same_program() {
     // The tool call is in flight: the run is parked on it. Let the bound
     // stop it there.
     started_rx.await.expect("the run reached its tool step");
+    stopper.cancel();
     let (outcome, checkpoint) = worker.await.expect("the worker ends");
 
     assert_eq!(outcome.conclusion, RunConclusion::Timeout);
@@ -444,13 +449,18 @@ async fn a_checkpoint_refuses_a_changed_program() {
     let harness = engine.load_harness_from_str(GATED).expect("loads");
 
     let mut run = harness.start(json!({})).expect("starts");
+    // The run is stopped once its tool is in flight, not after a wall-clock
+    // budget that a loaded machine can spend before the tool starts.
+    let stop = CancelToken::new();
+    let stopper = stop.clone();
     let worker = tokio::spawn(async move {
-        run.execute(RunOptions::new().deadline(std::time::Duration::from_millis(200)))
+        run.execute(RunOptions::new().suspend_on(stop))
             .await
             .expect("the run stops");
         run.checkpoint()
     });
     started_rx.await.expect("the run parks on its tool");
+    stopper.cancel();
     let checkpoint = worker.await.expect("ends").expect("checkpoints");
 
     // A different engine, a different program that only claims the same
