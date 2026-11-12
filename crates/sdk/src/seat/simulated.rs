@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
-use super::checks::{check_reply, SeatChecks};
+use super::checks::{check_reply, mentions, unlocked, SeatChecks};
 use super::evidence::{self, Evidence};
 use super::{Provenance, Seat, SeatReply};
 use crate::{Agent, CallError, Engine};
@@ -170,7 +170,7 @@ impl SeatSpec {
                  nothing beyond the note.\n",
             );
         }
-        text.push_str("\nReply with what you say next, nothing else. Say [END] when you are done.");
+        text.push_str("\nReply with what you say next, nothing else. Say [END] only when the conversation has reached its natural end and you have answered everything you were asked.");
         text
     }
 }
@@ -191,6 +191,7 @@ struct State {
     agent: Agent,
     mastery: BTreeMap<String, f64>,
     seen: BTreeMap<String, BTreeSet<String>>,
+    told: BTreeSet<String>,
     learner_said: String,
     checks: SeatChecks,
 }
@@ -223,6 +224,7 @@ impl SimulatedSeat {
                 agent,
                 mastery,
                 seen: BTreeMap::new(),
+                told: BTreeSet::new(),
                 learner_said: String::new(),
                 checks: SeatChecks::default(),
             }),
@@ -284,7 +286,21 @@ impl Seat for SimulatedSeat {
         let reply = without_note(&outcome.reply);
         let violations = check_reply(&self.spec, &state.learner_said, reply);
         state.checks.record(violations);
-        let done = reply.contains(END_MARKER);
+        for fact in &self.spec.hidden_facts {
+            if mentions(reply, &fact.value) {
+                state.told.insert(fact.id.clone());
+            }
+        }
+        // A seat that walks out while a fact the learner asked for is untold
+        // would score the learner for a conversation the seat cut short.
+        let pending = self.spec.hidden_facts.iter().any(|f| {
+            unlocked(&state.learner_said, &f.disclose_when) && !state.told.contains(&f.id)
+        });
+        let ends = reply.contains(END_MARKER);
+        if ends && pending {
+            state.checks.premature_ends += 1;
+        }
+        let done = ends && !pending;
         Ok(SeatReply {
             text: reply.replace(END_MARKER, "").trim().to_string(),
             done,

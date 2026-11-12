@@ -36,6 +36,10 @@ pub struct SeatChecks {
     pub clean_replies: usize,
     /// Every violation found, with the 0-based reply it was in.
     pub violations: Vec<(usize, Violation)>,
+    /// Times the seat model tried to end the conversation while a fact the
+    /// learner had asked for was still untold; the ending was not honoured.
+    #[serde(default)]
+    pub premature_ends: usize,
 }
 
 impl SeatChecks {
@@ -80,8 +84,23 @@ fn normalise(text: &str) -> String {
         .to_lowercase()
 }
 
+/// Whether `reply` states `value`, verbatim or restated (the same rule the
+/// disclosure checks use).
+pub(super) fn mentions(reply: &str, value: &str) -> bool {
+    let reply = normalise(reply);
+    reply.contains(&normalise(value)) || paraphrases(&reply, value)
+}
+
+/// Whether the learner's words so far unlock a fact.
+pub(super) fn unlocked(learner_said: &str, disclose_when: &[String]) -> bool {
+    let said = normalise(learner_said);
+    disclose_when
+        .iter()
+        .any(|word| said.contains(&normalise(word)))
+}
+
 /// Checks one reply against the spec: verbatim and paraphrased leaks of the
-/// answer key, hidden facts told early, and role breaks.
+/// answer key (unless the learner already said it), hidden facts told early, and role breaks.
 ///
 /// Checks one reply against the spec. `learner_said` is everything the
 /// learner has said so far, which is what unlocks a hidden fact.
@@ -90,6 +109,11 @@ pub fn check_reply(spec: &SeatSpec, learner_said: &str, reply: &str) -> Vec<Viol
     let said = normalise(learner_said);
     let mut found = Vec::new();
     for key in &spec.answer_key {
+        // The learner said it first: the seat repeating the learner's own words is
+        // not the seat knowing the answer.
+        if said.contains(&normalise(key)) || paraphrases(&said, key) {
+            continue;
+        }
         if reply.contains(&normalise(key)) {
             found.push(Violation::AnswerKeyLeak(key.clone()));
         } else if paraphrases(&reply, key) {

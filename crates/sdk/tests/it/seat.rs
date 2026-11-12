@@ -452,3 +452,38 @@ async fn a_trivial_quotient_is_not_a_worked_example() {
     seat.reply("Ohm: 12 / 4 = 3.").await.expect("replies");
     assert_eq!(seat.mastery().unwrap()["ohm"], 0.5);
 }
+
+#[test]
+fn the_seat_repeating_what_the_learner_said_first_is_not_a_leak() {
+    let spec = SeatSpec::parse(
+        "id: s\npersona: p\ngoals: [g]\nopening: hi\nanswer_key: [right to cancel for fundamental breach]\n",
+    )
+    .expect("parses")
+    .0;
+    let reply = "So I have the right to cancel for a fundamental breach?";
+    assert!(!sven_sdk::seat::check_reply(&spec, "hello", reply).is_empty());
+    let said = "You may have a right to cancel for fundamental breach here.";
+    assert!(sven_sdk::seat::check_reply(&spec, said, reply).is_empty());
+}
+
+#[tokio::test]
+async fn the_seat_does_not_walk_out_while_a_fact_the_learner_asked_for_is_untold() {
+    let spec = "id: s\npersona: p\ngoals: [g]\nopening: hi\nhidden_facts:\n  - {id: cost, value: it cost 410000 SEK, disclose_when: [cost]}\n";
+    let provider = ScriptedMockProvider::new(vec![
+        say("I must go. [END]"),
+        say("It cost 410000 SEK. [END]"),
+    ]);
+    let engine = Engine::builder()
+        .model_provider(Arc::new(provider))
+        .toolset(Toolset::none())
+        .build()
+        .expect("an engine builds");
+    let (spec, sha) = SeatSpec::parse(spec).expect("parses");
+    let seat = SimulatedSeat::new(&engine, spec, sha);
+    let first = seat.reply("What was the cost?").await.expect("replies");
+    assert!(!first.done, "the cost was asked for and is untold");
+    assert_eq!(first.text, "I must go.");
+    let second = seat.reply("And in total?").await.expect("replies");
+    assert!(second.done);
+    assert_eq!(seat.checks().unwrap().premature_ends, 1);
+}
