@@ -526,7 +526,10 @@ DOCS_PUBLISHER ?= tools/docs-publisher/docs-publisher.mjs
 # PDF are cut from it, in the navigation order of docs/manifest.yaml.
 DOCS_OUT := build/docs
 MANUAL_SECTIONS ?= Getting started,Guides,Concepts,Reference,Examples
-MANUAL_MD := target/docs/sven-user-guide.md
+# Generated manuals go where the build output goes: CARGO_TARGET_DIR when it is set
+# (a shared build tree), else target/.
+DOCS_TARGET := $(or $(CARGO_TARGET_DIR),target)/docs
+MANUAL_MD := $(DOCS_TARGET)/sven-user-guide.md
 
 # The vendored publisher is pinned by its checksum unless DOCS_PUBLISHER is
 # overridden on the command line (to try a newer build of it).
@@ -534,8 +537,9 @@ _docs-publisher-pin:
 	@$(if $(filter command line,$(origin DOCS_PUBLISHER)),true,\
 	  cd tools/docs-publisher && sha256sum -c docs-publisher.mjs.sha256 >/dev/null)
 
-## docs - default: build the single-file user manual (target/docs/sven-user-guide.md); MANUAL_SECTIONS selects the navigation sections it contains
+## docs - default: build the single-file user manual (docs/sven-user-guide.md under CARGO_TARGET_DIR, else target/); MANUAL_SECTIONS selects the navigation sections it contains
 docs: docs/build
+	@mkdir -p $(DOCS_TARGET)
 	@$(NODE) scripts/docs-manual.mjs --dir $(DOCS_OUT) --out $(MANUAL_MD) --sections "$(MANUAL_SECTIONS)"
 
 ## docs/build - build the documentation publication in build/docs (offline; no Rust build, no downloads)
@@ -550,7 +554,7 @@ docs/check: _docs-publisher-pin
 
 ## docs/clean - remove the generated documentation output
 docs/clean:
-	rm -rf $(DOCS_OUT) target/docs/sven-user-guide.md target/docs/sven-user-guide.pdf
+	rm -rf $(DOCS_OUT) $(DOCS_TARGET)/sven-user-guide.md $(DOCS_TARGET)/sven-user-guide.pdf
 
 ## docs/pdf - build the PDF user manual (requires pandoc + a LaTeX distribution)
 docs/pdf: docs
@@ -567,8 +571,8 @@ docs/pdf: docs
 		--toc-depth=2 \
 		--number-sections \
 		--highlight-style=tango \
-		-o target/docs/sven-user-guide.pdf
-	@echo "PDF guide written to target/docs/sven-user-guide.pdf"
+		-o $(DOCS_TARGET)/sven-user-guide.pdf
+	@echo "PDF guide written to $(DOCS_TARGET)/sven-user-guide.pdf"
 
 PAPER_DIRS := $(patsubst %/Makefile,%,$(wildcard papers/*/Makefile))
 PAPER_TARGETS := $(addsuffix /pdf,$(PAPER_DIRS))
@@ -730,7 +734,7 @@ fmt:
 ## clean - remove build artefacts
 clean:
 	$(CARGO) clean
-	rm -rf target/debian target/debian-staging target/completions target/docs target/benchmark $(DIST)
+	rm -rf target/debian target/debian-staging target/completions $(DOCS_TARGET) target/benchmark $(DIST)
 
 ## help - show every target as a tree, grouped by section
 help:
