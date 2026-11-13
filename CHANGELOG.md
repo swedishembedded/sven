@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.15.0] - 2026-11-13
+
 ### Added
 - **document**: a document someone sent is read in confined worker processes (`sven document worker`): the session's own process never parses it. Workers run with no writable path and no TCP (Landlock; a kernel that cannot enforce it starts none), set hard memory and CPU limits before reading a byte, and are killed and replaced past a request's deadline.
 - **document**: `document_locate` and `document_convert` take a conversation's file handle as source, name the Markdown after its source, and publish it back as a file of the conversation; a hosted host offers both, always isolated, each conversation working in a directory of its own.
