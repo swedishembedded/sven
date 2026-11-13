@@ -15,7 +15,11 @@ completion token ids, log-probabilities, the seed the server used, adapter, base
 digest, backend and engine per step (and per request when a step covers several);
 whole-conversation record under compaction; append-only journal with an incomplete marker and
 a kill test; children embedded in a harness run's trajectory; mock-stream reconstruction from a
-trajectory; the round trip against a real server (`make test/e2e/capture`).
+trajectory; the round trip against a real server (`make test/e2e/capture`); the training-server
+spelling of the capture (`generation_token_ids`, `generation_log_probs`, prompt ids on the choice),
+the policy version, tokenizer and chat-template digests and the log-probability kind
+(`policy`/`sampler`) a server reports, and a `truncated` mark on a response cut off at the
+output-token ceiling.
 
 ## Still open
 

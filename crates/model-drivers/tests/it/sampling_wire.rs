@@ -263,6 +263,96 @@ async fn openai_compat_parses_token_ids_logprobs_and_the_served_model() {
     assert_eq!(ids, vec![11, 12, 13]);
     assert_eq!(lps, vec![-0.5, -0.25, -1.0]);
 }
+/// Everything the provider returned of one streamed call, in order.
+async fn events_of(frames: &[&str]) -> Vec<ResponseEvent> {
+    let (port, _req_rx) = mock_server_once(200, "text/event-stream", sse_body(frames)).await;
+    let cfg = ModelConfig {
+        provider: "openai".into(),
+        name: "gpt-4o-mini".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let provider = from_config(&cfg).unwrap();
+    let mut stream = provider.complete(sampled_request()).await.unwrap();
+    let mut events = Vec::new();
+    while let Some(ev) = stream.next().await {
+        events.push(ev.unwrap());
+    }
+    events
+}
+
+/// A training server names the capture `generation_token_ids` and
+/// `generation_log_probs` and puts the prompt ids on the choice; they are read
+/// as the sampled ids and log-probabilities, once.
+#[tokio::test]
+async fn openai_compat_reads_the_generation_spelling_of_the_capture() {
+    let events = events_of(&[
+        r#"{"model":"m","choices":[{"delta":{"content":"a"},"generation_token_ids":[21,22],"generation_log_probs":[-0.5,-0.75]}]}"#,
+        r#"{"model":"m","choices":[{"delta":{},"finish_reason":"stop","message":{"prompt_token_ids":[1,2,3]}}]}"#,
+    ])
+    .await;
+    let (mut ids, mut lps, mut prompt): (Vec<i64>, Vec<f64>, Vec<i64>) =
+        (Vec::new(), Vec::new(), Vec::new());
+    for e in &events {
+        match e {
+            ResponseEvent::Tokens {
+                ids: i,
+                logprobs: l,
+            } => {
+                ids.extend(i);
+                lps.extend(l);
+            }
+            ResponseEvent::PromptTokens { ids } => prompt.extend(ids),
+            _ => {}
+        }
+    }
+    assert_eq!(ids, vec![21, 22]);
+    assert_eq!(lps, vec![-0.5, -0.75]);
+    assert_eq!(prompt, vec![1, 2, 3]);
+}
+
+/// A server that sends the log-probabilities in both spellings is not counted
+/// twice: the generation spelling wins.
+#[tokio::test]
+async fn openai_compat_does_not_double_count_two_spellings_of_the_log_probabilities() {
+    let events = events_of(&[
+        r#"{"model":"m","choices":[{"delta":{"content":"a"},"token_ids":[5],"generation_log_probs":[-0.5],"logprobs":{"content":[{"token":"a","logprob":-0.5}]}}]}"#,
+    ])
+    .await;
+    let lps: Vec<f64> = events
+        .iter()
+        .filter_map(|e| match e {
+            ResponseEvent::Tokens { logprobs, .. } => Some(logprobs.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(lps, vec![-0.5]);
+}
+
+/// The identity a training server reports beside the capture: the policy
+/// version, the tokenizer and chat template digests and what its
+/// log-probabilities are.
+#[tokio::test]
+async fn openai_compat_reads_the_policy_identity() {
+    let events = events_of(&[
+        r#"{"model":"m","brain":{"policy_version":"v12","tokenizer_digest":"sha256:tt","chat_template_digest":"sha256:cc","logprob_kind":"policy"},"choices":[{"delta":{"content":"a"}}]}"#,
+    ])
+    .await;
+    let identity = events
+        .iter()
+        .find_map(|e| match e {
+            ResponseEvent::Identity(i) => Some(i.clone()),
+            _ => None,
+        })
+        .expect("the identity event");
+    assert_eq!(identity.policy_version.as_deref(), Some("v12"));
+    assert_eq!(identity.tokenizer_digest.as_deref(), Some("sha256:tt"));
+    assert_eq!(identity.chat_template_digest.as_deref(), Some("sha256:cc"));
+    assert_eq!(identity.logprob_kind, Some(sven_vocab::LogprobKind::Policy));
+}
+
 /// The room a prompt leaves of the window is sven's estimate; an
 /// OpenAI-compatible server bounds an unlimited reply by its context exactly,
 /// so the request carries no limit then. A limit that was set is sent.

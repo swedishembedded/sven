@@ -117,10 +117,10 @@ mod tests {
         let mut ledger = LedgerOutput::new(false);
         assembler.push_message(&sven_model::Message::user("hi"));
         for event in [
-            SessionEvent::ResponseSampled(Sampled {
+            SessionEvent::ResponseSampled(Box::new(Sampled {
                 seed: Some(42),
                 ..Sampled::default()
-            }),
+            })),
             usage(10, 3, None),
             usage(0, 0, Some(RequestBreakdown::default())),
         ] {

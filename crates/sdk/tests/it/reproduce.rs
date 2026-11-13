@@ -57,6 +57,7 @@ fn identity(seed: u64) -> ResponseEvent {
         base_digest: Some("sha256:bb".into()),
         backend: Some("cpu".into()),
         engine: Some("brain 2.0.0".into()),
+        ..ServedIdentity::default()
     })
 }
 
@@ -161,6 +162,7 @@ fn scripts_from(trajectory: &atif::Trajectory) -> Vec<Vec<ResponseEvent>> {
                 base_digest: sven["base_digest"].as_str().map(str::to_string),
                 backend: sven["backend"].as_str().map(str::to_string),
                 engine: sven["engine"].as_str().map(str::to_string),
+                ..ServedIdentity::default()
             }));
             if i == 0 {
                 for call in step.tool_calls.iter().flatten() {

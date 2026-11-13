@@ -111,3 +111,12 @@ pub(crate) fn extract_inline_invoke_tool_calls(text: &str) -> (String, Vec<ToolC
     let cleaned = invoke_re.replace_all(text, "").trim().to_string();
     (cleaned, tool_calls)
 }
+
+/// Adds one finished reasoning block to the turn's reasoning, blocks apart by
+/// a blank line.
+pub(crate) fn keep_reasoning(reasoning: &mut String, block: &str) {
+    if !block.is_empty() {
+        reasoning.push_str(if reasoning.is_empty() { "" } else { "\n\n" });
+        reasoning.push_str(block);
+    }
+}

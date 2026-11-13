@@ -4,7 +4,7 @@
 //! Shared tool-call vocabulary.
 //!
 //! [`ToolCall`], [`ToolOutput`]/[`ToolOutputPart`], [`ToolSchema`], and
-//! [`OutputCategory`] are pure data types with no behavior — no execution,
+//! [`OutputCategory`] are pure data types with no behavior - no execution,
 //! no registry, no permission policy. They exist here, below
 //! `sven-tool-api`, so that crates which only need to *name* a tool call or
 //! its result (a wire protocol, a control protocol) don't have to depend on
@@ -58,7 +58,7 @@ pub use notice::{Notice, NoticeError};
 pub use request::{RequestFold, RequestRecord, Sampled};
 pub use served::{
     context_budget_text, describe_adapter, served_model_changed_text, AdapterRef, ContextBudget,
-    ServedIdentity,
+    LogprobKind, ServedIdentity,
 };
 pub use todo::{TodoItem, TodoStatus};
 pub use turn::{AnsweredCall, TurnDecoding, TurnRequest, TURN_KIND};
@@ -668,7 +668,7 @@ pub enum SessionEvent {
     },
     /// What served one model request and what it sampled, when the provider
     /// reported either; sent just before the request's closing `TokenUsage`.
-    ResponseSampled(Sampled),
+    ResponseSampled(Box<Sampled>),
     /// The model has produced nothing real (no text, reasoning or tool-call
     /// chunk; keepalives do not count) for a while. Sent every few seconds
     /// until output arrives or the turn is aborted, so a surface can show

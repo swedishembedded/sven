@@ -10,7 +10,7 @@ use futures::{Stream, StreamExt};
 use serde_json::Value;
 
 use sven_model::ResponseEvent;
-use sven_vocab::{AdapterRef, ServedIdentity};
+use sven_vocab::{AdapterRef, LogprobKind, ServedIdentity};
 
 /// The events one SSE `data:` frame carries.
 ///
@@ -246,9 +246,10 @@ pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
         .expect("a frame always carries at least one event"))
 }
 
-/// The server's account of a decode, from a frame's non-standard `brain`
-/// object: `seed`, `adapter {id, digest}`, `base_digest`, `backend`, `engine`.
-/// `None` when it names none of them.
+/// The server's account of a decode, from a frame's non-standard `brain` (or
+/// `policy`) object: `seed`, `adapter {id, digest}`, `base_digest`, `backend`,
+/// `engine`, `policy_version`, `tokenizer_digest`, `chat_template_digest` and
+/// `logprob_kind` (`policy` or `sampler`). `None` when it names none of them.
 pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
     let text = |key: &str| brain.get(key).and_then(Value::as_str).map(str::to_owned);
     let identity = ServedIdentity {
@@ -262,6 +263,18 @@ pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
         base_digest: text("base_digest"),
         backend: text("backend"),
         engine: text("engine"),
+        policy_version: brain.get("policy_version").and_then(|v| match v {
+            Value::String(text) => Some(text.clone()),
+            Value::Number(number) => Some(number.to_string()),
+            _ => None,
+        }),
+        tokenizer_digest: text("tokenizer_digest"),
+        chat_template_digest: text("chat_template_digest"),
+        logprob_kind: match brain.get("logprob_kind").and_then(Value::as_str) {
+            Some("policy") => Some(LogprobKind::Policy),
+            Some("sampler") => Some(LogprobKind::Sampler),
+            _ => None,
+        },
     };
     (!identity.is_empty()).then_some(identity)
 }
@@ -291,14 +304,24 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
     let model = v.get("model").and_then(|m| m.as_str()).map(str::to_owned);
 
     // Token-level extensions that arrive on a frame of their own or beside the
-    // choice: the prompt's token ids (`prompt_token_ids`, vLLM's name) and the
-    // server's account of the decode (`brain`, see `served_identity`).
-    if let Some(ids) = v.get("prompt_token_ids").and_then(Value::as_array) {
+    // choice: the prompt's token ids (`prompt_token_ids`, vLLM's name; on the
+    // frame, the choice or its message) and the server's account of the
+    // decode (`brain`, or `policy`, see `served_identity`).
+    let first_choice = v["choices"].get(0).unwrap_or(&Value::Null);
+    if let Some(ids) = field(
+        &[v, first_choice, &first_choice["message"]],
+        "prompt_token_ids",
+    )
+    .and_then(Value::as_array)
+    {
         events.push(ResponseEvent::PromptTokens {
             ids: ids.iter().filter_map(Value::as_i64).collect(),
         });
     }
-    if let Some(identity) = v.get("brain").and_then(served_identity) {
+    if let Some(identity) = ["brain", "policy"]
+        .iter()
+        .find_map(|key| v.get(key).and_then(served_identity))
+    {
         events.push(ResponseEvent::Identity(identity));
     }
 
@@ -408,18 +431,26 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
         events.push(ResponseEvent::TextDelta(text.to_string()));
     }
 
-    // Token-level capture. `logprobs.content[].logprob` is the OpenAI shape;
-    // `token_ids` is the extension carrying the sampled ids, accepted on the
-    // choice or inside `logprobs`.
-    let ids: Vec<i64> = choice
-        .get("token_ids")
-        .or_else(|| choice["logprobs"].get("token_ids"))
-        .and_then(|t| t.as_array())
+    // Token-level capture. The sampled ids are `token_ids` (brain, vLLM) or
+    // `generation_token_ids` (the name training servers use), on the choice,
+    // its delta or message, or inside `logprobs`. Their log-probabilities are
+    // `generation_log_probs` or, in the OpenAI shape,
+    // `logprobs.content[].logprob`; the first form a frame carries is used,
+    // never both, so a server that sends two spellings is not double counted.
+    let places = [choice, delta, &choice["message"], &choice["logprobs"], v];
+    let ids: Vec<i64> = field(&places, "token_ids")
+        .or_else(|| field(&places, "generation_token_ids"))
+        .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_i64).collect())
         .unwrap_or_default();
-    let logprobs: Vec<f64> = choice["logprobs"]["content"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|t| t["logprob"].as_f64()).collect())
+    let logprobs: Vec<f64> = field(&places, "generation_log_probs")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_f64).collect())
+        .or_else(|| {
+            choice["logprobs"]["content"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|t| t["logprob"].as_f64()).collect())
+        })
         .unwrap_or_default();
     if !ids.is_empty() || !logprobs.is_empty() {
         events.push(ResponseEvent::Tokens { ids, logprobs });
@@ -474,6 +505,13 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
         terminal,
         model,
     })
+}
+
+/// The first non-null `key` among `places`.
+fn field<'a>(places: &[&'a Value], key: &str) -> Option<&'a Value> {
+    places
+        .iter()
+        .find_map(|place| place.get(key).filter(|value| !value.is_null()))
 }
 
 /// A tool call's `arguments` as JSON text. The schema says string; a few

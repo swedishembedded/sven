@@ -107,7 +107,7 @@ async fn the_settings_a_request_used_are_recorded_with_it() {
     let sampled = events
         .iter()
         .find_map(|e| match e {
-            SessionEvent::ResponseSampled(s) => Some(s.clone()),
+            SessionEvent::ResponseSampled(s) => Some((**s).clone()),
             _ => None,
         })
         .expect("a request with settings reports them");

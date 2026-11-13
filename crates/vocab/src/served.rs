@@ -47,6 +47,35 @@ pub struct ServedIdentity {
     /// The inference engine build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
+    /// The version of the policy (weights plus adapter) that decoded, for a
+    /// server that refits a policy while it serves: it changes whenever the
+    /// weights do, so two calls of one episode can be told apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_version: Option<String>,
+    /// `sha256:<hex>` of the tokenizer the server tokenized and detokenized
+    /// with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokenizer_digest: Option<String>,
+    /// `sha256:<hex>` of the chat template that rendered the messages into
+    /// the prompt ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_template_digest: Option<String>,
+    /// Which distribution the reported log-probabilities belong to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logprob_kind: Option<LogprobKind>,
+}
+
+/// The distribution a sampled token's reported log-probability is taken
+/// from. A trainer that corrects for the gap between sampler and learner
+/// needs the policy's own; the sampler's is not it unless nothing truncated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogprobKind {
+    /// The untruncated model distribution at the sampling temperature.
+    Policy,
+    /// The distribution the token was drawn from after temperature, top-k
+    /// and top-p were applied (`0.0` under greedy decoding).
+    Sampler,
 }
 
 impl ServedIdentity {

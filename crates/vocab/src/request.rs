@@ -49,6 +49,10 @@ pub struct Sampled {
     /// any were made (a harness step can set them per turn).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decoding: Option<Box<TurnDecoding>>,
+    /// The response ended at the output-token ceiling, not because the model
+    /// stopped: its last tokens are a cut-off, not a finished answer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 impl Sampled {
@@ -62,6 +66,7 @@ impl Sampled {
             && self.prompt_token_ids.is_empty()
             && self.identity.is_empty()
             && self.decoding.is_none()
+            && !self.truncated
     }
 }
 
@@ -83,7 +88,7 @@ impl RequestFold {
     pub fn observe(&mut self, event: &SessionEvent) -> Option<RequestRecord> {
         match event {
             SessionEvent::ResponseSampled(sampled) => {
-                self.open.sampled = sampled.clone();
+                self.open.sampled = (**sampled).clone();
                 None
             }
             SessionEvent::TokenUsage {

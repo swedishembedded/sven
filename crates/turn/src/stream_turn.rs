@@ -45,7 +45,8 @@ pub fn to_model_schemas(schemas: Vec<sven_tool_registry::ToolSchema>) -> Vec<Too
 }
 
 use crate::inline_markup::{
-    extract_inline_invoke_tool_calls, extract_inline_think_block, strip_think_wrappers,
+    extract_inline_invoke_tool_calls, extract_inline_think_block, keep_reasoning,
+    strip_think_wrappers,
 };
 use crate::ledger_recorder::LedgerRecorder;
 use crate::repetition::RepetitionWatch;
@@ -563,6 +564,7 @@ pub async fn stream_turn_attributed(
             ResponseEvent::MaxTokens => {
                 warn!("model hit its max-output-tokens limit; response was truncated");
                 truncated = true;
+                sampled.truncated = true;
             }
             ResponseEvent::ThinkingDelta(delta) => {
                 let stall_started =
@@ -769,7 +771,9 @@ pub async fn stream_turn_attributed(
         let _ = tx.send(AgentEvent::TextComplete(full_text.clone())).await;
     }
     if !sampled.is_empty() {
-        let _ = tx.send(AgentEvent::ResponseSampled(sampled)).await;
+        let _ = tx
+            .send(AgentEvent::ResponseSampled(Box::new(sampled)))
+            .await;
     }
     // Last, so a consumer that folds events into turn-shaped steps has the
     // response's content in hand when the request's ledger record arrives.
@@ -784,15 +788,6 @@ pub async fn stream_turn_attributed(
         thinking_tokens: thinking_token_estimate,
         reasoning,
     })
-}
-
-/// Adds one finished reasoning block to the turn's reasoning, blocks apart by
-/// a blank line.
-fn keep_reasoning(reasoning: &mut String, block: &str) {
-    if !block.is_empty() {
-        reasoning.push_str(if reasoning.is_empty() { "" } else { "\n\n" });
-        reasoning.push_str(block);
-    }
 }
 
 #[cfg(test)]
@@ -1314,7 +1309,15 @@ mod max_tokens_tests {
     #[tokio::test]
     async fn max_tokens_does_not_abort_the_turn() {
         let (tx, mut rx) = mpsc::channel::<AgentEvent>(16);
-        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let drain = tokio::spawn(async move {
+            let mut cut_off = None;
+            while let Some(event) = rx.recv().await {
+                if let AgentEvent::ResponseSampled(sampled) = event {
+                    cut_off = Some(sampled.truncated);
+                }
+            }
+            cut_off
+        });
 
         let result = stream_turn(
             &TruncatedProvider,
@@ -1329,10 +1332,15 @@ mod max_tokens_tests {
         )
         .await;
         drop(tx);
-        let _ = drain.await;
+        let cut_off = drain.await.unwrap();
 
         let turn = result.expect("MaxTokens must not fail the turn");
         assert_eq!(turn.text, "partial ans");
+        assert_eq!(
+            cut_off,
+            Some(true),
+            "the record of the call says the response was cut off"
+        );
         assert!(turn.tool_calls.is_empty());
     }
 }
