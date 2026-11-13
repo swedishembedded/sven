@@ -1103,7 +1103,7 @@ is listed at all. How it works and what it saves:
 | `fetch_max_chars` | `20000` | Characters `web_fetch` returns when the model names no `max_chars`. Never more than 100000 whatever the model asks, and at most 4 MiB of a response body is read |
 | `public_only` | `false` | `web_fetch` reaches only the public internet: never this machine, a private network or a cloud metadata service. `sven rc` sets it unless started with `--wide-access` |
 | `search.provider` | `auto` | `auto`: the sven service `sven rc` signed in to, else a `providers.sven` entry with `base_url` and a key, else Brave. `sven` or `brave` to choose one |
-| `search.api_key` | - | Brave Search API key (also `BRAVE_API_KEY` env var) |
+| `search.api_key` | - | Brave Search API key, read from this key (the `BRAVE_API_KEY` env var is only a fallback). The endpoint host `api.search.brave.com` obeys the [`network`](#network) allow list and `resolve` map like every other host |
 
 ---
 

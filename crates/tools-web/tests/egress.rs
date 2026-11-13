@@ -71,8 +71,17 @@ fn world() -> &'static World {
                 allow_hosts: Some(vec![
                     format!("127.0.0.1:{}", world.allowed.port()),
                     "service.test".into(),
+                    "api.search.brave.com".into(),
                 ]),
-                resolve: [("service.test".to_string(), "127.0.0.1".parse().unwrap())].into(),
+                resolve: [
+                    ("service.test".to_string(), "127.0.0.1".parse().unwrap()),
+                    // The fixed search endpoint, emulated locally.
+                    (
+                        "api.search.brave.com".to_string(),
+                        "127.0.0.1".parse().unwrap(),
+                    ),
+                ]
+                .into(),
                 ..NetworkConfig::default()
             })
             .unwrap();
@@ -171,17 +180,38 @@ async fn a_familiar_name_resolves_to_the_local_emulator() {
     );
 }
 
+/// The search endpoint is a host like any other: not in the list it is
+/// refused by name; listed and mapped it is dialled at the mapped address
+/// (nothing listens on 443 here, so the failure is a connection, not a
+/// refusal); and its key is the configured one.
 #[tokio::test]
-async fn a_search_provider_outside_the_list_is_refused() {
+async fn the_search_endpoint_is_governed_by_the_list_and_the_resolver() {
     world();
-    let out = WebSearchTool::brave(Some("key".into()))
-        .execute(&call("web_search", json!({"query": "anything"})))
+    let args = json!({"query": "anything"});
+    let mapped = WebSearchTool::brave(Some("key".into()))
+        .execute(&call("web_search", args.clone()))
         .await;
     assert!(
-        out.is_error && out.content.contains("api.search.brave.com"),
+        mapped.is_error
+            && mapped.content.contains("tcp connect")
+            && !mapped.content.contains("network egress"),
         "{}",
-        out.content
+        mapped.content
     );
+
+    let service = WebSearchTool {
+        backend: sven_tools_web::SearchBackend::Sven(sven_tools_web::SvenEndpoint {
+            base_url: "https://search.elsewhere.test/v1".into(),
+            api_key: "k".into(),
+        }),
+    };
+    let refused = service.execute(&call("web_search", args)).await;
+    assert!(
+        refused.is_error && refused.content.contains("search.elsewhere.test"),
+        "{}",
+        refused.content
+    );
+    assert!(refused.content.contains("network.allow_hosts"));
 }
 
 /// `public_only` (a hosted default) must not silently defeat the operator's
