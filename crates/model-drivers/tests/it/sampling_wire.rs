@@ -282,18 +282,21 @@ async fn events_of(frames: &[&str]) -> Vec<ResponseEvent> {
     events
 }
 
-/// A training server names the capture `generation_token_ids` and
-/// `generation_log_probs` and puts the prompt ids on the choice; they are read
-/// as the sampled ids and log-probabilities, once.
+/// A brain server asked for the training capture answers with a
+/// `policy_trace` object on the terminal chunk: the prompt ids, the generated
+/// ids (the stop token included) and their log-probabilities at the scoring
+/// temperature. They are read as the sampled ids and log-probabilities, with
+/// the identity saying they are the policy's and at which temperature.
 #[tokio::test]
-async fn openai_compat_reads_the_generation_spelling_of_the_capture() {
+async fn openai_compat_reads_a_brain_policy_trace() {
     let events = events_of(&[
-        r#"{"model":"m","choices":[{"delta":{"content":"a"},"generation_token_ids":[21,22],"generation_log_probs":[-0.5,-0.75]}]}"#,
-        r#"{"model":"m","choices":[{"delta":{},"finish_reason":"stop","message":{"prompt_token_ids":[1,2,3]}}]}"#,
+        r#"{"model":"m","choices":[{"delta":{"content":"a"}}]}"#,
+        r#"{"model":"m","brain":{"seed":3,"adapter":{"id":"tuned","digest":"sha256:aa","version":4}},"policy_trace":{"prompt_token_ids":[1,2,3],"generation_token_ids":[21,22,151645],"generation_log_probs":[-0.5,-0.75,-0.01],"log_prob_temperature":1.0},"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
     ])
     .await;
     let (mut ids, mut lps, mut prompt): (Vec<i64>, Vec<f64>, Vec<i64>) =
         (Vec::new(), Vec::new(), Vec::new());
+    let mut identity = None;
     for e in &events {
         match e {
             ResponseEvent::Tokens {
@@ -304,31 +307,44 @@ async fn openai_compat_reads_the_generation_spelling_of_the_capture() {
                 lps.extend(l);
             }
             ResponseEvent::PromptTokens { ids } => prompt.extend(ids),
+            ResponseEvent::Identity(i) => identity = Some(i.clone()),
             _ => {}
         }
     }
-    assert_eq!(ids, vec![21, 22]);
-    assert_eq!(lps, vec![-0.5, -0.75]);
+    assert_eq!(ids, vec![21, 22, 151645]);
+    assert_eq!(lps, vec![-0.5, -0.75, -0.01]);
     assert_eq!(prompt, vec![1, 2, 3]);
+    let identity = identity.expect("one identity event");
+    assert_eq!(identity.logprob_kind, Some(sven_vocab::LogprobKind::Policy));
+    assert_eq!(identity.logprob_temperature, Some(1.0));
+    // The adapter's release is the policy version.
+    assert_eq!(identity.policy_version.as_deref(), Some("4"));
+    assert_eq!(identity.seed, Some(3));
 }
 
-/// A server that sends the log-probabilities in both spellings is not counted
-/// twice: the generation spelling wins.
+/// A request for the capture asks a brain server for the policy trace and
+/// nothing else of the capture; any other server gets the OpenAI shape.
 #[tokio::test]
-async fn openai_compat_does_not_double_count_two_spellings_of_the_log_probabilities() {
-    let events = events_of(&[
-        r#"{"model":"m","choices":[{"delta":{"content":"a"},"token_ids":[5],"generation_log_probs":[-0.5],"logprobs":{"content":[{"token":"a","logprob":-0.5}]}}]}"#,
-    ])
+async fn the_capture_is_asked_of_a_brain_server_as_a_policy_trace() {
+    let (port, req_rx) = mock_server_once(
+        200,
+        "text/event-stream",
+        sse_body(&[r#"{"choices":[{"delta":{"content":"hi"}}]}"#]),
+    )
     .await;
-    let lps: Vec<f64> = events
-        .iter()
-        .filter_map(|e| match e {
-            ResponseEvent::Tokens { logprobs, .. } => Some(logprobs.clone()),
-            _ => None,
-        })
-        .flatten()
-        .collect();
-    assert_eq!(lps, vec![-0.5]);
+    let cfg = ModelConfig {
+        provider: "brain".into(),
+        name: "m".into(),
+        api_key: Some("key".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let provider = from_config(&cfg).unwrap();
+    let mut stream = provider.complete(sampled_request()).await.unwrap();
+    while stream.next().await.is_some() {}
+    let body = req_rx.await.unwrap().body;
+    assert_eq!(body["policy_trace"], true);
+    assert!(body.get("logprobs").is_none() && body.get("return_token_ids").is_none());
 }
 
 /// The identity a training server reports beside the capture: the policy

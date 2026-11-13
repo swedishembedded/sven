@@ -521,8 +521,17 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             body["seed"] = json!(seed);
         }
         if req.want_logprobs {
-            body["logprobs"] = json!(true);
-            body["return_token_ids"] = json!(true);
+            if self.driver_name == "brain" {
+                // The training capture: the prompt and generated ids and the
+                // policy's own log-probabilities, scored by the serving model
+                // over the whole vocabulary.
+                body["policy_trace"] = json!(true);
+            } else {
+                // The OpenAI shape, with the ids the way vLLM-style servers
+                // name them.
+                body["logprobs"] = json!(true);
+                body["return_token_ids"] = json!(true);
+            }
         }
         if !tools.is_empty() {
             body["tools"] = json!(tools);

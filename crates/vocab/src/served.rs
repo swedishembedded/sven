@@ -30,7 +30,7 @@ impl std::fmt::Display for AdapterRef {
 /// actually used (which differs from the one asked for when none was asked),
 /// the adapter and base checkpoint it ran, and what ran them. Each field is
 /// absent when the server does not report it; none is ever guessed.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ServedIdentity {
     /// The sampling seed the decode used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,6 +63,11 @@ pub struct ServedIdentity {
     /// Which distribution the reported log-probabilities belong to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logprob_kind: Option<LogprobKind>,
+    /// The temperature the reported log-probabilities were scored at, when the
+    /// server says: `log softmax(logits / temperature)`. They are the policy's
+    /// for a request only when this is the temperature the request sampled at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logprob_temperature: Option<f64>,
 }
 
 /// The distribution a sampled token's reported log-probability is taken

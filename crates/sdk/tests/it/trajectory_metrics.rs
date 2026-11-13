@@ -84,6 +84,7 @@ async fn two_request_agent() -> (Engine, sven_sdk::Agent, sven_sdk::RunOutcome) 
                 tokenizer_digest: Some("sha256:tt".into()),
                 chat_template_digest: Some("sha256:cc".into()),
                 logprob_kind: Some(sven_vocab::LogprobKind::Policy),
+                logprob_temperature: Some(1.0),
             }),
             ResponseEvent::ToolCall {
                 index: 0,
@@ -196,6 +197,7 @@ async fn the_prompt_ids_and_the_serving_identity_are_on_the_step() {
     assert_eq!(sven["tokenizer_digest"], "sha256:tt");
     assert_eq!(sven["chat_template_digest"], "sha256:cc");
     assert_eq!(sven["logprob_kind"], "policy");
+    assert_eq!(sven["logprob_temperature"], 1.0);
 }
 
 #[tokio::test]

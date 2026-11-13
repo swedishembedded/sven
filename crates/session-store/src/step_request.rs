@@ -74,7 +74,7 @@ pub fn record_response(
     // What identifies the decode goes under `extra.sven`; the first request of
     // the step that reported a field fixes it.
     let identity = &sampled.identity;
-    let facts: [(&str, Option<Value>); 11] = [
+    let facts: [(&str, Option<Value>); 12] = [
         ("seed", sampled.seed.map(Value::from)),
         ("decoding", sampled.decoding.as_ref().map(|d| json!(d))),
         (
@@ -100,6 +100,10 @@ pub fn record_response(
             identity.chat_template_digest.clone().map(Value::from),
         ),
         ("logprob_kind", identity.logprob_kind.map(|k| json!(k))),
+        (
+            "logprob_temperature",
+            identity.logprob_temperature.map(Value::from),
+        ),
         // Only a cut-off is worth saying; a finished response is the rule.
         ("truncated", sampled.truncated.then(|| Value::from(true))),
     ];

@@ -246,9 +246,39 @@ pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
         .expect("a frame always carries at least one event"))
 }
 
-/// The server's account of a decode, from a frame's non-standard `brain` (or
-/// `policy`) object: `seed`, `adapter {id, digest}`, `base_digest`, `backend`,
-/// `engine`, `policy_version`, `tokenizer_digest`, `chat_template_digest` and
+/// What a brain server's `policy_trace` object carries: the prompt ids, the
+/// generated ids (the stop token included) and the log-probability of each
+/// at `log_prob_temperature`, scored over the whole vocabulary by the serving
+/// model itself. They are the policy's own, so the call's identity says so
+/// and at which temperature; whether that is the temperature the request
+/// sampled at is for the consumer to check against what it asked for.
+fn policy_trace_events(
+    trace: &Value,
+    events: &mut Vec<ResponseEvent>,
+    identity: &mut ServedIdentity,
+) {
+    let numbers = |key: &str| trace.get(key).and_then(Value::as_array);
+    if let Some(ids) = numbers("prompt_token_ids") {
+        events.push(ResponseEvent::PromptTokens {
+            ids: ids.iter().filter_map(Value::as_i64).collect(),
+        });
+    }
+    events.push(ResponseEvent::Tokens {
+        ids: numbers("generation_token_ids")
+            .map(|a| a.iter().filter_map(Value::as_i64).collect())
+            .unwrap_or_default(),
+        logprobs: numbers("generation_log_probs")
+            .map(|a| a.iter().filter_map(Value::as_f64).collect())
+            .unwrap_or_default(),
+    });
+    identity.logprob_kind = Some(LogprobKind::Policy);
+    identity.logprob_temperature = trace.get("log_prob_temperature").and_then(Value::as_f64);
+}
+
+/// The server's account of a decode, from a frame's non-standard `brain`
+/// object: `seed`, `adapter {id, digest, version}`, `base_digest`, `backend`,
+/// `engine`, and the keys a server may add: `policy_version` (else the
+/// adapter's `version`), `tokenizer_digest`, `chat_template_digest` and
 /// `logprob_kind` (`policy` or `sampler`). `None` when it names none of them.
 pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
     let text = |key: &str| brain.get(key).and_then(Value::as_str).map(str::to_owned);
@@ -263,11 +293,14 @@ pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
         base_digest: text("base_digest"),
         backend: text("backend"),
         engine: text("engine"),
-        policy_version: brain.get("policy_version").and_then(|v| match v {
-            Value::String(text) => Some(text.clone()),
-            Value::Number(number) => Some(number.to_string()),
-            _ => None,
-        }),
+        policy_version: brain
+            .get("policy_version")
+            .or_else(|| brain.get("adapter").and_then(|a| a.get("version")))
+            .and_then(|v| match v {
+                Value::String(text) => Some(text.clone()),
+                Value::Number(number) => Some(number.to_string()),
+                _ => None,
+            }),
         tokenizer_digest: text("tokenizer_digest"),
         chat_template_digest: text("chat_template_digest"),
         logprob_kind: match brain.get("logprob_kind").and_then(Value::as_str) {
@@ -275,6 +308,7 @@ pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
             Some("sampler") => Some(LogprobKind::Sampler),
             _ => None,
         },
+        logprob_temperature: None,
     };
     (!identity.is_empty()).then_some(identity)
 }
@@ -304,9 +338,9 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
     let model = v.get("model").and_then(|m| m.as_str()).map(str::to_owned);
 
     // Token-level extensions that arrive on a frame of their own or beside the
-    // choice: the prompt's token ids (`prompt_token_ids`, vLLM's name; on the
-    // frame, the choice or its message) and the server's account of the
-    // decode (`brain`, or `policy`, see `served_identity`).
+    // choice: the prompt's token ids (`prompt_token_ids`, vLLM's name), the
+    // server's account of the decode (`brain`, see `served_identity`) and a
+    // brain server's `policy_trace` (see `policy_trace_events`).
     let first_choice = v["choices"].get(0).unwrap_or(&Value::Null);
     if let Some(ids) = field(
         &[v, first_choice, &first_choice["message"]],
@@ -318,10 +352,11 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
             ids: ids.iter().filter_map(Value::as_i64).collect(),
         });
     }
-    if let Some(identity) = ["brain", "policy"]
-        .iter()
-        .find_map(|key| v.get(key).and_then(served_identity))
-    {
+    let mut identity = v.get("brain").and_then(served_identity);
+    if let Some(trace) = v.get("policy_trace").filter(|t| !t.is_null()) {
+        policy_trace_events(trace, &mut events, identity.get_or_insert_default());
+    }
+    if let Some(identity) = identity {
         events.push(ResponseEvent::Identity(identity));
     }
 
@@ -431,26 +466,18 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
         events.push(ResponseEvent::TextDelta(text.to_string()));
     }
 
-    // Token-level capture. The sampled ids are `token_ids` (brain, vLLM) or
-    // `generation_token_ids` (the name training servers use), on the choice,
-    // its delta or message, or inside `logprobs`. Their log-probabilities are
-    // `generation_log_probs` or, in the OpenAI shape,
-    // `logprobs.content[].logprob`; the first form a frame carries is used,
-    // never both, so a server that sends two spellings is not double counted.
-    let places = [choice, delta, &choice["message"], &choice["logprobs"], v];
+    // Token-level capture in the OpenAI-compatible shape: the sampled ids are
+    // `token_ids` (on the choice, its delta or message, or inside `logprobs`)
+    // and their log-probabilities `logprobs.content[].logprob`. A brain
+    // server's `policy_trace` is read from the frame instead (see above).
+    let places = [choice, delta, &choice["message"], &choice["logprobs"]];
     let ids: Vec<i64> = field(&places, "token_ids")
-        .or_else(|| field(&places, "generation_token_ids"))
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_i64).collect())
         .unwrap_or_default();
-    let logprobs: Vec<f64> = field(&places, "generation_log_probs")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_f64).collect())
-        .or_else(|| {
-            choice["logprobs"]["content"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|t| t["logprob"].as_f64()).collect())
-        })
+    let logprobs: Vec<f64> = choice["logprobs"]["content"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|t| t["logprob"].as_f64()).collect())
         .unwrap_or_default();
     if !ids.is_empty() || !logprobs.is_empty() {
         events.push(ResponseEvent::Tokens { ids, logprobs });

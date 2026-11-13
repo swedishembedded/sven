@@ -21,19 +21,23 @@ request a step covers:
 | `metrics.extra.sven.adapter` | `{id, digest}` of the adapter that answered | `adapter` of the `brain` object |
 | `metrics.extra.sven.base_digest` | `sha256:` of the base checkpoint | `base_digest` of the `brain` object |
 | `metrics.extra.sven.backend`, `engine` | the compute backend and engine build that decoded | `backend`, `engine` of the `brain` object |
-| `metrics.extra.sven.policy_version` | the version of the policy that decoded, when the server refits one while it serves | `policy_version` of the `brain` object |
+| `metrics.extra.sven.policy_version` | the version of the policy that decoded, when the server refits one while it serves | `adapter.version` (or `policy_version`) of the `brain` object |
 | `metrics.extra.sven.tokenizer_digest`, `chat_template_digest` | `sha256:` of the tokenizer and the chat template that made the prompt ids | the same |
-| `metrics.extra.sven.logprob_kind` | `policy` (untruncated model distribution) or `sampler` (after temperature, top-k, top-p) | `logprob_kind` of the `brain` object |
+| `metrics.extra.sven.logprob_kind`, `logprob_temperature` | `policy` (whole-vocabulary distribution) or `sampler` (after temperature, top-k, top-p), and the temperature the log-probabilities were scored at | the `policy_trace` object, or `logprob_kind` of the `brain` object |
 | `metrics.extra.sven.truncated` | `true` when the response ended at the output-token ceiling | the response's `finish_reason: length` |
 | `metrics.extra.sven.requests` | each request's own prompt ids, sampled ids, log-probabilities, seed and token counts, when the step covers more than one request | the same |
 
-The `brain` object (read also under the name `policy`) is a non-standard member of the streamed
-response frames that a [brain](https://swedishembedded.com/docs/brain) server adds;
-`prompt_token_ids`, `token_ids` and `logprobs` are read from any OpenAI-compatible server that
-echoes them. A training server's spelling is read too: `generation_token_ids` and
-`generation_log_probs` on the choice, its delta or its message, and `prompt_token_ids` on the
-frame, the choice or its message. A frame that carries both spellings of the log-probabilities is
-counted once, the generation spelling first.
+Two non-standard members of the response frames come from a
+[brain](https://swedishembedded.com/docs/brain) server. The `brain` object names what decoded
+(`seed`, `adapter {id, digest, version}`, `base_digest`, `backend`, `engine`); the adapter's
+`version` is read as the policy version. When a run asks for the capture, a request to a brain
+server carries `policy_trace: true` and nothing else of the capture, and the terminal chunk answers
+with a `policy_trace` object: `prompt_token_ids`, `generation_token_ids` (the stop token included),
+`generation_log_probs` (`log softmax(logits / log_prob_temperature)` over the whole vocabulary,
+scored by the serving model) and `log_prob_temperature`. Those are recorded as the policy's own
+log-probabilities (`logprob_kind` `policy`, with the temperature they were scored at). Any other
+OpenAI-compatible server is asked for `logprobs` and `return_token_ids`, and the sampled ids and
+`logprobs.content[]` are read as the sampler's.
 
 A step covers more than one request when a tool call and the answer after its result
 share a step: the step's own `prompt_token_ids` are then the first request's and the
