@@ -29,6 +29,7 @@ output-token ceiling.
    spawner (`ChildRecords`) but only a harness run exports it; an `Agent::trajectory()` over an
    `sdlc` run should embed them the same way (M).
 4. A per-request cost on `extra.sven.requests` (today the step carries the summed cost).
-5. D-Bus provider: prompt ids and the server's identity echo (the HTTP driver has them).
+5. (Done 2026-11-13.) The D-Bus provider asks for brain's `policy_trace` and reads it and the
+   identity echo as the HTTP driver does.
 6. File tools rooted in a given directory (M), so an embedding application can run an agent
    against a copy of a repository without a sandbox shell.

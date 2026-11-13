@@ -844,7 +844,7 @@ What sven sends and expects, on interface
   `[image]`/`[audio]` markers), the sampling temperature as `temp` (always:
   the request's, the model's `temperature`, else 0.2, since brain decodes
   greedily without one) and, when set, `max_new`, `top_p`, `top_k`, `seed`,
-  `logprobs` with `return_token_ids`, and the request's tools as `tools`
+  `policy_trace` (when the capture is wanted), and the request's tools as `tools`
   (a JSON string of OpenAI function definitions, with `tool_choice` `"none"`
   when tools are offered but must not be called). At most one image and one
   audio blob are sent per request; extra attachments are dropped with a
@@ -856,8 +856,8 @@ What sven sends and expects, on interface
   `{id, name, arguments}`) is read from the `done` result, so an agent works
   over D-Bus as it does over HTTP. So are the decode's identity (`seed`,
   `adapter`, `base_digest`, `backend`, `engine`) and, when asked for, the
-  token facts (`prompt_token_ids`, `completion_token_ids`,
-  `completion_logprobs`).
+  `policy_trace` object (prompt ids, generated ids, the policy's own
+  log-probabilities and the temperature they were scored at), read as over HTTP.
 - `ListModels()` lists model ids; failure is treated as "unknown".
 
 - `Cancel(job)` is called when the response stream is dropped before `done`

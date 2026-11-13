@@ -252,7 +252,7 @@ pub(super) fn parse_sse_chunk_test(v: &Value) -> anyhow::Result<ResponseEvent> {
 /// model itself. They are the policy's own, so the call's identity says so
 /// and at which temperature; whether that is the temperature the request
 /// sampled at is for the consumer to check against what it asked for.
-fn policy_trace_events(
+pub(crate) fn policy_trace_events(
     trace: &Value,
     events: &mut Vec<ResponseEvent>,
     identity: &mut ServedIdentity,

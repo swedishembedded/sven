@@ -8,7 +8,7 @@ use tracing::warn;
 
 use sven_model::ResponseEvent;
 
-use crate::openai_compat::served_identity;
+use crate::openai_compat::{policy_trace_events, served_identity};
 
 /// The response events a `Run` reply carries, in the order a streamed reply
 /// would emit them: the model's reasoning, its text, then its tool calls.
@@ -66,41 +66,22 @@ pub(super) fn reply_events(result_json: &str, text: String) -> Vec<ResponseEvent
     events
 }
 
-/// The token-level facts and the serving identity a `Run` reply reports, as
-/// events: the prompt's token ids, the account of the decode (seed, adapter,
-/// base digest, backend, engine) and the sampled ids with their
-/// log-probabilities. brain returns the token facts only when the request
-/// asked (`logprobs`, `return_token_ids`), under the same keys its HTTP
-/// surface reads: `prompt_token_ids`, `completion_token_ids` and
-/// `completion_logprobs`.
+/// The serving identity and the capture a `Run` reply reports, as events: the
+/// account of the decode (seed, adapter, base digest, backend, engine) and,
+/// when the request asked for it, brain's `policy_trace` object, read exactly
+/// as the HTTP surface's is: the prompt and generated ids, the policy's own
+/// log-probabilities and the temperature they were scored at.
 pub(super) fn reply_extras(result_json: &str) -> Vec<ResponseEvent> {
     let Ok(result) = serde_json::from_str::<Value>(result_json) else {
         return Vec::new();
     };
-    let ids = |key: &str| -> Vec<i64> {
-        result
-            .get(key)
-            .and_then(Value::as_array)
-            .map_or_else(Vec::new, |a| a.iter().filter_map(Value::as_i64).collect())
-    };
     let mut events = Vec::new();
-    let prompt = ids("prompt_token_ids");
-    if !prompt.is_empty() {
-        events.push(ResponseEvent::PromptTokens { ids: prompt });
+    let mut identity = served_identity(&result);
+    if let Some(trace) = result.get("policy_trace").filter(|t| !t.is_null()) {
+        policy_trace_events(trace, &mut events, identity.get_or_insert_default());
     }
-    if let Some(identity) = served_identity(&result) {
+    if let Some(identity) = identity {
         events.push(ResponseEvent::Identity(identity));
-    }
-    let completion = ids("completion_token_ids");
-    let logprobs: Vec<f64> = result
-        .get("completion_logprobs")
-        .and_then(Value::as_array)
-        .map_or_else(Vec::new, |a| a.iter().filter_map(Value::as_f64).collect());
-    if !completion.is_empty() || !logprobs.is_empty() {
-        events.push(ResponseEvent::Tokens {
-            ids: completion,
-            logprobs,
-        });
     }
     events
 }
@@ -180,17 +161,22 @@ mod tests {
     }
 
     #[test]
-    fn token_facts_and_identity_come_from_the_result_outputs() {
+    fn the_policy_trace_and_identity_come_from_the_result_outputs() {
         let result = r#"{"text":"hi","seed":7,"base_digest":"sha256:ab","backend":"cuda","engine":"brain 3.0.0",
-                         "prompt_token_ids":[1,2],"completion_token_ids":[3],"completion_logprobs":[-0.5]}"#;
+                         "policy_trace":{"prompt_token_ids":[1,2],"generation_token_ids":[3,4],
+                                         "generation_log_probs":[-0.5,-0.25],"log_prob_temperature":1.0}}"#;
         let events = reply_extras(result);
         assert!(matches!(&events[0], ResponseEvent::PromptTokens { ids } if ids == &[1, 2]));
         assert!(
-            matches!(&events[1], ResponseEvent::Identity(i) if i.seed == Some(7) && i.backend.as_deref() == Some("cuda"))
+            matches!(&events[1], ResponseEvent::Tokens { ids, logprobs } if ids == &[3, 4] && logprobs == &[-0.5, -0.25])
         );
-        assert!(
-            matches!(&events[2], ResponseEvent::Tokens { ids, logprobs } if ids == &[3] && logprobs == &[-0.5])
-        );
+        assert!(matches!(
+            &events[2],
+            ResponseEvent::Identity(i) if i.seed == Some(7)
+                && i.backend.as_deref() == Some("cuda")
+                && i.logprob_kind == Some(sven_vocab::LogprobKind::Policy)
+                && i.logprob_temperature == Some(1.0)
+        ));
     }
 
     #[test]

@@ -29,7 +29,7 @@ pub(crate) use request::{build_openai_messages_with, function_tool};
 use stream::decode_events;
 /// Read by the D-Bus driver, which decodes the same reply fields.
 #[cfg(all(target_os = "linux", feature = "dbus"))]
-pub(crate) use stream::served_identity;
+pub(crate) use stream::{policy_trace_events, served_identity};
 
 #[cfg(test)]
 use stream::parse_sse_chunk_test as parse_sse_chunk;

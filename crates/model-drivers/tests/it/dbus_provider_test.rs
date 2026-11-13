@@ -8,7 +8,7 @@
 //! stands up a fake `com.swedishembedded.Brain1.Manager` over a plain
 //! `UnixStream` pair (peer-to-peer, so no `dbus-daemon` and no well-known name
 //! resolution are involved), and the fake reads every received fd the same way
-//! the real server does — `fstat` for the length, then `mmap`.
+//! the real server does - `fstat` for the length, then `mmap`.
 //!
 //! That `fstat` is the whole point: a plain anonymous pipe reports
 //! `st_size == 0`, so a pipe-backed fd would silently deliver an *empty* blob.
@@ -152,7 +152,7 @@ struct FakeManager {
 
 /// Read an fd exactly the way brain does: `fstat` for the size, then `mmap`.
 ///
-/// A pipe would report `st_size == 0` here and yield an empty vec — which is
+/// A pipe would report `st_size == 0` here and yield an empty vec - which is
 /// precisely the silent failure the provider's sealed memfds avoid.
 fn read_fd_via_mmap(fd: &OwnedFd) -> Vec<u8> {
     use std::num::NonZeroUsize;
@@ -217,7 +217,7 @@ impl FakeManager {
         }
 
         let wants_logprobs = serde_json::from_str::<Value>(&params)
-            .map(|p| p["logprobs"] == true)
+            .map(|p| p["policy_trace"] == true)
             .unwrap_or(false);
         *self.seen.lock().unwrap() = Some(Seen {
             model,
@@ -247,8 +247,12 @@ impl FakeManager {
         let mut result = serde_json::json!({"usage": {"input_tokens": 11, "output_tokens": 5}});
         if wants_logprobs {
             result["seed"] = 7.into();
-            result["completion_token_ids"] = serde_json::json!([5, 6, 7]);
-            result["completion_logprobs"] = serde_json::json!([-0.5, -0.25, -1.0]);
+            result["policy_trace"] = serde_json::json!({
+                "prompt_token_ids": [1, 2],
+                "generation_token_ids": [5, 6, 7],
+                "generation_log_probs": [-0.5, -0.25, -1.0],
+                "log_prob_temperature": 0.25,
+            });
         }
         send_frame(
             &server,
@@ -284,7 +288,7 @@ async fn fake_server() -> (DbusProvider, Arc<Mutex<Option<Seen>>>, zbus::Connect
     let seen = Arc::new(Mutex::new(None));
 
     // Both `build()` calls drive one half of the same authentication
-    // handshake, so they must run concurrently — awaiting the server first
+    // handshake, so they must run concurrently - awaiting the server first
     // would deadlock waiting for a client that has not been created yet.
     let seen_for_server = Arc::clone(&seen);
     let server_task = tokio::spawn(async move {
@@ -499,7 +503,7 @@ async fn blobs_are_non_empty_which_a_pipe_backed_fd_would_not_be() {
     for name in ["image", "audio"] {
         assert!(
             seen.blob_lens[name] > 0,
-            "{name} blob read back as empty — the fd must be a sized, mmap-able \
+            "{name} blob read back as empty - the fd must be a sized, mmap-able \
              memfd, not a pipe"
         );
     }
@@ -628,7 +632,8 @@ async fn sampling_fields_travel_in_params_and_generation_meta_is_read_back() {
     assert_eq!(params["top_p"].as_f64(), Some(0.9));
     assert_eq!(params["top_k"], 40);
     assert_eq!(params["seed"], 7);
-    assert_eq!(params["logprobs"], true);
+    assert_eq!(params["policy_trace"], true);
+    assert!(params.get("logprobs").is_none());
 
     assert!(
         events.iter().any(|e| matches!(
@@ -642,6 +647,8 @@ async fn sampling_fields_travel_in_params_and_generation_meta_is_read_back() {
         events.iter().any(|e| matches!(
             e,
             ResponseEvent::Identity(identity) if identity.seed == Some(7)
+                && identity.logprob_kind == Some(sven_vocab::LogprobKind::Policy)
+                && identity.logprob_temperature == Some(0.25)
         )),
         "{events:?}"
     );
