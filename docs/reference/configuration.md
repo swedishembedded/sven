@@ -1121,7 +1121,7 @@ the `shell` tool (`--disable-tool shell`). Guide:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `allow_hosts` | absent | Absent: no restriction. Present, an empty list included: only these hosts, everything else refused (IP literals and redirect targets too). Entries: `host`, `*.suffix` (subdomains, not the apex), an IP address, each with an optional `:port` (`[::1]:9000` for IPv6). Also `--allow-host`, `--deny-egress` |
-| `proxy` | - | `http(s)://host:port`: every allowed request goes through it, and system proxy variables are ignored. The proxy resolves destination names. Also `--egress-proxy` |
+| `proxy` | - | `http(s)://host:port`: every allowed request goes through it, and system proxy variables are ignored. Credentials in the URL (`http://user:pass@host:port`) are sent as `Proxy-Authorization: Basic`; HTTPS goes through `CONNECT`. The proxy resolves destination names. Also `--egress-proxy` |
 | `ca_bundle` | - | A PEM file of certificate authorities trusted in addition to the built-in roots, for a proxy that terminates TLS for emulated names. Certificates are still verified. Also `--ca-bundle` |
 | `resolve` | `{}` | Host name to IP address for direct connections: `ntfy.sh: 127.0.0.1` makes a familiar name reach a local emulator. The port is the URL's. Also `--resolve HOST=ADDR` |
 
