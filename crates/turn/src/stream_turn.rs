@@ -681,7 +681,7 @@ pub async fn stream_turn_attributed(
                 if identity.seed.is_some() {
                     sampled.seed = identity.seed;
                 }
-                sampled.identity = identity;
+                sampled.identity.merge(identity);
             }
             ResponseEvent::Done => {
                 if !thinking_buf.is_empty() {

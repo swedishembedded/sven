@@ -84,6 +84,27 @@ pub enum LogprobKind {
 }
 
 impl ServedIdentity {
+    /// Takes over every fact `other` reports, keeping what it does not: a
+    /// server may report the decode's identity on one frame and the capture's
+    /// on another.
+    pub fn merge(&mut self, other: Self) {
+        fn take<T>(slot: &mut Option<T>, new: Option<T>) {
+            if new.is_some() {
+                *slot = new;
+            }
+        }
+        take(&mut self.seed, other.seed);
+        take(&mut self.adapter, other.adapter);
+        take(&mut self.base_digest, other.base_digest);
+        take(&mut self.backend, other.backend);
+        take(&mut self.engine, other.engine);
+        take(&mut self.policy_version, other.policy_version);
+        take(&mut self.tokenizer_digest, other.tokenizer_digest);
+        take(&mut self.chat_template_digest, other.chat_template_digest);
+        take(&mut self.logprob_kind, other.logprob_kind);
+        take(&mut self.logprob_temperature, other.logprob_temperature);
+    }
+
     /// Whether the server reported nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -178,5 +199,34 @@ mod budget_tests {
             }
         });
         assert!(capped.ends_with("thinking cap 4096 tokens"));
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    /// A server reports the decode's identity on one frame and the capture's
+    /// kind on another: merging keeps every fact either named, and a later
+    /// fact replaces an earlier one.
+    #[test]
+    fn merging_identities_keeps_the_facts_of_both_frames() {
+        let mut decode = ServedIdentity {
+            seed: Some(7),
+            base_digest: Some("sha256:base".into()),
+            policy_version: Some("1".into()),
+            ..ServedIdentity::default()
+        };
+        decode.merge(ServedIdentity {
+            logprob_kind: Some(LogprobKind::Policy),
+            logprob_temperature: Some(1.0),
+            policy_version: Some("2".into()),
+            ..ServedIdentity::default()
+        });
+        assert_eq!(decode.seed, Some(7));
+        assert_eq!(decode.base_digest.as_deref(), Some("sha256:base"));
+        assert_eq!(decode.logprob_kind, Some(LogprobKind::Policy));
+        assert_eq!(decode.logprob_temperature, Some(1.0));
+        assert_eq!(decode.policy_version.as_deref(), Some("2"));
     }
 }
