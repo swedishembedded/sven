@@ -37,5 +37,6 @@ pub(crate) mod tool;
 #[cfg(feature = "tui")]
 pub(crate) mod tui;
 pub(crate) use startup_failure::record as record_startup_failure;
+pub(crate) use sven_ci::UsageError;
 mod variant;
 pub(crate) mod workflow;

@@ -18,8 +18,8 @@ pub use pipe::{MapOptions, ReduceOptions, TeeOptions};
 pub use runner::{
     is_trace_input,
     runtime_runner::{GoalTerms, RuntimeRunner, RuntimeRunnerOptions},
-    CiOptions, CiRunner, OutputFormat, EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED, EXIT_INTERRUPT,
-    EXIT_SUCCESS, EXIT_TIMEOUT, EXIT_TOOL_WARNINGS, EXIT_VALIDATION_ERROR,
+    CiOptions, CiRunner, OutputFormat, UsageError, EXIT_AGENT_ERROR, EXIT_BUDGET_EXHAUSTED,
+    EXIT_INTERRUPT, EXIT_SUCCESS, EXIT_TIMEOUT, EXIT_TOOL_WARNINGS, EXIT_VALIDATION_ERROR,
 };
 pub use toolcall_replay::replay_tool_calls;
 // Re-export runtime detection utilities for callers that import from sven_ci

@@ -97,10 +97,13 @@ fn main() -> anyhow::Result<()> {
     // stacks) on a large machine.
     // A headless run that fails before its session exists still leaves the
     // record `--output-trace` promises (`run::startup_failure`).
+    // Never over a trace the run was asked to continue (`--trace`, or a
+    // `--load-trace` of the same file): a failed load must not destroy it.
     let failure_trace = cli
         .is_headless()
         .then(|| cli.effective_output_trace().cloned())
-        .flatten();
+        .flatten()
+        .filter(|path| cli.trace.is_none() && cli.load_trace.as_ref() != Some(path));
     let prompt = cli.prompt.clone();
     let started = std::time::SystemTime::now();
     let result = tokio::runtime::Builder::new_multi_thread()
@@ -110,6 +113,13 @@ fn main() -> anyhow::Result<()> {
         .block_on(run_cli(cli, hosted));
     if let (Err(error), Some(path)) = (&result, failure_trace) {
         run::record_startup_failure(&path, error, prompt.as_deref(), started);
+    }
+    // A refused invocation is not a crash: its message, and status 2.
+    if let Err(error) = &result {
+        if let Some(usage) = error.downcast_ref::<run::UsageError>() {
+            eprintln!("[sven:error] {usage}");
+            std::process::exit(2);
+        }
     }
     result
 }
@@ -134,8 +144,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     // here, never by hanging at the first prompt.
     cli.check_approval()?;
     if let Err(why) = cli.goal_terms() {
-        eprintln!("[sven:error] {why}");
-        std::process::exit(2);
+        return Err(run::UsageError(why).into());
     }
 
     // In TUI mode writing to stderr corrupts the display.

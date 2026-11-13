@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod exit;
+mod usage;
 
 mod attachment;
 mod deadline;
@@ -80,6 +81,8 @@ async fn wait_for_interrupt() -> bool {
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_AGENT_ERROR: i32 = 1;
 pub const EXIT_VALIDATION_ERROR: i32 = 2;
+
+pub use usage::UsageError;
 /// One or more tool calls returned errors during the run but the run completed.
 /// Allows `set -e` pipelines to treat partial failures differently from hard errors.
 pub const EXIT_TOOL_WARNINGS: i32 = 3;
@@ -390,8 +393,8 @@ impl CiRunner {
                     } else {
                         "conversation"
                     };
-                    write_stderr(&format!(
-                        "[sven:error] Piped {format_name} has no pending task.\n\
+                    return Err(UsageError(format!(
+                        "Piped {format_name} has no pending task.\n\
                          \n\
                          To continue a piped conversation provide a prompt:\n\
                          \n\
@@ -399,8 +402,8 @@ impl CiRunner {
                          \n\
                          Or end the piped output with an unanswered ## User section\n\
                          so the next sven instance picks it up automatically."
-                    ));
-                    std::process::exit(EXIT_VALIDATION_ERROR);
+                    ))
+                    .into());
                 }
             }
         } else if let Some(w) = workflow {
@@ -536,11 +539,11 @@ impl CiRunner {
                     ));
                 }
                 Err(e) => {
-                    write_stderr(&format!(
-                        "[sven:error] Failed to read --system-prompt-file {}: {e}",
+                    return Err(UsageError(format!(
+                        "Failed to read --system-prompt-file {}: {e}",
                         sp_file.display()
-                    ));
-                    std::process::exit(EXIT_VALIDATION_ERROR);
+                    ))
+                    .into());
                 }
             }
         }
@@ -579,11 +582,11 @@ impl CiRunner {
                     (trajectory.steps, trajectory.session_id, meta, subagents)
                 }
                 Err(e) => {
-                    write_stderr(&format!(
-                        "[sven:error] Failed to load --load-trace {}: {e:#}",
+                    return Err(UsageError(format!(
+                        "Failed to load --load-trace {}: {e:#}",
                         tpath.display()
-                    ));
-                    std::process::exit(EXIT_VALIDATION_ERROR);
+                    ))
+                    .into());
                 }
             },
             _ => (Vec::new(), None, None, Vec::new()),

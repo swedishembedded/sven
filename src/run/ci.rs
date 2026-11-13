@@ -194,12 +194,13 @@ pub(crate) async fn run_ci(
     if goal.is_some() && !runs_on_runtime_runner {
         // The workflow runner has no goal run: refuse rather than run the
         // prompt as a plain message and ignore the goal.
-        eprintln!(
-            "[sven:error] --goal-turns runs a single prompt as a goal; it cannot be combined \
+        return Err(super::UsageError(
+            "--goal-turns runs a single prompt as a goal; it cannot be combined \
              with a workflow file, --var, --artifacts-dir, --dry-run, --attach, --output-format, \
              --output-last-message, --system-prompt-file, a loaded trace, or piped trace input"
-        );
-        std::process::exit(2);
+                .into(),
+        )
+        .into());
     }
     if runs_on_runtime_runner {
         let kernel_mode = std::env::var("SVEN_MODE").unwrap_or_else(|_| {
@@ -230,8 +231,8 @@ pub(crate) async fn run_ci(
                     match new_task {
                         Some(task) => (task, conv.history),
                         None => {
-                            eprintln!(
-                                "[sven:error] Piped conversation has no pending task.\n\
+                            return Err(super::UsageError(
+                                "Piped conversation has no pending task.\n\
                                  \n\
                                  To continue a piped conversation provide a prompt:\n\
                                  \n\
@@ -239,8 +240,9 @@ pub(crate) async fn run_ci(
                                  \n\
                                  Or end the piped output with an unanswered ## User section\n\
                                  so the next sven instance picks it up automatically."
-                            );
-                            std::process::exit(2);
+                                    .into(),
+                            )
+                            .into());
                         }
                     }
                 }
