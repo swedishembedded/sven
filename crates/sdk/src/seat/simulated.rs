@@ -311,12 +311,16 @@ impl Seat for SimulatedSeat {
     /// knows only the note on what it understands now, not the conversation:
     /// a model that read the lesson would otherwise answer from the lesson,
     /// and the test would measure its reading instead of the modelled state.
-    /// Without concepts the seat answers inside the conversation.
+    /// Without concepts the seat answers in its own conversation, which
+    /// the question does not count towards.
     async fn probe(&self, question: &str) -> Result<String, CallError> {
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
         if self.spec.concepts.is_empty() {
-            drop(state);
-            return Ok(self.reply(question).await?.text);
+            // The question reaches the seat's memory like anything it was
+            // asked, but it is not a turn of the conversation: it unlocks no
+            // hidden fact and its answer is not counted in the checks.
+            let outcome = state.agent.send(question).await?;
+            return Ok(without_note(&outcome.reply).trim().to_string());
         }
         let message = self.with_note(&state, question);
         let mut fresh = self.engine.agent_with_role("agent", self.spec.briefing());

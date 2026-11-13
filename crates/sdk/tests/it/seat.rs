@@ -487,3 +487,19 @@ async fn the_seat_does_not_walk_out_while_a_fact_the_learner_asked_for_is_untold
     assert!(second.done);
     assert_eq!(seat.checks().unwrap().premature_ends, 1);
 }
+
+/// A question put outside the conversation is not a turn of it: it is not
+/// counted in the checks and does not unlock a hidden fact, also for a seat
+/// with no concepts, which answers it in its own conversation.
+#[tokio::test]
+async fn a_probe_of_a_seat_without_concepts_is_not_a_conversation_turn() {
+    let seat = simulated(&["I think it was 14000 SEK."]);
+    let answer = seat
+        .probe("How much was the amount?")
+        .await
+        .expect("answers");
+    assert_eq!(answer, "I think it was 14000 SEK.");
+    let checks = seat.checks().expect("measured");
+    assert_eq!(checks.replies, 0, "the probe is not a reply");
+    assert!(checks.violations.is_empty(), "{:?}", checks.violations);
+}
