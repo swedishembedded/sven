@@ -309,6 +309,11 @@ impl ProviderEntry {
     }
 }
 
+/// The header naming the conversation a call is made for, so the service
+/// records its cost under it. Here, not in `invoke`, because the chat drivers
+/// send it too and they build for a browser, where `invoke` does not.
+pub const SESSION_HEADER: &str = "x-sven-session";
+
 /// The active model: which driver, which model, how it is reached and what
 /// it is allowed - the `model:` section, and what every driver is built from.
 #[derive(Debug, Clone, Serialize, Deserialize)]

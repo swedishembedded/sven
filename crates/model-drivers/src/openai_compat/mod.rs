@@ -173,9 +173,9 @@ impl OpenAICompatProvider {
             }
         }
         // The conversation the calls are made for, as the service's media
-        // calls name it (`invoke::SESSION_HEADER`).
+        // calls name it (`config::SESSION_HEADER`).
         if let Some(session) = &cfg.session {
-            headers.push((crate::invoke::SESSION_HEADER.into(), session.clone()));
+            headers.push((crate::config::SESSION_HEADER.into(), session.clone()));
         }
         let options = match extras.rewrite_options {
             Some(rewrite) => rewrite(cfg.driver_options.clone()),
@@ -868,12 +868,12 @@ mod tests {
         assert!(plain
             .extra_headers
             .iter()
-            .all(|(name, _)| name != crate::invoke::SESSION_HEADER));
+            .all(|(name, _)| name != crate::config::SESSION_HEADER));
         cfg.session = Some("conv-1".into());
         let named = OpenAICompatProvider::for_driver(driver, &cfg, None, "https://s/v1", None);
         assert!(named
             .extra_headers
-            .contains(&(crate::invoke::SESSION_HEADER.into(), "conv-1".into())));
+            .contains(&(crate::config::SESSION_HEADER.into(), "conv-1".into())));
         // Never in the body the model reads.
         assert!(named.extra_body.get("session").is_none());
     }

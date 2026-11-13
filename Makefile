@@ -108,7 +108,7 @@ build/profiling:
 ##   wasm-bindgen-cli matching the locked wasm-bindgen; RUSTUP_RUN as for
 ##   check/wasm.
 build/wasm:
-	$(RUSTUP_RUN) $(CARGO) build -p sven-wasm --release --target wasm32-unknown-unknown --target-dir target/wasm
+	$(RUSTUP_RUN) $(CARGO) build -p sven-wasm --release --target wasm32-unknown-unknown --target-dir $(or $(CARGO_TARGET_DIR),target)/wasm
 	@for flavour in web nodejs; do \
 		dir=target/wasm-pkg/$$( [ $$flavour = nodejs ] && echo node || echo web ); \
 		rm -rf $$dir && wasm-bindgen target/wasm/wasm32-unknown-unknown/release/sven_wasm.wasm \
@@ -222,9 +222,9 @@ test/package:
 ##   matching the locked wasm-bindgen; RUSTUP_RUN as for check/wasm.
 test/wasm:
 	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
-		$(RUSTUP_RUN) $(CARGO) test -p sven-kernel --test portable --target wasm32-unknown-unknown --target-dir target/wasm
+		$(RUSTUP_RUN) $(CARGO) test -p sven-kernel --test portable --target wasm32-unknown-unknown --target-dir $(or $(CARGO_TARGET_DIR),target)/wasm
 	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
-		$(RUSTUP_RUN) $(CARGO) test -p sven-executors --test portable_session --target wasm32-unknown-unknown --target-dir target/wasm
+		$(RUSTUP_RUN) $(CARGO) test -p sven-executors --test portable_session --target wasm32-unknown-unknown --target-dir $(or $(CARGO_TARGET_DIR),target)/wasm
 	$(MAKE) --no-print-directory build/wasm
 	SVEN_WASM_PKG=target/wasm-pkg/node node --test crates/wasm/tests/session.mjs crates/wasm/tests/conversation-doc.mjs
 
@@ -394,7 +394,7 @@ check/wasm:
 	@if ! $(RUSTUP_RUN) rustc --print sysroot | xargs -I{} test -d {}/lib/rustlib/wasm32-unknown-unknown; then \
 		echo "check/wasm: the wasm32-unknown-unknown target is not installed; run: rustup target add wasm32-unknown-unknown" >&2; exit 1; \
 	fi
-	$(RUSTUP_RUN) $(CARGO) check $(foreach p,$(WASM_PACKAGES),-p $(p)) --target wasm32-unknown-unknown --target-dir target/wasm
+	$(RUSTUP_RUN) $(CARGO) check $(foreach p,$(WASM_PACKAGES),-p $(p)) --target wasm32-unknown-unknown --target-dir $(or $(CARGO_TARGET_DIR),target)/wasm
 
 ## check/clippy - lint the workspace, warnings are errors
 check/clippy:

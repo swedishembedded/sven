@@ -36,8 +36,7 @@ const MAX_TEXT_CHARS: usize = 200_000;
 /// The most models a listing is read for.
 const MAX_MODELS: usize = 5_000;
 
-/// The header naming the conversation an invocation belongs to.
-pub const SESSION_HEADER: &str = "x-sven-session";
+pub use crate::config::SESSION_HEADER;
 /// The scheme of a handle the service keeps.
 pub const HANDLE_PREFIX: &str = "mcp-file://files/";
 
