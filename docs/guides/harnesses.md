@@ -173,7 +173,7 @@ sven harness run      <PATH> [--input JSON | --input-file FILE] --workspace DIR
                       [--media-endpoint URL [--media-key-file FILE]]
                       [--first-byte-timeout SECS] [--timeout SECS] [--max-output-tokens N]
                       [--scratchpad DIR] [--trace FILE] [--record FILE]
-                      [--trajectory FILE] [--conversations DIR]
+                      [--trajectory FILE] [--conversations FILE]
                       [--checkpoint-out FILE] [--json] [--quiet]
 sven harness resume   <PATH> --checkpoint FILE [the flags of run]
 sven harness replay   <PATH> --recording FILE [--expect-trace FILE] [--json]
@@ -362,15 +362,18 @@ where it rests, exits 3 and leaves its checkpoint for `harness resume`.
 Nothing is written unless a flag asks for it: `--trace` (one trace record per
 line, JSONL, each with `ts_ms`, the Unix time in milliseconds at which sven
 observed it), `--record` (the recording, JSON), `--trajectory` (the ATIF
-trajectory, JSON), `--conversations DIR` (each conversation of the run - one
-task's agent, or one role of one loop item - as its own ATIF file
-`NNNN-<name>.json`, the form tool-call training data wants; the images a
-conversation was given are written once under `images/<sha256>.<ext>` beside
-the files, and `--trajectory` writes them next to its file) and
+trajectory, JSON), `--conversations FILE` (each conversation of the run - one
+task's agent, or one role of one loop item - as one JSON line
+`{"index", "name", "trajectory"}` of a JSON-lines file, the trajectory being the conversation's own
+ATIF document; the images a conversation was given are written once under `images/<sha256>.<ext>`
+beside the file, and `--trajectory` writes them next to its file; `sven_sdk::read_conversations`
+reads the file, and also the directory of `NNNN-<name>.json` files that older versions wrote, which
+`--conversations` now refuses to write into) and
 `--checkpoint-out` (the checkpoint of a suspended run, JSON). `--trace` is
 appended to record by record and `--conversations` receives a finished loop
-item's conversations when the item finishes, so a killed run keeps both up to
-its last finished item; the files written at the end replace them. A run keeps
+item's conversations when the item finishes (a conversation that changed is appended again with its
+whole state, and a reader keeps the last line of each index), so a killed run keeps both up to its
+last finished item; the files written at the end replace them, with one line per conversation. A run keeps
 its scratchpad and prints the path. No sven configuration is read.
 
 ## Samples tour

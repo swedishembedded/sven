@@ -6,7 +6,7 @@
 //! `--trace` and `--conversations` are the record of what a run did. A run
 //! killed in the middle of a long sweep has no chance to write them at its
 //! end, so the trace is appended record by record as the records are observed
-//! and each finished item's conversations are written when the item finishes.
+//! and each finished item's conversations are appended when the item finishes.
 //! The files written when the run ends have the same content and replace
 //! these.
 //!
@@ -17,26 +17,10 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
 use sven_sdk::ConversationUpdate;
-
-/// The file a conversation is written to: its position in the order the
-/// conversations began, then its name made safe for a file name.
-pub(super) fn conversation_file(index: usize, name: &str) -> String {
-    let name: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    format!("{index:04}-{name}.json")
-}
 
 /// Appends trace lines to the `--trace` file as they are observed.
 pub(super) struct TraceAppender {
@@ -67,24 +51,64 @@ impl TraceAppender {
     }
 }
 
-/// Writes the conversations a finished item changed into `dir`, each through
-/// a private file renamed into place.
-pub(super) fn write_conversations(dir: &PathBuf, updates: &[ConversationUpdate]) {
-    let written = std::fs::create_dir_all(dir).and_then(|()| {
-        updates.iter().try_for_each(|update| {
+/// The line a conversation is written as in the `--conversations` file; see
+/// [`sven_sdk::NamedConversation`].
+fn conversation_line(
+    index: usize,
+    name: &str,
+    trajectory: &impl serde::Serialize,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&serde_json::json!({
+        "index": index,
+        "name": name,
+        "trajectory": trajectory,
+    }))
+}
+
+/// Appends the conversations a finished item changed to the `--conversations`
+/// file, each with its whole state so far (a reader keeps the last line of an
+/// index), and writes the images they refer to beside the file.
+pub(super) fn append_conversations(
+    file: &TraceAppender,
+    path: &Path,
+    updates: &[ConversationUpdate],
+) {
+    let written = updates.iter().try_for_each(|update| {
+        if let Some(dir) = path.parent() {
             sven_sdk::write_trajectory_images(dir, &update.images)?;
-            let target = dir.join(conversation_file(update.index, &update.name));
-            let partial = target.with_extension("json.partial");
-            let text =
-                serde_json::to_string_pretty(&update.trajectory).map_err(std::io::Error::other)?;
-            std::fs::write(&partial, text)?;
-            std::fs::rename(&partial, &target)
-        })
+        }
+        let line = conversation_line(update.index, &update.name, &update.trajectory)
+            .map_err(std::io::Error::other)?;
+        file.append(&line);
+        Ok::<(), std::io::Error>(())
     });
     if let Err(e) = written {
         eprintln!(
             "[sven:harness] warning: cannot keep the conversations in {}: {e}",
-            dir.display()
+            path.display()
         );
     }
+}
+
+/// The conversations of a finished run as the `--conversations` file's
+/// content: one line per conversation, in the order they began.
+pub(super) fn final_conversations(
+    trajectory: &serde_json::Value,
+) -> Result<String, serde_json::Error> {
+    let embedded = trajectory["subagent_trajectories"]
+        .as_array()
+        .into_iter()
+        .flatten();
+    let mut text = String::new();
+    for (index, conversation) in embedded
+        .filter(|t| t["extra"]["harness"]["conversation"].is_string())
+        .enumerate()
+    {
+        let name = conversation["extra"]["harness"]["conversation"]
+            .as_str()
+            .unwrap_or_default();
+        text.push_str(&conversation_line(index, name, conversation)?);
+        text.push('\n');
+    }
+    Ok(text)
 }

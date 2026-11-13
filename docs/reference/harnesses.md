@@ -586,7 +586,7 @@ the run's whole set). An image is an ATIF image segment whose `path` is
 file, so a trajectory stays small, one picture shown twice is stored once and
 the name verifies the bytes. `HarnessRun::trajectory_images()` returns the
 files; `write_trajectory_images(dir, &images)` writes them, and `sven harness
-run` does so next to `--trajectory` and under `--conversations`. An image that
+run` does so next to `--trajectory` and beside `--conversations`. An image that
 cannot be kept (audio, a type ATIF has no name for, a remote URL, bad base64)
 appears in its step as a text segment `[image not recorded: <reason>]`.
 

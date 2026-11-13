@@ -47,5 +47,5 @@ sven harness run samples/harnesses/rust-refactor \
 order; `limit` caps how many this run takes. The harness needs `git` and `jq`.
 
 A run that stops resumes at the file it was on (`sven harness resume ...
---checkpoint`). Add `--conversations DIR` to keep each agent's conversation as
-an ATIF trajectory: tool-call training data, written only when asked for.
+--checkpoint`). Add `--conversations FILE` to keep each agent's conversation as one line of a
+JSON-lines file (an ATIF trajectory each): tool-call training data, written only when asked for.

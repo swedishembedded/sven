@@ -29,7 +29,7 @@ use super::engine_run::{
     resume_on_engine, run_on_engine, ActivityFn, CheckpointFn, ConversationsFn, EngineRun,
     ProgressFn, RunResult,
 };
-use super::live_files::{write_conversations, TraceAppender};
+use super::live_files::{append_conversations, TraceAppender};
 use super::progress::{Progress, Style};
 use super::stamps::{stamped_line, Stamps};
 use super::{kit, usage, Failure};
@@ -191,9 +191,23 @@ impl Assembly {
                 }
             }) as ProgressFn)
         };
-        let item_conversations: Option<ConversationsFn> = args.conversations.clone().map(|dir| {
+        if args.conversations.as_deref().is_some_and(Path::is_dir) {
+            return Err(usage(
+                "--conversations is one JSON-lines file now, not a directory (older versions \
+                 wrote a file per conversation there); name a file",
+            ));
+        }
+        let conversations_file = args
+            .conversations
+            .as_deref()
+            .map(|file| {
+                TraceAppender::open(file, resumed).map(|f| (Arc::new(f), file.to_path_buf()))
+            })
+            .transpose()
+            .map_err(|e| usage(format!("cannot write the conversations file: {e}")))?;
+        let item_conversations: Option<ConversationsFn> = conversations_file.map(|(file, path)| {
             Arc::new(move |updates: &[sven_sdk::ConversationUpdate]| {
-                write_conversations(&dir, updates);
+                append_conversations(&file, &path, updates);
             }) as ConversationsFn
         });
         let activity: Option<ActivityFn> = (!args.quiet).then(|| {

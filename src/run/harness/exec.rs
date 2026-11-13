@@ -17,7 +17,7 @@ use sven_sdk::{sourced_trace, HarnessCheckpoint, SourcedRecord};
 
 use super::engine::{self, Assembly};
 use super::engine_run::{RunResult, RunStatus, RunSummary};
-use super::live_files::conversation_file;
+use super::live_files::final_conversations;
 use super::progress::Progress;
 use super::source::Source;
 use super::stamps::{stamped_line, Stamps};
@@ -140,9 +140,11 @@ fn write_files(args: &HarnessRunArgs, result: &RunResult, times: &[u64]) -> Resu
             write_images(dir, &result.trajectory_images)?;
         }
     }
-    if let (Some(dir), Some(trajectory)) = (&args.conversations, &result.trajectory) {
-        write_conversations(dir, trajectory)?;
-        write_images(dir, &result.trajectory_images)?;
+    if let (Some(file), Some(trajectory)) = (&args.conversations, &result.trajectory) {
+        write_conversations(file, trajectory)?;
+        if let Some(dir) = file.parent() {
+            write_images(dir, &result.trajectory_images)?;
+        }
     }
     Ok(())
 }
@@ -162,33 +164,18 @@ fn write_images(
     })
 }
 
-/// Writes each conversation embedded in `trajectory` to `dir` as its own
-/// ATIF file, numbered in the order the conversations began.
+/// Writes the conversations embedded in `trajectory` to `file`, one JSON line
+/// each, in the order the conversations began, replacing what the run
+/// appended while it went.
 fn write_conversations(
-    dir: &std::path::Path,
+    file: &std::path::Path,
     trajectory: &serde_json::Value,
 ) -> Result<(), Failure> {
-    std::fs::create_dir_all(dir).map_err(|e| Failure {
+    let text = final_conversations(trajectory).map_err(|e| Failure {
         code: 5,
-        message: format!("cannot create {}: {e}", dir.display()),
+        message: format!("cannot serialize the conversations: {e}"),
     })?;
-    let embedded = trajectory["subagent_trajectories"]
-        .as_array()
-        .into_iter()
-        .flatten();
-    for (index, conversation) in embedded
-        .filter(|t| t["extra"]["harness"]["conversation"].is_string())
-        .enumerate()
-    {
-        let name = conversation["extra"]["harness"]["conversation"]
-            .as_str()
-            .unwrap_or_default();
-        write(
-            &dir.join(conversation_file(index, name)),
-            &to_json(conversation)?,
-        )?;
-    }
-    Ok(())
+    write(file, &text)
 }
 
 fn jsonl_line(record: &SourcedRecord, ts_ms: u64) -> Result<String, Failure> {

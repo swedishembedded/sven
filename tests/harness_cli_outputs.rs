@@ -80,7 +80,7 @@ fn every_trace_record_the_cli_writes_or_prints_carries_the_time_it_observed_it()
 }
 
 #[test]
-fn conversations_writes_one_trajectory_per_agent_conversation() {
+fn conversations_writes_one_line_per_agent_conversation_in_one_file() {
     let setup = setup();
     let server = serve(vec![
         Turn::Calls(vec![write("lexer.txt", "ok")]),
@@ -88,7 +88,7 @@ fn conversations_writes_one_trajectory_per_agent_conversation() {
         Turn::Calls(vec![write("parser.txt", "ok")]),
         Turn::Text("done parser"),
     ]);
-    let dir = setup.out("conversations");
+    let file = setup.out("conversations.jsonl");
     let out = run(setup
         .subcommand("run", &fixtures().join("gated-sweep"), &server)
         .args([
@@ -99,18 +99,42 @@ fn conversations_writes_one_trajectory_per_agent_conversation() {
             "--quiet",
             "--conversations",
         ])
-        .arg(&dir));
+        .arg(&file));
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    let mut names: Vec<String> = std::fs::read_dir(&dir)
-        .expect("the directory was written")
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+    // One file, one line per conversation: each module is worked on in a
+    // conversation of its own.
+    let lines: Vec<Value> = std::fs::read_to_string(&file)
+        .expect("the file was written")
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("a JSON line"))
         .collect();
-    names.sort();
-    // Each module is worked on in a conversation of its own.
-    assert_eq!(names, ["0000-notes-0.json", "0001-notes-1.json"]);
-    let first: Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("0000-notes-0.json")).unwrap())
-            .unwrap();
+    let named: Vec<(u64, &str)> = lines
+        .iter()
+        .map(|l| (l["index"].as_u64().unwrap(), l["name"].as_str().unwrap()))
+        .collect();
+    assert_eq!(named, [(0, "notes#0"), (1, "notes#1")]);
+    let first = &lines[0]["trajectory"];
     assert_eq!(first["extra"]["harness"]["conversation"], "notes#0");
     assert!(first["steps"].as_array().is_some_and(|s| !s.is_empty()));
+
+    // The reader the SDK gives agrees.
+    let read = sven_sdk::read_conversations(&file).expect("reads");
+    assert_eq!(read.len(), 2);
+    assert_eq!(read[1].name, "notes#1");
+}
+
+/// A directory is refused with a message: older versions wrote a file per
+/// conversation there, and silently writing into it would mix the layouts.
+#[test]
+fn conversations_refuses_a_directory() {
+    let setup = setup();
+    let server = serve(vec![]);
+    let dir = setup.out("conversations");
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = run(setup
+        .subcommand("run", &fixtures().join("gated-sweep"), &server)
+        .args(["--approvals", "auto", "--quiet", "--conversations"])
+        .arg(&dir));
+    assert_ne!(code(&out), 0);
+    assert!(stderr(&out).contains("JSON-lines file"), "{}", stderr(&out));
 }

@@ -220,7 +220,7 @@ fn a_killed_sweep_leaves_its_trace_and_the_finished_items_conversations() {
         Turn::Calls(vec![write("b.txt", "ok")]),
         Turn::Stall,
     ]);
-    let (trace, conversations) = (setup.out("trace.jsonl"), setup.out("conversations"));
+    let (trace, conversations) = (setup.out("trace.jsonl"), setup.out("conversations.jsonl"));
     let mut child = setup
         .subcommand("run", &coding_sweep(), &stalled)
         .args([
@@ -239,10 +239,10 @@ fn a_killed_sweep_leaves_its_trace_and_the_finished_items_conversations() {
         .spawn()
         .expect("sven starts");
     // Item b is in flight once its second request has arrived; item a's
-    // conversation is written when item a finished, which is before that.
-    let first = conversations.join("0000-notes-0.json");
+    // conversation is appended when item a finished, which is before that.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while (stalled.seen.lock().unwrap().requests < 4 || !first.is_file())
+    while (stalled.seen.lock().unwrap().requests < 4
+        || std::fs::read_to_string(&conversations).map_or(true, |t| t.is_empty()))
         && std::time::Instant::now() < deadline
     {
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -250,10 +250,13 @@ fn a_killed_sweep_leaves_its_trace_and_the_finished_items_conversations() {
     child.kill().expect("sven is still running");
     child.wait().unwrap();
 
-    let conversation: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&first).expect("item a's conversation"))
-            .expect("a trajectory");
-    assert_eq!(conversation["extra"]["harness"]["conversation"], "notes#0");
+    let conversations =
+        sven_sdk::read_conversations(&conversations).expect("item a's conversation");
+    assert_eq!(conversations[0].name, "notes#0");
+    assert_eq!(
+        conversations[0].trajectory.extra.as_ref().unwrap()["harness"]["conversation"],
+        "notes#0"
+    );
     let trace = std::fs::read_to_string(&trace).expect("the trace so far");
     assert!(
         trace.lines().any(|l| l.contains("item_completed")),

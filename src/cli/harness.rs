@@ -303,9 +303,12 @@ pub struct HarnessRunArgs {
     #[arg(long, value_name = "FILE")]
     pub trajectory: Option<PathBuf>,
     /// Write each conversation of the run (one agent's work: a task, or one
-    /// role of one loop item) as its own ATIF trajectory, `NNNN-<name>.json`,
-    /// into DIR: tool-call training data, kept only when asked for.
-    #[arg(long, value_name = "DIR")]
+    /// role of one loop item) as its own ATIF trajectory, one JSON line each
+    /// (`{"index", "name", "trajectory"}`) in FILE, kept only when asked for.
+    /// FILE is appended to while the run goes and holds one line per
+    /// conversation when it ends. An existing directory is refused: older
+    /// versions wrote a file per conversation there.
+    #[arg(long, value_name = "FILE")]
     pub conversations: Option<PathBuf>,
     /// Write the checkpoint of a suspended run as JSON.
     #[arg(long, value_name = "FILE")]

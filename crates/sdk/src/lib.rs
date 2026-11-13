@@ -70,9 +70,9 @@ pub use error::CallError;
 pub use events::{EventStream, RunEvent};
 pub use gates::HumanGate;
 pub use harness::{
-    compile_harness, write_trajectory_images, ConversationUpdate, Correction, Harness,
-    HarnessCheckpoint, HarnessFailure, HarnessOutcome, HarnessRecording, HarnessReplay, HarnessRun,
-    Publication, RefusedMessage, TrajectoryImage,
+    compile_harness, read_conversations, write_trajectory_images, ConversationUpdate, Correction,
+    Harness, HarnessCheckpoint, HarnessFailure, HarnessOutcome, HarnessRecording, HarnessReplay,
+    HarnessRun, NamedConversation, Publication, RefusedMessage, TrajectoryImage,
 };
 pub use memory_scope::MemoryScope;
 pub use method::{Method, Strategy};

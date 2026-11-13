@@ -38,6 +38,7 @@ use sven_hsm::Snapshot;
 use crate::engine::Engine;
 use crate::error::CallError;
 
+mod conversations;
 mod handoff;
 pub(crate) mod live_trajectory;
 mod outcome;
@@ -47,6 +48,7 @@ mod run_support;
 mod scratchpad;
 mod trajectory;
 
+pub use conversations::{read_conversations, NamedConversation};
 pub use handoff::Publication;
 pub use live_trajectory::ConversationUpdate;
 pub use record::{HarnessRecording, HarnessReplay};

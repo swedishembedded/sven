@@ -236,7 +236,7 @@ model that answers a role the workflow names, on the same endpoint),
 OpenRouter-compatible video API the run's agents generate with: `models` and
 `run_model`), `--first-byte-timeout SECS`, `--timeout SECS`,
 `--max-output-tokens N`, `--scratchpad DIR` (the run's private directory; its audit log goes there, never into the workspace), `--trace FILE` (JSONL), `--record FILE`,
-`--trajectory FILE`, `--conversations DIR` (one ATIF file per conversation), `--checkpoint-out FILE`, `--json` (one JSON document on
+`--trajectory FILE`, `--conversations FILE` (one JSON line per conversation, each holding its own ATIF document), `--checkpoint-out FILE`, `--json` (one JSON document on
 stdout and nothing else), `--quiet` (no progress on stderr) and `--progress auto|json|text`
 (`json` is one `[sven:harness] {...}` line per event, `text` a readable per-task log, and `auto`,
 the default, is `text` on a terminal and `json` otherwise).
