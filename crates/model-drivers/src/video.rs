@@ -92,6 +92,10 @@ pub struct VideoModel {
     pub providers: Option<Vec<String>>,
     /// Its price per second, by the listing's own key, as listed.
     pub pricing: Vec<(String, String)>,
+    /// Only a version that may keep data serves it, and the person has not
+    /// allowed sharing data with it (`needs_data_sharing`): a video is
+    /// refused until they do.
+    pub needs_data_sharing: bool,
 }
 
 /// A server's video API, at its OpenAI-style base URL (ending in `/v1`).
@@ -207,6 +211,7 @@ fn parse_models(value: &Value) -> Vec<VideoModel> {
                             .filter(|name| name != "brain")
                             .collect(),
                         providers: m["providers"].as_array().map(|_| strings(&m["providers"])),
+                        needs_data_sharing: m["needs_data_sharing"].as_bool() == Some(true),
                         actions: m["actions"]
                             .as_array()
                             .map(|a| {
@@ -258,15 +263,12 @@ impl VideoClient {
             .with_context(|| format!("{what}: reading the answer"))?;
         let json: Option<Value> = serde_json::from_str(&body).ok();
         if !status.is_success() {
-            let message = json
-                .as_ref()
-                .and_then(|j| {
-                    j["error"]["message"]
-                        .as_str()
-                        .or_else(|| j["error"].as_str())
-                })
-                .map_or_else(|| body.chars().take(200).collect(), str::to_owned);
-            bail!("{what}: HTTP {}: {message}", status.as_u16());
+            return Err(crate::invoke::refused(
+                what,
+                status.as_u16(),
+                json.as_ref(),
+                &body,
+            ));
         }
         json.ok_or_else(|| anyhow!("{what}: the answer is not JSON"))
     }

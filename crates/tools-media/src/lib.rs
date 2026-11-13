@@ -35,6 +35,7 @@
 //! `seed`. A job that failed is asked again under a fresh name. Every other
 //! invocation is named by its call, so asking again is a new picture.
 
+pub mod consent;
 mod direct;
 mod generate;
 mod handover;
@@ -49,6 +50,7 @@ pub use held::{remember_held, HELD};
 #[cfg(any(test, feature = "fake-server"))]
 pub mod fake;
 
+pub use consent::{SharingAnswer, SharingConsent};
 pub use generate::{generate, Generated};
 pub use handover::{fetch_to, hand_over, Handover, FETCHED_DIR};
 pub use run_model::RunModelTool;
@@ -243,6 +245,7 @@ async fn every_model(endpoint: &MediaEndpoint) -> Result<Vec<ListedModel>, Strin
             if !known.output.iter().any(|o| o == "video") {
                 known.output.push("video".into());
             }
+            known.needs_data_sharing |= video.needs_data_sharing;
             continue;
         }
         models.push(ListedModel {
@@ -262,6 +265,7 @@ async fn every_model(endpoint: &MediaEndpoint) -> Result<Vec<ListedModel>, Strin
             pricing: video.pricing.clone(),
             voices: Vec::new(),
             parameters: video_parameters(&video),
+            needs_data_sharing: video.needs_data_sharing,
         });
     }
     Ok(models)
@@ -281,6 +285,9 @@ fn line(model: &ListedModel) -> String {
     }
     if !model.voices.is_empty() {
         line.push_str(&format!("; {} voices", model.voices.len()));
+    }
+    if model.needs_data_sharing {
+        line.push_str("; may keep data: the user must allow it before it runs");
     }
     let prices: Vec<String> = model
         .pricing

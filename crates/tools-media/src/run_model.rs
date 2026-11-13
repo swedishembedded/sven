@@ -18,12 +18,20 @@ use sven_hsm::ToolCapability;
 use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{ArtifactRef, Tool, ToolCall, ToolOutput};
 
+use std::sync::Arc;
+
+use sven_model_drivers::invoke::DATA_SHARING_NOT_ALLOWED;
+
+use super::consent::{SharingAnswer, SharingConsent};
 use super::{direct, generate, invocation, invoker, MediaConfig, MediaEndpoint};
 
 pub struct RunModelTool {
     endpoint: MediaEndpoint,
     config: MediaConfig,
     workdir: PathBuf,
+    /// Who is asked when a model that may keep data is refused because the
+    /// person has not allowed it; none where nobody can answer.
+    consent: Option<Arc<dyn SharingConsent>>,
 }
 
 impl RunModelTool {
@@ -33,7 +41,18 @@ impl RunModelTool {
             endpoint,
             config,
             workdir,
+            consent: None,
         }
+    }
+
+    /// Asks the person through `consent` when a run is refused because they
+    /// have not allowed the model to keep data, and runs it again once they
+    /// allow it. Only for a session someone answers: a headless run reports
+    /// the refusal instead of waiting.
+    #[must_use]
+    pub fn with_consent(mut self, consent: Option<Arc<dyn SharingConsent>>) -> Self {
+        self.consent = consent;
+        self
     }
 }
 
@@ -187,6 +206,48 @@ impl Tool for RunModelTool {
         ToolCapability::WriteFile
     }
     async fn execute(&self, call: &ToolCall) -> ToolOutput {
+        let first = self.run_once(call).await;
+        // Refused because the person has not allowed the model to keep data:
+        // asked where someone can answer, and run again once they allow it.
+        // The model's own provider settles this with no service to ask.
+        let model = call.args.get("model").and_then(Value::as_str);
+        let (Some(consent), Some(model)) = (&self.consent, model) else {
+            return first;
+        };
+        if !first.is_error || !first.content.contains(DATA_SHARING_NOT_ALLOWED) || self.direct() {
+            return first;
+        }
+        let always = match consent.ask(model).await {
+            SharingAnswer::Deny => {
+                return ToolOutput::err(
+                    &call.id,
+                    format!("{model} was not run: the user did not allow it to keep data. Use a model that keeps no data, or do without it."),
+                )
+            }
+            SharingAnswer::Once => false,
+            SharingAnswer::Always => true,
+        };
+        if let Err(error) = invoker(&self.endpoint, &self.config)
+            .allow_data_sharing(model, always)
+            .await
+        {
+            return ToolOutput::err(&call.id, format!("{model} was not run: {error:#}"));
+        }
+        self.run_once(call).await
+    }
+}
+
+impl RunModelTool {
+    /// Whether models run on a provider of the person's own rather than the
+    /// sven service.
+    fn direct(&self) -> bool {
+        self.config
+            .provider
+            .as_deref()
+            .is_some_and(|p| p != sven_model_drivers::sven_service::PROVIDER)
+    }
+
+    async fn run_once(&self, call: &ToolCall) -> ToolOutput {
         let Some(args) = call.args.as_object() else {
             return ToolOutput::err(&call.id, "the arguments must be an object");
         };
@@ -214,12 +275,7 @@ impl Tool for RunModelTool {
         };
         // A provider of its own (a bring-your-own key) is called directly;
         // the sven service runs the invocation as the person.
-        let direct = self
-            .config
-            .provider
-            .as_deref()
-            .is_some_and(|p| p != sven_model_drivers::sven_service::PROVIDER);
-        if direct {
+        if self.direct() {
             direct::run(
                 &self.endpoint,
                 &self.config,

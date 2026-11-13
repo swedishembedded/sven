@@ -29,8 +29,7 @@ use sven_tool_api::events::{TodoItem, ToolEvent};
 use sven_tool_api::PathScope;
 use sven_tool_registry::ToolRegistry;
 use sven_tools_agent::{
-    AskQuestionTool, ModelCatalogEntry, SetGoalTool, SkillTool, SystemTool, TodoTool,
-    UpdateGoalTool,
+    ModelCatalogEntry, SetGoalTool, SkillTool, SystemTool, TodoTool, UpdateGoalTool,
 };
 use sven_tools_ctx::{ChunkExpandTool, ChunkExpander, ContextStore};
 #[cfg(feature = "document")]
@@ -40,6 +39,10 @@ use sven_tools_fs::AttachFileTool;
 use sven_tools_fs::{EditFileTool, FindFileTool, OutputBufferStore, ReadFileTool, WriteTool};
 #[cfg(all(unix, feature = "gdb"))]
 use sven_tools_gdb::GdbSessionState;
+use sven_tools_media::consent::SharingConsent;
+
+pub(crate) use crate::questions::register_ask_question;
+use crate::questions::terminal_consent;
 use sven_tools_web::GrepTool;
 use sven_vocab::AgentMode;
 
@@ -374,7 +377,6 @@ fn system_tool(
     }
 }
 
-/// Offers `ask_question` routed as `questions` says, if at all.
 /// The tools that keep the session's own state: its todo list, and the
 /// goal the model reports on or sets when asked.
 pub(crate) fn register_session_tools(
@@ -385,15 +387,6 @@ pub(crate) fn register_session_tools(
     reg.register(TodoTool::new(todos, events));
     reg.register(UpdateGoalTool);
     reg.register(SetGoalTool);
-}
-
-pub(crate) fn register_ask_question(reg: &mut ToolRegistry, questions: Questions) {
-    match questions {
-        Questions::Answered(tx) => reg.register(AskQuestionTool::new_tui(tx)),
-        Questions::Parked => reg.register(AskQuestionTool::parking()),
-        Questions::NoUser => reg.register(AskQuestionTool::no_user()),
-        Questions::Unavailable => {}
-    }
 }
 
 /// Parameters shared by the Full and Coding profile builders.
@@ -439,6 +432,7 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
             buffers_readable: true,
             include_full: p.include_gdb_context,
             expansion: p.expansion,
+            consent: terminal_consent(&p.questions),
         },
     );
 
@@ -568,6 +562,7 @@ fn build_profile_subagent(
             buffers_readable: false, // No `task` tool to read them with
             include_full: false,     // No GDB/context in sub-agents
             expansion: None,
+            consent: None, // Sub-agents run headless.
         },
     );
 
@@ -596,6 +591,9 @@ struct BaseTools<'a> {
     /// Lets the `context` tool expand shortened results; only the Full
     /// profile has that tool.
     expansion: Option<ChunkExpander>,
+    /// Who `run_model` asks before a model that may keep data runs; only a
+    /// session someone answers has one.
+    consent: Option<Arc<dyn SharingConsent>>,
 }
 
 /// Register the lean consolidated tool set shared by agent profiles.
@@ -615,6 +613,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
         buffers_readable,
         include_full,
         expansion,
+        consent,
     } = params;
     // ── File I/O ─────────────────────────────────────────────────────────────
     // read_file already handles images (auto-detected by extension). Every
@@ -737,7 +736,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     {
         reg.register(models);
         reg.register(schema);
-        reg.register(run_model);
+        reg.register(run_model.with_consent(consent));
     }
 
     // ── Memory (KV + project knowledge) ──────────────────────────────────────
@@ -800,6 +799,7 @@ fn tool_scope(cfg: &Config, scope: &PathScope) -> Option<PathScope> {
 
 #[cfg(test)]
 mod tests {
+
     /// A session started with the delegating session's store offers `context`
     /// expansion of it even though its own addressable context is off.
     #[test]

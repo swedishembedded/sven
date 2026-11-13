@@ -59,6 +59,10 @@ pub struct ListedModel {
     /// Its parameters as listed: a list of names (chat) or descriptors by
     /// name (an image model's enums and ranges).
     pub parameters: Value,
+    /// Only a version that may keep data serves it, and the person has not
+    /// allowed sharing data with it (`needs_data_sharing`): a call is
+    /// refused until they do.
+    pub needs_data_sharing: bool,
 }
 
 impl ListedModel {
@@ -182,7 +186,32 @@ fn listed(entry: &Value) -> Option<ListedModel> {
         } else {
             entry["supported_parameters"].clone()
         },
+        needs_data_sharing: entry["needs_data_sharing"].as_bool() == Some(true),
     })
+}
+
+/// The code a refusal names when the model may keep data and the person has
+/// not allowed sharing data with it: asking them, and trying again, helps.
+pub const DATA_SHARING_NOT_ALLOWED: &str = "data_sharing_not_allowed";
+
+/// A service's refusal as an error: what was being done, the status, the
+/// service's own code when it gives one (`error.code`, a stable name a caller
+/// can act on, such as [`DATA_SHARING_NOT_ALLOWED`]) and its message.
+pub(crate) fn refused(what: &str, status: u16, json: Option<&Value>, body: &str) -> anyhow::Error {
+    let message = json
+        .and_then(|j| {
+            j["error"]["message"]
+                .as_str()
+                .or_else(|| j["error"].as_str())
+        })
+        .map_or_else(|| body.chars().take(200).collect(), str::to_owned);
+    let code = json.and_then(|j| j["error"]["code"].as_str()).filter(|c| {
+        !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    });
+    match code {
+        Some(code) => anyhow!("{what}: HTTP {status} {code}: {message}"),
+        None => anyhow!("{what}: HTTP {status}: {message}"),
+    }
 }
 
 /// A handle the service answered, if it is one this client can use again.
@@ -273,15 +302,12 @@ impl InvocationClient {
             .with_context(|| format!("{what}: reading the answer"))?;
         let json: Option<Value> = serde_json::from_str(&body).ok();
         if !status.is_success() {
-            let message = json
-                .as_ref()
-                .and_then(|j| {
-                    j["error"]["message"]
-                        .as_str()
-                        .or_else(|| j["error"].as_str())
-                })
-                .map_or_else(|| body.chars().take(200).collect(), str::to_owned);
-            bail!("{what}: HTTP {}: {message}", status.as_u16());
+            return Err(crate::invoke::refused(
+                what,
+                status.as_u16(),
+                json.as_ref(),
+                &body,
+            ));
         }
         json.ok_or_else(|| anyhow!("{what}: the answer is not JSON"))
     }
@@ -302,6 +328,25 @@ impl InvocationClient {
             .as_array()
             .map(|data| data.iter().take(MAX_MODELS).filter_map(listed).collect())
             .unwrap_or_default())
+    }
+
+    /// Records the person's answer to a request for `model`, which may keep
+    /// data: for the next call only, or (`always`) from now on. Only a key
+    /// the person issued may: the person's own sign-in.
+    ///
+    /// # Errors
+    /// The service cannot be reached, or refuses (its organisation forbids
+    /// sharing data, or the key is not the person's own).
+    pub async fn allow_data_sharing(&self, model: &str, always: bool) -> anyhow::Result<()> {
+        let response = crate::build_http_client()
+            .post(format!("{}/data-sharing", self.base_url))
+            .bearer_auth(&self.api_key)
+            .timeout(LIST_TIMEOUT)
+            .json(&serde_json::json!({ "model": model, "allow": if always { "always" } else { "once" } }))
+            .send()
+            .await
+            .context("allowing the model")?;
+        Self::read(response, "allowing the model").await.map(drop)
     }
 
     /// Run one invocation (`request` is the invocation's JSON body) under

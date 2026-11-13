@@ -383,6 +383,19 @@ again in another call is another picture.
 A `chat` answer cut off at the model's output limit says so, so the agent can
 ask for less at once rather than trust a truncated page.
 
+**Models that may keep data.** On the sven service, a model served only by
+providers that may keep what they are sent runs only once the person allows
+sharing data with it (Settings, Models); `models` marks such a model "may keep
+data: the user must allow it before it runs". A call to one they have not
+allowed is refused, its error naming `data_sharing_not_allowed`. In the
+terminal the person is asked there and then: **Allow once** runs this call,
+**Always allow this model** allows it from now on, **Deny** refuses it, and an
+allowed call is run again at once. In a conversation of the sven service the
+conversation asks the person instead. A session nobody answers (headless, a
+sub-agent, a harness run) asks nobody and waits for nothing: the refusal is
+the tool's answer. Where the person's organisation forbids sharing, the
+error names `data_sharing_forbidden` and nobody is asked.
+
 **Video** is a durable job written to a file. Its `params` are the video
 API's: `duration` (seconds), `resolution`, `aspect_ratio`, `generate_audio`,
 `seed` (another seed is another take), `size` (`WIDTHxHEIGHT`), `references`

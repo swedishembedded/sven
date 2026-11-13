@@ -42,6 +42,10 @@ pub struct Fake {
     pub created: Created,
     /// The invocations run so far, in order.
     pub invoked: Arc<Mutex<Vec<Invocation>>>,
+    /// What the person allowed (`POST /v1/data-sharing`), in order: model and
+    /// `once` or `always`. A `keeps/` model is refused, as one the person has
+    /// not allowed to keep data, until it is allowed here.
+    pub allowed: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 /// The smallest valid PNG: one transparent pixel.
@@ -95,6 +99,27 @@ fn invoked_answer(index: usize, body: &Value) -> Value {
     }
 }
 
+/// Whether an invocation may run: any model but a `keeps/` one, which needs
+/// the person's `always`, or a `once` it then spends.
+fn may_run(allowed: &Mutex<Vec<(String, String)>>, body: &[u8]) -> bool {
+    let request: Value = serde_json::from_slice(body).unwrap_or_default();
+    let model = request["model"].as_str().unwrap_or("");
+    if !model.starts_with("keeps/") {
+        return true;
+    }
+    let mut allowed = allowed.lock().unwrap();
+    if allowed.iter().any(|(m, a)| m == model && a == "always") {
+        return true;
+    }
+    match allowed.iter().position(|(m, a)| m == model && a == "once") {
+        Some(once) => {
+            allowed[once].1 = "spent".into();
+            true
+        }
+        None => false,
+    }
+}
+
 /// A video server that fails the first `fail_first` jobs it starts, answers a
 /// repeated key with the same job, and completes every job on its second poll.
 pub async fn serve(fail_first: usize) -> Fake {
@@ -109,14 +134,17 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
     let created: Created = Arc::default();
     let invoked: Arc<Mutex<Vec<Invocation>>> = Arc::default();
     let jobs: Arc<Mutex<Vec<(String, u32)>>> = Arc::default();
+    let allowed: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
     let seen = Arc::clone(&created);
     let ran = Arc::clone(&invoked);
+    let sharing = Arc::clone(&allowed);
     tokio::spawn(async move {
         loop {
             let Ok((stream, _)) = listener.accept().await else {
                 return;
             };
             let (seen, jobs, ran) = (Arc::clone(&seen), Arc::clone(&jobs), Arc::clone(&ran));
+            let sharing = Arc::clone(&sharing);
             tokio::spawn(async move {
                 let (read, mut write) = stream.into_split();
                 let mut reader = BufReader::new(read);
@@ -216,6 +244,19 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                         body,
                     });
                     (200, "application/json", answer.to_string().into_bytes())
+                } else if method == "POST" && path == "/v1/data-sharing" {
+                    let body: Value = serde_json::from_slice(&body).unwrap();
+                    let answer = (
+                        body["model"].as_str().unwrap_or("").to_owned(),
+                        body["allow"].as_str().unwrap_or("").to_owned(),
+                    );
+                    sharing.lock().unwrap().push(answer);
+                    (200, "application/json", body.to_string().into_bytes())
+                } else if method == "POST" && path == "/v1/invocations" && !may_run(&sharing, &body)
+                {
+                    let refusal = json!({"error": {"type": "permission_error", "code": "data_sharing_not_allowed",
+                        "message": "the model may keep data, and the user has not allowed sharing data with it"}});
+                    (403, "application/json", refusal.to_string().into_bytes())
                 } else if method == "POST" && path == "/v1/invocations" {
                     let body: Value = serde_json::from_slice(&body).unwrap();
                     let mut ran = ran.lock().unwrap();
@@ -285,6 +326,7 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
         base_url,
         created,
         invoked,
+        allowed,
     }
 }
 

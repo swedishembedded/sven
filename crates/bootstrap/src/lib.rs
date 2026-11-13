@@ -41,6 +41,7 @@ pub mod kernel_bridge;
 mod mcp_setup;
 mod mode_policy;
 pub mod modes;
+mod questions;
 pub mod registry;
 pub mod runtime_builder;
 mod session_executor;

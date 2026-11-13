@@ -8,6 +8,7 @@
 //! session's model as text.
 
 use super::*;
+use std::sync::Arc;
 
 fn invoking(fake: &Fake, workdir: &Path, session: Option<&str>) -> RunModelTool {
     RunModelTool::new(
@@ -438,4 +439,82 @@ async fn a_provider_of_its_own_keeps_a_chat_answer_as_a_file_here() {
         "vision/a sees a red car"
     );
     assert!(!read.content.contains("sees a red car"), "{}", read.content);
+}
+
+/// Answers every question the same way, counting them.
+struct Answers(SharingAnswer, std::sync::atomic::AtomicUsize);
+
+#[async_trait::async_trait]
+impl SharingConsent for Answers {
+    async fn ask(&self, _model: &str) -> SharingAnswer {
+        self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.0
+    }
+}
+
+/// Spec: a model the person has not allowed to keep data is asked about
+/// where someone answers, recorded as they answer and run again; with nobody
+/// to ask, the refusal is the answer, naming its code, and nothing waits.
+#[tokio::test]
+async fn a_model_that_may_keep_data_is_asked_about_then_run_or_refused() {
+    let args = json!({"model": "keeps/video", "operation": "image", "prompt": "a fox"});
+
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let headless = invoking(&fake, dir.path(), None);
+    let refused = call(&headless, "h1", args.clone()).await;
+    assert!(refused.is_error);
+    assert!(
+        refused.content.contains("data_sharing_not_allowed"),
+        "{}",
+        refused.content
+    );
+    assert!(
+        fake.allowed.lock().unwrap().is_empty(),
+        "nothing is allowed for the person"
+    );
+
+    // Allowed once, the grant is spent by the run it allowed.
+    for (answer, recorded) in [
+        (SharingAnswer::Once, "spent"),
+        (SharingAnswer::Always, "always"),
+    ] {
+        let fake = serve(0).await;
+        let asked = Arc::new(Answers(answer, Default::default()));
+        let tool = invoking(&fake, dir.path(), None).with_consent(Some(asked.clone()));
+        let ran = call(&tool, "c1", args.clone()).await;
+        assert!(!ran.is_error, "{}", ran.content);
+        assert_eq!(asked.1.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            fake.allowed.lock().unwrap()[0],
+            ("keeps/video".to_owned(), recorded.to_owned())
+        );
+        assert_eq!(
+            fake.invoked.lock().unwrap().len(),
+            1,
+            "run once, after it was allowed"
+        );
+    }
+
+    let fake = serve(0).await;
+    let tool = invoking(&fake, dir.path(), None).with_consent(Some(Arc::new(Answers(
+        SharingAnswer::Deny,
+        Default::default(),
+    ))));
+    let denied = call(&tool, "d1", args).await;
+    assert!(denied.is_error);
+    assert!(
+        denied.content.contains("did not allow"),
+        "{}",
+        denied.content
+    );
+    assert!(fake.allowed.lock().unwrap().is_empty());
+    assert!(fake.invoked.lock().unwrap().is_empty());
+
+    // A model that keeps no data is never asked about.
+    let fake = serve(0).await;
+    let asked = Arc::new(Answers(SharingAnswer::Deny, Default::default()));
+    let tool = invoking(&fake, dir.path(), None).with_consent(Some(asked.clone()));
+    assert!(!call(&tool, "n1", json!({"model": "google/gemini-nano-banana-2.1", "operation": "image", "prompt": "a fox"})).await.is_error);
+    assert_eq!(asked.1.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
