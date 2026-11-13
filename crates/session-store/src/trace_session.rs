@@ -36,7 +36,7 @@ use atif::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use sven_model::{FunctionCall, Message, MessageContent, Role, ToolResultContent};
+use sven_model::{ContentPart, FunctionCall, Message, MessageContent, Role, ToolResultContent};
 use sven_vocab::notice::ORIGIN as NOTICE_ORIGIN;
 use sven_vocab::{Notice, RequestBreakdown, RequestRecord};
 
@@ -265,6 +265,11 @@ struct PendingAgentStep {
 ///   complete step list.
 ///
 /// `step_id`s are assigned sequentially starting at 1 as steps are closed.
+/// What a step without an image sink says in place of an image it was given.
+const IMAGE_NOT_KEPT: &str = "[image not recorded: this record keeps no image files]";
+/// The same for a sound.
+const AUDIO_NOT_KEPT: &str = "[audio not recorded: this record keeps no audio files]";
+
 #[derive(Debug, Default)]
 pub struct StepAssembler {
     steps: Vec<TraceStep>,
@@ -374,6 +379,22 @@ impl StepAssembler {
                 if let Some(segments) = segments {
                     self.push_immediate_step(StepOrigin::User, MessageBody::segments(segments));
                 }
+            }
+            // No place for image files: the message's words are kept, and
+            // each image or sound is said to be left out, never dropped
+            // with the words around it.
+            (Role::User, MessageContent::ContentParts(parts)) => {
+                let text = parts
+                    .iter()
+                    .map(|part| match part {
+                        ContentPart::Text { text } => text.clone(),
+                        ContentPart::Image { .. } => IMAGE_NOT_KEPT.to_string(),
+                        ContentPart::Audio { .. } => AUDIO_NOT_KEPT.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.flush_pending();
+                self.push_immediate_step(StepOrigin::User, MessageBody::text(text));
             }
             (Role::Assistant, MessageContent::Text(text)) => {
                 let pending = self.pending_for_response();

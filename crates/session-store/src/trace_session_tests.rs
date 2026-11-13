@@ -167,6 +167,28 @@ fn default_agent_profile_reports_the_real_sven_binary_version_not_a_frozen_crate
 // ── StepAssembler: forward turn assembly ────────────────────────────────
 
 #[test]
+fn a_message_with_an_image_keeps_its_words_without_an_image_sink() {
+    // A session file has no place for image files: the words of a message
+    // that carried one are kept, and the image is said to be left out.
+    let mut a = StepAssembler::new();
+    a.push_message(&Message {
+        role: Role::User,
+        content: MessageContent::ContentParts(vec![
+            sven_model::ContentPart::text("what is in this picture?"),
+            sven_model::ContentPart::image("data:image/png;base64,iVBORw0KGgo="),
+        ]),
+        reasoning: None,
+    });
+    let steps = a.finish();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].source, StepOrigin::User);
+    let text = steps[0].message.as_text().expect("a text body");
+    assert!(text.starts_with("what is in this picture?"), "{text}");
+    assert!(text.contains("[image not recorded"), "{text}");
+    assert!(!text.contains("base64"), "{text}");
+}
+
+#[test]
 fn simple_user_assistant_turn() {
     let mut a = StepAssembler::new();
     a.push_message(&Message::user("Hello, how are you?"));
