@@ -333,8 +333,7 @@ Search the web. Where the search runs (`tools.web.search.provider`, default
   signed in to. sven sends the query to `<base_url>/search`
   with that key; the service searches and bills the account the key belongs
   to, and a refusal (no credit, a revoked key) comes back as its message.
-- **Brave Search** otherwise, with `tools.web.search.api_key` or the
-  `BRAVE_API_KEY` environment variable. `provider: brave` keeps Brave even when
+- **Brave Search** otherwise, with `tools.web.search.api_key`. `provider: brave` keeps Brave even when
   a sven service is known.
 
 With neither, the call returns an error saying how to configure one.

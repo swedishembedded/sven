@@ -72,8 +72,8 @@ pub fn check_requested_tools(requested: Option<&str>) -> anyhow::Result<()> {
 ///
 /// `web_search_api_key` is forwarded to [`WebSearchTool`].  When `None` the
 /// web_search tool is still registered but will return an error if invoked
-/// without a Brave API key configured via the `BRAVE_API_KEY` environment
-/// variable.
+/// without a Brave API key (the `--brave-api-key` flag or
+/// `tools.web.search.api_key`).
 ///
 /// `allowed_names` is an optional comma-separated list of tool names to
 /// include.  Pass `"default"` (or `None`) to include [`DEFAULT_TOOL_NAMES`].

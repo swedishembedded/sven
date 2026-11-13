@@ -434,7 +434,7 @@ tools:
       # Brave otherwise), sven, or brave.
       # provider: auto
       # API key for the Brave Search backend.
-      # Can also be set with BRAVE_API_KEY environment variable.
+      # Only this key: the BRAVE_API_KEY environment variable is not read.
       # api_key: BSA...
 
 
@@ -1103,7 +1103,7 @@ is listed at all. How it works and what it saves:
 | `fetch_max_chars` | `20000` | Characters `web_fetch` returns when the model names no `max_chars`. Never more than 100000 whatever the model asks, and at most 4 MiB of a response body is read |
 | `public_only` | `false` | `web_fetch` reaches only the public internet: never this machine, a private network or a cloud metadata service. `sven rc` sets it unless started with `--wide-access` |
 | `search.provider` | `auto` | `auto`: the sven service `sven rc` signed in to, else a `providers.sven` entry with `base_url` and a key, else Brave. `sven` or `brave` to choose one |
-| `search.api_key` | - | Brave Search API key, read from this key (the `BRAVE_API_KEY` env var is only a fallback). The endpoint host `api.search.brave.com` obeys the [`network`](#network) allow list and `resolve` map like every other host |
+| `search.api_key` | - | Brave Search API key. The `BRAVE_API_KEY` environment variable is no longer read. The endpoint host `api.search.brave.com` obeys the [`network`](#network) allow list and `resolve` map like every other host |
 
 ---
 
@@ -1589,7 +1589,6 @@ tui:
 | `XDG_RUNTIME_DIR` | Where a running brain server's connection record is looked for (`$XDG_RUNTIME_DIR/brain`, else `<tmpdir>/brain-<uid>`) |
 | `SVEN_MODEL` | Default for `--model` |
 | `SVEN_MOCK_RESPONSES` | Responses file for the mock provider |
-| `BRAVE_API_KEY` | Key of the `web_search` tool's Brave backend when `tools.web.search.api_key` is unset |
 | `AWS_DEFAULT_REGION`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | Credentials and region of the Bedrock provider |
 | `SVEN_ASCII_BORDERS=1` | Same as `tui.ascii_borders: true` |
 | `SVEN_LOG_FILE`, `RUST_LOG` | Logging; see the [command-line reference](cli.md#environment) |

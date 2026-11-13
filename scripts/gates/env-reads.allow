@@ -8,7 +8,6 @@ crates/chain/tests/processes.rs	<WRITER_LOG>
 crates/ci/src/template.rs	<key>
 crates/config/src/document.rs	<name>
 crates/mcp-client/src/connection.rs	PATH
-crates/mcp/src/cli.rs	BRAVE_API_KEY
 crates/model-drivers/src/aws.rs	AWS_ACCESS_KEY_ID
 crates/model-drivers/src/aws.rs	AWS_DEFAULT_REGION
 crates/model-drivers/src/aws.rs	AWS_REGION
@@ -23,7 +22,6 @@ crates/team/src/cli.rs	HOME
 crates/tools-android/src/tool.rs	SVEN_ANDROID_SERIAL
 crates/tools-exec/src/search_path.rs	PATH
 crates/tools-fs/src/file/read_file.rs	SVEN_NO_PATH_ASCENT
-crates/tools-web/src/web_search.rs	BRAVE_API_KEY
 crates/tui-nvim/src/bridge.rs	SVEN_REQUIRE_NVIM
 crates/tui/src/app/chat_ops.rs	SVEN_ASCII_BORDERS
 crates/tui/src/app/term_events.rs	HOME

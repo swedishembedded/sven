@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **web_search**: the `BRAVE_API_KEY` environment variable is no longer read, by `web_search` or `sven mcp serve`. Set `tools.web.search.api_key` (`sven mcp serve` also takes `--brave-api-key`, defaulting to that key). Without a key the tool's error names the key to set.
+
 ### Added
 - **network**: a `network` section (`allow_hosts`, `proxy`, `ca_bundle`, `resolve`) and the flags `--allow-host`, `--deny-egress`, `--egress-proxy`, `--ca-bundle` and `--resolve` confine every HTTP client of a process except the model provider's: deny by default when a list is given, enforced at the connection layer (IP literals and redirects included), inherited by sub-agents, with readable refusals. See the new guide "Independent agents".
 - **tools**: `http_request` sends one HTTP request with a chosen method, headers and body and streams the answer up to a limit (`agent` mode).

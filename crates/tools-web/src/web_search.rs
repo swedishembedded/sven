@@ -20,7 +20,7 @@ pub enum SearchBackend {
     /// A sven service's `/search`, authenticated with its key; it searches
     /// and bills the account the key belongs to.
     Sven(SvenEndpoint),
-    /// Brave Search, with this key or `BRAVE_API_KEY`.
+    /// Brave Search, with this key (`tools.web.search.api_key`).
     Brave { api_key: Option<String> },
     /// No search is possible, for this reason.
     Unavailable(String),
@@ -38,7 +38,7 @@ pub struct WebSearchTool {
 }
 
 impl WebSearchTool {
-    /// Searching Brave with `api_key`, or `BRAVE_API_KEY` without one.
+    /// Searching Brave with `api_key` (`tools.web.search.api_key`).
     #[must_use]
     pub fn brave(api_key: Option<String>) -> Self {
         Self {
@@ -117,15 +117,13 @@ impl Tool for WebSearchTool {
                 }
             }
             SearchBackend::Brave { api_key } => {
-                let api_key = api_key
-                    .clone()
-                    .or_else(|| std::env::var("BRAVE_API_KEY").ok());
-                let Some(api_key) = api_key else {
+                let Some(api_key) = api_key.clone() else {
                     return ToolOutput::err(
                         &call.id,
                         "No search service is configured. Sign in to a sven service (`sven rc`), \
-                         configure a `providers.sven` entry with a key, or set BRAVE_API_KEY or \
-                         tools.web.search.api_key for Brave.",
+                         configure a `providers.sven` entry with a key, or set \
+                         `tools.web.search.api_key` for Brave (the BRAVE_API_KEY environment \
+                         variable is no longer read).",
                     );
                 };
                 let url = search_url(&query, count);
@@ -292,8 +290,8 @@ mod tests {
         use serde_json::json;
         use sven_tool_api::tool::ToolCall;
 
-        // Ensure env var is unset for test
-        std::env::remove_var("BRAVE_API_KEY");
+        // The retired variable is not a key, even when set.
+        std::env::set_var("BRAVE_API_KEY", "not-a-key");
 
         let t = WebSearchTool::brave(None);
         let call = ToolCall {
@@ -303,7 +301,11 @@ mod tests {
         };
         let out = t.execute(&call).await;
         assert!(out.is_error);
-        assert!(out.content.contains("BRAVE_API_KEY"));
+        assert!(
+            out.content.contains("tools.web.search.api_key"),
+            "{}",
+            out.content
+        );
         assert!(out.content.contains("sven rc"));
         assert!(
             out.provenance.is_none(),

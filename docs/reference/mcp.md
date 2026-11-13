@@ -293,7 +293,7 @@ these built-in tools by default: `edit_file`, `find_file`, `grep`,
 | Flag | Meaning |
 |------|---------|
 | `--tools a,b,...` | serve only these tools; `default` or no flag serves the nine above; a name outside that set (including a stale `all`) is an error. The set is deliberately smaller than the agent's tools: those that need a live session (`ask_question`, `todo`, `switch_mode`) or change agent state are not offered to MCP clients |
-| `--brave-api-key KEY` | key for `web_search` (also read from `BRAVE_API_KEY`) |
+| `--brave-api-key KEY` | key for `web_search` (default `tools.web.search.api_key`) |
 | `--listen ADDR` | serve over Streamable HTTP at `http://ADDR/mcp` instead of stdio; needs `--token-file` |
 | `--token-file PATH` | the bearer token an HTTP client must present: at least 32 characters, in a file readable by its owner alone; any other request is answered 401 |
 

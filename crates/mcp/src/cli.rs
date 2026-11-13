@@ -44,8 +44,9 @@ pub enum McpCommands {
 
         /// Brave Search API key for the web_search tool.
         ///
-        /// May also be provided via the BRAVE_API_KEY environment variable.
-        #[arg(long, env = "BRAVE_API_KEY", value_name = "KEY")]
+        /// Defaults to `tools.web.search.api_key` of the configuration; the
+        /// BRAVE_API_KEY environment variable is not read.
+        #[arg(long, value_name = "KEY")]
         brave_api_key: Option<String>,
 
         /// Serve over Streamable HTTP at `http://ADDR/mcp` instead of stdio,
@@ -171,7 +172,9 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
             let scope = sven_tool_api::PathScope::confined(&root)
                 .map_err(|e| anyhow::anyhow!("serving {}: {e}", root.display()))?;
             let registry = std::sync::Arc::new(crate::build_mcp_registry(
-                brave_api_key.clone(),
+                brave_api_key
+                    .clone()
+                    .or_else(|| config.tools.web.search.api_key.clone()),
                 tools.as_deref(),
                 &config.tools,
                 scope,

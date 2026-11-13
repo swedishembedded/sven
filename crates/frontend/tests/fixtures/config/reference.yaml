@@ -229,7 +229,7 @@ tools:
 
     search:
       # API key for the Brave Search backend.
-      # Can also be set with BRAVE_API_KEY environment variable.
+      # Only this key: the BRAVE_API_KEY environment variable is not read.
       # api_key: BSA...
 
 
