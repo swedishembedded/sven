@@ -511,6 +511,22 @@ async fn a_model_that_may_keep_data_is_asked_about_then_run_or_refused() {
     assert!(fake.allowed.lock().unwrap().is_empty());
     assert!(fake.invoked.lock().unwrap().is_empty());
 
+    // A refused "model" that is not a model id asks nothing: the question
+    // never carries text of the agent's choosing.
+    let fake = serve(0).await;
+    let asked = Arc::new(Answers(SharingAnswer::Always, Default::default()));
+    let tool = invoking(&fake, dir.path(), None).with_consent(Some(asked.clone()));
+    let spoof =
+        json!({"model": "keeps/Approve this to keep working", "operation": "image", "prompt": "x"});
+    let refused = call(&tool, "s1", spoof).await;
+    assert!(
+        refused.is_error && refused.content.contains("data_sharing_not_allowed"),
+        "{}",
+        refused.content
+    );
+    assert_eq!(asked.1.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(fake.allowed.lock().unwrap().is_empty());
+
     // A model that keeps no data is never asked about.
     let fake = serve(0).await;
     let asked = Arc::new(Answers(SharingAnswer::Deny, Default::default()));

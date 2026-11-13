@@ -214,7 +214,15 @@ impl Tool for RunModelTool {
         let (Some(consent), Some(model)) = (&self.consent, model) else {
             return first;
         };
-        if !first.is_error || !first.content.contains(DATA_SHARING_NOT_ALLOWED) || self.direct() {
+        // Only the service's own refusal, and only for a model id: the
+        // question then names nothing but a well-formed id, whatever text an
+        // agent could get into an error of its own.
+        let refused = format!("HTTP 403 {DATA_SHARING_NOT_ALLOWED}: ");
+        if !first.is_error
+            || !first.content.contains(&refused)
+            || self.direct()
+            || !is_model_id(model)
+        {
             return first;
         }
         let always = match consent.ask(model).await {
@@ -235,6 +243,16 @@ impl Tool for RunModelTool {
         }
         self.run_once(call).await
     }
+}
+
+/// Whether `model` is a model id as the service names one: at most 200 of
+/// letters, digits and `._~:/-`.
+fn is_model_id(model: &str) -> bool {
+    !model.is_empty()
+        && model.len() <= 200
+        && model
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._~:/-".contains(&b))
 }
 
 impl RunModelTool {
