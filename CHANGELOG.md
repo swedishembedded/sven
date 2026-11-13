@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **document**: a document someone sent is read in confined worker processes (`sven document worker`): the session's own process never parses it. Workers run with no writable path and no TCP (Landlock; a kernel that cannot enforce it starts none), set hard memory and CPU limits before reading a byte, and are killed and replaced past a request's deadline.
+- **document**: `document_locate` and `document_convert` take a conversation's file handle as source, name the Markdown after its source, and publish it back as a file of the conversation; a hosted host offers both, always isolated, each conversation working in a directory of its own.
+- **document_convert**: past `ocr.confirm_above_pages` (20) pages that need OCR, it answers `needs_confirmation` with the counts and sends nothing until called with `confirmed: true` or fewer pages; a long conversion reports "page N of M" at most every 30 seconds.
+- **media**: `run_model` asks the person before a model that may keep data runs (Allow once, Always allow this model, Deny), records an allowed answer with the service and runs again; a session nobody answers gets the refusal as the tool's answer.
+- **tools**: a tool declares how long its own bounded work may take (`Tool::longest_run`), and the watchdog allows that long; `document_convert` declares six hours.
+
+### Fixed
+- **session-store**: a person's message that carried an image kept nothing in the saved session, its words included; its words are kept now, and the image is said to be left out.
+- **remote**: a tool call the server denies tells the agent the server's reason (what to use instead) rather than only that it was denied.
+- **remote**: a session's file tools reach the files sven keeps for its conversation (attachments, files fetched by handle, models' outputs), which no path tool could read; sven's own configuration stays refused.
+- **remote**: only a working directory several conversations share is split per conversation; a host in its own container works across its workspace again.
+- **document**: workers start inside a hosted host's confinement (they failed with EACCES), a page the model declines to read fails instead of keeping the refusal as its text, and a page of one flat tone costs no request.
+- **ocr**: a provider's vision model named as the OCR model is set up from its listing, so it is no longer refused as not accepting images.
+
+### Security
+- **document_convert**: its record and errors name paths relative to the session's working directory, never the host's own layout.
+
 ## [4.14.0] - 2026-11-12
 
 ### Fixed
