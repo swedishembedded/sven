@@ -459,22 +459,27 @@ fn progress_text_is_readable_and_json_is_the_unchanged_default_off_a_terminal() 
             .args(["--approvals", "auto", "--input", r#"{"plan": "pro"}"#])
             .args(extra))
     };
-    // Timestamps differ between runs; everything else is the contract.
-    let json_lines = |out: &std::process::Output| -> Vec<serde_json::Value> {
-        stderr(out)
-            .lines()
-            .filter_map(|l| l.strip_prefix("[sven:harness] "))
-            .map(|l| {
-                let mut v: serde_json::Value = serde_json::from_str(l).expect("a JSON line");
-                v.as_object_mut().unwrap().remove("ts_ms");
-                v
-            })
-            .collect()
-    };
+    // Timestamps differ between runs; everything else is the contract. The
+    // run's records and the tool activity lines (`tool_started`,
+    // `tool_finished`) come from two independent streams written as each
+    // happens, so their interleaving is a race and not part of the
+    // contract: each stream's own order is, and is compared on its own.
+    let json_lines =
+        |out: &std::process::Output| -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+            stderr(out)
+                .lines()
+                .filter_map(|l| l.strip_prefix("[sven:harness] "))
+                .map(|l| {
+                    let mut v: serde_json::Value = serde_json::from_str(l).expect("a JSON line");
+                    v.as_object_mut().unwrap().remove("ts_ms");
+                    v
+                })
+                .partition(|v| !v["event"].as_str().is_some_and(|e| e.starts_with("tool_")))
+        };
 
     let default = go(&[]);
     let json = go(&["--progress", "json"]);
-    assert!(!json_lines(&json).is_empty());
+    assert!(!json_lines(&json).0.is_empty());
     assert_eq!(
         json_lines(&default),
         json_lines(&json),
