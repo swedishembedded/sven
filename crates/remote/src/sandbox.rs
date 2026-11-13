@@ -179,7 +179,7 @@ mod tests {
             std::fs::read_dir(sandbox.parent().unwrap()).map(drop),
             "listing the directory above its own",
         );
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = sven_roots::home_dir() {
             denied(
                 std::fs::read_dir(home).map(drop),
                 "listing the home directory",

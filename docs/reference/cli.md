@@ -47,6 +47,13 @@ both for that step and the steps after it.
 | `--skill-disclosure MODE` | `skills.disclosure` | `full` or `deferred`: how much of each skill the system prompt lists. |
 | `--subagent-disclosure MODE` | `subagents.disclosure` | `full` or `deferred`: how much of each sub-agent the system prompt lists. |
 | `--knowledge-disclosure MODE` | `knowledge.disclosure` | `full` or `deferred`: how much of each knowledge document the system prompt lists. |
+| `--state-root DIR` | - | Keep every file this process reads or writes for itself under `DIR` and read no `/etc/sven` or user configuration; see [Independent agents](../guides/independent-agents.md). `sven acp serve` takes it too. |
+| `--allow-host HOST[:PORT]` | `network.allow_hosts` | Repeatable. A host the HTTP tools may reach; giving any makes the list exclusive. |
+| `--deny-egress` | `network.allow_hosts: []` | The HTTP tools reach nothing unless `--allow-host` lists it. |
+| `--egress-proxy URL` | `network.proxy` | Send every allowed HTTP(S) request through this proxy. |
+| `--ca-bundle FILE` | `network.ca_bundle` | Trust these certificate authorities as well. |
+| `--resolve HOST=ADDR` | `network.resolve` | Repeatable. Resolve a host name to an address for direct connections. |
+| `--disable-tool NAME` | `tools.disabled` | Repeatable. Remove a tool from the session: `--disable-tool shell` runs an agent with no command execution. |
 | `--context-assembly MODE` | `context.assembly.mode` | `off`, `demote` or `reconstruct`; see [Addressable context](../internals/context-assembly.md). |
 | `--orchestration MODE` | `agent.orchestration` | `off` or `plan`: whether the agent is offered `plan_tasks`; see [Orchestration](../concepts/orchestration.md). |
 | `-c, --config FILE` | auto-discovery | A configuration file merged over every file found by the [normal lookup](configuration.md#config-file-location). |

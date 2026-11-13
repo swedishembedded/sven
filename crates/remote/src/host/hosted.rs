@@ -146,9 +146,9 @@ pub(super) fn forget_conversation_files(working_dir: &Path, shared: bool, id: uu
 /// traces, which hold whatever they ever pasted into sven.
 fn protected_locations() -> Vec<PathBuf> {
     let mut locations = Vec::new();
-    locations.extend(dirs::config_dir().map(|dir| dir.join("sven")));
-    locations.extend(dirs::home_dir().map(|home| home.join(".config").join("sven")));
-    locations.extend(dirs::data_dir().map(|dir| dir.join("sven")));
+    locations.extend(sven_roots::config_dir().map(|dir| dir.join("sven")));
+    locations.extend(sven_roots::home_dir().map(|home| home.join(".config").join("sven")));
+    locations.extend(sven_roots::data_dir().map(|dir| dir.join("sven")));
     locations
 }
 
@@ -306,8 +306,10 @@ mod tests {
         let protected = protected_locations();
         let kept = [
             crate::sessions::default_dir().unwrap(),
-            dirs::data_dir().unwrap().join("sven").join("chats"),
-            dirs::home_dir().unwrap().join(".config/sven/remote.yaml"),
+            sven_roots::data_dir().unwrap().join("sven").join("chats"),
+            sven_roots::home_dir()
+                .unwrap()
+                .join(".config/sven/remote.yaml"),
         ];
         for path in kept {
             assert!(

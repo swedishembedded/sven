@@ -63,6 +63,9 @@ pub enum AcpCommands {
         #[arg(long = "disable-tool", value_name = "NAME")]
         disable_tools: Vec<String>,
 
+        #[command(flatten)]
+        isolation: crate::isolation::IsolationFlags,
+
         /// Ignores `tools.preload`: the sessions of a delegated child start
         /// with only the core tools loaded, as the model that delegated to it
         /// chose its tools, not the child.
@@ -199,8 +202,12 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             evidence_store,
             media_session,
             parent_terms_stdin,
+            isolation,
         } => {
+            isolation.activate_state_root()?;
             let mut config = sven_bootstrap::Config::load(None)?;
+            isolation.apply(&mut config.network);
+            config.apply_network()?;
             sven_bootstrap::connectors::add_signed_in(&mut config);
             // Held to a parent's terms: its memory, which will hold the
             // parent's key, is kept from other processes first.

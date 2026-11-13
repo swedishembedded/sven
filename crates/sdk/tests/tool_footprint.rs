@@ -30,8 +30,9 @@ use sven_turn::ledger::schema_tokens;
 /// session gained standing goals (`update_goal` ~190, `set_goal` ~120), and
 /// from 3 810 when the coding set gained joining clips into a film
 /// (`join_videos` ~175), and from 3 990 when `task` gained isolated
-/// worktree writers and per-action handles (~616 now).
-const CODING_CEILING: u32 = 4_170;
+/// worktree writers and per-action handles (~616 now), and from 4 170 when
+/// it gained an API request tool (`http_request`, ~165).
+const CODING_CEILING: u32 = 4_340;
 /// Estimated tokens of every definition `Toolset::research()` offers. Raised
 /// from 2 390 for the same two goal tools, and from 2 680 for the same
 /// growth of `task`.

@@ -711,6 +711,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
 
     // ── Web ───────────────────────────────────────────────────────────────────
     reg.register(cfg.tools.web.fetch_tool());
+    reg.register(cfg.tools.web.http_request_tool());
     reg.register(cfg.web_search_tool());
 
     // ── Media (models of every modality) ─────────────────────────────────────
@@ -997,6 +998,7 @@ mod tests {
             "edit_file",
             "find_file",
             "grep",
+            "http_request",
             "memory",
             "read_file",
             "shell",

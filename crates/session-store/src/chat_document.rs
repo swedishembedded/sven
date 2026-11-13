@@ -328,9 +328,9 @@ fn turn_to_record(turn: &TurnRecord) -> Option<ConversationRecord> {
 ///
 /// Defaults to `$XDG_DATA_HOME/sven/chats` (i.e. `~/.local/share/sven/chats`).
 pub fn chat_dir() -> PathBuf {
-    dirs::data_dir()
+    sven_roots::data_dir()
         .unwrap_or_else(|| {
-            dirs::home_dir()
+            sven_roots::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".local")
                 .join("share")

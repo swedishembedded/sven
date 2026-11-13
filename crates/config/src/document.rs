@@ -22,15 +22,18 @@ pub fn layer_files(dir: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     // /etc/ is a Linux convention; macOS and Windows use the user's
     // configuration directory for everything instead.
+    // A process with a state root of its own reads only that root.
     #[cfg(target_os = "linux")]
-    paths.extend(["/etc/sven/config.yaml", "/etc/sven/config.yml"].map(PathBuf::from));
-    // dirs::config_dir() is $XDG_CONFIG_HOME or ~/.config on Linux,
+    if sven_roots::state_root().is_none() {
+        paths.extend(["/etc/sven/config.yaml", "/etc/sven/config.yml"].map(PathBuf::from));
+    }
+    // sven_roots::config_dir() is $XDG_CONFIG_HOME or ~/.config on Linux,
     // ~/Library/Application Support on macOS and %APPDATA% on Windows; the
     // ~/.config spelling is read on every platform.
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = sven_roots::home_dir() {
         paths.extend(["config.yaml", "config.yml"].map(|n| home.join(".config/sven").join(n)));
     }
-    if let Some(cfg) = dirs::config_dir() {
+    if let Some(cfg) = sven_roots::config_dir() {
         paths.extend(["config.yaml", "config.yml"].map(|n| cfg.join("sven").join(n)));
     }
     paths.extend(crate::scope::workspace_file(dir));

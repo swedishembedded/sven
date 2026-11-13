@@ -16,6 +16,7 @@
 
 pub mod bridge;
 pub mod cli;
+pub mod isolation;
 
 mod agent;
 

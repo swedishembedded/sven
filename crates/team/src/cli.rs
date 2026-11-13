@@ -526,7 +526,7 @@ pub fn cmd_watch(team_name: &str, interval_secs: u64, timeout_secs: u64) -> anyh
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn base_teams_dir() -> PathBuf {
-    dirs::config_dir()
+    sven_roots::config_dir()
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
         .join("sven")
         .join("teams")

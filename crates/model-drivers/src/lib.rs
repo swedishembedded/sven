@@ -93,12 +93,12 @@ pub(crate) fn build_http_client() -> reqwest::Client {
     // In a browser the request is the page's own `fetch`, which owns its
     // connections and their timeouts, and sends the browser's User-Agent.
     #[cfg(not(target_arch = "wasm32"))]
-    let builder = sven_http::client_builder()
+    let builder = sven_http::model_client_builder()
         .user_agent(concat!("sven/", env!("CARGO_PKG_VERSION")))
         .tcp_keepalive(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(30));
     #[cfg(target_arch = "wasm32")]
-    let builder = sven_http::client_builder();
+    let builder = sven_http::model_client_builder();
     builder.build().expect("failed to build HTTP client")
 }
 

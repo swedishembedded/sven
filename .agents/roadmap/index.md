@@ -25,6 +25,7 @@ heading and a `Scope: <one sentence>` line under it, then run
 | [`goals`](goals.md) | goals | standing goals (`/goal`): what is left after the supervised goal loop, its check commands and its terminal and `sven rc` surfaces shipped. |
 | [`harness-performance`](harness-performance.md) | harness-performance | Making sven a fast, efficient, precise and robust coding harness for any model, and proving it with measured runs. |
 | [`harness-workflows`](harness-workflows.md) | harness-workflows | Open work on the harness workflow language and runtime (`sven-harness-spec`, `sven-harness-runtime`, `sven harness`). |
+| [`independent-agents`](independent-agents.md) | independent-agents | Running sven as an independent actor on a network an embedding application controls: egress control, an API tool, and per-run state, with nothing shared between agents on one machine. |
 | [`mcp-client`](mcp-client.md) | mcp-client | sven as an MCP client: a current-protocol client for any remote or local MCP server, standalone with any model provider, with a guided sign-in and a tool policy that holds after the server's tool list changes. |
 | [`memory`](memory.md) | memory | Agent memory: the `sven-memory-api` contract, the `sven-memory-sqlite` adapter and the `semantic_memory` tool. |
 | [`model-router`](model-router.md) | model-router | Routing a request to models beyond the session language model (image, speech, video and other brain-served models). |

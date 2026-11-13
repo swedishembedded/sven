@@ -29,7 +29,7 @@ use uuid::Uuid;
 /// Where this user's kept sessions live.
 #[must_use]
 pub fn default_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("sven").join("remote").join("sessions"))
+    sven_roots::data_dir().map(|dir| dir.join("sven").join("remote").join("sessions"))
 }
 
 /// The kept conversations of one host, by session id.

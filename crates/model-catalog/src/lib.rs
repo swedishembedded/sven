@@ -169,8 +169,8 @@ fn current_unix_secs() -> u64 {
 }
 
 fn cache_dir() -> Option<PathBuf> {
-    dirs::config_dir()
-        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+    sven_roots::config_dir()
+        .or_else(|| sven_roots::home_dir().map(|h| h.join(".config")))
         .map(|p| p.join("sven").join("model-cache"))
 }
 

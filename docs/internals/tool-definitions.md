@@ -30,7 +30,7 @@ per-tool table with `--nocapture`:
 cargo test -p sven-sdk --test tool_footprint -- --nocapture
 ```
 
-The test fails when the total exceeds its ceiling: `CODING_CEILING` (4,170
+The test fails when the total exceeds its ceiling: `CODING_CEILING` (4,340
 estimated tokens) and `RESEARCH_CEILING` (2,850). The ceilings sit just above
 the totals of the default build, which has the most tool text (image-capable
 `read_file` and `attach_file`); a build with fewer features is smaller. A
@@ -73,7 +73,8 @@ its paths through the scope and refuses anything outside the root.
 | `document_convert` | yes | jailed (source and destination) | sends page images to the configured OCR model; reads the PDF, writes the Markdown file and its manifest |
 | `attach_file` | yes (`media` feature) | jailed | audio the model cannot take is sent to a speech-to-text service over D-Bus, and only in a build with the `asr` feature |
 | `shell` | yes | starts in the root, and a `workdir` must stay inside it; the command itself is not confined | anything the process can do |
-| `web_fetch`, `web_search` | yes | none | any http(s) URL; no private-address filter |
+| `web_fetch`, `web_search` | yes | none | any http(s) URL, within the `network` egress policy when one is set; no private-address filter |
+| `http_request` | yes (`agent` mode) | none | any http(s) request, within the `network` egress policy when one is set |
 | `memory` | yes | its own notes file in the user's config directory (or `tools.memory.memory_file`), not the project; reads `.sven/knowledge/` | none |
 | `semantic_memory` | yes (`memory` feature) | its own SQLite store | none |
 | `skill` | yes | reads installed skill files | none |

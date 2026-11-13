@@ -49,7 +49,9 @@ impl OpenAiEmbedder {
             max_tokens: 8192,
         };
         let mut embedder = Self {
-            client: sven_http::client(),
+            client: sven_http::model_client_builder()
+                .build()
+                .expect("an HTTP client with default settings builds"),
             base_url,
             api_key,
             model,

@@ -408,7 +408,7 @@ pub(crate) fn ancestor_chain_within(start: &Path, ceiling: Option<&Path>) -> Vec
 /// deduplicates, and returns them shallowest-first so that deeper directories
 /// (closer to the project root) always win on command name collisions.
 ///
-/// `home` defaults to `dirs::home_dir()` when `None` is passed.  Tests pass
+/// `home` defaults to `sven_roots::home_dir()` when `None` is passed.  Tests pass
 /// an explicit value (e.g. `Some(tmp.path())`) to avoid reading real user
 /// config directories from the live filesystem.
 pub(crate) fn build_sorted_search_dirs(
@@ -531,15 +531,15 @@ fn enumerate_md_inner(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>)
 /// walk base so workspace-level skills are still found.
 #[must_use]
 pub fn discover_skills(project_root: Option<&Path>) -> Vec<SkillInfo> {
-    discover_skills_impl(project_root, dirs::home_dir().as_deref(), true)
+    discover_skills_impl(project_root, sven_roots::home_dir().as_deref(), true)
 }
 
-/// Discover skills anchored to explicit roots — no real-user-home fallback.
+/// Discover skills anchored to explicit roots - no real-user-home fallback.
 ///
 /// Same discovery rules as [`discover_skills`], except:
 ///
 /// * the ancestor walk is anchored at exactly the given `project_root` and
-///   `home` — `dirs::home_dir()` is never consulted, so the host user's
+///   `home` - `sven_roots::home_dir()` is never consulted, so the host user's
 ///   config directories cannot leak in (pass `None` for `home` to skip the
 ///   home walk entirely);
 /// * the system paths (`/usr/share/sven/skills`,
@@ -562,7 +562,7 @@ pub fn discover_skills_anchored(
     discover_skills_impl(project_root, home, include_system)
 }
 
-/// Internal implementation; `home` overrides `dirs::home_dir()`.
+/// Internal implementation; `home` overrides `sven_roots::home_dir()`.
 ///
 /// Pass `Some(isolated_dir)` (or `None` to skip the home walk entirely) in
 /// tests so that real user config directories are never consulted.
@@ -615,7 +615,7 @@ pub(crate) fn discover_skills_within(
         // On non-Unix platforms, use the platform data directory (e.g.
         // %ProgramData%\sven on Windows, /Library/Application Support on macOS).
         #[cfg(not(unix))]
-        if let Some(data_dir) = dirs::data_dir() {
+        if let Some(data_dir) = sven_roots::data_dir() {
             load(data_dir.join("sven").join("skills"), "system-data");
         }
     }
@@ -751,7 +751,7 @@ pub fn discover_commands(project_root: Option<&Path>) -> Vec<SkillInfo> {
         }
     };
 
-    for dir in &build_sorted_search_dirs(project_root, dirs::home_dir().as_deref()) {
+    for dir in &build_sorted_search_dirs(project_root, sven_roots::home_dir().as_deref()) {
         let label = dir.to_string_lossy();
         load(
             dir.join(".agents").join("commands"),

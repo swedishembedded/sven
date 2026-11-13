@@ -449,7 +449,7 @@ impl TaskStore {
 
 /// Compute the default directory for a team's data.
 pub fn default_team_dir(team_name: &str) -> PathBuf {
-    dirs::config_dir()
+    sven_roots::config_dir()
         .unwrap_or_else(|| PathBuf::from("~/.config"))
         .join("sven")
         .join("teams")

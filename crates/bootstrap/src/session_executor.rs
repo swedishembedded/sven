@@ -260,9 +260,7 @@ fn default_audit_log(project_root: Option<&Path>) -> PathBuf {
         .map(Path::to_path_buf)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
-    let base = dirs::state_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(std::env::temp_dir);
+    let base = sven_roots::state_dir().unwrap_or_else(sven_roots::temp_dir);
     audit_log_in(&base, &project)
 }
 

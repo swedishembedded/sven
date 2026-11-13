@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 /// The credentials file of this user.
 #[must_use]
 pub fn path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("sven").join("credentials.yaml"))
+    sven_roots::config_dir().map(|d| d.join("sven").join("credentials.yaml"))
 }
 
 /// The key stored for `provider`, if any.

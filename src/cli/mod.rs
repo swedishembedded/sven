@@ -116,6 +116,15 @@ pub struct Cli {
     #[command(flatten)]
     pub disclosure: DisclosureFlags,
 
+    #[command(flatten)]
+    pub isolation: sven_acp::isolation::IsolationFlags,
+
+    /// A tool to remove from the session: never offered to the model, never
+    /// run (adds to `tools.disabled`). Repeatable. `--disable-tool shell`
+    /// runs an agent with no command execution.
+    #[arg(long = "disable-tool", value_name = "NAME")]
+    pub disable_tools: Vec<String>,
+
     /// How the context of a request is assembled from the conversation,
     /// overriding `context.assembly.mode` of the configuration file for this
     /// process.

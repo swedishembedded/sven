@@ -56,7 +56,7 @@ impl Scratchpad {
             (None, Some(dir), _) => PathBuf::from(dir),
             (None, None, Some(dir)) => PathBuf::from(dir),
             (None, None, None) => {
-                std::env::temp_dir().join(format!("sven-harness-{}", choices.run_id))
+                sven_roots::temp_dir().join(format!("sven-harness-{}", choices.run_id))
             }
         };
         if !chosen.is_absolute() {

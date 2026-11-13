@@ -87,7 +87,7 @@ pub fn workspace_file(dir: &Path) -> Option<PathBuf> {
 /// The user's own configuration file (it need not exist).
 #[must_use]
 pub fn user_file() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("sven").join("config.yaml"))
+    sven_roots::config_dir().map(|d| d.join("sven").join("config.yaml"))
 }
 
 /// The file `scope` names from `dir`: the one that exists, else where a new

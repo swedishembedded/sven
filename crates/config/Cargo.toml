@@ -8,7 +8,7 @@ description = "Loading sven's configuration file: file and environment layering,
 anyhow       = { workspace = true }
 serde        = { workspace = true }
 serde_yaml   = { workspace = true }
-dirs         = { workspace = true }
+sven-roots   = { path = "../roots" }
 tracing      = { workspace = true }
 shellexpand  = { workspace = true }
 

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 sven-chunks        = { path = "../chunks" }
 sven-config        = { path = "../config" }
+sven-http          = { path = "../http" }
 sven-decision      = { path = "../decision" }
 sven-model         = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
@@ -40,7 +41,7 @@ sven-executors     = { path = "../executors" }
 sven-memory        = { path = "../memory", optional = true }
 sven-memory-api    = { path = "../memory-api", optional = true }
 sven-memory-sqlite = { path = "../memory-sqlite", optional = true }
-dirs               = { workspace = true }
+sven-roots = { path = "../roots" }
 anyhow       = { workspace = true }
 async-trait  = { workspace = true }
 futures      = { workspace = true }

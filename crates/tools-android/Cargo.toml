@@ -6,6 +6,7 @@ description = "Typed Android device control over ADB: screenshot, tap, swipe, ty
 license     = "Apache-2.0"
 
 [dependencies]
+sven-roots = { path = "../roots" }
 sven-tool-api = { path = "../tool-api" }
 sven-hsm      = { path = "../hsm" }
 sven-image    = { path = "../image" }

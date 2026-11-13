@@ -157,16 +157,14 @@ async fn sven_search(
     count: usize,
     api_key: &str,
 ) -> anyhow::Result<String> {
-    let client = sven_http::client_builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("sven-agent/0.1")
-        .build()?;
+    let client = crate::client::web_client(std::time::Duration::from_secs(30), false)?;
     let resp = client
-        .post(url)
+        .post(crate::client::checked_url(url, false)?)
         .bearer_auth(api_key)
         .json(&json!({ "query": query, "count": count }))
         .send()
-        .await?;
+        .await
+        .map_err(|e| crate::client::request_error(&e))?;
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
@@ -199,18 +197,16 @@ fn search_url(query: &str, count: usize) -> String {
 }
 
 async fn brave_search(url: &str, count: usize, api_key: &str) -> anyhow::Result<String> {
-    let client = sven_http::client_builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent("sven-agent/0.1")
-        .build()?;
+    let client = crate::client::web_client(std::time::Duration::from_secs(15), false)?;
 
     let resp = client
-        .get(url)
+        .get(crate::client::checked_url(url, false)?)
         .header("Accept", "application/json")
         .header("Accept-Encoding", "gzip")
         .header("X-Subscription-Token", api_key)
         .send()
-        .await?;
+        .await
+        .map_err(|e| crate::client::request_error(&e))?;
 
     if !resp.status().is_success() {
         anyhow::bail!("Brave API returned status {}", resp.status());

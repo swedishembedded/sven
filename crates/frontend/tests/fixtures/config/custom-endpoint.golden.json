@@ -101,6 +101,12 @@
       "provider": "openai",
       "temperature": 0.0
     },
+    "network": {
+      "allow_hosts": null,
+      "ca_bundle": null,
+      "proxy": null,
+      "resolve": {}
+    },
     "ocr": {
       "models": {}
     },

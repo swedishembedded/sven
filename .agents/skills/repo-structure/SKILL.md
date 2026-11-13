@@ -69,6 +69,8 @@ tiers unless an edge is listed there.
 | `sven-control` | Transport-agnostic operator control protocol and its kernel mappings |
 | `sven-bootstrap` | `RuntimeBuilder` (assembles the kernel from config + mode), `Config` (`AgentConfig`, `ToolsConfig`), tool-registry building, `KernelAgentSession`, `TaskTool` |
 | `sven-config` | Finding, layering, `${VAR}`-expanding and merging the config file (`.sven.yaml`, `.sven/config.yaml`, `~/.config/sven/config.yaml`), and the report of unrecognised keys; each section's types live in the crate that reads it |
+| `sven-roots` | Where per-user state lives: the platform's directories, or the one `--state-root` a process is given; every crate asks it, never `dirs::` (`check/gates/confined-io`) |
+| `sven-http` | The one way HTTP clients are built: TLS provider, and the process-wide egress policy (`network:`) every client enforces except the model provider's (`model_client_builder`) |
 | `sven-workspace` | Project-root, git and CI detection; skill, command, agent and knowledge discovery |
 | `sven-model` | `ModelProvider` trait, request/response types, budget gate, driver registry |
 | `sven-model-catalog` | Static model catalog data + live-cache overlay |

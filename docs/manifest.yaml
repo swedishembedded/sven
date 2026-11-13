@@ -38,6 +38,8 @@ navigation:
       - source: docs/guides/remote-control.md
         description: "Run sven sessions on your own machine and drive them from your sven account in a browser; the machine only connects out."
       - docs/guides/browser-sessions.md
+      - source: docs/guides/independent-agents.md
+        description: "Run sven as an independent actor on a network you control: an egress allowlist or proxy, emulated hostnames, a state root of its own and no shared files."
       - docs/guides/troubleshooting.md
   - title: Concepts
     pages:

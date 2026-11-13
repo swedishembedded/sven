@@ -120,6 +120,7 @@ use isolation::Isolation;
 pub(crate) use resolve::child_mode_allowed;
 use resolve::{child_contract, child_workdir, effective_model, resolve_mode_and_prompt};
 use runner::{AcpProcessRunner, ChildRunner};
+pub use session::confinement_flags;
 use session::{CancelGuard, SpawnArgs};
 pub(crate) use subgoals::NearMatch;
 pub use terms::{ParentTerms, TermsEndpoint};

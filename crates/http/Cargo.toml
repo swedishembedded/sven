@@ -7,6 +7,14 @@ license     = "Apache-2.0"
 
 [dependencies]
 reqwest = { workspace = true }
+serde   = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rustls = { workspace = true }
+tokio  = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio    = { workspace = true }
+tokio-rustls = "0.26"
+rustls   = { workspace = true }

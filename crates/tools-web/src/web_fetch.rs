@@ -11,7 +11,6 @@ use sven_tool_api::policy::ApprovalPolicy;
 use sven_tool_api::tool::{Tool, ToolCall, ToolDisplay, ToolOutput};
 
 use crate::provenance::{attach_web_provenance, now_unix};
-use crate::public_net;
 
 /// Default character ceiling for fetched page content.
 /// 20 K chars ≈ 5,000 tokens - fits comfortably within a 40 K-token context window.
@@ -114,9 +113,6 @@ impl Tool for WebFetchTool {
     }
 }
 
-/// Redirects followed before giving up.
-const MAX_REDIRECTS: usize = 3;
-
 /// The most of a response body read, after decompression: the rest is never
 /// downloaded. Many hosted agents share one memory budget, so one page (or a
 /// small body that decompresses to gigabytes) must not take it.
@@ -152,32 +148,13 @@ async fn capped_body(mut response: reqwest::Response) -> anyhow::Result<(String,
 
 async fn fetch_url(url: &str, max_chars: usize, public_only: bool) -> anyhow::Result<String> {
     let max_chars = max_chars.min(MAX_OUTPUT_CHARS);
-    let builder = sven_http::client_builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .user_agent("sven-agent/0.1");
-    let client = if public_only {
-        builder
-            .no_proxy()
-            .dns_resolver(std::sync::Arc::new(public_net::PublicOnly))
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() > MAX_REDIRECTS {
-                    return attempt.error("too many redirects");
-                }
-                match public_net::refuse_literal(attempt.url()) {
-                    Ok(()) => attempt.follow(),
-                    Err(why) => attempt.error(why),
-                }
-            }))
-    } else {
-        builder.redirect(reqwest::redirect::Policy::limited(MAX_REDIRECTS))
-    }
-    .build()?;
-
-    let parsed = reqwest::Url::parse(url)?;
-    if public_only {
-        public_net::refuse_literal(&parsed).map_err(|why| anyhow::anyhow!(why))?;
-    }
-    let response = client.get(parsed).send().await?;
+    let client = crate::client::web_client(std::time::Duration::from_secs(30), public_only)?;
+    let parsed = crate::client::checked_url(url, public_only)?;
+    let response = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|e| crate::client::request_error(&e))?;
     let content_type = response
         .headers()
         .get("content-type")

@@ -153,7 +153,7 @@ impl RuntimeContext {
             knowledge,
             knowledge_drift_note,
             path_scope: PathScope::unconfined(),
-            memory_home: dirs::home_dir(),
+            memory_home: sven_roots::home_dir(),
             conversation_files: None,
         }
     }

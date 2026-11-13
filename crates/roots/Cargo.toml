@@ -1,0 +1,12 @@
+[package]
+name        = "sven-roots"
+version.workspace = true
+edition     = "2021"
+description = "Where sven keeps its per-user state (configuration, data, state, temporary files, home): the platform's directories, or one state root a process is given so that no two processes share a file."
+license     = "Apache-2.0"
+
+[dependencies]
+dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -16,7 +16,7 @@ sven reads every file it finds below and merges them from lowest to highest
 priority; a later file overrides an earlier one. A file holds only the keys
 written into it; every other key keeps its default.
 
-1. `/etc/sven/config.yaml` (Linux only; system-wide)
+1. `/etc/sven/config.yaml` (Linux only; system-wide; not read under `--state-root`)
 2. The user's file: `~/.config/sven/config.yaml`, and `sven/config.yaml` in the
    platform configuration directory when that is not `~/.config`
    (`~/Library/Application Support` on macOS, `%APPDATA%` on Windows)
@@ -24,6 +24,9 @@ written into it; every other key keeps its default.
    the current one
 4. The project's file: the configuration file of the current directory
 5. The file named by `--config FILE`, which overrides all of the above
+
+Under `--state-root DIR` (see [Independent agents](../guides/independent-agents.md))
+the user's file is `DIR/config/sven/config.yaml` and `/etc/sven` is not read.
 
 A directory's configuration file is the first of `.sven/config.yaml`,
 `.sven/config.yml`, `.sven.yaml`, `.sven.yml`, `sven.yaml` and `sven.yml` it
@@ -1101,6 +1104,30 @@ is listed at all. How it works and what it saves:
 | `public_only` | `false` | `web_fetch` reaches only the public internet: never this machine, a private network or a cloud metadata service. `sven rc` sets it unless started with `--wide-access` |
 | `search.provider` | `auto` | `auto`: the sven service `sven rc` signed in to, else a `providers.sven` entry with `base_url` and a key, else Brave. `sven` or `brave` to choose one |
 | `search.api_key` | - | Brave Search API key (also `BRAVE_API_KEY` env var) |
+
+---
+
+### `network`
+
+Which hosts the HTTP tools may reach. Applies to `web_fetch`, `web_search`,
+`http_request`, HTTP MCP servers, HTTP verifiers and the other clients of the
+process, in every session and sub-agent; it does not apply to the model
+provider's endpoint (`model`, `providers`), which is configured separately.
+Shell commands and stdio MCP servers are processes, not HTTP clients of sven:
+contain them with the sandbox or network namespace sven runs in, or remove
+the `shell` tool (`--disable-tool shell`). Guide:
+[Independent agents](../guides/independent-agents.md).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `allow_hosts` | absent | Absent: no restriction. Present, an empty list included: only these hosts, everything else refused (IP literals and redirect targets too). Entries: `host`, `*.suffix` (subdomains, not the apex), an IP address, each with an optional `:port` (`[::1]:9000` for IPv6). Also `--allow-host`, `--deny-egress` |
+| `proxy` | - | `http(s)://host:port`: every allowed request goes through it, and system proxy variables are ignored. The proxy resolves destination names. Also `--egress-proxy` |
+| `ca_bundle` | - | A PEM file of certificate authorities trusted in addition to the built-in roots, for a proxy that terminates TLS for emulated names. Certificates are still verified. Also `--ca-bundle` |
+| `resolve` | `{}` | Host name to IP address for direct connections: `ntfy.sh: 127.0.0.1` makes a familiar name reach a local emulator. The port is the URL's. Also `--resolve HOST=ADDR` |
+
+A malformed entry, an unreadable `ca_bundle` or a policy that differs from the
+one the process already enforces fails at startup, never at the first request.
+The policy is process-wide: one process has one.
 
 ---
 

@@ -11,6 +11,7 @@ path = "src/bin/sven-acp.rs"
 
 [dependencies]
 sven-http = { path = "../http" }
+sven-roots = { path = "../roots" }
 sven-machines        = { path = "../machines" }
 sven-tool-api    = { path = "../tool-api" }
 sven-hsm         = { path = "../hsm" }

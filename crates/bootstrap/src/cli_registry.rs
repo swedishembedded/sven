@@ -53,7 +53,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
     ));
 
     // ── Multimodal attachments ───────────────────────────────────────────────
-    // No live model in the CLI registry, so audio is always transcribed —
+    // No live model in the CLI registry, so audio is always transcribed -
     // the only answer that is correct for every possible target model.
     #[cfg(feature = "media")]
     reg.register(AttachFileTool::new(None, cfg.tools.asr.clone()));
@@ -63,6 +63,7 @@ pub fn build_cli_tool_registry(cfg: &Config) -> ToolRegistry {
 
     // ── Web ───────────────────────────────────────────────────────────────────
     reg.register(cfg.tools.web.fetch_tool());
+    reg.register(cfg.tools.web.http_request_tool());
     reg.register(cfg.web_search_tool());
 
     // ── System ────────────────────────────────────────────────────────────────

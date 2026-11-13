@@ -450,7 +450,7 @@ fn nearest_writable_config() -> PathBuf {
         }
     }
     // Fall back to ~/.config/sven/config.yaml.
-    dirs::config_dir()
+    sven_roots::config_dir()
         .unwrap_or_else(|| PathBuf::from("~/.config"))
         .join("sven")
         .join("config.yaml")

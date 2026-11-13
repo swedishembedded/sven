@@ -60,9 +60,8 @@ pub(super) const BRANCH_MARK: &str = "kept on branch '";
 /// Where isolated worktrees are made: the user's state directory, never
 /// inside a project tree.
 pub(super) fn default_worktree_root() -> PathBuf {
-    dirs::state_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(std::env::temp_dir)
+    sven_roots::state_dir()
+        .unwrap_or_else(sven_roots::temp_dir)
         .join("sven")
         .join("task-worktrees")
 }

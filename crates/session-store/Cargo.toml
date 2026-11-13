@@ -20,7 +20,7 @@ atif          = { path = "../atif" }
 # The parked-question ledger: hash-chained JSONL keyed by hsm's QuestionId.
 sven-chain    = { path = "../chain" }
 sven-hsm      = { path = "../hsm" }
-dirs          = { workspace = true }
+sven-roots = { path = "../roots" }
 chrono        = { workspace = true }
 uuid          = { workspace = true }
 libc          = { workspace = true }

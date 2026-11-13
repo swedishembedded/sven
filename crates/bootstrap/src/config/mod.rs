@@ -34,6 +34,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sven_config::{ConfigDocument, Schema};
 use sven_decision::config::DecisionConfig;
+use sven_http::egress::{EgressPolicy, NetworkConfig};
 use sven_mcp_client::{mcp_servers_schema, McpServers};
 use sven_model_drivers::{providers_schema, ModelConfig, Providers};
 
@@ -98,12 +99,21 @@ pub struct Config {
     /// The OCR model `document_convert` uses and how it is run. See
     /// `docs/guides/document-conversion.md`.
     pub ocr: OcrConfig,
+    /// Which hosts the HTTP tools may reach, through which proxy, trusting
+    /// which authority, resolving which names. See
+    /// `docs/guides/independent-agents.md`.
+    pub network: NetworkConfig,
 }
 
 /// What a machine knows about reaching a provider beyond the configuration:
 /// where it is when the entry names no URL (a running brain, the server
 /// signed in to) and the key stored for it. Tests give their own, so the
 /// outcome never depends on the sign-in or keys of the machine they run on.
+/// The keys of the `network:` section.
+fn network_schema() -> Schema {
+    Schema::keys(&["allow_hosts", "proxy", "ca_bundle", "resolve"])
+}
+
 trait ProviderLookup {
     fn base_url(&self, entry: &sven_model_drivers::ProviderEntry) -> Option<String>;
     fn key(&self, entry: &sven_model_drivers::ProviderEntry) -> Option<String>;
@@ -226,6 +236,24 @@ impl Config {
         ))
     }
 
+    /// Installs this configuration's `network` section as the process's
+    /// egress policy (every HTTP client except the model provider's
+    /// enforces it). A section that sets nothing installs nothing. Call it
+    /// once the configuration is final, before the first session starts;
+    /// calling it again with the same section is fine, a different one is
+    /// refused because clients already built enforce the first.
+    ///
+    /// # Errors
+    /// A malformed section (named key), an unreadable CA bundle, or a
+    /// different policy already installed.
+    pub fn apply_network(&self) -> anyhow::Result<()> {
+        if self.network == NetworkConfig::default() {
+            return Ok(());
+        }
+        let policy = EgressPolicy::from_config(&self.network).map_err(anyhow::Error::msg)?;
+        sven_http::egress::install(policy).map_err(anyhow::Error::msg)
+    }
+
     /// The `web_search` tool this configuration gives a session.
     #[must_use]
     pub fn web_search_tool(&self) -> sven_tools_web::WebSearchTool {
@@ -249,6 +277,7 @@ impl Config {
             ("subagents", ListingConfig::schema()),
             ("knowledge", ListingConfig::schema()),
             ("ocr", OcrConfig::schema()),
+            ("network", network_schema()),
         ])
     }
 

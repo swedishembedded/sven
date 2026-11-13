@@ -11,6 +11,7 @@ members = [
     "crates/chain",
     "crates/vocab",
     "crates/http",
+    "crates/roots",
     "crates/config",
     "crates/model",
     "crates/model-catalog",
@@ -215,7 +216,6 @@ clap        = { workspace = true }
 clap_complete = { workspace = true }
 tracing     = { workspace = true }
 tracing-subscriber = { workspace = true }
-dirs        = { workspace = true }
 serde_json  = { workspace = true }
 serde_yaml  = { workspace = true }
 # `sven replay`: does a replayed tool call satisfy the tool's parameter schema.

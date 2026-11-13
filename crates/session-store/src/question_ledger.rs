@@ -105,7 +105,7 @@ impl QuestionLedger {
     /// The conventional on-disk location, beside the semantic memory store.
     #[must_use]
     pub fn default_path() -> PathBuf {
-        dirs::home_dir()
+        sven_roots::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".config/sven/memory/questions.jsonl")
     }

@@ -262,7 +262,7 @@ async fn screenshot(call_id: &str, serial: &str, path: Option<&str>) -> ToolOutp
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0);
-            owned_path = std::env::temp_dir().join(format!("android-{serial}-{millis}.png"));
+            owned_path = sven_roots::temp_dir().join(format!("android-{serial}-{millis}.png"));
             owned_path.as_path()
         }
     };

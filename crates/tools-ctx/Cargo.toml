@@ -14,7 +14,7 @@ sven-vocab     = { path = "../vocab" }
 sven-workspace = { path = "../workspace" }
 anyhow         = { workspace = true }
 async-trait    = { workspace = true }
-dirs           = { workspace = true }
+sven-roots = { path = "../roots" }
 memmap2        = { workspace = true }
 regex          = { workspace = true }
 serde          = { workspace = true }

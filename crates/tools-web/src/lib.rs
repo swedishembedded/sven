@@ -9,8 +9,10 @@
 //! None of these tools references another beyond the kernel-tier `Tool`
 //! vocabulary; they are grouped as stateless, read-only information
 //! gathering that never modifies the agent itself.
+mod client;
 mod config;
 pub mod grep;
+pub mod http_request;
 mod provenance;
 pub mod public_net;
 pub mod read_lints;
@@ -19,6 +21,7 @@ pub mod web_search;
 
 pub use config::{LintsConfig, SearchProvider, SvenEndpoint, WebConfig, WebSearchConfig};
 pub use grep::GrepTool;
+pub use http_request::HttpRequestTool;
 pub use read_lints::ReadLintsTool;
 pub use web_fetch::WebFetchTool;
 pub use web_search::{SearchBackend, WebSearchTool};

@@ -50,6 +50,7 @@ sven-tui-nvim    = "foundation"
 sven-workspace   = "foundation"
 sven-vocab       = "foundation"
 sven-http        = "foundation"
+sven-roots       = "foundation"
 sven-memory-api  = "foundation"
 atif             = "foundation"
 
@@ -259,6 +260,26 @@ to   = "sven-config"
 why  = "The kernel owns dispatch, effects and permissions; it names tools and models only through sven-vocab's data types."
 
 # ── Legitimate same-tier edges. Each needs a `why`. ─────────────────────────
+[[same_layer]]
+from = "sven-config"
+to   = "sven-roots"
+why  = """
+Both are "foundation" tier. sven-roots answers where the per-user directories
+are (the platform's, or the one state root a process is given); locating the
+configuration files is sven-config's job and must follow it. sven-roots has
+zero sven dependencies and exists as its own crate only so that every other
+foundation crate that reads a per-user directory can ask it without a cycle.
+"""
+
+[[same_layer]]
+from = "sven-workspace"
+to   = "sven-roots"
+why  = """
+Both are "foundation" tier. Skill and agent discovery read the user's own
+directories (home, data); those must be the process's state root when it has
+one, so the lookup is sven-roots', which has zero sven dependencies.
+"""
+
 [[same_layer]]
 from = "sven-model"
 to   = "sven-model-catalog"

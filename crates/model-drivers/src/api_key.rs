@@ -87,7 +87,7 @@ fn at_default_endpoint(cfg: &ModelConfig) -> bool {
 /// the start of the path is the home directory.
 pub(crate) fn read_key_file(path: &str) -> anyhow::Result<String> {
     let path = match path.strip_prefix("~/") {
-        Some(rest) => dirs::home_dir()
+        Some(rest) => sven_roots::home_dir()
             .ok_or_else(|| anyhow::anyhow!("{path}: no home directory"))?
             .join(rest),
         None => std::path::PathBuf::from(path),

@@ -61,6 +61,7 @@ the rest ([Core and deferred disclosure](#core-and-deferred-disclosure)).
 | [`document_convert`](#document_convert) | write | `agent` | deferred |
 | [`web_fetch`](#web_fetch) | network | all | deferred |
 | [`web_search`](#web_search) | network | all | deferred |
+| [`http_request`](#http_request) | network | `agent` | deferred |
 | [`models`](#models) | network | all | deferred |
 | [`model_schema`](#model_schema) | network | all | deferred |
 | [`run_model`](#run_model) | write | `agent` | deferred |
@@ -289,12 +290,37 @@ it in the chat, and `run_model` passes it on by that handle.
 
 Fetch an http(s) URL and return it as readable text (HTML becomes markdown, JSON
 is pretty-printed). Up to three redirects, 30 s timeout, no authentication, no
-private-address filter.
+private-address filter. With a [`network`](configuration.md#network) section
+it reaches only the allowed hosts; a refusal names the host.
 
 | Parameter | Description |
 |-----------|-------------|
 | `url` (required) | http or https URL |
 | `max_chars` | Truncate to this many characters (default `tools.web.fetch_max_chars`, 20000) |
+
+### `http_request`
+
+Send one HTTP(S) request with a chosen method, headers and body, and read the
+answer: for APIs (a pub/sub topic, a paste service, a JSON-RPC peer) where
+`web_fetch`, which only reads pages, is not enough. Returns the status line,
+every response header and the body. Any HTTP status is an answer; only a
+failure to get one (refused destination, unreachable host, timeout) is an
+error. The answer is read as a stream and abandoned at `max_bytes`, so a huge
+or endless body is never downloaded. Redirects (at most three) go through the
+same [`network`](configuration.md#network) policy as the first request.
+`agent` mode only, because a POST changes the world; the call and its result
+are in the trajectory like any tool call.
+
+| Parameter | Description |
+|-----------|-------------|
+| `url` (required) | http or https URL |
+| `method` | `GET` (default), `HEAD`, `POST`, `PUT`, `PATCH` or `DELETE` |
+| `headers` | Object of request headers (at most 32). `Host`, `Content-Length`, `Transfer-Encoding`, `Connection` and `Upgrade` belong to the transport and are refused |
+| `body` | Request body text, at most 1 MiB |
+| `max_bytes` | Response bytes to read, default 65536, at most 4 MiB |
+| `timeout_secs` | Default 30, at most 120 |
+
+`tools.web.public_only` applies to it as to `web_fetch`.
 
 ### `web_search`
 

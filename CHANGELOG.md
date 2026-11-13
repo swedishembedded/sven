@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **network**: a `network` section (`allow_hosts`, `proxy`, `ca_bundle`, `resolve`) and the flags `--allow-host`, `--deny-egress`, `--egress-proxy`, `--ca-bundle` and `--resolve` confine every HTTP client of a process except the model provider's: deny by default when a list is given, enforced at the connection layer (IP literals and redirects included), inherited by sub-agents, with readable refusals. See the new guide "Independent agents".
+- **tools**: `http_request` sends one HTTP request with a chosen method, headers and body and streams the answer up to a limit (`agent` mode).
+- **state**: `--state-root DIR` keeps a process's configuration, sessions, memory, audit log, worktrees, temporary files and `~` under one directory and reads no `/etc/sven` or user configuration, so concurrent agents share no file; new crate `sven-roots`, and `check/gates/confined-io` keeps crates from bypassing it or the egress policy.
+- **cli**: `--disable-tool NAME` on the top-level command (as `tools.disabled`).
+
 ## [4.15.2] - 2026-11-13
 
 ## [4.15.1] - 2026-11-13

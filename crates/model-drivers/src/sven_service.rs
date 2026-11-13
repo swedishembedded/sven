@@ -52,7 +52,7 @@ struct Record {
 /// The sign-in record of this user.
 #[must_use]
 pub fn path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("sven").join("remote.yaml"))
+    sven_roots::config_dir().map(|d| d.join("sven").join("remote.yaml"))
 }
 
 /// The server this user signed in to, if they did. A record that cannot be

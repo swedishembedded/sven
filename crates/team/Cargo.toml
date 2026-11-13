@@ -5,6 +5,7 @@ edition = "2021"
 description = "Agent team coordination: shared task lists, team config and definitions, and the `sven team` commands"
 
 [dependencies]
+sven-roots = { path = "../roots" }
 fs4         = { workspace = true }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
@@ -13,7 +14,6 @@ serde_json  = { workspace = true }
 serde_yaml  = { workspace = true }
 uuid        = { workspace = true }
 chrono      = { workspace = true }
-dirs        = { workspace = true }
 
 [dev-dependencies]
 tempfile    = { workspace = true }

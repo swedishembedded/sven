@@ -77,11 +77,11 @@ impl MemoryTool {
         if let Some(path) = &self.memory_file {
             return path.clone();
         }
-        // Use dirs::config_dir() which returns the platform-appropriate config
+        // Use sven_roots::config_dir() which returns the platform-appropriate config
         // directory (Linux: ~/.config, macOS: ~/Library/Application Support,
         // Windows: %APPDATA%).  Fall back to the system temp dir as a last resort.
-        let config_base = dirs::config_dir()
-            .or_else(dirs::home_dir)
+        let config_base = sven_roots::config_dir()
+            .or_else(sven_roots::home_dir)
             .unwrap_or_else(std::env::temp_dir);
         config_base
             .join("sven")

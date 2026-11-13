@@ -178,7 +178,7 @@ pub fn evaluate_with<'a>(
                     Ok(r) => r,
                     Err(e) => {
                         return VerifierVerdict::Unknown {
-                            reason: format!("{url} unreachable: {e}"),
+                            reason: format!("{url} unreachable: {}", sven_http::describe(&e)),
                         }
                     }
                 };

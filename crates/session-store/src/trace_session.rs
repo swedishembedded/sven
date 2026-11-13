@@ -879,9 +879,9 @@ fn push_turn_record(assembler: &mut StepAssembler, turn: &TurnRecord) {
 /// `chat_document::chat_dir()` (`.../sven/chats`), so old `.yaml` files and
 /// new `.json` trajectory files never collide in the same directory listing.
 pub fn session_dir() -> PathBuf {
-    dirs::data_dir()
+    sven_roots::data_dir()
         .unwrap_or_else(|| {
-            dirs::home_dir()
+            sven_roots::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".local")
                 .join("share")

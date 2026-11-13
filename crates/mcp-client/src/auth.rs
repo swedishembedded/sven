@@ -49,8 +49,8 @@ impl TokenStore {
     /// `~/.config/sven/mcp-oauth.json`.
     #[must_use]
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
-            .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        sven_roots::config_dir()
+            .or_else(|| sven_roots::home_dir().map(|h| h.join(".config")))
             .unwrap_or_else(|| PathBuf::from("."))
             .join("sven")
             .join("mcp-oauth.json")

@@ -9,6 +9,7 @@ description = "Remote control: sign a host in to a remote-control server and run
 license     = "Apache-2.0"
 
 [dependencies]
+sven-roots = { path = "../roots" }
 sven-http = { path = "../http" }
 sven-bootstrap     = { path = "../bootstrap", default-features = false }
 sven-control       = { path = "../control" }
@@ -32,7 +33,6 @@ sven-vocab         = { path = "../vocab" }
 async-trait        = { workspace = true }
 anyhow     = { workspace = true }
 base64     = { workspace = true }
-dirs       = { workspace = true }
 futures    = { workspace = true }
 libc       = { workspace = true }
 rand       = "0.8"

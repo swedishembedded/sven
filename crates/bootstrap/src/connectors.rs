@@ -242,7 +242,7 @@ pub fn account_groups<'a>(tool_names: impl IntoIterator<Item = &'a str>) -> Vec<
 /// server under the user's data directory.
 #[must_use]
 pub fn served_skills_dir() -> Option<std::path::PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("sven").join("served-skills").join(SERVER))
+    sven_roots::data_dir().map(|dir| dir.join("sven").join("served-skills").join(SERVER))
 }
 
 /// Fetches the skills the signed-in server offers and adds them to `skills`

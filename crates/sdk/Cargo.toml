@@ -6,6 +6,7 @@ description = "The public Sven framework: engines, agent objects, and typed mode
 license = "Apache-2.0"
 
 [dependencies]
+sven-roots = { path = "../roots" }
 sven-bootstrap = { path = "../bootstrap", default-features = false }
 sven-harness-runtime = { path = "../harness-runtime" }
 sven-harness-spec = { path = "../harness-spec" }

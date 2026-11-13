@@ -22,7 +22,7 @@ tracing     = { workspace = true }
 sha2        = { workspace = true }
 hex         = { workspace = true }
 chrono      = { workspace = true }
-dirs        = { workspace = true }
+sven-roots = { path = "../roots" }
 serde_yaml  = { workspace = true }
 
 # ── D-Bus transport (optional) ────────────────────────────────────────────────

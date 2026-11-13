@@ -47,12 +47,29 @@ use sven_frontend::Settings;
 #[cfg(feature = "network")]
 use sven_mcp::cli::run_mcp_command;
 
+/// The configuration a run starts from, with what the command line says
+/// about confinement over it: `--disable-tool`, and the `network` flags,
+/// which are enforced from here on by every HTTP client of the process.
+fn load_settings(cli: &Cli) -> anyhow::Result<Settings> {
+    let mut settings = Settings::load(cli.config.as_deref())?;
+    cli.isolation.apply(&mut settings.runtime.network);
+    settings.runtime.apply_network()?;
+    for name in &cli.disable_tools {
+        if !settings.runtime.tools.disabled.contains(name) {
+            settings.runtime.tools.disabled.push(name.clone());
+        }
+    }
+    Ok(settings)
+}
+
 fn main() -> anyhow::Result<()> {
     // The TLS provider before any TLS code runs: every HTTP client and
     // library that builds one finds it in place.
     sven_http::ensure_crypto_provider();
 
     let cli = Cli::parse();
+    // Before any file of the user's is looked for.
+    cli.isolation.activate_state_root()?;
     // A document worker serves one document on its pipes and nothing else:
     // before any runtime, log or configuration (`run::document::worker`).
     #[cfg(feature = "document")]
@@ -127,7 +144,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     if let Some(cmd) = &cli.command {
         match cmd {
             Commands::Tool { command } => {
-                let config = Settings::load(cli.config.as_deref())?.runtime;
+                let config = load_settings(&cli)?.runtime;
                 return run_tool_command(command, &config).await;
             }
             Commands::Media { command } => {
@@ -136,13 +153,13 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
             Commands::Doctor {
                 command: DoctorCommands::Decisions { json },
             } => {
-                let config = Settings::load(cli.config.as_deref())?.runtime;
+                let config = load_settings(&cli)?.runtime;
                 return run_doctor_decisions(&config, *json).await;
             }
             Commands::Doctor {
                 command: DoctorCommands::Provider { json },
             } => {
-                let mut config = Settings::load(cli.config.as_deref())?.runtime;
+                let mut config = load_settings(&cli)?.runtime;
                 if let Some(m) = &cli.model {
                     config.model = config.resolve_model(m);
                 }
@@ -151,11 +168,11 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
             Commands::Decisions {
                 command: DecisionsCommands::Models { json },
             } => {
-                let config = Settings::load(cli.config.as_deref())?.runtime;
+                let config = load_settings(&cli)?.runtime;
                 return run_decisions_models(&config, *json).await;
             }
             Commands::Agent { command } => {
-                let mut config = Settings::load(cli.config.as_deref())?.runtime;
+                let mut config = load_settings(&cli)?.runtime;
                 if let Some(m) = &cli.model {
                     config.model = config.resolve_model(m);
                 }
@@ -191,7 +208,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                         tui: true,
                     }) => {
                         let conversation = *conversation;
-                        let settings = Settings::load(cli.config.as_deref())?;
+                        let settings = load_settings(&cli)?;
                         let task = attached_agent(conversation)?;
                         return run_tui(cli, settings, Some(task)).await;
                     }
@@ -201,7 +218,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                     }
                     None => {}
                 }
-                let config = Settings::load(cli.config.as_deref())?.runtime;
+                let config = load_settings(&cli)?.runtime;
                 return run_remote_host(
                     config,
                     args.working_dir.clone(),
@@ -215,7 +232,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                 return Ok(());
             }
             Commands::ShowConfig => {
-                let settings = Settings::load(cli.config.as_deref())?;
+                let settings = load_settings(&cli)?;
                 println!("{}", serde_yaml::to_string(&settings).unwrap_or_default());
                 return Ok(());
             }
@@ -236,7 +253,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                 variant,
                 json,
             }) => {
-                let mut config = Settings::load(cli.config.as_deref())?.runtime;
+                let mut config = load_settings(&cli)?.runtime;
                 if let Some(m) = &cli.model {
                     config.model = config.resolve_model(m);
                 }
@@ -264,7 +281,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                 return validate_workflow(file);
             }
             Commands::AgentDispatch => {
-                let config = Arc::new(Settings::load(cli.config.as_deref())?.runtime);
+                let config = Arc::new(load_settings(&cli)?.runtime);
                 return run_agent_dispatch_command(config).await;
             }
             Commands::Map {
@@ -310,7 +327,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
             }
             #[cfg(feature = "document")]
             Commands::Document { command } => {
-                let config = Settings::load(cli.config.as_deref())?.runtime;
+                let config = load_settings(&cli)?.runtime;
                 let code = run_document_command(command, &config).await?;
                 if code != 0 {
                     std::process::exit(code);
@@ -332,11 +349,11 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
                 return Ok(());
             }
             Commands::Task { command } => {
-                let config = Settings::load(cli.config.as_deref())?.runtime;
+                let config = load_settings(&cli)?.runtime;
                 return run_task_command(command, &config).await;
             }
             Commands::ListModels { provider, json } => {
-                let config = Settings::load(cli.config.as_deref())?.runtime;
+                let config = load_settings(&cli)?.runtime;
                 return list_models_cmd(&config, provider.as_deref(), *json).await;
             }
             Commands::Auth { command } => {
@@ -364,7 +381,7 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
             );
         }
     }
-    let mut settings = Settings::load(cli.config.as_deref())?;
+    let mut settings = load_settings(&cli)?;
     cli.disclosure.apply(&mut settings.runtime);
     #[cfg(feature = "network")]
     sven_bootstrap::connectors::add_signed_in(&mut settings.runtime);

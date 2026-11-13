@@ -18,7 +18,7 @@
 //! can procure our services by sending an email to info@swedishembedded.com.
 use std::cell::Cell;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -414,9 +414,49 @@ fn serve_args(
         flag("wall-clock-secs", seconds.to_string());
         flag("permission-timeout-secs", seconds.to_string());
     }
+    // A child is as confined as its parent: the same state root and the same
+    // egress policy, which are process-wide, never the child's own choice.
+    args.extend(confinement_flags(
+        sven_roots::state_root(),
+        sven_http::egress::installed().map(sven_http::egress::EgressPolicy::config),
+    ));
     // A child does not recurse and has no `plan_tasks`: `tools.preload` is
     // the parent's choice of tools, not the child's.
     args.push("--no-preload".to_string());
+    args
+}
+
+/// The flags of `sven acp serve` that carry a state root and an egress
+/// policy to a child (`sven-acp`'s `IsolationFlags` reads them back).
+pub fn confinement_flags(
+    state_root: Option<&Path>,
+    network: Option<&sven_http::egress::NetworkConfig>,
+) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(root) = state_root {
+        args.extend(["--state-root".to_string(), root.display().to_string()]);
+    }
+    let Some(network) = network else {
+        return args;
+    };
+    match &network.allow_hosts {
+        Some(hosts) if hosts.is_empty() => args.push("--deny-egress".to_string()),
+        Some(hosts) => {
+            for host in hosts {
+                args.extend(["--allow-host".to_string(), host.clone()]);
+            }
+        }
+        None => {}
+    }
+    if let Some(proxy) = &network.proxy {
+        args.extend(["--egress-proxy".to_string(), proxy.clone()]);
+    }
+    if let Some(bundle) = &network.ca_bundle {
+        args.extend(["--ca-bundle".to_string(), bundle.display().to_string()]);
+    }
+    for (host, addr) in &network.resolve {
+        args.extend(["--resolve".to_string(), format!("{host}={addr}")]);
+    }
     args
 }
 

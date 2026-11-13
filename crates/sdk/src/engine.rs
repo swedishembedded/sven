@@ -566,7 +566,10 @@ impl EngineBuilder {
     /// without a [`Self::human_gates`] handler or [`Self::park_approvals`] -
     /// nobody could approve a call, and approving it on their behalf is what
     /// manual approval rules out - and when [`Self::park_approvals`] is set
-    /// under any other policy, where nothing is ever asked.
+    /// under any other policy, where nothing is ever asked. Also when the
+    /// configuration's `network` section is malformed or differs from the one
+    /// this process already enforces: the egress policy is process-wide, so
+    /// every engine in a process shares one.
     pub fn build(self) -> Result<Engine, CallError> {
         if self.park_approvals && self.approvals != ApprovalPolicy::Manual {
             return Err(CallError::Precondition(
@@ -585,6 +588,9 @@ impl EngineBuilder {
             Some(c) => c,
             None => Arc::new(Config::default()),
         };
+        config
+            .apply_network()
+            .map_err(|e| CallError::Precondition(format!("the `network` section: {e}")))?;
         let paths = match &self.project_root {
             Some(root) => sven_tool_api::PathScope::confined(root)
                 .map_err(|e| CallError::Precondition(e.to_string()))?,

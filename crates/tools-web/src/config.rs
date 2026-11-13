@@ -14,7 +14,7 @@ use sven_config::Schema;
 
 use crate::web_fetch::DEFAULT_MAX_CHARS;
 use crate::web_search::SearchBackend;
-use crate::{WebFetchTool, WebSearchTool};
+use crate::{HttpRequestTool, WebFetchTool, WebSearchTool};
 
 /// Which service `web_search` asks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +125,17 @@ impl WebConfig {
     #[must_use]
     pub fn fetch_tool(&self) -> WebFetchTool {
         let tool = WebFetchTool::new(self.fetch_max_chars);
+        if self.public_only {
+            tool.public_only()
+        } else {
+            tool
+        }
+    }
+
+    /// The `http_request` tool.
+    #[must_use]
+    pub fn http_request_tool(&self) -> HttpRequestTool {
+        let tool = HttpRequestTool::default();
         if self.public_only {
             tool.public_only()
         } else {

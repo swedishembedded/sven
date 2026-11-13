@@ -16,6 +16,9 @@
 //! has a library build clients itself (rmcp's sign-in, for one), and is
 //! called before it.
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod egress;
+
 /// Installs `ring` as this process's TLS provider, once; later calls, and a
 /// provider installed by someone else first, leave it as it is. Nothing to do
 /// in a browser, where requests are the page's own `fetch`.
@@ -30,10 +33,53 @@ pub fn ensure_crypto_provider() {
 }
 
 /// A client builder whose TLS provider is in place: the start of every HTTP
-/// client sven builds.
+/// client sven builds, enforcing the installed [`egress`] policy (none by
+/// default).
 pub fn client_builder() -> reqwest::ClientBuilder {
+    client_builder_resolving(None)
+}
+
+/// [`client_builder`], with `inner` resolving the names the egress policy
+/// does not map: for a caller that restricts resolution further itself.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn client_builder_resolving(
+    inner: Option<std::sync::Arc<dyn reqwest::dns::Resolve>>,
+) -> reqwest::ClientBuilder {
+    match egress::installed() {
+        Some(policy) => policy.apply(model_client_builder(), inner),
+        None => model_client_builder(),
+    }
+}
+
+/// In a browser requests are the page's own `fetch`; there is no policy.
+#[cfg(target_arch = "wasm32")]
+pub fn client_builder_resolving(_inner: Option<()>) -> reqwest::ClientBuilder {
+    model_client_builder()
+}
+
+/// A client builder that ignores the egress policy: only for the model
+/// provider's endpoint, which is configured separately (`providers`,
+/// `model`). Everything else uses [`client_builder`].
+pub fn model_client_builder() -> reqwest::ClientBuilder {
     ensure_crypto_provider();
     reqwest::Client::builder()
+}
+
+/// An error and its causes as one line (`a: b: c`): reqwest's own text for a
+/// failed request hides why (a refused destination, a failed lookup).
+#[must_use]
+pub fn describe(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut cause = error.source();
+    while let Some(next) = cause {
+        let part = next.to_string();
+        if !text.contains(&part) {
+            text.push_str(": ");
+            text.push_str(&part);
+        }
+        cause = next.source();
+    }
+    text
 }
 
 /// A client with reqwest's defaults and the TLS provider in place.

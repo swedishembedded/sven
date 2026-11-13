@@ -166,6 +166,7 @@ pub async fn run_mcp_command(cmd: &McpCommands) -> anyhow::Result<()> {
         } => {
             crate::check_requested_tools(tools.as_deref())?;
             let config = sven_bootstrap::Config::load(None)?;
+            config.apply_network()?;
             let root = std::env::current_dir()?;
             let scope = sven_tool_api::PathScope::confined(&root)
                 .map_err(|e| anyhow::anyhow!("serving {}: {e}", root.display()))?;
@@ -378,6 +379,7 @@ async fn watch_tools(manager: &std::sync::Arc<sven_mcp_client::McpManager>) -> a
 
 fn manager(interactive: bool) -> anyhow::Result<std::sync::Arc<sven_mcp_client::McpManager>> {
     let mut config = sven_bootstrap::Config::load(None)?;
+    config.apply_network()?;
     sven_bootstrap::connectors::add_signed_in(&mut config);
     let (events, _) = tokio::sync::mpsc::channel(64);
     Ok(sven_mcp_client::McpManager::new(
