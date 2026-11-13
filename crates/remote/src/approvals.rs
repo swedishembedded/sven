@@ -34,20 +34,15 @@ pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(600);
 pub struct PendingApprovals(Arc<Mutex<HashMap<String, oneshot::Sender<Permission>>>>);
 
 impl PendingApprovals {
-    /// Answers call `call_id`; a denial's `reason` is passed on to the agent.
+    /// Answers call `call_id`; a denial's reason is passed on to the agent.
     /// False when nothing was waiting for it (already answered, timed out, or
     /// never asked).
-    pub fn decide(&self, call_id: &str, approved: bool, reason: Option<String>) -> bool {
+    pub fn decide(&self, call_id: &str, answer: Permission) -> bool {
         let waiting = self
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(call_id);
-        let answer = if approved {
-            Permission::Allowed
-        } else {
-            Permission::Denied { reason }
-        };
         waiting.is_some_and(|waiting| waiting.send(answer).is_ok())
     }
 
@@ -209,10 +204,17 @@ mod tests {
                 }
                 other => panic!("expected ToolNeedsApproval, got {other:?}"),
             }
-            assert!(pending.decide("c1", approve, None));
+            assert!(pending.decide(
+                "c1",
+                if approve {
+                    Permission::Allowed
+                } else {
+                    Permission::Denied { reason: None }
+                }
+            ));
             assert_eq!(decision.await.unwrap(), approve);
             assert!(
-                !pending.decide("c1", true, None),
+                !pending.decide("c1", Permission::Allowed),
                 "an answered call takes no second answer"
             );
         }
@@ -229,7 +231,12 @@ mod tests {
                 .await
         });
         asked.recv().await.expect("asked");
-        assert!(pending.decide("c4", false, Some("use a model that keeps no data".into())));
+        assert!(pending.decide(
+            "c4",
+            Permission::Denied {
+                reason: Some("use a model that keeps no data".into())
+            }
+        ));
         assert_eq!(
             decision.await.unwrap(),
             Permission::Denied {
@@ -250,7 +257,7 @@ mod tests {
         asked.recv().await.expect("asked");
         assert!(!decision.await.unwrap(), "silence is not consent");
         assert!(
-            !pending.decide("c2", true, None),
+            !pending.decide("c2", Permission::Allowed),
             "a late answer finds nothing waiting"
         );
     }
@@ -284,7 +291,7 @@ mod tests {
             }
             other => panic!("expected ToolNeedsApproval, got {other:?}"),
         }
-        assert!(pending.decide("c3", true, None));
+        assert!(pending.decide("c3", Permission::Allowed));
         assert!(decision.await.unwrap());
         // Asked again (the registry after the approval mode): not put twice.
         assert!(

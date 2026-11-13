@@ -28,6 +28,7 @@ use sven_control::{ControlCommand, ControlEvent, HistoryEntry, SessionState};
 use sven_frontend::SessionController;
 use sven_machines::AgentEvent;
 use sven_model::Message;
+use sven_tool_api::Permission;
 use sven_vocab::goal::Goal;
 use sven_vocab::AgentMode;
 use tokio::sync::mpsc;
@@ -286,9 +287,7 @@ enum SessionCommand {
     /// The server's answer to a tool call waiting for permission.
     Decide {
         call_id: String,
-        approved: bool,
-        /// Why a denial was given, for the agent.
-        reason: Option<String>,
+        answer: Permission,
     },
     Cancel,
     /// The server asks how the session's goal stands.
@@ -458,12 +457,8 @@ impl SessionActor {
                 }
             }
             SessionCommand::Notice(notice, start_turn) => self.notice(notice, start_turn).await,
-            SessionCommand::Decide {
-                call_id,
-                approved,
-                reason,
-            } => {
-                if !self.approvals.decide(&call_id, approved, reason) {
+            SessionCommand::Decide { call_id, answer } => {
+                if !self.approvals.decide(&call_id, answer) {
                     tracing::debug!(
                         "session {}: no call {call_id} waits for permission",
                         self.id
@@ -1668,7 +1663,7 @@ mod tests {
                 upload = sent.recv() => upload.expect("the session is alive"),
                 Some(ask) = asked.recv() => {
                     if let ControlEvent::ToolNeedsApproval { call_id, .. } = ask {
-                        commands.send(SessionCommand::Decide { call_id, approved: true, reason: None }).await.unwrap();
+                        commands.send(SessionCommand::Decide { call_id, answer: Permission::Allowed }).await.unwrap();
                     }
                     continue;
                 }
@@ -1836,7 +1831,7 @@ responses:
                 Some(ask) = asked.recv() => {
                     if let ControlEvent::ToolNeedsApproval { call_id, tool_name, answer_id, .. } = ask {
                         asks.push((call_id.clone(), tool_name, answer_id));
-                        commands.send(SessionCommand::Decide { call_id, approved: true, reason: None }).await.unwrap();
+                        commands.send(SessionCommand::Decide { call_id, answer: Permission::Allowed }).await.unwrap();
                     }
                     continue;
                 }

@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use sven_control::{ControlCommand, ControlEvent, SessionState};
 use sven_machines::AgentEvent;
+use sven_tool_api::Permission;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -189,8 +190,7 @@ async fn route(
             session_id,
             SessionCommand::Decide {
                 call_id,
-                approved: true,
-                reason: None,
+                answer: Permission::Allowed,
             },
         ),
         ControlCommand::DenyTool {
@@ -201,8 +201,7 @@ async fn route(
             session_id,
             SessionCommand::Decide {
                 call_id,
-                approved: false,
-                reason,
+                answer: Permission::Denied { reason },
             },
         ),
         ControlCommand::ListSlashCommands => {
