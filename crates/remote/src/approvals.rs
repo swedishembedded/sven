@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use sven_control::ControlEvent;
 use sven_hsm::ToolCapability;
-use sven_tool_api::{PermissionRequester, ToolCall};
+use sven_tool_api::{Permission, PermissionRequester, ToolCall};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
@@ -31,21 +31,27 @@ pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// The calls of one session waiting for an answer, by call id.
 #[derive(Clone, Default)]
-pub struct PendingApprovals(Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>>);
+pub struct PendingApprovals(Arc<Mutex<HashMap<String, oneshot::Sender<Permission>>>>);
 
 impl PendingApprovals {
-    /// Answers call `call_id`. False when nothing was waiting for it (already
-    /// answered, timed out, or never asked).
-    pub fn decide(&self, call_id: &str, approved: bool) -> bool {
+    /// Answers call `call_id`; a denial's `reason` is passed on to the agent.
+    /// False when nothing was waiting for it (already answered, timed out, or
+    /// never asked).
+    pub fn decide(&self, call_id: &str, approved: bool, reason: Option<String>) -> bool {
         let waiting = self
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(call_id);
-        waiting.is_some_and(|answer| answer.send(approved).is_ok())
+        let answer = if approved {
+            Permission::Allowed
+        } else {
+            Permission::Denied { reason }
+        };
+        waiting.is_some_and(|waiting| waiting.send(answer).is_ok())
     }
 
-    fn wait(&self, call_id: &str) -> oneshot::Receiver<bool> {
+    fn wait(&self, call_id: &str) -> oneshot::Receiver<Permission> {
         let (answer, waiting) = oneshot::channel();
         self.0
             .lock()
@@ -108,14 +114,18 @@ pub struct RemoteApprovals {
 
 #[async_trait::async_trait]
 impl PermissionRequester for RemoteApprovals {
-    async fn request_permission(&self, call: &ToolCall, _capability: ToolCapability) -> bool {
+    async fn request_permission(&self, call: &ToolCall, capability: ToolCapability) -> bool {
+        self.decide(call, capability).await == Permission::Allowed
+    }
+
+    async fn decide(&self, call: &ToolCall, _capability: ToolCapability) -> Permission {
         if self
             .approved
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains(&call.id)
         {
-            return true;
+            return Permission::Allowed;
         }
         let answer = self.pending.wait(&call.id);
         let request = ControlEvent::ToolNeedsApproval {
@@ -132,21 +142,21 @@ impl PermissionRequester for RemoteApprovals {
         );
         if self.ask.send(request).await.is_err() {
             self.pending.forget(&call.id);
-            return false;
+            return Permission::Denied { reason: None };
         }
         match tokio::time::timeout(self.timeout, answer).await {
-            Ok(Ok(approved)) => {
-                if approved {
+            Ok(Ok(answer)) => {
+                if answer == Permission::Allowed {
                     self.approved
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .insert(call.id.clone());
                 }
-                approved
+                answer
             }
             _ => {
                 self.pending.forget(&call.id);
-                false
+                Permission::Denied { reason: None }
             }
         }
     }
@@ -199,13 +209,33 @@ mod tests {
                 }
                 other => panic!("expected ToolNeedsApproval, got {other:?}"),
             }
-            assert!(pending.decide("c1", approve));
+            assert!(pending.decide("c1", approve, None));
             assert_eq!(decision.await.unwrap(), approve);
             assert!(
-                !pending.decide("c1", true),
+                !pending.decide("c1", true, None),
                 "an answered call takes no second answer"
             );
         }
+    }
+
+    /// Spec: a denial's reason from the server reaches the agent's tool call.
+    #[tokio::test]
+    async fn a_denial_carries_its_reason() {
+        let (approvals, mut asked) = requester(Duration::from_secs(5));
+        let pending = approvals.pending.clone();
+        let decision = tokio::spawn(async move {
+            approvals
+                .decide(&call("c4"), ToolCapability::WriteFile)
+                .await
+        });
+        asked.recv().await.expect("asked");
+        assert!(pending.decide("c4", false, Some("use a model that keeps no data".into())));
+        assert_eq!(
+            decision.await.unwrap(),
+            Permission::Denied {
+                reason: Some("use a model that keeps no data".into())
+            }
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -220,7 +250,7 @@ mod tests {
         asked.recv().await.expect("asked");
         assert!(!decision.await.unwrap(), "silence is not consent");
         assert!(
-            !pending.decide("c2", true),
+            !pending.decide("c2", true, None),
             "a late answer finds nothing waiting"
         );
     }
@@ -254,7 +284,7 @@ mod tests {
             }
             other => panic!("expected ToolNeedsApproval, got {other:?}"),
         }
-        assert!(pending.decide("c3", true));
+        assert!(pending.decide("c3", true, None));
         assert!(decision.await.unwrap());
         // Asked again (the registry after the approval mode): not put twice.
         assert!(

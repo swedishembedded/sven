@@ -190,17 +190,19 @@ async fn route(
             SessionCommand::Decide {
                 call_id,
                 approved: true,
+                reason: None,
             },
         ),
         ControlCommand::DenyTool {
             session_id,
             call_id,
-            ..
+            reason,
         } => (
             session_id,
             SessionCommand::Decide {
                 call_id,
                 approved: false,
+                reason,
             },
         ),
         ControlCommand::ListSlashCommands => {

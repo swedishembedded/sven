@@ -26,6 +26,17 @@ pub enum ApprovalPolicy {
     Deny,
 }
 
+/// A person's answer to a call put to them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Permission {
+    Allowed,
+    /// Refused; `reason`, when given, is for the agent: why, and what to do
+    /// instead.
+    Denied {
+        reason: Option<String>,
+    },
+}
+
 /// Async callback invoked before executing a tool that requires approval.
 ///
 /// Implementors bridge from the tool-execution pipeline to an external approval
@@ -43,6 +54,21 @@ pub trait PermissionRequester: Send + Sync {
         call: &crate::ToolCall,
         capability: crate::ToolCapability,
     ) -> bool;
+
+    /// The answer with what the person said about it: a denial may carry a
+    /// reason the agent is told (what to do instead). By default the yes or
+    /// no of [`Self::request_permission`], with no reason.
+    async fn decide(
+        &self,
+        call: &crate::ToolCall,
+        capability: crate::ToolCapability,
+    ) -> Permission {
+        if self.request_permission(call, capability).await {
+            Permission::Allowed
+        } else {
+            Permission::Denied { reason: None }
+        }
+    }
 
     /// `true` while every call must be put to this requester, a tool's
     /// [`ApprovalPolicy::Auto`] included: the turn running was started by

@@ -29,7 +29,7 @@ pub use display::format_tools_list;
 pub use events::{TodoItem, TodoStatus, ToolEvent};
 pub use grep_match::GrepMatch;
 pub use path_scope::{OpenError, OpenMode, PathScope, PathScopeError};
-pub use policy::{ApprovalPolicy, PermissionRequester};
+pub use policy::{ApprovalPolicy, Permission, PermissionRequester};
 pub use search_hint::{no_match_hint, MAX_HINT_NAMES};
 pub use summary::{one_line_summary, SUMMARY_MAX_CHARS};
 pub use sven_hsm::ToolCapability;

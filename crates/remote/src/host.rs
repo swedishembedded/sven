@@ -287,6 +287,8 @@ enum SessionCommand {
     Decide {
         call_id: String,
         approved: bool,
+        /// Why a denial was given, for the agent.
+        reason: Option<String>,
     },
     Cancel,
     /// The server asks how the session's goal stands.
@@ -456,8 +458,12 @@ impl SessionActor {
                 }
             }
             SessionCommand::Notice(notice, start_turn) => self.notice(notice, start_turn).await,
-            SessionCommand::Decide { call_id, approved } => {
-                if !self.approvals.decide(&call_id, approved) {
+            SessionCommand::Decide {
+                call_id,
+                approved,
+                reason,
+            } => {
+                if !self.approvals.decide(&call_id, approved, reason) {
                     tracing::debug!(
                         "session {}: no call {call_id} waits for permission",
                         self.id
@@ -1662,7 +1668,7 @@ mod tests {
                 upload = sent.recv() => upload.expect("the session is alive"),
                 Some(ask) = asked.recv() => {
                     if let ControlEvent::ToolNeedsApproval { call_id, .. } = ask {
-                        commands.send(SessionCommand::Decide { call_id, approved: true }).await.unwrap();
+                        commands.send(SessionCommand::Decide { call_id, approved: true, reason: None }).await.unwrap();
                     }
                     continue;
                 }
@@ -1741,7 +1747,10 @@ responses:
         .await;
         let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
         let task = tokio::spawn(actor.run(inbox));
-        commands.send(typed("wait for it", "a", false)).await.unwrap();
+        commands
+            .send(typed("wait for it", "a", false))
+            .await
+            .unwrap();
         let started = tokio::time::Instant::now();
         let mut stopped_at = None;
         let seen = tokio::time::timeout(
@@ -1827,7 +1836,7 @@ responses:
                 Some(ask) = asked.recv() => {
                     if let ControlEvent::ToolNeedsApproval { call_id, tool_name, answer_id, .. } = ask {
                         asks.push((call_id.clone(), tool_name, answer_id));
-                        commands.send(SessionCommand::Decide { call_id, approved: true }).await.unwrap();
+                        commands.send(SessionCommand::Decide { call_id, approved: true, reason: None }).await.unwrap();
                     }
                     continue;
                 }

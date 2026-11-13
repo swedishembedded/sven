@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 use sven_hsm::ToolCapability;
 use sven_vocab::AgentMode;
 
-use sven_tool_api::policy::PermissionRequester;
+use sven_tool_api::policy::{Permission, PermissionRequester};
 use sven_tool_api::tool::ToolDisplayRegistry;
 use sven_tool_api::{ApprovalPolicy, OutputCategory, Tool, ToolCall, ToolOutput};
 pub use sven_vocab::ToolSchema;
@@ -317,10 +317,16 @@ impl ToolRegistry {
             ApprovalPolicy::Ask => {
                 if let Some(requester) = &self.permission_requester {
                     let capability = tool.call_capability(&call.args);
-                    if !requester.request_permission(call, capability).await {
+                    if let Permission::Denied { reason } = requester.decide(call, capability).await
+                    {
                         return ToolOutput::err(
                             &call.id,
-                            format!("tool '{}' was denied by the client", call.name),
+                            match reason {
+                                Some(reason) => {
+                                    format!("tool '{}' was denied: {reason}", call.name)
+                                }
+                                None => format!("tool '{}' was denied by the client", call.name),
+                            },
                         );
                     }
                 }
@@ -863,6 +869,37 @@ mod tests {
             let out = reg.execute(&call("ask_tool")).await;
             assert_eq!(out.is_error, !allow, "{}", out.content);
         }
+    }
+
+    /// Denies every call, saying why.
+    struct DeniesWithReason;
+
+    #[async_trait]
+    impl sven_tool_api::policy::PermissionRequester for DeniesWithReason {
+        async fn request_permission(&self, _: &ToolCall, _: sven_tool_api::ToolCapability) -> bool {
+            false
+        }
+
+        async fn decide(&self, _: &ToolCall, _: sven_tool_api::ToolCapability) -> Permission {
+            Permission::Denied {
+                reason: Some("use a model that keeps no data".into()),
+            }
+        }
+    }
+
+    /// Spec: the agent is told why a call was denied when the person said.
+    #[tokio::test]
+    async fn a_denial_tells_the_agent_its_reason() {
+        let mut reg = ToolRegistry::new();
+        reg.register(AskTool);
+        reg.set_permission_requester(Arc::new(DeniesWithReason));
+        let out = reg.execute(&call("ask_tool")).await;
+        assert!(out.is_error);
+        assert!(
+            out.content.contains("use a model that keeps no data"),
+            "{}",
+            out.content
+        );
     }
 
     /// A tool that runs without asking: a file read.
