@@ -1228,3 +1228,7 @@ fn migrate_legacy_chats_between(
 #[cfg(test)]
 #[path = "trace_session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "trace_session_meta_tests.rs"]
+mod meta_tests;

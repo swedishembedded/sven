@@ -361,7 +361,7 @@ path = "crates/session-store/src/trace_session.rs"
 lines = 1289
 [[allow.large_file]]
 path = "crates/session-store/src/trace_session_tests.rs"
-lines = 1249
+lines = 1121
 [[allow.large_file]]
 path = "crates/executors/tests/it/pipeline_integration.rs"
 lines = 1066
