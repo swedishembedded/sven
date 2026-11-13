@@ -62,7 +62,7 @@ policy stops the run at startup instead of degrading silently.
 | `config/` | `config/sven/config.yaml` is the agent's user configuration; credentials and MCP sign-ins |
 | `data/` | conversations, trajectories, served skills |
 | `state/` | audit log, task worktrees |
-| `home/` | what `~` means, including the persistent memory |
+| `home/` | what `~` means, including the persistent memory (`home/.config/sven/memory`; `tools.memory.memory_file` names another file) |
 | `tmp/` | scratch files |
 
 With a root, `/etc/sven` and the user's own configuration are not read, so two

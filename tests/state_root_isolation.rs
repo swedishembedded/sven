@@ -112,6 +112,11 @@ fn two_concurrent_agents_with_separate_roots_share_no_file() {
             "{} holds no state of the run: {files:?}",
             root.display()
         );
+        assert!(
+            files.iter().any(|f| f.starts_with(root.join("home")) && f.to_string_lossy().contains("memory")),
+            "persistent memory is not under {}: {files:?}",
+            root.display()
+        );
         for file in files {
             let meta = std::fs::metadata(&file).unwrap();
             assert!(
