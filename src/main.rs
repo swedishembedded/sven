@@ -54,6 +54,11 @@ fn load_settings(cli: &Cli) -> anyhow::Result<Settings> {
     let mut settings = Settings::load(cli.config.as_deref())?;
     cli.isolation.apply(&mut settings.runtime.network);
     settings.runtime.apply_network()?;
+    // A run given its own deadline is bounded by it, not by the 300 s
+    // stall defaults (a model shared by several agents may queue longer).
+    if let Some(secs) = cli.run_timeout {
+        settings.runtime.agent.align_stall_limits_to_run(secs);
+    }
     for name in &cli.disable_tools {
         if !settings.runtime.tools.disabled.contains(name) {
             settings.runtime.tools.disabled.push(name.clone());

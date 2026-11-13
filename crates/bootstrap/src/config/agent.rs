@@ -308,6 +308,26 @@ impl AgentConfig {
         ))
     }
 
+    /// Makes the run's own deadline the only bound on a quiet model: every
+    /// stall limit the configuration leaves unset (`stream_idle`,
+    /// `first_byte`, `first_token`, `no_progress`) becomes `run_secs`, so a
+    /// model server shared by many agents may queue or prefill for as long
+    /// as the run may last without the watchdog cutting the turn first. A
+    /// limit the configuration sets stays as set; `0` changes nothing.
+    pub fn align_stall_limits_to_run(&mut self, run_secs: u64) {
+        if run_secs == 0 {
+            return;
+        }
+        for limit in [
+            &mut self.stream_idle_timeout_secs,
+            &mut self.first_byte_timeout_secs,
+            &mut self.first_token_timeout_secs,
+            &mut self.no_progress_timeout_secs,
+        ] {
+            limit.get_or_insert(run_secs);
+        }
+    }
+
     /// When and how a session compacts its history.
     #[must_use]
     pub fn compaction(&self) -> CompactionConfig {
@@ -389,6 +409,24 @@ mod tests {
         assert_eq!(limits.thinking.max_thinking_tokens, Some(4096));
         assert_eq!(limits.thinking.thinking_timeout_secs, Some(90));
         assert_eq!(limits.stream_idle, Some(Duration::from_secs(7)));
+    }
+
+    #[test]
+    fn an_explicit_run_deadline_replaces_only_the_unset_stall_limits() {
+        let mut a: AgentConfig = serde_yaml::from_str("first_token_timeout_secs: 90\n").unwrap();
+        a.align_stall_limits_to_run(3600);
+        assert_eq!(a.first_token_timeout_secs, Some(90));
+        assert_eq!(
+            (
+                a.stream_idle_timeout_secs,
+                a.first_byte_timeout_secs,
+                a.no_progress_timeout_secs
+            ),
+            (Some(3600), Some(3600), Some(3600))
+        );
+        let mut untouched = AgentConfig::default();
+        untouched.align_stall_limits_to_run(0);
+        assert_eq!(untouched.stream_idle_timeout_secs, None);
     }
 
     #[test]
