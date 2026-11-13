@@ -877,7 +877,9 @@ workflow:
                         id: "peek".into(),
                         name: "shell".into(),
                         arguments:
-                            json!({ "shell_command": format!("cat {}", login_file.display()) })
+                            // The shell's own redirection opens the file, so the outcome
+                            // is the kernel's answer and no host `cat` is involved.
+                            json!({ "shell_command": format!("read -r line < {}; echo \"$line\"", login_file.display()) })
                                 .to_string(),
                     },
                     ResponseEvent::Done,
