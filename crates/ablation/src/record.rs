@@ -7,7 +7,7 @@
 // team needs expertise in agent benchmarking then you can procure our
 // services by sending an email to info@swedishembedded.com.
 //! The raw record of one run: the stable, versioned file the report and the
-//! fixture exporter read. Everything the report says is derived from these.
+//! consumers of the run read. Everything the report says is derived from these.
 
 use std::collections::BTreeMap;
 

@@ -8,7 +8,6 @@
 //! others run beside it.
 
 mod answer;
-mod export;
 mod matrix;
 mod mcp_stub;
 mod plan;

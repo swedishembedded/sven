@@ -15,7 +15,6 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use sven_ablation::evidence::RequestLog;
-use sven_ablation::export::{export, to_jsonl, SplitPlan};
 use sven_ablation::loader::load_runs;
 use sven_ablation::markdown;
 use sven_ablation::matrix::Matrix;
@@ -86,24 +85,6 @@ enum Command {
         /// The variant under test, for example C (heuristic decisions).
         #[arg(long, default_value = "C")]
         candidate: String,
-    },
-    /// Write the decisions of the runs under --runs as training examples.
-    ExportFixtures {
-        #[arg(long)]
-        runs: PathBuf,
-        /// The JSON-lines file to write.
-        #[arg(long)]
-        out: PathBuf,
-        /// Seed of the split; the same seed gives the same split.
-        #[arg(long, default_value_t = 0)]
-        split_seed: u64,
-        #[arg(long, default_value_t = 0.2)]
-        validation_fraction: f64,
-        #[arg(long, default_value_t = 0.2)]
-        test_fraction: f64,
-        /// A whole task family that is test only (repeatable).
-        #[arg(long = "holdout-suite")]
-        holdout_suites: Vec<String>,
     },
     /// Serve a tool catalog as an MCP server on stdio (used by the tasks).
     McpStub {
@@ -228,29 +209,6 @@ fn run(command: Command) -> Result<ExitCode, String> {
             std::fs::write(out.join("comparison.md"), real_report::render_real(&report))
                 .map_err(|e| e.to_string())?;
             println!("{}", out.display());
-            Ok(ExitCode::SUCCESS)
-        }
-        Command::ExportFixtures {
-            runs,
-            out,
-            split_seed,
-            validation_fraction,
-            test_fraction,
-            holdout_suites,
-        } => {
-            let holdout_suites = holdout_suites
-                .iter()
-                .map(|s| Suite::from_name(s).ok_or_else(|| format!("unknown suite {s:?}")))
-                .collect::<Result<Vec<_>, _>>()?;
-            let plan = SplitPlan {
-                seed: split_seed,
-                validation_fraction,
-                test_fraction,
-                holdout_suites,
-            };
-            let examples = export(&runs, &plan)?;
-            std::fs::write(&out, to_jsonl(&examples)?).map_err(|e| e.to_string())?;
-            println!("{} examples to {}", examples.len(), out.display());
             Ok(ExitCode::SUCCESS)
         }
         Command::McpStub { catalog } => {

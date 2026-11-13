@@ -327,41 +327,31 @@ few pairs a wide interval is the honest answer.
    it beats the architecture alone, the heuristic and the random control.
 3. Read the verdict, not the tokens: a model that does not beat C has not
    earned its inference cost, and one that does not beat F is not contributing.
-4. Keep the evaluation held out. Fixtures exported with
-   `sven-ablation export-fixtures` (below) are what a model is fitted on. Hold out by **repository** (every
-   seed generates a different repository and catalog), by **task family**
-   (`--holdout-suite tool_selection` makes a whole family test only) and by
-   **seed** (the default split puts different seeds in train, validation and
-   test). Evaluate E on seeds that were never exported for training: run it
-   with `--first-seed` past the exported range.
+4. Keep the evaluation held out. A model is fitted on labelled examples a
+   consumer builds from the run records (below), and the evaluation must be
+   disjoint from them. Hold out by **repository** (every seed generates a
+   different repository and catalog), by **task family** and by **seed**:
+   whatever builds the examples should put whole task families and whole seeds
+   on one side of the split. Evaluate E on seeds that were never used to fit
+   a model: run it with `--first-seed` past the range the examples came from.
 
-## Fixtures
+## Labelled choices
 
-`sven-ablation export-fixtures --runs OUT --out fixtures.jsonl` writes the
-choice decisions of the runs under OUT as JSON lines, schema
-`sven.ablation.fixture/1`. Only runs whose decisions were answered by the
-suite's own provider (C, F, G) leave `decisions.jsonl` and so yield examples;
-a Brain-served variant's questions are not logged.
+The ablation tool does not build labelled datasets or splits: that is a
+consumer's work, from the files a run leaves under
+`OUT/runs/<task>/<variant>/`:
 
-| field | meaning |
-|-------|---------|
-| `decision_type` | `tool_routing` |
-| `state_ref` | `run`, `task`, `suite`, `seed`, `variant`, `inputs_digest` (the digest sven records in `sven_decisions` for the same inputs), `question_id` |
-| `question` | `id`, `instruction`, `state` (the text the model was given) |
-| `options` | `[{id, description}]` in the order asked |
-| `label`, `label_index` | the correct option and its index in `options` |
-| `label_source` | `oracle` (the generator labelled it). `counterfactual_replay` and `scorer` are reserved and not written |
-| `outcome` | `task_passed`, `llm_tokens_saved` (baseline tokens minus this run's, absent without a baseline), `recovery_calls` |
-| `split` | `train`, `validation` or `test` |
+| file | what a consumer can read in it |
+|------|--------------------------------|
+| `record.json` | schema `sven.ablation.run/1`: `task_id`, `suite`, `seed`, `variant` (`id`, `role`), `probe`, `status`, `tokens` (`total`, `recovery_expansions`), `score` (`passed`) |
+| `task.json` | the task, with `oracle_labels`: for each decision, the `state_contains` text a question's state mentions and the `correct_option` |
+| `decisions.jsonl` | one line per decision the suite's own provider answered: `inputs_digest` (the digest sven records in `sven_decisions` for the same inputs), `state`, and `questions` (`id`, `kind`, `instruction`, `options` as `[id, description]` in the order asked) |
 
-`(question.state, options[].description or id, label_index)` is the triple a
-choice trainer reads. The same question asked under several variants appears
-once per run, with that run's outcome, and always in one split. Splits are
-decided per task family and seed: within a family the seeds are ordered by a
-hash of `--split-seed`, the family and the seed, and divided by
-`--validation-fraction` and `--test-fraction` (a family with fewer than three
-seeds is all train); `--holdout-suite` makes a family test only. No example of
-one task is ever in two splits.
+Only runs whose decisions were answered by the suite's own provider (C, F, G)
+leave `decisions.jsonl`; a Brain-served variant's questions are not logged.
+A labelled choice question is a `choice` question whose state matches an
+oracle label naming one of its options. The same question asked under several
+variants, or in another option order, is one question and belongs in one split.
 
 ## Sample report
 

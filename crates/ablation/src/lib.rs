@@ -22,7 +22,6 @@
 
 pub mod answer;
 pub mod evidence;
-pub mod export;
 pub mod gates;
 pub mod loader;
 pub mod markdown;

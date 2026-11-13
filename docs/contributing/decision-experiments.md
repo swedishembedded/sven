@@ -64,9 +64,9 @@ result.
    Gate: accuracy on accepted answers above the heuristic's (variant C) and the
    random control's (F), calibration error reported.
 3. **D2 and D3 end to end**, real task model, the seeds of step 1 plus
-   held-out seeds (`--first-seed` past the seeds exported with
-   `sven-ablation export-fixtures`), so a model fitted on exported fixtures is
-   never judged on them.
+   held-out seeds (`--first-seed` past the seeds a consumer built
+   its labelled examples from, see `docs/contributing/ablation-benchmarks.md`), so a model fitted on
+   those examples is never judged on them.
 
    ```
    benchmarks/ablation/run --out OUT/d2-d3 --variants B,C,D,E --seeds 5 \
