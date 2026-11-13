@@ -86,3 +86,24 @@ sven --headless --state-root /run/agents/a1 --config a1.yaml \
 and run it in the namespace that carries only the emulated network. Enforcing
 the network at the process boundary is the embedder's; sven guarantees only
 what its own tools do.
+
+## Confined commands and sub-agents
+
+Where sven confines the commands of a session (a served run, `sven rc
+--hosted`), the threat model is a prompt-poisoned model: a tool spawned for it
+must not reveal more than the work needs. Its commands reach the working
+tree, the package's tools, the system program directories and a few
+machine-wide files, and no network. No `/proc/<pid>` entry of any process is
+readable: not another process's command line, environment or auxv, not the
+host's, not the command's own. The same confinement holds for everything a
+command starts, a sub-agent's tools included. A confined session offers no
+`task` or `plan_tasks` (a child is a whole process) and cannot add MCP
+servers through `system`; a sub-agent of an unconfined session is started with
+its parent's state root and egress policy.
+
+One consequence: programs of the `rust-coreutils` (uutils) set read their own
+`/proc/self/auxv` and abort inside a confined shell. A host that confines
+commands needs GNU coreutils for them. Allowing only the command's own auxv
+cannot be expressed in Landlock without opening other processes' entries, so
+it is not offered; the reasoning is in
+`.agents/knowledge/confined-shell-breaks-rust-coreutils.md`.

@@ -45,11 +45,7 @@ fn layout() -> Layout {
     }
     std::fs::write(bin.join("lib.sh"), "greeting=hello-from-lib\n").unwrap();
     let tool = bin.join("package-tool");
-    std::fs::write(
-        &tool,
-        ". \"$(dirname \"$0\")/lib.sh\"\necho \"$greeting\"\n",
-    )
-    .unwrap();
+    std::fs::write(&tool, ". \"${0%/*}/lib.sh\"\necho \"$greeting\"\n").unwrap();
     std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::write(private.join("token"), "secret-token").unwrap();
     let gate_script = private.join("gate.sh");
@@ -104,8 +100,8 @@ async fn a_confined_command_works_in_the_workspace_and_runs_the_packages_tools()
     let out = sh(
         &tool,
         &l.workspace,
-        "echo made > made.txt && cat made.txt && mkdir sub && echo ok > sub/f && package-tool \
-         && f=$(mktemp) && echo \"$f\" && echo x > /dev/null && ls /usr/bin > /dev/null",
+        "echo made > made.txt && read -r m < made.txt && echo \"$m\" && package-tool \
+         && echo \"$TMPDIR\" && echo x > /dev/null && [ -d /usr/bin ]",
     )
     .await;
     assert!(
@@ -133,11 +129,17 @@ async fn a_confined_command_reaches_nothing_outside_the_workspace() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     for (what, command) in [
-        ("read the token file", format!("cat {}", token.display())),
-        ("read a gate script", format!("cat {}", gate.display())),
+        (
+            "read the token file",
+            format!("read -r l < {}", token.display()),
+        ),
+        (
+            "read a gate script",
+            format!("read -r l < {}", gate.display()),
+        ),
         (
             "list the worker directory",
-            format!("ls {}", l.private.display()),
+            format!("exec 3< {}", l.private.display()),
         ),
         ("write outside", format!("echo x > {}", outside.display())),
         (
@@ -214,8 +216,9 @@ async fn a_command_that_starts_its_own_session_outlives_its_call_still_confined(
     let out = sh(
         &tool,
         &l.workspace,
-        "setsid sh -c 'echo $$ > bg.pid; sleep 3; cat ../worker/token > bg.out 2>&1' \
-         > /dev/null 2>&1 < /dev/null & sleep 0.5",
+        "setsid sh -c 'echo $$ > bg.pid; perl -e \"select(undef,undef,undef,3)\"; \
+         read -r l < ../worker/token > bg.out 2>&1; echo $l >> bg.out' \
+         > /dev/null 2>&1 < /dev/null & perl -e 'select(undef,undef,undef,0.5)'",
     )
     .await;
     assert!(!out.is_error, "{}", out.content);
@@ -231,4 +234,115 @@ async fn a_command_that_starts_its_own_session_outlives_its_call_still_confined(
     tokio::time::sleep(std::time::Duration::from_secs(4)).await;
     let attempt = std::fs::read_to_string(l.workspace.join("bg.out")).unwrap();
     assert!(!attempt.contains("secret-token"), "{attempt}");
+}
+
+/// A process of the host, outside the confinement, that a confined command
+/// must not learn anything about.
+struct Bystander(std::process::Child);
+
+impl Bystander {
+    fn start() -> Self {
+        Self(
+            std::process::Command::new("sleep")
+                .arg("120")
+                .env("BYSTANDER_SECRET", "host-environment-value")
+                .spawn()
+                .unwrap(),
+        )
+    }
+    fn pid(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+impl Drop for Bystander {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Reads `path` with the shell's own redirection, so the answer is the
+/// kernel's and no host program is involved.
+fn read_in_shell(path: &str) -> String {
+    format!(": < {path} && echo READ-OK")
+}
+
+/// The threat model: a tool spawned for a (possibly prompt-poisoned) model
+/// reaches only the workspace tree. Nothing of `/proc/<pid>` is reachable,
+/// not another process's entries (command line, environment, auxv, maps,
+/// status), not the host's, not the confined command's own, whatever
+/// process the command is, a grandchild of the shell included.
+#[tokio::test]
+async fn a_confined_command_reads_no_proc_entry_of_any_process() {
+    let l = layout();
+    let tool = shell(&l);
+    let bystander = Bystander::start();
+    let mut targets = vec![
+        format!("/proc/{}", bystander.pid()),
+        format!("/proc/{}", std::process::id()),
+        "/proc/self".to_string(),
+        "/proc/thread-self".to_string(),
+    ];
+    targets.dedup();
+    for base in &targets {
+        for entry in ["cmdline", "environ", "auxv", "status", "maps", "stat"] {
+            let command = read_in_shell(&format!("{base}/{entry}"));
+            let out = sh(&tool, &l.workspace, &command).await;
+            assert!(
+                out.content.contains("Permission denied") && !out.content.contains("READ-OK"),
+                "a confined command read {base}/{entry}: {}",
+                out.content
+            );
+            // The same from a grandchild of the shell, with a pid of its own.
+            let nested = format!("sh -c '{command}'");
+            let out = sh(&tool, &l.workspace, &nested).await;
+            assert!(
+                out.content.contains("Permission denied") && !out.content.contains("READ-OK"),
+                "a grandchild read {base}/{entry}: {}",
+                out.content
+            );
+        }
+    }
+    // The machine-wide files the profile does allow stay readable.
+    let out = sh(&tool, &l.workspace, &read_in_shell("/proc/meminfo")).await;
+    assert!(out.content.contains("READ-OK"), "{}", out.content);
+}
+
+/// Why the profile has no "own auxv" exception. A Landlock rule names an
+/// inode, and `/proc/self` is resolved when the rule is made: a rule made by
+/// the worker names the worker's process, never the command's, and no rule
+/// made ahead of time can name the pid of a command (or its grandchildren)
+/// that does not exist yet. The only rule that would serve them all is
+/// `/proc` itself, and that opens every other process's command line to the
+/// tool. Both halves are shown here so a change of mind starts from facts.
+#[tokio::test]
+async fn no_landlock_rule_can_grant_a_command_only_its_own_proc_entry() {
+    let l = layout();
+    let bystander = Bystander::start();
+    let own_pid_rule = |paths: Vec<std::path::PathBuf>| {
+        let mut tool = shell(&l);
+        tool.confine.as_mut().unwrap().read_exec.extend(paths);
+        tool
+    };
+
+    // A rule on `/proc/self/auxv` resolves to the process that makes it.
+    let tool = own_pid_rule(vec!["/proc/self/auxv".into()]);
+    let out = sh(&tool, &l.workspace, &read_in_shell("/proc/self/auxv")).await;
+    assert!(
+        out.content.contains("Permission denied"),
+        "a rule made ahead of time named the command's own pid: {}",
+        out.content
+    );
+
+    // The rule that would help every command is the whole of `/proc`; it
+    // shows the bystander's command line (not guarded by any ptrace check).
+    let tool = own_pid_rule(vec!["/proc".into()]);
+    let command = read_in_shell(&format!("/proc/{}/cmdline", bystander.pid()));
+    let out = sh(&tool, &l.workspace, &command).await;
+    assert!(
+        out.content.contains("READ-OK"),
+        "expected the blanket /proc grant to expose another process: {}",
+        out.content
+    );
 }

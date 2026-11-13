@@ -172,6 +172,38 @@ mod tests {
         }
     }
 
+    /// A sub-agent started with its parent's flags enforces the parent's egress
+    /// policy: the host the parent allowed is reachable, any other is refused,
+    /// and the child cannot hold a wider policy than it was handed.
+    #[test]
+    fn a_sub_agent_reaches_only_the_hosts_its_parent_allowed() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Child {
+            #[command(flatten)]
+            isolation: IsolationFlags,
+        }
+        let parent = NetworkConfig {
+            allow_hosts: Some(vec!["ntfy.sh".into()]),
+            ..NetworkConfig::default()
+        };
+        let flags = sven_bootstrap::task_tool::confinement_flags(None, Some(&parent));
+        let child =
+            Child::try_parse_from(std::iter::once("sven".to_string()).chain(flags)).unwrap();
+        let mut network = NetworkConfig::default();
+        child.isolation.apply(&mut network);
+        let policy = sven_http::egress::EgressPolicy::from_config(&network).unwrap();
+        let url = |s: &str| reqwest::Url::parse(s).unwrap();
+        assert!(policy.check(&url("https://ntfy.sh/topic")).is_ok());
+        for outside in [
+            "https://example.com/",
+            "http://169.254.169.254/",
+            "http://127.0.0.1:8080/",
+        ] {
+            assert!(policy.check(&url(outside)).is_err(), "{outside}");
+        }
+    }
+
     #[test]
     fn a_resolve_flag_needs_host_and_address() {
         assert!(parse_resolve("ntfy.sh").is_err());
