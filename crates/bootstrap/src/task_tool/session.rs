@@ -86,6 +86,9 @@ pub(super) struct SpawnArgs {
     pub(super) media_session: Option<String>,
     /// The terms it is held to, written to its stdin before anything else.
     pub(super) parent_terms: Option<super::ParentTerms>,
+    /// The parent's command confinement, which the child process is started
+    /// inside.
+    pub(super) confinement: Option<sven_tools_exec::confine::CommandConfinement>,
     pub(super) description: String,
     pub(super) mode: String,
     /// What the child may do, and until when.
@@ -121,6 +124,8 @@ pub(super) struct ServeTerms {
     /// The parent's chunk store, which a child briefed with chunks reads
     /// (read-only) to expand them.
     pub(super) evidence_store: Option<PathBuf>,
+    /// The state root a confined child gets in place of this process's own.
+    pub(super) state_root: Option<PathBuf>,
 }
 
 // ── The protocol exchange ─────────────────────────────────────────────────────
@@ -417,7 +422,7 @@ fn serve_args(
     // A child is as confined as its parent: the same state root and the same
     // egress policy, which are process-wide, never the child's own choice.
     args.extend(confinement_flags(
-        sven_roots::state_root(),
+        terms.state_root.as_deref().or(sven_roots::state_root()),
         sven_http::egress::installed().map(sven_http::egress::EgressPolicy::config),
     ));
     // A child does not recurse and has no `plan_tasks`: `tools.preload` is
@@ -467,6 +472,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         images,
         media_session,
         parent_terms,
+        confinement,
         description,
         mode,
         contract,
@@ -483,6 +489,40 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     } = args;
 
     // ── Spawn child process ───────────────────────────────────────────────────
+    // Inside the parent's confinement, with a state root of its own.
+    let mut terms = terms;
+    let confined = match &confinement {
+        Some(parent) => {
+            let ports = super::confined_child::connect_ports(
+                parent_terms
+                    .as_ref()
+                    .and_then(|t| t.model.as_ref())
+                    .map(|m| m.base_url.as_str()),
+                sven_http::egress::installed().map(sven_http::egress::EgressPolicy::config),
+            );
+            match super::confined_child::confine_child(parent, &exe, &workdir, &handle_id, ports) {
+                Ok(child) => Some(child),
+                Err(e) => {
+                    buffer_store.lock().await.fail(&handle_id, e.clone());
+                    return ToolOutput::err(&call_id, format!("sub-agent not started: {e}"));
+                }
+            }
+        }
+        None => None,
+    };
+    terms.state_root = confined.as_ref().map(|c| c.state_root.clone());
+    // The child's own tools' commands are held to the parent's confinement,
+    // without the child process's extra reach (its executable, its model's
+    // ports).
+    let mut parent_terms = parent_terms;
+    if let (Some(terms), Some(child)) = (parent_terms.as_mut(), &confined) {
+        let mut read_exec = child.confinement.read_exec.clone();
+        read_exec.retain(|path| path != &exe);
+        terms.confine = Some(super::TermsConfinement {
+            writable: child.confinement.writable.clone(),
+            read_exec,
+        });
+    }
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.args(serve_args(
         model_override.as_deref(),
@@ -498,6 +538,12 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     .kill_on_drop(true);
 
     cmd.current_dir(&workdir);
+    if let Some(child) = &confined {
+        if let Err(e) = child.confinement.restrict(cmd.as_std_mut()) {
+            buffer_store.lock().await.fail(&handle_id, e.clone());
+            return ToolOutput::err(&call_id, format!("sub-agent not started: {e}"));
+        }
+    }
     // The child goes with the session: killed when this thread, which drives
     // it to its end, ends, even when the whole host is killed.
     sven_tools_exec::confine::die_with_parent(&mut cmd);
@@ -919,6 +965,7 @@ mod tests {
             .with_max_output_tokens(4096)
             .with_deadline(now + Duration::from_secs(90));
         let terms = ServeTerms {
+            state_root: None,
             disabled_tools: vec!["shell".to_string()],
             approval: ApprovalMode::Manual,
             command_patterns: Some((vec!["rm -rf /*".into()], vec!["ls *".into()])),

@@ -37,6 +37,8 @@ pub struct Seen {
     pub requests: usize,
     /// The `model` each chat request named, in order.
     pub models: Vec<String>,
+    /// The body of each chat request, in order.
+    pub bodies: Vec<String>,
 }
 
 /// A loopback chat-completions server that answers its n-th request with the
@@ -97,6 +99,8 @@ fn answer(mut stream: TcpStream, script: &[Turn], next: &AtomicUsize, log: &Mute
     {
         let mut seen = log.lock().unwrap();
         seen.requests += 1;
+        seen.bodies
+            .push(String::from_utf8_lossy(&body).into_owned());
         if let Some(model) = serde_json::from_slice::<Value>(&body)
             .ok()
             .and_then(|b| b["model"].as_str().map(str::to_string))

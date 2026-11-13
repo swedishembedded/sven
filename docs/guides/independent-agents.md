@@ -96,10 +96,18 @@ tree, the package's tools, the system program directories and a few
 machine-wide files, and no network. No `/proc/<pid>` entry of any process is
 readable: not another process's command line, environment or auxv, not the
 host's, not the command's own. The same confinement holds for everything a
-command starts, a sub-agent's tools included. A confined session offers no
-`task` or `plan_tasks` (a child is a whole process) and cannot add MCP
-servers through `system`; a sub-agent of an unconfined session is started with
-its parent's state root and egress policy.
+command starts, a sub-agent's tools included. A confined session can delegate:
+the `task` child is a whole `sven` process, started inside the parent's Landlock
+confinement (the same directory tree, no other path, and a state root of its
+own inside the parent's private tmp), with the parent's egress policy and the
+model endpoint it was handed. The kernel inherits the confinement to everything
+the child starts and lets it only narrow, so the child cannot loosen it. The
+child process may connect only to the ports of its model endpoint and of the
+hosts the egress policy lists; the commands its own tools start are confined
+like the parent's commands, with no network at all. `system` cannot add MCP
+servers in a confined session (a server is a command started outside the
+confinement); a sub-agent of an unconfined session is started with its parent's
+state root and egress policy.
 
 One consequence: programs of the `rust-coreutils` (uutils) set read their own
 `/proc/self/auxv` and abort inside a confined shell. A host that confines

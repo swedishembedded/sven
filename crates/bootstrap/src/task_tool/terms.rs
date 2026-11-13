@@ -19,7 +19,10 @@
 #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ParentTerms {
-    pub only_tools: Vec<String>,
+    /// The allow list of a held parent; `None` for a parent that is confined
+    /// but not held to one, whose child keeps its own tool set.
+    #[serde(default)]
+    pub only_tools: Option<Vec<String>>,
     pub web_public_only: bool,
     pub hide_locations: bool,
     pub system_prompt: Option<String>,
@@ -33,6 +36,21 @@ pub struct ParentTerms {
     pub media_session: Option<String>,
     /// The service the parent searches the web through.
     pub search: Option<TermsEndpoint>,
+    /// The confinement of the commands the child's tools start, set per child
+    /// by the parent that confines its own: the same tree and nothing more
+    /// (no network at all, unlike the child process itself, which must reach
+    /// its model).
+    #[serde(default)]
+    pub confine: Option<TermsConfinement>,
+}
+
+/// The directories a confined parent lets its commands use, handed to a
+/// child so the commands of the child's tools are held to the same.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TermsConfinement {
+    pub writable: Vec<std::path::PathBuf>,
+    pub read_exec: Vec<std::path::PathBuf>,
 }
 
 /// An endpoint and its key, as [`ParentTerms`] carries one.
@@ -64,7 +82,12 @@ impl ParentTerms {
     /// is held to an allow list; none otherwise, and the child reads its own.
     #[must_use]
     pub fn of(config: &crate::Config) -> Option<Self> {
-        let only = config.tools.only.as_ref()?;
+        // A confined parent hands its child the model endpoint too: the
+        // child's process is confined and reads no configuration of its own.
+        if config.tools.only.is_none() && config.tools.confine.is_none() {
+            return None;
+        }
+        let only = config.tools.only.as_ref();
         let endpoint =
             |base_url: &Option<String>, api_key: &Option<String>| match (base_url, api_key) {
                 (Some(base_url), Some(api_key)) => Some(TermsEndpoint {
@@ -75,11 +98,12 @@ impl ParentTerms {
             };
         let media = config.media_endpoint();
         Some(Self {
-            only_tools: only
-                .iter()
-                .filter(|name| name.as_str() != "task")
-                .cloned()
-                .collect(),
+            only_tools: only.map(|only| {
+                only.iter()
+                    .filter(|name| name.as_str() != "task")
+                    .cloned()
+                    .collect()
+            }),
             web_public_only: config.tools.web.public_only,
             hide_locations: config.tools.hide_locations,
             system_prompt: config.agent.system_prompt.clone(),
@@ -100,6 +124,7 @@ impl ParentTerms {
                     base_url: e.base_url.clone(),
                     api_key: e.api_key.clone(),
                 }),
+            confine: None,
         })
     }
 
@@ -115,14 +140,25 @@ impl ParentTerms {
     /// `config` (the child's) held to these terms: each only narrows what it
     /// would have, and the endpoints are the parent's.
     pub fn apply(&self, config: &mut crate::Config) {
-        config.tools.only = Some(
-            self.only_tools
-                .iter()
-                .filter(|name| name.as_str() != "task")
-                .cloned()
-                .collect(),
-        );
+        if let Some(only) = &self.only_tools {
+            config.tools.only = Some(
+                only.iter()
+                    .filter(|name| name.as_str() != "task")
+                    .cloned()
+                    .collect(),
+            );
+        }
         config.mcp_servers.clear();
+        // The commands of this process's tools are confined like the parent's
+        // (a nested domain: it can only narrow the process's own).
+        if let Some(confine) = &self.confine {
+            config.tools.confine = Some(sven_tools_exec::confine::CommandConfinement {
+                writable: confine.writable.clone(),
+                read_exec: confine.read_exec.clone(),
+                tmpdir: sven_roots::state_root().map(|root| root.join("tmp")),
+                connect_ports: Vec::new(),
+            });
+        }
         config.tools.web.public_only |= self.web_public_only;
         config.tools.hide_locations |= self.hide_locations;
         if self.system_prompt.is_some() {

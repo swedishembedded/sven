@@ -104,6 +104,10 @@ pub struct CommandConfinement {
     /// The `TMPDIR` of every command: one of `writable`, so `mktemp` and
     /// the like work without the shared `/tmp`.
     pub tmpdir: Option<PathBuf>,
+    /// TCP ports a command may connect to. Empty for a command (no network
+    /// at all); a confined sub-agent process gets the ports of its model
+    /// endpoint and of the hosts its egress policy allows, nothing else.
+    pub connect_ports: Vec<u16>,
 }
 
 #[cfg(target_os = "linux")]
@@ -256,8 +260,8 @@ mod linux {
         /// not exist, or the rules cannot be built.
         pub fn prepare(&self) -> Result<Prepared, String> {
             use landlock::{
-                path_beneath_rules, Access, AccessFs, AccessNet, CompatLevel, Compatible, Ruleset,
-                RulesetAttr, RulesetCreatedAttr, Scope,
+                path_beneath_rules, Access, AccessFs, AccessNet, CompatLevel, Compatible, NetPort,
+                Ruleset, RulesetAttr, RulesetCreatedAttr, Scope,
             };
             Self::require_kernel_support()?;
             if let Some(missing) = self.writable.iter().find(|dir| !dir.is_dir()) {
@@ -280,7 +284,10 @@ mod linux {
                     .add_rules(path_beneath_rules(DEVICE_WRITABLE, AccessFs::from_all(abi)))?
                     .add_rules(path_beneath_rules(&self.read_exec, read))?
                     .add_rules(path_beneath_rules(SYSTEM_EXEC, read))?
-                    .add_rules(path_beneath_rules(SYSTEM_READ_ONLY, read))?;
+                    .add_rules(path_beneath_rules(SYSTEM_READ_ONLY, read))?
+                    .add_rules(self.connect_ports.iter().map(|port| {
+                        Ok::<_, landlock::RulesetError>(NetPort::new(*port, AccessNet::ConnectTcp))
+                    }))?;
                 Ok(created.into())
             };
             let ruleset = build()

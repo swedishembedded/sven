@@ -64,6 +64,7 @@ fn confinement(layout: &Layout) -> CommandConfinement {
         writable: vec![layout.workspace.clone()],
         read_exec: vec![layout.bin.clone()],
         tmpdir: Some(layout.workspace.join(".tmp")),
+        connect_ports: Vec::new(),
     }
 }
 

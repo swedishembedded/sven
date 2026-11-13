@@ -72,6 +72,7 @@ impl ProcessWorkers {
                 .into_iter()
                 .collect(),
             tmpdir: None,
+            connect_ports: Vec::new(),
         }
     }
 }

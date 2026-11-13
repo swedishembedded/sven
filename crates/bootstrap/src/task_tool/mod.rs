@@ -99,6 +99,7 @@ use sven_workspace::SharedAgents;
 mod admission;
 mod approver;
 mod brief;
+mod confined_child;
 mod finding;
 mod handback;
 mod inspect;
@@ -123,7 +124,7 @@ use runner::{AcpProcessRunner, ChildRunner};
 pub use session::confinement_flags;
 use session::{CancelGuard, SpawnArgs};
 pub(crate) use subgoals::NearMatch;
-pub use terms::{ParentTerms, TermsEndpoint};
+pub use terms::{ParentTerms, TermsConfinement, TermsEndpoint};
 
 /// Environment variable set when running as a subagent (depth 0).
 ///
@@ -199,6 +200,11 @@ pub struct TaskTool {
     )>,
     /// What a parent held to an allow list hands each child (`ParentTerms`).
     terms: Option<ParentTerms>,
+    /// The confinement of the parent's commands: each child process is
+    /// started inside it (`confined_child`).
+    confinement: Option<sven_tools_exec::confine::CommandConfinement>,
+    /// The `sven` executable a child runs; the current one by default.
+    executable: Option<PathBuf>,
     /// Runs a prepared child to its end; the production one starts a
     /// `sven acp serve` process.
     runner: Arc<dyn ChildRunner>,
@@ -230,6 +236,8 @@ impl TaskTool {
             command_patterns: None,
             media: None,
             terms: None,
+            confinement: None,
+            executable: None,
             runner: Arc::new(AcpProcessRunner),
             worktree_root: isolation::default_worktree_root(),
             chunks: None,
@@ -321,6 +329,26 @@ impl TaskTool {
     #[must_use]
     pub fn with_parent_terms(mut self, terms: Option<ParentTerms>) -> Self {
         self.terms = terms;
+        self
+    }
+
+    /// Starts each child process inside `confinement`, the confinement of the
+    /// parent's own commands: the child and everything it starts reach no more
+    /// than they do, and cannot loosen it.
+    #[must_use]
+    pub fn with_confinement(
+        mut self,
+        confinement: Option<sven_tools_exec::confine::CommandConfinement>,
+    ) -> Self {
+        self.confinement = confinement;
+        self
+    }
+
+    /// Runs children with the `sven` executable at `path`, for an embedding
+    /// application whose own executable is not `sven`.
+    #[must_use]
+    pub fn with_executable(mut self, path: Option<PathBuf>) -> Self {
+        self.executable = path;
         self
     }
 
@@ -652,7 +680,11 @@ impl Tool for TaskTool {
             }
         }
 
-        let exe = match std::env::current_exe() {
+        let exe = match self
+            .executable
+            .clone()
+            .map_or_else(std::env::current_exe, Ok)
+        {
             Ok(p) => p,
             Err(e) => {
                 return ToolOutput::err(&call.id, format!("could not locate sven executable: {e}"))
@@ -700,6 +732,7 @@ impl Tool for TaskTool {
             images: handed.images,
             media_session: self.media.as_ref().and_then(|(_, c)| c.session.clone()),
             parent_terms: self.terms.clone(),
+            confinement: self.confinement.clone(),
             description: description.clone(),
             mode: acp_mode,
             contract: ChildRunContract {
@@ -718,6 +751,7 @@ impl Tool for TaskTool {
                 approval: self.approval_mode,
                 command_patterns: self.command_patterns.clone(),
                 evidence_store: brief.evidence_store,
+                state_root: None,
             },
             workdir,
             model_override,
@@ -782,7 +816,10 @@ mod tests {
         });
         parent.tools.media.session = Some("conv-1".into());
         let terms = ParentTerms::of(&parent).expect("a held parent hands terms");
-        assert_eq!(terms.only_tools, ["web_search", "run_model"]);
+        assert_eq!(
+            terms.only_tools.as_deref(),
+            Some(&["web_search".to_string(), "run_model".to_string()][..])
+        );
         // Never the key in its debug form (a log line).
         assert!(!format!("{terms:?}").contains("host-key"));
         assert_eq!(terms.model_name("openai/e2e/agent"), "e2e/agent");
@@ -820,7 +857,7 @@ mod tests {
         );
         // Terms that somehow named `task` still give the child none.
         let mut sneaky = terms.clone();
-        sneaky.only_tools.push("task".into());
+        sneaky.only_tools.as_mut().unwrap().push("task".into());
         sneaky.apply(&mut child);
         assert!(!child.tools.only.unwrap().contains(&"task".to_owned()));
     }

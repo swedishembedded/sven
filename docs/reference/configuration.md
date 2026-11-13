@@ -788,6 +788,7 @@ Controls the agent's autonomy and defaults.
 | `stream_idle_timeout_secs` | `300`; `1200` for a local server | Seconds a streamed response may stay silent before the connection is declared stale and the turn fails |
 | `first_byte_timeout_secs` | `120`; `600` for a local server | Seconds to wait for the model server's response headers; see [Stalled model servers](#stalled-model-servers) |
 | `first_token_timeout_secs` | `300`; `900` for a local server | Seconds, from the request, to wait for the first real output (text, reasoning or a tool-call chunk); keepalives do not count |
+| `child_executable` | the running executable | The `sven` executable that runs a `task` sub-agent; an embedding application whose own executable is not `sven` names it |
 | `no_progress_timeout_secs` | `600` | Seconds of silence in real output, once it has started, before the turn fails; keepalives do not count |
 | `transient_retries` | `3` | Times a model call that failed for a reason that may pass (dropped connection, busy or rate-limited server, a generation that hung) is asked again before the turn ends with an error. `0` ends the turn at the first such failure, for an application that retries on its own |
 | `transient_retry_delay_ms` | `5000` | Pause before the first such repeat; each next pause is three times longer |

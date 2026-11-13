@@ -440,34 +440,34 @@ fn build_profile_full(p: FullProfileParams<'_>) -> ToolRegistry {
     register_ask_question(&mut reg, p.questions);
     register_session_tools(&mut reg, p.todos, p.tool_event_tx.clone());
 
-    // A delegated child is a whole sven process with its own, unconfined
-    // shell: where commands are confined, delegation is not offered.
-    if p.cfg.tools.confine.is_none() {
-        let task = Arc::new(
-            TaskTool::new(
-                Arc::clone(&p.buffer_store),
-                p.tool_event_tx,
-                Some(model_id),
-                p.runtime.agents.clone(),
-                Arc::clone(&p.mode_lock),
-            )
-            .with_scope(p.runtime.path_scope.clone())
-            .with_chunks(p.chunks)
-            .with_near_match(p.near_match)
-            .with_delegation(p.cfg.delegation)
-            .with_wall_clock(p.cfg.agent.child_run_timeout())
-            .with_turn_budgets(
-                Some(p.cfg.agent.max_tool_rounds),
-                p.cfg.model.max_output_tokens,
-            )
-            .with_approver(p.approver, p.approval_mode)
-            .with_disabled_tools(p.cfg.tools.disabled.clone())
-            .with_command_patterns(&p.cfg.tools)
-            .with_media(p.cfg.media_endpoint())
-            .with_parent_terms(crate::task_tool::ParentTerms::of(p.cfg)),
-        );
-        crate::task_tool::orchestrate::register(&mut reg, task, p.cfg, &p.runtime.path_scope);
-    }
+    // A delegated child is a whole sven process; where commands are confined it
+    // is started inside the same confinement (`TaskTool::with_confinement`).
+    let task = Arc::new(
+        TaskTool::new(
+            Arc::clone(&p.buffer_store),
+            p.tool_event_tx,
+            Some(model_id),
+            p.runtime.agents.clone(),
+            Arc::clone(&p.mode_lock),
+        )
+        .with_scope(p.runtime.path_scope.clone())
+        .with_chunks(p.chunks)
+        .with_near_match(p.near_match)
+        .with_delegation(p.cfg.delegation)
+        .with_wall_clock(p.cfg.agent.child_run_timeout())
+        .with_turn_budgets(
+            Some(p.cfg.agent.max_tool_rounds),
+            p.cfg.model.max_output_tokens,
+        )
+        .with_approver(p.approver, p.approval_mode)
+        .with_disabled_tools(p.cfg.tools.disabled.clone())
+        .with_command_patterns(&p.cfg.tools)
+        .with_media(p.cfg.media_endpoint())
+        .with_parent_terms(crate::task_tool::ParentTerms::of(p.cfg))
+        .with_confinement(p.cfg.tools.confine.clone())
+        .with_executable(p.cfg.agent.child_executable.clone()),
+    );
+    crate::task_tool::orchestrate::register(&mut reg, task, p.cfg, &p.runtime.path_scope);
 
     reg
 }
@@ -507,29 +507,28 @@ fn build_profile_research(
 
     register_ask_question(&mut reg, questions);
     register_session_tools(&mut reg, todos, tool_event_tx.clone());
-    // Confined: no delegation (a child process would not carry the confinement).
-    if !confined {
-        reg.register(
-            TaskTool::new(
-                Arc::new(Mutex::new(OutputBufferStore::new())),
-                tool_event_tx,
-                Some(cfg.model_reference()),
-                runtime.agents.clone(),
-                mode_lock,
-            )
-            .with_scope(paths.clone())
-            .with_chunks(integrations.chunks.clone())
-            .with_near_match(integrations.near_match.clone())
-            .with_delegation(cfg.delegation)
-            .with_wall_clock(cfg.agent.child_run_timeout())
-            .with_turn_budgets(Some(cfg.agent.max_tool_rounds), cfg.model.max_output_tokens)
-            .with_approver(integrations.approver.clone(), integrations.approval_mode)
-            .with_disabled_tools(cfg.tools.disabled.clone())
-            .with_command_patterns(&cfg.tools)
-            .with_media(cfg.media_endpoint())
-            .with_parent_terms(crate::task_tool::ParentTerms::of(cfg)),
-        );
-    }
+    reg.register(
+        TaskTool::new(
+            Arc::new(Mutex::new(OutputBufferStore::new())),
+            tool_event_tx,
+            Some(cfg.model_reference()),
+            runtime.agents.clone(),
+            mode_lock,
+        )
+        .with_scope(paths.clone())
+        .with_chunks(integrations.chunks.clone())
+        .with_near_match(integrations.near_match.clone())
+        .with_delegation(cfg.delegation)
+        .with_wall_clock(cfg.agent.child_run_timeout())
+        .with_turn_budgets(Some(cfg.agent.max_tool_rounds), cfg.model.max_output_tokens)
+        .with_approver(integrations.approver.clone(), integrations.approval_mode)
+        .with_disabled_tools(cfg.tools.disabled.clone())
+        .with_command_patterns(&cfg.tools)
+        .with_media(cfg.media_endpoint())
+        .with_parent_terms(crate::task_tool::ParentTerms::of(cfg))
+        .with_confinement(cfg.tools.confine.clone())
+        .with_executable(cfg.agent.child_executable.clone()),
+    );
 
     reg
 }
@@ -921,6 +920,7 @@ mod tests {
             writable: vec![root.path().to_path_buf()],
             read_exec: Vec::new(),
             tmpdir: None,
+            connect_ports: Vec::new(),
         });
         let (tx, _rx) = mpsc::channel::<ToolEvent>(16);
         let runtime = AgentRuntimeContext {
@@ -949,12 +949,14 @@ mod tests {
                 assert!(names.iter().any(|n| n == offered), "{offered} in {names:?}");
             }
         }
-        for withheld in ["find_file", "grep", "attach_file", "context", "gdb", "task"] {
+        for withheld in ["find_file", "grep", "attach_file", "context", "gdb"] {
             assert!(
                 !names.iter().any(|n| n == withheld),
                 "{withheld} in {names:?}"
             );
         }
+        // Delegation is offered: a child is started inside the confinement.
+        assert!(names.iter().any(|n| n == "task"), "{names:?}");
         // A confined session cannot edit the MCP servers of a config file: a
         // server is a command started outside the confinement.
         let system = reg.get("system").expect("the system tool is offered");
@@ -972,18 +974,19 @@ mod tests {
         );
     }
 
-    /// Delegation is withheld from a confined session in every profile: a
-    /// child is a whole sven process, and none of them is a way out of the
-    /// confinement of the tools that spawned it.
+    /// Delegation is offered to a confined session in every profile, and
+    /// each child is started inside the session's confinement
+    /// (`task_tool::confined_child`).
     #[cfg(target_os = "linux")]
     #[test]
-    fn no_profile_offers_delegation_to_a_confined_session() {
+    fn a_confined_session_delegates_in_every_profile() {
         let root = tempfile::tempdir().unwrap();
         let confined = |cfg: &mut Config| {
             cfg.tools.confine = Some(sven_tools_exec::confine::CommandConfinement {
                 writable: vec![root.path().to_path_buf()],
                 read_exec: Vec::new(),
                 tmpdir: None,
+                connect_ports: Vec::new(),
             });
         };
         let build = |profile: ToolSetProfile, confine: bool| {
@@ -1010,13 +1013,13 @@ mod tests {
             questions: Questions::Unavailable,
             todos: Arc::new(Mutex::new(Vec::new())),
         };
-        // The check is not vacuous: unconfined, the research profile delegates.
-        assert!(build(research(), false).iter().any(|n| n == "task"));
-        let names = build(research(), true);
-        assert!(
-            !names.iter().any(|n| n == "task" || n == "plan_tasks"),
-            "{names:?}"
-        );
+        for confined in [false, true] {
+            let names = build(research(), confined);
+            assert!(
+                names.iter().any(|n| n == "task"),
+                "confined {confined}: {names:?}"
+            );
+        }
     }
 
     /// The words a tool's own schema already defines: its parameter names and

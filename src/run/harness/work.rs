@@ -341,6 +341,7 @@ pub(super) fn agent_confinement(
             .chain(sven_tools_exec::search_path_dirs())
             .collect(),
         tmpdir: Some(tmpdir),
+        connect_ports: Vec::new(),
     })
 }
 
@@ -403,6 +404,18 @@ pub(crate) async fn work(options: WorkOptions) -> Result<WorkEnd> {
     // The package's tools are found by the run's commands through the tools'
     // own configuration; this process's environment is not touched.
     let mut config = sven_sdk::config::Config::default();
+    // The endpoint a sub-agent is handed (`ParentTerms`): the run's model
+    // service and login, which the confined child process cannot find in any
+    // file.
+    if options.provider.is_none() {
+        config.model = sven_model_drivers::ModelConfig {
+            provider: "openai".into(),
+            name: descriptor.models.default.clone(),
+            base_url: Some(descriptor.models.openai_base_url.clone()),
+            api_key: Some(client.login.token.clone()),
+            ..sven_model_drivers::ModelConfig::default()
+        };
+    }
     config.tools.confine = Some(agent_confinement(
         &options.workspace,
         &options.scratch,

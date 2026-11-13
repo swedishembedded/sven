@@ -53,9 +53,20 @@ profile in place, from the shell and from a grandchild.
 
 Every way a sub-agent or its tool starts was checked:
 
-- `task`, `plan_tasks` (a child is a whole sven process, whose own shell would
-  be unconfined): not offered where commands are confined, in the full and the
-  research profile (the research profile offered it unconditionally; fixed).
+- `task`, `plan_tasks` (a child is a whole sven process): offered in every
+  profile of a confined session, and the child is started inside the parent's
+  Landlock ruleset (`task_tool::confined_child`): the parent's tree and nothing
+  else, plus the child's own executable (the file), its own state root inside the
+  parent's private tmp, the worktree it was given when isolated, and TCP connect
+  to the ports of its model endpoint and of the hosts the egress policy lists
+  (the only network the child process itself needs). The domain is inherited and
+  only narrows, so nothing the child starts can loosen it. Its tools' commands
+  are held to the parent's confinement exactly (`ParentTerms::confine`: a nested
+  domain without the ports), so they cannot dial even the child's own model. The
+  parent's model endpoint and key reach the child on its stdin, never a file.
+  `tests/confined_subagent.rs` runs the real child and has its model try to
+  escape. (Before, the research profile offered `task` unconfined and the full
+  profile withheld it; both fixed.)
 - `system add_mcp_server` (writes a config file outside the tree and names a
   command that starts unconfined): refused in a confined session (it was
   offered; fixed).

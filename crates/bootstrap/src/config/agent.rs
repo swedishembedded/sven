@@ -203,6 +203,12 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub no_progress_timeout_secs: Option<u64>,
 
+    /// The `sven` executable that runs a `task` sub-agent. `None` (the
+    /// default) is the running executable, which is right for `sven` itself;
+    /// an embedding application whose own executable is not `sven` names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_executable: Option<std::path::PathBuf>,
+
     /// Times a model call that failed for a reason that may pass (a dropped
     /// connection, a busy or rate-limited server) is asked again before the
     /// turn ends with an error. `None` (the default) is 3; `0` ends the turn
@@ -262,6 +268,7 @@ impl AgentConfig {
             "first_byte_timeout_secs",
             "first_token_timeout_secs",
             "no_progress_timeout_secs",
+            "child_executable",
             "transient_retries",
             "transient_retry_delay_ms",
             "child_run_timeout_secs",
@@ -361,6 +368,7 @@ impl Default for AgentConfig {
             first_byte_timeout_secs: None,
             first_token_timeout_secs: None,
             no_progress_timeout_secs: None,
+            child_executable: None,
             transient_retries: None,
             transient_retry_delay_ms: None,
             orchestration: super::Orchestration::default(),

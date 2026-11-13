@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **confinement**: where commands are confined, the research profile no longer offers `task`, and `system` no longer adds MCP servers: both started something outside the confinement. Tests pin that no `/proc/<pid>` entry of any process is readable from a confined command or its grandchildren, and the confinement tests no longer depend on the host's coreutils.
+- **confinement**: a confined session delegates: its `task` child is started inside the parent's Landlock confinement (same tree, own state root, the parent's egress policy), and the commands of the child's tools are confined like the parent's. `system` no longer adds MCP servers in a confined session, and the research profile no longer offers an unconfined `task`. New key `agent.child_executable` for embedders. Tests pin that no `/proc/<pid>` entry of any process is readable from a confined command or its grandchildren, and the confinement tests no longer depend on the host's coreutils.
 - **headless**: a run refused before its session exists (no API key, a malformed `network` section, invalid goal terms, a piped conversation with no task, an unreadable `--system-prompt-file` or `--load-trace`) still exits as before (status 2 for a refused invocation) but writes a `startup_error` trajectory at `--output-trace` instead of nothing.
 
 ### Removed
