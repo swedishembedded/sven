@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **headless**: a run that fails before its session exists (no API key, a malformed `network` section) writes a `startup_error` trajectory at `--output-trace` instead of nothing.
+
 ### Removed
 - **web_search**: the `BRAVE_API_KEY` environment variable is no longer read, by `web_search` or `sven mcp serve`. Set `tools.web.search.api_key` (`sven mcp serve` also takes `--brave-api-key`, defaulting to that key). Without a key the tool's error names the key to set.
 

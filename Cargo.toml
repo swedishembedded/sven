@@ -191,6 +191,7 @@ base64           = { workspace = true }
 # so this is unconditional (not gated behind `memory`).
 sven-vocab       = { path = "crates/vocab" }
 sven-http        = { path = "crates/http" }
+atif             = { path = "crates/atif" }
 toml             = { workspace = true }
 sha2             = { workspace = true }
 hex              = { workspace = true }

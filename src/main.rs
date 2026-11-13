@@ -95,11 +95,23 @@ fn main() -> anyhow::Result<()> {
     // work runs on the blocking pool, so a few workers serve any session: one
     // per core would give every process tens of idle threads (and their
     // stacks) on a large machine.
-    tokio::runtime::Builder::new_multi_thread()
+    // A headless run that fails before its session exists still leaves the
+    // record `--output-trace` promises (`run::startup_failure`).
+    let failure_trace = cli
+        .is_headless()
+        .then(|| cli.effective_output_trace().cloned())
+        .flatten();
+    let prompt = cli.prompt.clone();
+    let started = std::time::SystemTime::now();
+    let result = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(worker_threads())
         .enable_all()
         .build()?
-        .block_on(run_cli(cli, hosted))
+        .block_on(run_cli(cli, hosted));
+    if let (Err(error), Some(path)) = (&result, failure_trace) {
+        run::record_startup_failure(&path, error, prompt.as_deref(), started);
+    }
+    result
 }
 
 /// The runtime's async workers: the cores there are, at most four.

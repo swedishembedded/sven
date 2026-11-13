@@ -321,7 +321,7 @@ The trace file is a single pretty-printed JSON document (an ATIF `Trajectory`
 object), not line-delimited - see
 **[Pipe Composition](pipe-composition.md)** for the formats sven reads and
 writes. The workflow runner rewrites it after every step, so an interrupted
-run leaves a valid partial document.
+run leaves a valid partial document. A run that ends in an error, a timeout or an exhausted budget writes it too, and so does one that fails before any session exists (no API key, a malformed `network` section): that file holds the prompt and the error, with `final_metrics.extra.outcome` set to `startup_error`.
 
 A step whose tool call the permission gate decided about, or whose arguments
 broke the tool's parameter schema, carries `extra.sven.gate`; a step that read

@@ -29,11 +29,13 @@ pub(crate) mod remote;
 pub(crate) mod replay;
 mod replay_sample;
 pub(crate) mod secret;
+mod startup_failure;
 pub(crate) mod task;
 #[cfg(feature = "network")]
 pub(crate) mod team;
 pub(crate) mod tool;
 #[cfg(feature = "tui")]
 pub(crate) mod tui;
+pub(crate) use startup_failure::record as record_startup_failure;
 mod variant;
 pub(crate) mod workflow;
