@@ -183,3 +183,30 @@ async fn a_search_provider_outside_the_list_is_refused() {
         out.content
     );
 }
+
+/// `public_only` (a hosted default) must not silently defeat the operator's
+/// policy: with one installed the allow list is the authority, so an allowed
+/// loopback emulator is reachable even by a public-only tool, and a host
+/// outside the list is still refused.
+#[tokio::test]
+async fn an_installed_policy_replaces_public_only() {
+    let w = world();
+    let url = format!("http://{}/", w.allowed);
+    let fetched = WebFetchTool::default()
+        .public_only()
+        .execute(&call("web_fetch", json!({"url": url})))
+        .await;
+    assert!(
+        !fetched.is_error && fetched.content.contains("allowed body"),
+        "{}",
+        fetched.content
+    );
+    let requested = HttpRequestTool::default()
+        .public_only()
+        .execute(&call(
+            "http_request",
+            json!({"url": format!("http://{}/", w.forbidden)}),
+        ))
+        .await;
+    assert!(requested.is_error && requested.content.contains("network.allow_hosts"));
+}

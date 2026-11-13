@@ -250,6 +250,12 @@ impl Config {
         if self.network == NetworkConfig::default() {
             return Ok(());
         }
+        if self.tools.web.public_only {
+            tracing::warn!(
+                "tools.web.public_only is ignored while a `network` policy is set: \
+                 the policy's allow list decides what the web tools reach"
+            );
+        }
         let policy = EgressPolicy::from_config(&self.network).map_err(anyhow::Error::msg)?;
         sven_http::egress::install(policy).map_err(anyhow::Error::msg)
     }

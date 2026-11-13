@@ -1127,7 +1127,10 @@ the `shell` tool (`--disable-tool shell`). Guide:
 
 A malformed entry, an unreadable `ca_bundle` or a policy that differs from the
 one the process already enforces fails at startup, never at the first request.
-The policy is process-wide: one process has one.
+The policy is process-wide: one process has one. It replaces
+`tools.web.public_only`: with both set, the allow list is the only authority
+over what the web tools reach (private addresses and mapped emulators
+included) and a warning is logged.
 
 ---
 
