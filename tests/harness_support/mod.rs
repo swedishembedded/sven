@@ -39,6 +39,8 @@ pub struct Seen {
     pub models: Vec<String>,
     /// The body of each chat request, in order.
     pub bodies: Vec<String>,
+    /// Connections accepted, whether or not a request followed.
+    pub connections: usize,
 }
 
 /// A loopback chat-completions server that answers its n-th request with the
@@ -56,7 +58,15 @@ pub enum Turn {
 }
 
 pub fn serve(script: Vec<Turn>) -> Server {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("a free port");
+    serve_on(
+        TcpListener::bind("127.0.0.1:0").expect("a free port"),
+        script,
+    )
+}
+
+/// [`serve`] on a listener the caller bound, so the port is known before the
+/// script is written.
+pub fn serve_on(listener: TcpListener, script: Vec<Turn>) -> Server {
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let seen = Arc::new(Mutex::new(Seen::default()));
     let next = Arc::new(AtomicUsize::new(0));
@@ -64,6 +74,7 @@ pub fn serve(script: Vec<Turn>) -> Server {
     let log = Arc::clone(&seen);
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
+            log.lock().unwrap().connections += 1;
             let (script, next, log) = (Arc::clone(&script), Arc::clone(&next), Arc::clone(&log));
             std::thread::spawn(move || answer(stream, &script, &next, &log));
         }

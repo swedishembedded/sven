@@ -22,7 +22,7 @@ mod harness_support;
 
 use std::sync::{Arc, Mutex};
 
-use harness_support::{serve, Turn};
+use harness_support::{serve_on, Turn};
 use serde_json::json;
 use sven_model::ResponseEvent;
 use sven_model_mock::CallbackProvider;
@@ -62,36 +62,39 @@ async fn a_confined_sessions_sub_agent_and_its_tools_stay_inside_the_confinement
     let extra_port = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let extra = extra_port.local_addr().unwrap().port();
     let escape = |what: &str| format!(": < {what} && echo ESCAPE'D'");
-    let model = serve(vec![
-        Turn::Calls(vec![
-            shell("echo hi > made.txt && echo WROTE-IN-TREE"),
-            shell(&escape(&outside.display().to_string())),
-            shell(&escape(&format!("/proc/{bystander_pid}/cmdline"))),
-            shell(&escape("/proc/self/auxv")),
-            shell(&format!(
-                "sh -c \"{}\"",
-                escape(&outside.display().to_string())
-            )),
-            shell(&format!(
-                "exec 3<>/dev/tcp/127.0.0.1/{extra} && echo ESCAPE'D'"
-            )),
-            ("tools", json!({ "action": "load", "names": ["web_fetch"] })),
-        ]),
-        Turn::Calls(vec![(
-            "web_fetch",
-            json!({ "url": format!("http://127.0.0.1:{extra}/") }),
-        )]),
-        Turn::Text("done"),
-    ]);
-    let model_port: u16 = model
-        .base
-        .trim_end_matches("/v1")
-        .rsplit(':')
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap();
-
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let model_port = listener.local_addr().unwrap().port();
+    let model = serve_on(
+        listener,
+        vec![
+            Turn::Calls(vec![
+                shell("echo hi > made.txt && echo WROTE-IN-TREE"),
+                shell(&escape(&outside.display().to_string())),
+                shell(&escape(&format!("/proc/{bystander_pid}/cmdline"))),
+                shell(&escape("/proc/self/auxv")),
+                shell(&format!(
+                    "sh -c \"{}\"",
+                    escape(&outside.display().to_string())
+                )),
+                shell(&format!(
+                    "exec 3<>/dev/tcp/127.0.0.1/{extra} && echo ESCAPE'D'"
+                )),
+                // The child's own model, from its tools' commands and a grandchild.
+                shell(&format!(
+                    "exec 3<>/dev/tcp/127.0.0.1/{model_port} && echo ESCAPE'D'"
+                )),
+                shell(&format!(
+                    "sh -c \"exec 3<>/dev/tcp/127.0.0.1/{model_port} && echo ESCAPE'D'\""
+                )),
+                ("tools", json!({ "action": "load", "names": ["web_fetch"] })),
+            ]),
+            Turn::Calls(vec![(
+                "web_fetch",
+                json!({ "url": format!("http://127.0.0.1:{extra}/") }),
+            )]),
+            Turn::Text("done"),
+        ],
+    );
     // The parent's session: confined commands, the scripted parent, the real
     // `sven` as its sub-agents' executable, and an egress policy that lists
     // the model and one extra port the child's process may therefore dial.
@@ -184,8 +187,18 @@ async fn a_confined_sessions_sub_agent_and_its_tools_stay_inside_the_confinement
     );
     assert!(!answers.contains("top-secret-outside-the-tree"));
     assert!(
-        answers.matches("Permission denied").count() >= 5,
-        "outside file, another process, own auxv, a grandchild and a dial are all refused: {answers}"
+        answers.matches("Permission denied").count() >= 7,
+        "outside file, another process, own auxv, a grandchild and a dial are all refused: {:?}",
+        answers
+            .split("\"role\":\"tool\"")
+            .map(|t| t
+                .rsplit("\"content\":")
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(120)
+                .collect::<String>())
+            .collect::<Vec<_>>()
     );
     let fetched = seen
         .bodies
