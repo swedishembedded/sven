@@ -75,3 +75,48 @@ fn a_terminated_run_writes_its_trajectory_so_far() {
     );
     assert_eq!(doc["final_metrics"]["extra"]["outcome"], "cancelled");
 }
+
+/// Runs the mock agent headless with `extra` flags and returns the exit code
+/// and the trajectory it left at `--output-trace`.
+fn run_with_trace(prompt: &str, extra: &[&str]) -> (Option<i32>, serde_json::Value) {
+    let dir = tempfile::tempdir().unwrap();
+    let trace = dir.path().join("trace.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_sven"))
+        .args(["--headless", "--model", "mock", "--output-trace"])
+        .arg(&trace)
+        .args(extra)
+        .arg(prompt)
+        .current_dir(dir.path())
+        .env("HOME", dir.path())
+        .env(
+            "SVEN_MOCK_RESPONSES",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/mock_responses.yaml"
+            ),
+        )
+        .env("XDG_RUNTIME_DIR", dir.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("sven runs");
+    let written = std::fs::read_to_string(&trace)
+        .unwrap_or_else(|e| panic!("no trajectory after exit {:?}: {e}", out.status));
+    (
+        out.status.code(),
+        serde_json::from_str(&written).expect("a valid document"),
+    )
+}
+
+#[test]
+fn a_run_that_times_out_still_writes_its_trajectory() {
+    let (code, doc) = run_with_trace("run a slow command", &["--run-timeout", "2"]);
+    assert_eq!(code, Some(124));
+    assert!(doc["steps"].as_array().is_some_and(|s| !s.is_empty()));
+}
+
+#[test]
+fn a_run_that_exhausts_its_token_budget_still_writes_its_trajectory() {
+    let (code, doc) = run_with_trace("run ls", &["--max-tokens", "1"]);
+    assert!(code.is_some_and(|c| c != 0), "{code:?}");
+    assert!(doc["steps"].as_array().is_some_and(|s| !s.is_empty()));
+}
