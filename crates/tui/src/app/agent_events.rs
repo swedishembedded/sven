@@ -412,13 +412,14 @@ impl App {
                 }
                 self.rerender_chat().await;
             }
+            // An error is told, never taken for the turn's end: a turn
+            // retries a failed request, or goes on past a refused step, and
+            // a turn that is over says so with TurnComplete. Freeing the box
+            // here sent the next message to an agent still working.
             AgentEvent::Error(msg) => {
                 self.chat.push_segment(ChatSegment::Error(msg.clone()));
                 self.save_history_async();
                 self.rerender_chat().await;
-                self.agent.busy = false;
-                self.agent.current_tool = None;
-                self.agent.model_waiting = None;
             }
             AgentEvent::TodoUpdate(todos) => {
                 self.chat.push_segment(ChatSegment::TodoUpdate(todos));

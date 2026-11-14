@@ -1185,6 +1185,34 @@ mod submit_integration_tests {
         app.handle_agent_event(active, event).await;
     }
 
+    /// An error is told, not taken for the turn's end: a turn retries a
+    /// failed request and goes on. A message typed after it waits for the
+    /// turn's real end instead of reaching an agent that is still working.
+    #[tokio::test]
+    async fn a_message_typed_after_an_error_waits_for_the_turn_to_end() {
+        let (mut app, mut rx) = App::for_testing();
+        app.inject_input("fix the parser");
+        app.dispatch_action(Action::Submit).await;
+        let _first = recv_resubmit_for_test(&mut rx);
+
+        event(
+            &mut app,
+            sven_vocab::SessionEvent::Error("the server is busy; asking again".into()),
+        )
+        .await;
+        assert!(app.is_agent_busy(), "the turn still runs");
+        app.inject_input("then run the tests");
+        app.dispatch_action(Action::Submit).await;
+        assert_eq!(app.queued_len(), 1, "queued, not sent");
+        assert!(rx.try_recv().is_err(), "nothing sent mid-turn");
+
+        event(&mut app, sven_vocab::SessionEvent::TurnComplete).await;
+        match rx.try_recv() {
+            Ok(AgentRequest::Submit { content, .. }) => assert_eq!(content, "then run the tests"),
+            other => panic!("expected the queued message, got {other:?}"),
+        }
+    }
+
     /// Sending a queued message now steers the running turn instead of
     /// stopping it: it joins the conversation where the turn takes it, and
     /// one the turn ends without is the next message.

@@ -129,6 +129,14 @@ async fn generate_title_with_config(
 /// [`McpManager`].
 type McpToolsSource = Box<dyn Fn() -> Vec<Arc<dyn sven_tool_api::Tool>> + Send + Sync>;
 
+/// Tells the frontend the session cannot go on, and ends the answer it may
+/// be waiting for: an error is a diagnostic, never the end of a turn, so a
+/// failure that leaves no turn running says so with `TurnComplete` too.
+async fn end_with_error(tx: &mpsc::Sender<AgentEvent>, message: String) {
+    let _ = tx.send(AgentEvent::Error(message)).await;
+    let _ = tx.send(AgentEvent::TurnComplete).await;
+}
+
 /// Background task that owns an HSM-kernel session and forwards its
 /// [`AgentEvent`] stream back to the frontend.
 ///
@@ -218,7 +226,7 @@ pub(crate) async fn run_kernel_session_task(
     {
         Ok(opened) => opened,
         Err(e) => {
-            let _ = tx.send(AgentEvent::Error(format!("{e:#}"))).await;
+            end_with_error(&tx, format!("{e:#}")).await;
             return;
         }
     };
@@ -245,7 +253,7 @@ pub(crate) async fn run_kernel_session_task(
                 // the kernel with the new policy/provider, seeded with the
                 // history accumulated so far so context carries across.
                 if let Err(e) = session.submit(content, mode_override, model_override).await {
-                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                    end_with_error(&tx, e.to_string()).await;
                     break;
                 }
             }
@@ -264,16 +272,14 @@ pub(crate) async fn run_kernel_session_task(
                     .resubmit(messages, new_user_content, mode_override, model_override)
                     .await
                 {
-                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                    end_with_error(&tx, e.to_string()).await;
                     break;
                 }
             }
 
             AgentRequest::Steer { content } => {
                 if !session.steer(content, Vec::new()).await {
-                    let _ = tx
-                        .send(AgentEvent::Error("the agent session has stopped".into()))
-                        .await;
+                    end_with_error(&tx, "the agent session has stopped".into()).await;
                     break;
                 }
             }
@@ -318,7 +324,7 @@ pub(crate) async fn run_kernel_session_task(
                         let _ = tx.send(AgentEvent::TurnComplete).await;
                     }
                     Err(e) => {
-                        let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                        end_with_error(&tx, e.to_string()).await;
                         break;
                     }
                 }
@@ -336,7 +342,7 @@ pub(crate) async fn run_kernel_session_task(
                     }
                 }
                 Err(e) => {
-                    let _ = tx.send(AgentEvent::Error(e.to_string())).await;
+                    end_with_error(&tx, e.to_string()).await;
                     break;
                 }
             },
