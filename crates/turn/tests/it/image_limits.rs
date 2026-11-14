@@ -109,13 +109,18 @@ async fn a_pixel_total_over_the_limit_leaves_out_the_oldest_images() {
     assert_eq!(request[2].image_urls().len(), 1);
 }
 
+/// A server that states no limit still gets only the newest images: every
+/// image is sent again with every request, and an older one is still a file
+/// of the conversation to attach again (`MAX_INLINE_IMAGES`).
 #[tokio::test]
-async fn a_server_that_states_no_limit_gets_every_image() {
+async fn a_server_that_states_no_limit_gets_the_newest_images() {
+    use sven_model::sanitize::MAX_INLINE_IMAGES;
     let held = conversation(&[(1, 1), (2, 1), (3, 1), (4, 1), (5, 1)]);
     let request = sent(&provider(ImageLimits::default()), held).await;
-    assert!(notes(&request).is_empty());
+    assert_eq!(notes(&request).len(), 5 - MAX_INLINE_IMAGES);
+    assert!(request[0].image_urls().is_empty(), "the oldest is left out");
     assert_eq!(
         request.iter().map(|m| m.image_urls().len()).sum::<usize>(),
-        5
+        MAX_INLINE_IMAGES
     );
 }
