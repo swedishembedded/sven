@@ -1177,10 +1177,13 @@ mod tests {
 
     /// Tool names that are also ordinary English, and so cannot be judged by
     /// spelling alone: `edit_file` says "context line" about unified diffs,
-    /// not about the `context` tool. Excluded rather than special-cased per
-    /// call site, because a check that reports things that are fine is a check
-    /// people learn to override.
-    const AMBIGUOUS: &[&str] = &["context", "memory", "system", "task", "todo", "skill"];
+    /// not about the `context` tool, and `run_model` says "compare models"
+    /// about models, not about the `models` tool. Excluded rather than
+    /// special-cased per call site, because a check that reports things that
+    /// are fine is a check people learn to override.
+    const AMBIGUOUS: &[&str] = &[
+        "context", "memory", "models", "system", "task", "todo", "skill",
+    ];
 
     /// Every tool the system prompt names must be a tool that exists.
     ///
