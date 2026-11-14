@@ -306,6 +306,10 @@ pub struct RemoteClient {
     /// both named on its command stream and uploads, which the server
     /// refuses once another run holds the environment.
     attached: Option<(Uuid, Uuid)>,
+    /// Whether event uploads go gzip-compressed: once the server has said it
+    /// takes gzip on an answer to one (`Accept-Encoding`), never to a server
+    /// too old to read one, and never again once one is refused (415).
+    compress_events: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RemoteClient {
@@ -318,6 +322,7 @@ impl RemoteClient {
             control_url: control_url.to_string(),
             token: token.to_string(),
             attached: None,
+            compress_events: std::sync::Arc::default(),
         })
     }
 
@@ -691,15 +696,15 @@ impl RemoteClient {
     ///
     /// Not stored; the caller sends the same batch again.
     pub async fn post_events(&self, batch: &EventBatch) -> anyhow::Result<()> {
-        let response = self
-            .http
-            .post(self.url("events"))
-            .query(&self.environment_query())
-            .bearer_auth(&self.token)
-            .timeout(REQUEST_TIMEOUT)
-            .json(batch)
-            .send()
-            .await?;
+        use std::sync::atomic::Ordering::Relaxed;
+        let compressed = self.compress_events.load(Relaxed);
+        let mut response = self.send_events(batch, compressed).await?;
+        if compressed && response.status() == reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE {
+            self.compress_events.store(false, Relaxed);
+            response = self.send_events(batch, false).await?;
+        } else if !compressed && sven_model_drivers::compression::takes_gzip(response.headers()) {
+            self.compress_events.store(true, Relaxed);
+        }
         if response.status().as_u16() == 409 {
             return Err(superseded(response).await.into());
         }
@@ -709,6 +714,31 @@ impl RemoteClient {
             response.status()
         );
         Ok(())
+    }
+}
+
+impl RemoteClient {
+    /// Sends `batch`, gzip-compressed when `compressed`.
+    async fn send_events(
+        &self,
+        batch: &EventBatch,
+        compressed: bool,
+    ) -> anyhow::Result<reqwest::Response> {
+        let request = self
+            .http
+            .post(self.url("events"))
+            .query(&self.environment_query())
+            .bearer_auth(&self.token)
+            .timeout(REQUEST_TIMEOUT);
+        let request = if compressed {
+            request
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .header(reqwest::header::CONTENT_ENCODING, "gzip")
+                .body(sven_model_drivers::compression::gzip_json(batch)?)
+        } else {
+            request.json(batch)
+        };
+        Ok(request.send().await?)
     }
 }
 
@@ -763,6 +793,68 @@ fn media_type(path: &std::path::Path) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A host's uploads go compressed once the server says it takes gzip, and
+    /// plainly again, for good, once one is refused (415): an older server
+    /// is never sent a body it cannot read.
+    #[tokio::test]
+    async fn event_uploads_go_compressed_once_the_server_takes_them() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let (seen, mut encodings) = tokio::sync::mpsc::unbounded_channel::<Option<String>>();
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let (read, mut write) = stream.into_split();
+                let mut reader = BufReader::new(read);
+                let (mut line, mut length, mut encoding) = (String::new(), 0usize, None);
+                reader.read_line(&mut line).await.unwrap();
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).await.unwrap();
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((k, v)) = line.trim().split_once(": ") {
+                        if k.eq_ignore_ascii_case("content-length") {
+                            length = v.parse().unwrap();
+                        }
+                        if k.eq_ignore_ascii_case("content-encoding") {
+                            encoding = Some(v.to_string());
+                        }
+                    }
+                }
+                let mut body = vec![0u8; length];
+                reader.read_exact(&mut body).await.unwrap();
+                let status = if encoding.is_some() {
+                    "415 Unsupported Media Type"
+                } else {
+                    "200 OK"
+                };
+                let _ = seen.send(encoding);
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nAccept-Encoding: zstd, gzip\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = write.write_all(reply.as_bytes()).await;
+            }
+        });
+        let client = RemoteClient::new(&format!("{base}/api"), "token").unwrap();
+        let batch: EventBatch =
+            serde_json::from_value(serde_json::json!({ "run": Uuid::nil() })).unwrap();
+        client.post_events(&batch).await.unwrap();
+        client.post_events(&batch).await.unwrap();
+        client.post_events(&batch).await.unwrap();
+        let mut got = Vec::new();
+        for _ in 0..4 {
+            got.push(encodings.recv().await.unwrap());
+        }
+        assert_eq!(
+            got,
+            [None, Some("gzip".to_string()), None, None],
+            "plain, then compressed (refused) and sent again plainly, then plainly for good"
+        );
+    }
 
     /// Nothing a sign-in sends goes off the server's origin: the control and
     /// model APIs, the MCP endpoint and where its tokens are traded.

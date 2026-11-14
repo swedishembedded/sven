@@ -98,6 +98,13 @@ pub struct OpenAICompatProvider {
     /// leave the field out. The caller post-parses a structured answer
     /// either way, so the constraint is an optimisation, not the contract.
     response_format_refused: std::sync::atomic::AtomicBool,
+    /// Whether this server may be sent compressed bodies at all: only the
+    /// sven service, until it refuses one (415).
+    compression_offered: std::sync::atomic::AtomicBool,
+    /// Whether a completion request goes gzip-compressed: once the server
+    /// has said it takes gzip (`Accept-Encoding` on an answer, RFC 7694), so
+    /// a service too old to read one is never sent one.
+    compress_requests: std::sync::atomic::AtomicBool,
     /// Whether the server is a local one (brain, vLLM, llama.cpp): past turns'
     /// reasoning goes back as `reasoning_content`, which its chat template
     /// renders, and it gets the thinking controls. Hosted APIs define reasoning
@@ -146,6 +153,8 @@ impl OpenAICompatProvider {
             extra_body,
             server_root: Some(derive_server_root(base)),
             response_format_refused: std::sync::atomic::AtomicBool::new(false),
+            compression_offered: std::sync::atomic::AtomicBool::new(false),
+            compress_requests: std::sync::atomic::AtomicBool::new(false),
             local_endpoint: crate::discovery::is_local_endpoint(base),
         }
     }
@@ -181,7 +190,7 @@ impl OpenAICompatProvider {
             Some(rewrite) => rewrite(cfg.driver_options.clone()),
             None => cfg.driver_options.clone(),
         };
-        Self::new(
+        let provider = Self::new(
             driver.id,
             cfg.name.clone(),
             api_key,
@@ -191,7 +200,15 @@ impl OpenAICompatProvider {
             headers,
             AuthStyle::Bearer,
             options,
-        )
+        );
+        // The sven service takes a compressed body once it says so: the whole
+        // conversation is sent with every step, and its JSON compresses
+        // several times over.
+        provider.compression_offered.store(
+            driver.id == crate::sven_service::PROVIDER,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        provider
     }
 
     /// A plain OpenAI-protocol endpoint named `openai`, for an embedder that
@@ -247,12 +264,23 @@ impl OpenAICompatProvider {
             extra_body,
             server_root: None,
             response_format_refused: std::sync::atomic::AtomicBool::new(false),
+            compression_offered: std::sync::atomic::AtomicBool::new(false),
+            compress_requests: std::sync::atomic::AtomicBool::new(false),
             local_endpoint: false,
         }
     }
 
     /// Attach this provider's auth to a request builder, matching the pattern
     /// used throughout this module (`list_models`, `complete`).
+    /// Starts compressing request bodies once the server says it takes gzip
+    /// (`Accept-Encoding` on an answer), if it may be sent them at all.
+    fn learn_encodings(&self, headers: &reqwest::header::HeaderMap) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if crate::compression::takes_gzip(headers) && self.compression_offered.load(Relaxed) {
+            self.compress_requests.store(true, Relaxed);
+        }
+    }
+
     fn authed(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.api_key {
             Some(key) => match self.auth_style {
@@ -682,7 +710,18 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         tracing::trace!(request_body = ?body, "full completion request");
 
         let request = |body: &Value| -> anyhow::Result<reqwest::RequestBuilder> {
-            let mut http_req = self.client.post(&self.chat_url).json(body);
+            let mut http_req = if self
+                .compress_requests
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.client
+                    .post(&self.chat_url)
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .header(reqwest::header::CONTENT_ENCODING, "gzip")
+                    .body(crate::compression::gzip_json(body)?)
+            } else {
+                self.client.post(&self.chat_url).json(body)
+            };
             http_req = self.authed(http_req);
             for (name, val) in &self.extra_headers {
                 http_req = http_req.header(name.as_str(), val.as_str());
@@ -699,6 +738,21 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             .send()
             .await
             .with_context(|| format!("{} request failed", self.driver_name))?;
+        // A server that takes no encoded body says so (415): ask it again
+        // plainly, and plainly from then on.
+        if resp.status() == reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE
+            && self
+                .compress_requests
+                .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            self.compression_offered
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            resp = request(&body)?
+                .send()
+                .await
+                .with_context(|| format!("{} request failed", self.driver_name))?;
+        }
+        self.learn_encodings(resp.headers());
 
         if !resp.status().is_success() {
             let status = resp.status();

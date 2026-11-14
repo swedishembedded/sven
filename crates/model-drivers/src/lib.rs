@@ -29,6 +29,7 @@ mod aws;
 mod block_turns;
 pub mod brain_local;
 mod cohere;
+pub mod compression;
 pub mod config;
 pub mod credentials;
 pub mod dbus;

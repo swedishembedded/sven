@@ -12,6 +12,7 @@ mod common;
 
 mod all_drivers_mock;
 mod brain_thinking_wire;
+mod compression_wire;
 mod dbus_provider_test;
 mod discovery_tests;
 mod driver_tests;
