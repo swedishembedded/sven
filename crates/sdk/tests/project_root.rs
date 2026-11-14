@@ -245,6 +245,45 @@ async fn the_audit_log_is_kept_out_of_the_project_and_the_process_cwd() {
     );
 }
 
+#[tokio::test]
+async fn a_host_named_audit_log_receives_the_sessions_audit_records() {
+    let _serial = exclusive().await;
+    let ws = workspace();
+    // An embedding host keeps the audit trail with its own run state (a
+    // test's scratch directory, a campaign's run directory), not in a file
+    // shared by every session that ever ran from the same directory.
+    let log = ws.root.join("run-state").join("audit.jsonl");
+    let engine = Engine::builder()
+        .model_provider(Arc::new(ScriptedMockProvider::new(vec![
+            vec![
+                ResponseEvent::ToolCall {
+                    index: 0,
+                    id: "c0".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "missing.txt"}).to_string(),
+                },
+                ResponseEvent::Done,
+            ],
+            vec![ResponseEvent::TextDelta("done".into()), ResponseEvent::Done],
+        ])))
+        .toolset(Toolset::coding())
+        .project_root(&ws.root)
+        .audit_log(&log)
+        .build()
+        .expect("an engine with an existing root builds");
+    let mut agent = engine.agent("agent");
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), agent.send("work"))
+        .await
+        .expect("the run finishes")
+        .expect("an outcome");
+    assert_eq!(outcome.reply, "done");
+    let records = std::fs::read_to_string(&log).expect("the named audit log is written");
+    assert!(
+        records.lines().any(|line| line.contains("read_file")),
+        "{records}"
+    );
+}
+
 #[test]
 fn a_root_that_is_not_a_directory_is_refused_when_the_engine_is_built() {
     let ws = workspace();

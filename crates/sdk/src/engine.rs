@@ -36,6 +36,9 @@ pub struct Engine {
     toolset: Toolset,
     machines: Option<Arc<sven_machines::ModeRegistry>>,
     paths: sven_tool_api::PathScope,
+    /// Where every session's audit trail goes, when the host named a file
+    /// ([`EngineBuilder::audit_log`]); `None` keeps the default location.
+    audit_log: Option<std::path::PathBuf>,
     /// The most a harness run on this engine may do, whatever its document
     /// declares; `None` leaves the document's own declaration the whole cap.
     host_capabilities: Option<Arc<[sven_hsm::ToolCapability]>>,
@@ -269,6 +272,16 @@ impl Engine {
         self.paths.root()
     }
 
+    /// The audit log the host named, when it named one.
+    pub(crate) fn audit_log(&self) -> Option<&std::path::Path> {
+        self.audit_log.as_deref()
+    }
+
+    /// The audit log the host named, else `fallback`.
+    pub(crate) fn audit_log_or(&self, fallback: std::path::PathBuf) -> std::path::PathBuf {
+        self.audit_log.clone().unwrap_or(fallback)
+    }
+
     /// The host's capability ceiling for harness runs, when one is set.
     pub(crate) fn host_policy(&self) -> Option<sven_hsm::PermissionPolicy> {
         self.host_capabilities.as_ref().map(|caps| {
@@ -338,6 +351,7 @@ pub struct EngineBuilder {
     toolset: Toolset,
     machines: Option<sven_machines::ModeRegistry>,
     project_root: Option<std::path::PathBuf>,
+    audit_log: Option<std::path::PathBuf>,
     host_capabilities: Option<Vec<sven_hsm::ToolCapability>>,
     model_roles: std::collections::BTreeMap<String, Arc<dyn ModelProvider>>,
 }
@@ -428,8 +442,7 @@ impl EngineBuilder {
     ///
     /// The built-in file tools resolve relative paths against it and refuse
     /// any path that resolves outside it, symlinks included; the `shell`
-    /// tool starts there and refuses a `workdir` outside it; the audit log
-    /// is written to `<root>/.sven/audit.jsonl`; and skills, sub-agent
+    /// tool starts there and refuses a `workdir` outside it; and skills, sub-agent
     /// personas, project knowledge and the project context file are
     /// discovered from it as the CLI discovers them from its project.
     ///
@@ -439,11 +452,27 @@ impl EngineBuilder {
     /// the agent in a sandbox. Tools registered with [`Self::tool`] are the
     /// application's own and are not confined.
     ///
-    /// Without a root, paths resolve against the process working directory
-    /// and the audit log is written beneath it.
+    /// Without a root, paths resolve against the process working directory.
+    /// Neither form writes the audit log into the tree: see
+    /// [`Self::audit_log`].
     #[must_use]
     pub fn project_root(mut self, root: impl Into<std::path::PathBuf>) -> Self {
         self.project_root = Some(root.into());
+        self
+    }
+
+    /// Writes every session's audit trail to `path` (hash-chained JSONL,
+    /// appended under a sidecar `<path>.lock`).
+    ///
+    /// Without it the log goes to the user's state directory, one file per
+    /// working directory (the project root, else the process working
+    /// directory), which every session ever run from that directory shares.
+    /// A host that runs many sessions, tests among them, names a file in its
+    /// own run state so its trail is kept with the run and its sessions do
+    /// not contend for one lock with unrelated ones.
+    #[must_use]
+    pub fn audit_log(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.audit_log = Some(path.into());
         self
     }
 
@@ -607,6 +636,7 @@ impl EngineBuilder {
             toolset: self.toolset,
             machines: self.machines.map(Arc::new),
             paths,
+            audit_log: self.audit_log,
             host_capabilities: self.host_capabilities.map(Into::into),
             model_roles: Arc::new(self.model_roles),
             harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),

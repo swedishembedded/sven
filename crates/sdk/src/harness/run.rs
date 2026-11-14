@@ -412,7 +412,7 @@ impl HarnessRun {
             .with_child_records(children.clone())
             .with_allow_interactive_oauth(false)
             .with_runtime_context(runtime_ctx)
-            .with_audit_log_path(scratch.audit_log())
+            .with_audit_log_path(self.engine.audit_log_or(scratch.audit_log()))
             .with_builtin_tools(self.engine.toolset().builtin())
             .with_extra_tools(harness_tools(
                 root.as_deref(),

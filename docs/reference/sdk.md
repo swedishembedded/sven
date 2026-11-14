@@ -123,8 +123,9 @@ With a root set:
   a `workdir` outside it. **`task`** starts its sub-agent in the root and
   holds its `workdir` inside it the same way.
 - **The audit log** goes to the user's state directory
-  (`$XDG_STATE_HOME/sven/audit/<root path>.jsonl`), never into the root, and
-  the verifier checks paths relative to the root.
+  (`$XDG_STATE_HOME/sven/audit/<root path>.jsonl`), never into the root, unless
+  the host names a file with `EngineBuilder::audit_log`; and the verifier
+  checks paths relative to the root.
 - **Discovery** runs from the root as the CLI runs it from its project:
   skills, sub-agent personas, `.sven/knowledge/`, the project context file
   (`AGENTS.md` and friends) and the git summary in the system prompt.
@@ -165,7 +166,16 @@ ones; neither relies on detecting a violation afterwards. Both are pinned by
 `crates/sdk/tests/it/project_root_children.rs`.
 
 Without a root, paths resolve against the process working directory as they
-always have, the audit log is written beneath it, and nothing is discovered.
+always have, the audit log goes to the user's state directory under the
+working directory's path, and nothing is discovered.
+
+**Where the audit trail goes.** By default every session run from one directory
+appends to one shared file in the user's state directory. A host that runs
+many sessions (a test suite, an embedding application with its own run state)
+names a file with `EngineBuilder::audit_log(path)`: every agent and harness run
+on that engine appends there instead, so the trail is kept with the host's run
+and unrelated sessions do not contend for one lock. Pinned by
+`crates/sdk/tests/project_root.rs`.
 The CLI and TUI never confine their tools.
 
 ## Human gates

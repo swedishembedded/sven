@@ -497,7 +497,8 @@ Every run owns a private directory. Its path is `{{ run.scratchpad }}` in
 prompts, system texts and gate arguments and `stdin`, and a command gate also
 finds it in its environment as `SVEN_SCRATCHPAD`. It holds what the run needs
 to keep but must not put in the workspace: the run's audit log
-(`audit.jsonl`; nothing of the run's own is written to `<workspace>/.sven`),
+(`audit.jsonl`, or the file the host named with `EngineBuilder::audit_log`;
+nothing of the run's own is written to `<workspace>/.sven`),
 the trajectory file a gate reads, and whatever the workflow's gates leave there.
 
 Where it is, in order of precedence:

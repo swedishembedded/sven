@@ -412,6 +412,9 @@ impl Agent {
         if let Some(snapshot) = self.state.kernel.clone() {
             builder = builder.with_kernel_snapshot(snapshot);
         }
+        if let Some(log) = self.engine.audit_log() {
+            builder = builder.with_audit_log_path(log.to_path_buf());
+        }
 
         let bundle = builder.build_session().await?;
         if let Some((approval_id, decision)) = &parked_decision {
