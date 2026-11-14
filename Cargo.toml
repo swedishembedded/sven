@@ -95,7 +95,7 @@ exclude = ["third_party/rmcp"]
 # so every ATIF trajectory sven writes carries the real release version with
 # no runtime plumbing required.
 [workspace.package]
-version = "4.15.2"
+version = "5.0.0"
 
 [workspace.dependencies]
 libc         = "0.2"
