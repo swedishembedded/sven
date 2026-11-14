@@ -414,7 +414,7 @@ impl EffectExecutor for ToolExecutor {
                 let call = tool_call.clone();
                 let task = sven_rt::spawn(sven_tool_api::call_records::scope(
                     recorder.clone(),
-                    async move { registry.execute(&call).await },
+                    async move { sized_for_model(registry.execute(&call).await) },
                 ));
                 let abort = task.abort_handle();
                 let finished = tokio::select! {
@@ -636,6 +636,29 @@ fn finished_view(output: &ToolOutput) -> FinishedView {
     }
 }
 
+/// `output` with each image it returned at the size a model reads it
+/// (`sven_image::for_model`): the conversation keeps, and every later request
+/// carries, that size, never the tool's full-size original, which stays the
+/// tool's file. Done in the call's own task, never the executor's loop.
+#[cfg(feature = "media")]
+fn sized_for_model(mut output: ToolOutput) -> ToolOutput {
+    for part in &mut output.parts {
+        if let sven_tool_api::ToolOutputPart::Image(url) = part {
+            if let Some(fitted) = sven_image::for_model(url) {
+                *url = fitted;
+            }
+        }
+    }
+    output
+}
+
+/// Without the image codecs (the minimal SDK), images stay as the tool gave
+/// them; the per-request limits still bound what a request carries.
+#[cfg(not(feature = "media"))]
+fn sized_for_model(output: ToolOutput) -> ToolOutput {
+    output
+}
+
 /// The history message of a tool result: its (truncated) text, followed by
 /// the images and audio the tool returned, so a model that accepts them sees
 /// them. Which of them a given model is sent is decided per turn
@@ -662,6 +685,53 @@ fn with_media(call_id: String, text: String, parts: &[sven_tool_api::ToolOutputP
     let mut content = vec![ToolContentPart::Text { text }];
     content.extend(media);
     Message::tool_result_with_parts(call_id, content)
+}
+
+#[cfg(all(test, feature = "media"))]
+mod sized_for_model_tests {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+
+    use super::*;
+
+    /// What a tool returns is what the conversation keeps, at the size a
+    /// model reads: a generated 3000x2000 picture goes in at the model's long
+    /// edge, much smaller; its text is untouched.
+    #[test]
+    fn a_tools_image_is_kept_at_the_size_a_model_reads() {
+        let mut state = 7u32;
+        let picture =
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(3000, 2000, |_, _| {
+                state = state.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let [r, g, b, _] = state.to_le_bytes();
+                image::Rgb([r, g, b])
+            }));
+        let mut png = std::io::Cursor::new(Vec::new());
+        picture.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let url = format!("data:image/png;base64,{}", B64.encode(png.into_inner()));
+        let output = ToolOutput {
+            parts: vec![
+                sven_tool_api::ToolOutputPart::Text("made it".into()),
+                sven_tool_api::ToolOutputPart::Image(url.clone()),
+            ],
+            ..ToolOutput::ok("c1", "made it")
+        };
+
+        let sized = sized_for_model(output);
+
+        let sven_tool_api::ToolOutputPart::Image(kept) = &sized.parts[1] else {
+            panic!("the image stays an image");
+        };
+        assert!(
+            kept.len() < url.len() / 4,
+            "{} -> {}",
+            url.len(),
+            kept.len()
+        );
+        let (_, bytes) = sven_image::parse_data_url(kept).unwrap();
+        let fitted = image::load_from_memory(&bytes).unwrap();
+        assert_eq!(fitted.width(), sven_image::MODEL_LONG_EDGE);
+        assert_eq!(sized.content, "made it");
+    }
 }
 
 #[cfg(test)]

@@ -6,10 +6,10 @@
 //! This crate converts local image files into data URLs that can be embedded
 //! directly in multimodal LLM API requests.
 //!
-//! ## Size limits
-//! Images wider than [`MAX_WIDTH`] or taller than [`MAX_HEIGHT`] are downscaled
-//! while preserving aspect ratio before encoding.  This keeps request payloads
-//! reasonable and aligns with provider limits (most cap uploads at ~20 MB).
+//! ## Size
+//! Every image is given to a model at the size the model reads it
+//! ([`model_size`]): fitted to [`MODEL_LONG_EDGE`] and encoded small, so a
+//! request carries no bytes the provider would scale away.
 //!
 //! ## Caching
 //! [`load_image`] transparently caches encoded results in an in-process
@@ -20,7 +20,6 @@
 pub mod black_screen;
 pub use black_screen::is_flag_secure_black;
 
-use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -29,8 +28,10 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use sha2::Digest as _;
 
 pub use error::ImageError;
+pub use model_size::{encode_for_model, for_model, MODEL_LONG_EDGE, PNG_KEPT_UNDER};
 
 mod error;
+pub mod model_size;
 
 // ─── LRU image cache ──────────────────────────────────────────────────────────
 
@@ -47,11 +48,6 @@ fn image_cache() -> &'static Mutex<lru::LruCache<CacheKey, EncodedImage>> {
         ))
     })
 }
-
-/// Maximum image width in pixels before downscaling.
-pub const MAX_WIDTH: u32 = 2048;
-/// Maximum image height in pixels before downscaling.
-pub const MAX_HEIGHT: u32 = 2048;
 
 /// An image that has been loaded, (optionally) resized, and encoded as base64.
 #[derive(Debug, Clone)]
@@ -149,29 +145,9 @@ fn encode_image_bytes(raw: &[u8], hint_path: &Path) -> Result<EncodedImage, Imag
         })
         .map_err(|_| ImageError::UnsupportedFormat(hint_path.display().to_string()))?;
 
-    let use_png = fmt == image::ImageFormat::Png;
-
     let img = image::load_from_memory_with_format(raw, fmt)
         .map_err(|e| ImageError::Decode(hint_path.display().to_string(), e.to_string()))?;
-
-    let img = resize_if_needed(img);
-
-    let mut out = Cursor::new(Vec::new());
-    if use_png {
-        img.write_to(&mut out, image::ImageFormat::Png)
-            .map_err(|e| ImageError::Encode(e.to_string()))?;
-        Ok(EncodedImage {
-            mime_type: "image/png".into(),
-            bytes: out.into_inner(),
-        })
-    } else {
-        img.write_to(&mut out, image::ImageFormat::Jpeg)
-            .map_err(|e| ImageError::Encode(e.to_string()))?;
-        Ok(EncodedImage {
-            mime_type: "image/jpeg".into(),
-            bytes: out.into_inner(),
-        })
-    }
+    encode_for_model(img)
 }
 
 /// Parse a data URL and return `(mime_type, raw_bytes)`.
@@ -189,19 +165,6 @@ pub fn parse_data_url(data_url: &str) -> Result<(String, Vec<u8>), ImageError> {
         .decode(b64)
         .map_err(|e| ImageError::Base64(e.to_string()))?;
     Ok((mime, bytes))
-}
-
-fn resize_if_needed(img: image::DynamicImage) -> image::DynamicImage {
-    let (w, h) = (img.width(), img.height());
-    if w <= MAX_WIDTH && h <= MAX_HEIGHT {
-        return img;
-    }
-    let ratio_w = MAX_WIDTH as f64 / w as f64;
-    let ratio_h = MAX_HEIGHT as f64 / h as f64;
-    let ratio = ratio_w.min(ratio_h);
-    let new_w = ((w as f64 * ratio).round() as u32).max(1);
-    let new_h = ((h as f64 * ratio).round() as u32).max(1);
-    img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3)
 }
 
 // ─── Raw HWC f32 pixels (D-Bus wire convention) ──────────────────────────────
@@ -286,6 +249,7 @@ pub fn is_image_extension(ext: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn parse_data_url_valid() {

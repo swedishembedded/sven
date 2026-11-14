@@ -6,6 +6,7 @@ description  = "Effect executors for the Sven HSM runtime"
 license      = "Apache-2.0"
 
 [dependencies]
+sven-image    = { path = "../image", optional = true }
 sven-chunks   = { path = "../chunks" }
 sven-control  = { path = "../control" }
 sven-cost     = { path = "../cost" }
@@ -31,7 +32,9 @@ tracing       = { workspace = true }
 sven-tools-fs = { path = "../tools-fs", default-features = false, optional = true }
 
 [features]
-media = ["dep:sven-tools-fs", "sven-tools-fs/media"]
+# Images and audio a tool returns are fitted to the size a model reads them
+# (`sven_image::for_model`); without it they are kept as the tool gave them.
+media = ["dep:sven-tools-fs", "sven-tools-fs/media", "dep:sven-image"]
 
 # Native only: the audit log (a hash-chained file) and the verifiers (files,
 # sockets, HTTP probes). A browser session has neither slot; an effect for
@@ -54,6 +57,8 @@ sven-model-mock = { path = "../model-mock" }
 sven-workspace = { path = "../workspace" }
 futures     = { workspace = true }
 async-trait = { workspace = true }
+image       = { workspace = true }
+base64      = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio      = { workspace = true, features = ["test-util"] }
