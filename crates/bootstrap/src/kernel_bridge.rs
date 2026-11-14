@@ -29,6 +29,7 @@
 //! in any TUI code, and without creating a dependency cycle — every surface
 //! already depends on `sven-bootstrap`.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use sven_hsm::UiEvent;
@@ -42,36 +43,88 @@ use tracing::{info, warn};
 
 use crate::runtime_builder::{KernelChannels, RuntimeHandle, SessionBundle};
 
+/// The most events the bridge holds for a receiver that is not taking them.
+pub(crate) const BACKLOG: usize = 4096;
+
 /// Spawn the observation bridge: forward the kernel's outward [`UiEvent`]
 /// broadcast into `event_tx` as [`AgentEvent`]s until the observation channel
-/// closes (session shutdown).
+/// closes (session shutdown), then what it still holds.
 ///
-/// A lagging consumer skips events (the inward event queue remains the source
-/// of truth); a closed channel ends the task.
+/// The bridge never waits on `event_tx` while the kernel speaks, so the
+/// broadcast never laps it and drops an event at random (a turn's end among
+/// them, which would leave its client waiting for good). What the receiver
+/// has not taken is held, up to [`BACKLOG`]; past it, the oldest live update
+/// is let go (a text or thinking delta, tool progress, a token count: what a
+/// later event repeats in full), and the receiver is told once. A turn's
+/// end, its results and its errors are always kept.
 pub fn spawn_observation_bridge(
     mut obs_rx: broadcast::Receiver<UiEvent>,
     event_tx: mpsc::Sender<AgentEvent>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let mut held: VecDeque<AgentEvent> = VecDeque::new();
+        let mut told = false;
         loop {
-            match obs_rx.recv().await {
-                Ok(ev) => {
-                    if event_tx.send(ev).await.is_err() {
-                        // Consumer dropped the receiver — nothing left to feed.
+            tokio::select! {
+                biased;
+                permit = event_tx.reserve(), if !held.is_empty() => match permit {
+                    Ok(permit) => {
+                        permit.send(held.pop_front().expect("held is not empty"));
+                        if held.is_empty() {
+                            told = false;
+                        }
+                    }
+                    // Consumer dropped the receiver: nothing left to feed.
+                    Err(_) => return,
+                },
+                observed = obs_rx.recv() => match observed {
+                    Ok(event) => hold(&mut held, event, &mut told),
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "kernel bridge: lagged, skipped observations");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        info!("kernel bridge: observation channel closed, bridge exiting");
                         break;
                     }
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!(skipped = n, "kernel bridge: lagged, skipped observations");
-                    continue;
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    info!("kernel bridge: observation channel closed, bridge exiting");
-                    break;
-                }
+                },
+            }
+        }
+        for event in held {
+            if event_tx.send(event).await.is_err() {
+                return;
             }
         }
     })
+}
+
+/// Whether `event` is a live update a later event repeats in full.
+fn superseded_later(event: &AgentEvent) -> bool {
+    matches!(
+        event,
+        AgentEvent::TextDelta(_)
+            | AgentEvent::ThinkingDelta(_)
+            | AgentEvent::ToolProgress { .. }
+            | AgentEvent::TokenUsage { .. }
+    )
+}
+
+/// Holds `event` for the receiver, letting go of the oldest live update once
+/// [`BACKLOG`] are held; the first time, the receiver is told.
+fn hold(held: &mut VecDeque<AgentEvent>, event: AgentEvent, told: &mut bool) {
+    held.push_back(event);
+    if held.len() <= BACKLOG {
+        return;
+    }
+    if let Some(at) = held.iter().position(superseded_later) {
+        held.remove(at);
+        if !*told {
+            *told = true;
+            held.push_back(AgentEvent::Warning(
+                "Live updates were skipped while this view was not keeping up; the answer's end and results are kept."
+                    .into(),
+            ));
+        }
+    }
 }
 
 /// Spawn the user-question / approval bridge.
@@ -443,6 +496,61 @@ mod tests {
     fn tool_args() -> serde_json::Value {
         serde_json::json!({ "command": "ls" })
     }
+
+    /// A receiver that stops taking events (a server that stopped taking a
+    /// host's uploads) never makes the turn's end disappear: the bridge keeps
+    /// reading the kernel, holds what the receiver has not taken, and, past
+    /// its bound, lets go of live updates only, saying so once. The turn's
+    /// ends and complete texts arrive, in order.
+    #[tokio::test]
+    async fn a_stalled_receiver_still_gets_the_turns_end() {
+        let (obs_tx, obs_rx) = broadcast::channel(OBSERVATION_TEST_CAPACITY);
+        let (event_tx, mut event_rx) = mpsc::channel(1);
+        let bridge = spawn_observation_bridge(obs_rx, event_tx);
+        // Two turns, each speaking more than the receiver holds: the first
+        // one's end is followed by the second's updates.
+        for turn in ["first", "second"] {
+            for i in 0..3 * BACKLOG {
+                obs_tx.send(UiEvent::TextDelta(format!("{i} "))).unwrap();
+                if i % 64 == 0 {
+                    tokio::task::yield_now().await;
+                }
+            }
+            obs_tx
+                .send(UiEvent::TextComplete(format!("the {turn} answer")))
+                .unwrap();
+            obs_tx.send(UiEvent::TurnComplete).unwrap();
+        }
+        drop(obs_tx);
+
+        let mut seen = Vec::new();
+        while let Some(event) = event_rx.recv().await {
+            seen.push(event);
+        }
+        bridge.await.unwrap();
+        assert!(seen.len() <= BACKLOG + 4, "bounded: {}", seen.len());
+        let kept: Vec<&AgentEvent> = seen.iter().filter(|e| !superseded_later(e)).collect();
+        assert_eq!(
+            kept[1..],
+            [
+                &AgentEvent::TextComplete("the first answer".into()),
+                &AgentEvent::TurnComplete,
+                &AgentEvent::TextComplete("the second answer".into()),
+                &AgentEvent::TurnComplete,
+            ],
+            "every turn's end and text, in order, after the one warning"
+        );
+        assert_eq!(
+            seen.iter()
+                .filter(|e| matches!(e, AgentEvent::Warning(w) if w.contains("skipped")))
+                .count(),
+            1,
+            "said once"
+        );
+    }
+
+    /// The bridge's broadcast in the test above: the kernel's own size.
+    const OBSERVATION_TEST_CAPACITY: usize = 1024;
 
     /// The spawned observation bridge forwards a live `UiEvent` broadcast into
     /// the `AgentEvent` channel in order, and exits when the sink is dropped.
