@@ -28,6 +28,7 @@ pub mod cost;
 pub mod goal;
 pub mod harness;
 pub mod ledger;
+pub mod message;
 mod mode;
 pub mod notice;
 pub mod provenance;

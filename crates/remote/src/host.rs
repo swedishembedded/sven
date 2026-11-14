@@ -549,6 +549,10 @@ impl SessionActor {
 
     async fn answer(&mut self, text: String, attached: &[sven_vocab::ArtifactRef]) {
         println!("[{}] > {}", self.short(), printable(first_line(&text)));
+        // Every client keeps to this limit; a message over it never reaches the model.
+        if !sven_vocab::message::fits_message(&text) {
+            return self.fail(&sven_vocab::message::too_long(text.len())).await;
+        }
         // The server asking again for the answer this host was stopped in
         // the middle of: continue it, rather than start it over.
         let input = if self.unfinished.take().as_deref() == Some(text.as_str()) {
@@ -1997,6 +2001,40 @@ responses:
                 |(_, e)| matches!(e, AgentEvent::TextDelta(t) if t.contains("A turn is running"))
             ),
             "never refused: {seen:?}"
+        );
+    }
+
+    /// A message over the limit every client keeps to never reaches the
+    /// model: its answer ends at once, saying its size and to attach it.
+    #[tokio::test]
+    async fn a_message_over_the_limit_is_refused_saying_to_attach_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (actor, mut sent, mut asked) = scripted_session(
+            dir.path(),
+            r#"
+responses:
+  - match_type: contains
+    pattern: "a"
+    reply: "the model read it"
+"#,
+        )
+        .await;
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        let long = "a".repeat(sven_vocab::message::MAX_MESSAGE_BYTES + 1);
+        commands.send(typed(&long, "b", false)).await.unwrap();
+        let seen = events_until_ended(&mut sent, &mut asked, &commands, |_| None, "b").await;
+        task.abort();
+
+        assert_eq!(endings(&seen), ["b"], "{seen:?}");
+        assert!(
+            seen.iter().any(|(_, e)| matches!(e, AgentEvent::Error(m)
+                if m == &sven_vocab::message::too_long(long.len()))),
+            "refused, naming the size and the way out: {seen:?}"
+        );
+        assert!(
+            !text_of(&seen, "b").contains("the model read it"),
+            "{seen:?}"
         );
     }
 
