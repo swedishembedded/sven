@@ -22,9 +22,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures::StreamExt;
 use sven_bootstrap::Config;
-use sven_control::{ControlCommand, ControlEvent, HistoryEntry, SessionState};
+use sven_control::{ControlEvent, HistoryEntry, SessionState};
 use sven_frontend::SessionController;
 use sven_machines::AgentEvent;
 use sven_model::Message;
@@ -35,7 +34,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::approvals::{PendingApprovals, Turn, TurnAuthority};
-use crate::client::{EnvironmentTaken, RemoteClient, TokenRefused, UnreadableCommand};
+use crate::client::RemoteClient;
 use crate::login::RemoteLogin;
 use crate::sessions::{opening, SessionStore, CONTINUE_INTERRUPTED};
 use answers::{sleep_until, Answers};
@@ -47,6 +46,7 @@ mod commands;
 mod conversation_files;
 mod describe;
 mod hosted;
+mod inbox;
 mod opening;
 mod router;
 mod services;
@@ -55,6 +55,7 @@ mod steering;
 mod upload;
 
 pub use hosted::{restrict_to_hosted, restrict_to_working_dir, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
+use inbox::command_loop;
 use router::{list_slash_commands, router};
 use services::use_server_services;
 
@@ -179,62 +180,6 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
             }
             Ok(())
         }
-    }
-}
-
-async fn command_loop(
-    client: &RemoteClient,
-    routed: &mpsc::Sender<ControlCommand>,
-    uploads: &mpsc::Sender<Upload>,
-) -> anyhow::Result<()> {
-    let mut taken = 0u64;
-    let mut backoff = Duration::from_millis(500);
-    loop {
-        match client.commands(taken).await {
-            Ok(stream) => {
-                backoff = Duration::from_millis(500);
-                futures::pin_mut!(stream);
-                while let Some(item) = stream.next().await {
-                    let envelope = match item {
-                        Ok(envelope) => envelope,
-                        // Sent again from the same place on every reconnect, so
-                        // a command that cannot be read is passed over, not
-                        // retried: it would wedge this host for good.
-                        Err(e) => match e.downcast_ref::<UnreadableCommand>() {
-                            Some(UnreadableCommand { seq: Some(seq), .. }) => {
-                                tracing::warn!("skipping command {seq}: {e:#}");
-                                taken = taken.max(*seq);
-                                let _ = uploads.send(Upload::Ack(taken)).await;
-                                continue;
-                            }
-                            _ => {
-                                tracing::warn!("command stream: {e:#}");
-                                break;
-                            }
-                        },
-                    };
-                    // At-least-once delivery: a command already taken is
-                    // sent again after a reconnect and dropped here.
-                    if envelope.seq <= taken {
-                        continue;
-                    }
-                    taken = envelope.seq;
-                    let _ = routed.send(envelope.command).await;
-                    let _ = uploads.send(Upload::Ack(taken)).await;
-                }
-            }
-            // Signed out, or replaced by another `sven rc` here: retrying
-            // cannot help, and two hosts must never run one environment.
-            Err(e)
-                if e.downcast_ref::<TokenRefused>().is_some()
-                    || e.downcast_ref::<EnvironmentTaken>().is_some() =>
-            {
-                return Err(e)
-            }
-            Err(e) => tracing::warn!("command stream: {e:#}"),
-        }
-        tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(MAX_BACKOFF);
     }
 }
 
@@ -932,61 +877,6 @@ mod tests {
     use super::*;
     use sven_control::HistoryRole;
     use sven_model_drivers::ModelConfig;
-
-    /// A command this host cannot read is passed over: the server sends it
-    /// again from the same place on every reconnect, so retrying it would
-    /// keep the host from ever reaching the commands after it.
-    #[tokio::test]
-    async fn a_command_that_cannot_be_read_does_not_wedge_the_command_loop() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let (asked, mut asked_rx) = mpsc::unbounded_channel::<String>();
-        tokio::spawn(async move {
-            // The server keeps resending whatever follows `after`.
-            let poison = r#"{"seq":1,"command":{"type":"from_the_future"}}"#;
-            let cancel = r#"{"seq":2,"command":{"type":"cancel_session","session_id":"00000000-0000-0000-0000-000000000000"}}"#;
-            loop {
-                let (mut conn, _) = listener.accept().await.unwrap();
-                let mut buf = vec![0u8; 4096];
-                let n = conn.read(&mut buf).await.unwrap();
-                let request = String::from_utf8_lossy(&buf[..n]).to_string();
-                let after = request
-                    .split("after=")
-                    .nth(1)
-                    .unwrap()
-                    .split(['&', ' '])
-                    .next()
-                    .unwrap()
-                    .to_string();
-                asked.send(after.clone()).unwrap();
-                let body = if after == "0" {
-                    format!("data: {poison}\n\n")
-                } else {
-                    format!("data: {cancel}\n\n")
-                };
-                let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
-                let _ = conn.write_all(format!("{head}{body}").as_bytes()).await;
-            }
-        });
-        let client = RemoteClient::new(&format!("{base}/api"), "token").unwrap();
-        let (routed, mut routed_rx) = mpsc::channel(8);
-        let (uploads, mut uploads_rx) = mpsc::channel(8);
-        let looping = tokio::spawn(async move { command_loop(&client, &routed, &uploads).await });
-        let command = tokio::time::timeout(Duration::from_secs(10), routed_rx.recv())
-            .await
-            .expect("the command after the unreadable one arrives")
-            .unwrap();
-        assert!(matches!(command, ControlCommand::CancelSession { .. }));
-        assert_eq!(asked_rx.recv().await.unwrap(), "0");
-        assert_eq!(
-            asked_rx.recv().await.unwrap(),
-            "1",
-            "it resumed after the skipped command"
-        );
-        assert!(matches!(uploads_rx.recv().await, Some(Upload::Ack(1))));
-        looping.abort();
-    }
 
     /// A host searches through the server it signed in to, with its key:
     /// the server runs the search and bills that account.
