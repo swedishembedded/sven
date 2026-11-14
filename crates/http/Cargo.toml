@@ -16,5 +16,6 @@ tokio  = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio    = { workspace = true }
+rcgen    = "0.14"
 tokio-rustls = "0.26"
 rustls   = { workspace = true }

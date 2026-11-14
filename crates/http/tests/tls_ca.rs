@@ -2,27 +2,44 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //! A custom CA bundle makes a TLS server with an emulated name trusted, and
-//! only then: certificates stay verified. The fixtures are a throwaway CA and
-//! a leaf for `ntfy.sh` (valid 100 years, CA key discarded) that protect
-//! nothing; they exist so the test needs no network and no certificate tool.
+//! only then: certificates stay verified. Each test makes its own throwaway CA
+//! and a leaf for `ntfy.sh` in memory, so no key is kept in the repository and
+//! the test needs no network and no certificate tool.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair};
 use sven_http::egress::{EgressPolicy, NetworkConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio_rustls::TlsAcceptor;
 
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+/// A TLS server for `ntfy.sh` signed by a CA that exists only for this test.
+struct TlsServer {
+    port: u16,
+    /// The CA certificate (PEM) a client names as its `ca_bundle`; lives as
+    /// long as the server's handle.
+    ca_bundle: std::path::PathBuf,
+    _dir: tempfile::TempDir,
+}
 
-async fn tls_server() -> u16 {
+async fn tls_server() -> TlsServer {
     sven_http::ensure_crypto_provider();
-    let certs = CertificateDer::pem_file_iter(format!("{FIXTURES}/ntfy-leaf.pem"))
+    let ca_key = KeyPair::generate().unwrap();
+    let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let ca = ca_params.self_signed(&ca_key).unwrap();
+    let leaf_key = KeyPair::generate().unwrap();
+    let leaf = CertificateParams::new(vec!["ntfy.sh".to_string()])
         .unwrap()
-        .collect::<Result<Vec<_>, _>>()
+        .signed_by(&leaf_key, &Issuer::new(ca_params, ca_key))
         .unwrap();
-    let key = PrivateKeyDer::from_pem_file(format!("{FIXTURES}/ntfy-leaf.key.pem")).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let ca_bundle = dir.path().join("test-ca.pem");
+    std::fs::write(&ca_bundle, ca.pem()).unwrap();
+    let certs = vec![CertificateDer::from(leaf.der().to_vec())];
+    let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(leaf_key.serialize_der()));
     let config = tokio_rustls::rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)
@@ -51,15 +68,19 @@ async fn tls_server() -> u16 {
             });
         }
     });
-    port
+    TlsServer {
+        port,
+        ca_bundle,
+        _dir: dir,
+    }
 }
 
-fn policy(ca: bool) -> EgressPolicy {
+fn policy(ca: Option<&std::path::Path>) -> EgressPolicy {
     let mut resolve = BTreeMap::new();
     resolve.insert("ntfy.sh".to_string(), "127.0.0.1".parse().unwrap());
     EgressPolicy::from_config(&NetworkConfig {
         allow_hosts: Some(vec!["ntfy.sh".into()]),
-        ca_bundle: ca.then(|| format!("{FIXTURES}/test-ca.pem").into()),
+        ca_bundle: ca.map(Into::into),
         resolve,
         ..NetworkConfig::default()
     })
@@ -68,11 +89,11 @@ fn policy(ca: bool) -> EgressPolicy {
 
 #[tokio::test]
 async fn the_bundle_authority_is_trusted_and_without_it_the_certificate_is_not() {
-    let port = tls_server().await;
-    let url = format!("https://ntfy.sh:{port}/");
+    let server = tls_server().await;
+    let url = format!("https://ntfy.sh:{}/", server.port);
     sven_http::ensure_crypto_provider();
 
-    let trusting = policy(true)
+    let trusting = policy(Some(&server.ca_bundle))
         .apply(reqwest::Client::builder(), None)
         .build()
         .unwrap();
@@ -88,7 +109,7 @@ async fn the_bundle_authority_is_trusted_and_without_it_the_certificate_is_not()
         "ok"
     );
 
-    let strict = policy(false)
+    let strict = policy(None)
         .apply(reqwest::Client::builder(), None)
         .build()
         .unwrap();
@@ -153,12 +174,12 @@ async fn connect_proxy(upstream: u16) -> (u16, tokio::sync::mpsc::Receiver<(Stri
 #[tokio::test]
 async fn https_goes_through_an_authenticating_connect_proxy_with_the_bundle_trusted() {
     let tls = tls_server().await;
-    let (proxy, mut seen) = connect_proxy(tls).await;
+    let (proxy, mut seen) = connect_proxy(tls.port).await;
     sven_http::ensure_crypto_provider();
     let config = |login: &str| NetworkConfig {
         allow_hosts: Some(vec!["ntfy.sh".into()]),
         proxy: Some(format!("http://{login}127.0.0.1:{proxy}")),
-        ca_bundle: Some(format!("{FIXTURES}/test-ca.pem").into()),
+        ca_bundle: Some(tls.ca_bundle.clone()),
         ..NetworkConfig::default()
     };
     let client = |c: &NetworkConfig| {
