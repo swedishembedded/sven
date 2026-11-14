@@ -694,13 +694,13 @@ mod sized_for_model_tests {
     use super::*;
 
     /// What a tool returns is what the conversation keeps, at the size a
-    /// model reads: a generated 3000x2000 picture goes in at the model's long
-    /// edge, much smaller; its text is untouched.
+    /// model reads: a 4000x3000 picture goes in at the model's long edge, much
+    /// smaller; its text is untouched.
     #[test]
     fn a_tools_image_is_kept_at_the_size_a_model_reads() {
         let mut state = 7u32;
         let picture =
-            image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(3000, 2000, |_, _| {
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(4000, 3000, |_, _| {
                 state = state.wrapping_mul(1_103_515_245).wrapping_add(12345);
                 let [r, g, b, _] = state.to_le_bytes();
                 image::Rgb([r, g, b])

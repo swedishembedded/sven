@@ -10,11 +10,12 @@
 //! and no larger.
 //!
 //! Providers scale every image down to the size their model reads before it
-//! is read: Claude to a long edge of 1568 px (2576 px on its high-resolution
-//! models), OpenAI's high detail to 2048 px and, for most images, a short
-//! side of 768 px. Bytes beyond that are sent, and resent with every later
-//! request of the conversation, for nothing. So every image that enters a
-//! conversation is fitted once to [`MODEL_LONG_EDGE`] and encoded small. A
+//! is read: Claude to a long edge of 2576 px on its high-resolution models
+//! (1568 px on the others), OpenAI's high detail to 2048 px. Bytes beyond the
+//! largest of those are sent, and resent with every later request of the
+//! conversation, for nothing. So every image that enters a conversation is
+//! fitted once to [`MODEL_LONG_EDGE`], the largest, so no model sees less
+//! than it would, and encoded small. A
 //! screenshot, a diagram or a drawing (few colours) stays PNG, so its text
 //! stays sharp, unless even that is over [`PNG_KEPT_UNDER`]; a photo or a
 //! rendering (many colours) becomes JPEG. The
@@ -27,12 +28,16 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 
 use crate::{parse_data_url, EncodedImage, ImageError};
 
-/// The longest edge, in pixels, an image is given to a model.
-pub const MODEL_LONG_EDGE: u32 = 1568;
+/// The longest edge, in pixels, an image is given to a model: the largest a
+/// current model reads (Claude's high-resolution models), so none is given
+/// less than it would look at; others scale it down themselves.
+pub const MODEL_LONG_EDGE: u32 = 2576;
 
 /// A screenshot or diagram whose PNG stays under this many bytes stays PNG;
-/// over it, it becomes a high-quality JPEG.
-pub const PNG_KEPT_UNDER: usize = 1024 * 1024;
+/// over it, it becomes a high-quality JPEG. At the model's size a full
+/// screen of text is about 1.6 MB as PNG, under half again its JPEG, and
+/// lossless text is what a model reads most closely.
+pub const PNG_KEPT_UNDER: usize = 5 * 512 * 1024;
 
 /// The quality of a JPEG a photo or a rendering becomes.
 const PHOTO_QUALITY: u8 = 85;
@@ -164,7 +169,7 @@ mod tests {
         }))
     }
 
-    /// A screenshot of a laptop's screen: a sidebar, a toolbar, flat panels
+    /// A screenshot of a large screen: a sidebar, a toolbar, flat panels
     /// and lines of text.
     fn screenshot(w: u32, h: u32) -> image::DynamicImage {
         image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| {
@@ -187,11 +192,11 @@ mod tests {
 
     #[test]
     fn a_large_photo_is_fitted_to_the_long_edge_and_becomes_a_small_jpeg() {
-        let original = data_url(&photo(3000, 2000), image::ImageFormat::Png, "image/png");
+        let original = data_url(&photo(3900, 2600), image::ImageFormat::Png, "image/png");
         let fitted = for_model(&original).expect("resized");
         let (mime, img) = decoded(&fitted);
         assert_eq!(mime, "image/jpeg");
-        assert_eq!((img.width(), img.height()), (MODEL_LONG_EDGE, 1045));
+        assert_eq!((img.width(), img.height()), (MODEL_LONG_EDGE, 1717));
         assert!(
             fitted.len() < original.len() / 4,
             "{} -> {}",
@@ -203,14 +208,14 @@ mod tests {
     #[test]
     fn a_large_screenshot_is_fitted_and_stays_a_lossless_png() {
         let original = data_url(
-            &screenshot(2560, 1600),
+            &screenshot(3840, 2400),
             image::ImageFormat::Png,
             "image/png",
         );
         let fitted = for_model(&original).expect("resized");
         let (mime, img) = decoded(&fitted);
         assert_eq!(mime, "image/png", "text stays sharp");
-        assert_eq!((img.width(), img.height()), (MODEL_LONG_EDGE, 980));
+        assert_eq!((img.width(), img.height()), (MODEL_LONG_EDGE, 1610));
     }
 
     #[test]
