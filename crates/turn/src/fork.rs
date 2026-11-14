@@ -39,6 +39,9 @@ are not retried;
 - every file read, changed, created or deleted, with the key facts learned \
 from it or the change made;
 - commands run and what each returned (exit status, the decisive output);
+- every image and other media seen (made, attached or returned by a tool): \
+what it shows, in as much detail as the work still needs, and the handle or \
+path it can be attached again from, verbatim;
 - exact identifiers, names, paths, numbers, codes and strings the task still \
 needs, copied verbatim - never paraphrased or rounded;
 - the current state: what is done, what is half done, what is untested;
@@ -393,6 +396,8 @@ mod tests {
             "decisions",
             "files",
             "commands",
+            "every image",
+            "attached again from",
             "verbatim",
             "current state",
             "open questions",
