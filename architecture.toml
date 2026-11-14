@@ -401,6 +401,3 @@ lines = 1022
 [[allow.large_file]]
 path = "crates/machines/src/machines/loop_core.rs"
 lines = 844
-[[allow.large_file]]
-path = "crates/machines/src/machines/reactive_agent.rs"
-lines = 833

@@ -95,7 +95,9 @@ use sven_hsm::{
     status::Reaction,
 };
 
+use super::clarification::clarification_question;
 use super::goal_flow;
+use super::held_messages;
 use super::loop_core::{
     build_turn_effect, handle_tool_event, init_loop, on_llm_turn_complete, GeneratingAction,
     LoopState, Steering, STEER_SIGNAL,
@@ -160,24 +162,6 @@ const ASK_QUESTION_TOOL: &str = "ask_question";
 /// [`ASK_QUESTION_TOOL`] keeps it a literal here rather than a lookup. The
 /// kernel still enforces it - this only declares which bucket the call falls in.
 const ASK_QUESTION_CAPABILITY: ToolCapability = ToolCapability::ReadFile;
-
-/// Bounds on how many alternatives make a sensible multiple-choice question.
-/// Fewer is not a choice; more is a list the user should read as prose.
-const MIN_ALTERNATIVES: usize = 2;
-/// Upper bound, see [`MIN_ALTERNATIVES`].
-const MAX_ALTERNATIVES: usize = 6;
-
-/// Openers that mark a question as addressed to the *user* rather than
-/// rhetorical. Matched case-insensitively against the question sentence.
-const USER_DIRECTED_OPENERS: &[&str] = &[
-    "which",
-    "should i",
-    "shall i",
-    "do you",
-    "would you",
-    "could you",
-    "can you",
-];
 
 /// States of the reactive agent machine.
 ///
@@ -254,6 +238,17 @@ impl ReactiveAgentMachine {
                 ToolCapability::ExecuteShell,
             ])
             .build()
+    }
+
+    /// A person's message starts a turn.
+    fn person_turn(ctx: &mut Context, text: &str) -> Reaction<ReactiveState> {
+        goal_flow::begin_person_turn(ctx);
+        let ls = start_loop(ctx);
+        Reaction::transition(
+            ReactiveState::Generating,
+            vec![ls.stamp(Self::first_turn_effect(text))],
+            "user sent message; starting turn",
+        )
     }
 
     /// Build the first `CallLlm { kind:"turn" }` effect for a user message.
@@ -371,101 +366,6 @@ fn derive_call_id(thread: &str, round: u32) -> ToolCallId {
     ))
 }
 
-/// Extract a clarification question from a final answer, or `None` when the
-/// answer is resolved.
-///
-/// Both halves must come from the model: a question it addressed to the user,
-/// and between [`MIN_ALTERNATIVES`] and [`MAX_ALTERNATIVES`] alternatives it
-/// enumerated itself. Requiring both is what keeps a resolved answer - including
-/// one that happens to contain a rhetorical question, or a bullet list of work
-/// done - untouched.
-fn clarification_question(text: &str) -> Option<(String, Vec<String>)> {
-    // Only what the model enumerated *after* asking counts. A list is the
-    // answer set to a question when it follows one; a list that precedes a
-    // question is the far more ordinary shape "here is what I did, shall I go
-    // on", where the items answer nothing and the question is a yes/no with no
-    // options at all. The two are indistinguishable by content, so the
-    // conservative reading is the only honest one: this check sits on every
-    // turn of the default mode, and its whole licence is that it invents
-    // nothing.
-    let (prompt, after_question) = user_directed_question(text)?;
-    let options = enumerated_alternatives(&text[after_question..]);
-    if !(MIN_ALTERNATIVES..=MAX_ALTERNATIVES).contains(&options.len()) {
-        return None;
-    }
-    Some((prompt, options))
-}
-
-/// The first question sentence that is addressed to the user, and the byte
-/// offset just past it.
-fn user_directed_question(text: &str) -> Option<(String, usize)> {
-    let mut start = 0;
-    for (i, ch) in text.char_indices() {
-        match ch {
-            '?' => {
-                let end = i + ch.len_utf8();
-                let sentence = text[start..end].trim();
-                if is_user_directed(sentence) {
-                    return Some((sentence.to_string(), end));
-                }
-                start = end;
-            }
-            '.' | '!' | '\n' => start = i + ch.len_utf8(),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Whether a question sentence asks *the user* something.
-fn is_user_directed(sentence: &str) -> bool {
-    let s = sentence
-        .trim_start_matches(|c: char| !c.is_alphanumeric())
-        .to_ascii_lowercase();
-    USER_DIRECTED_OPENERS.iter().any(|o| s.starts_with(o))
-        || s.contains(" you ")
-        || s.contains(" you?")
-        || s.contains(" your ")
-}
-
-/// The alternatives the model enumerated as a `-`/`*`/`N.` list, in order and
-/// deduplicated.
-///
-/// Called with only the text that follows the question, so a list of work
-/// already done - which precedes its closing question - is never mistaken for
-/// a set of answers to it.
-fn enumerated_alternatives(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        let item = line
-            .strip_prefix("- ")
-            .or_else(|| line.strip_prefix("* "))
-            .map(str::trim)
-            .map(str::to_string)
-            .or_else(|| numbered_item(line));
-        if let Some(item) = item {
-            if !item.is_empty() && !out.contains(&item) {
-                out.push(item);
-            }
-        }
-    }
-    out
-}
-
-/// The body of a `1. ` / `1) ` list item, if the line is one.
-fn numbered_item(line: &str) -> Option<String> {
-    let digits = line.chars().take_while(char::is_ascii_digit).count();
-    if digits == 0 {
-        return None;
-    }
-    let rest = &line[digits..];
-    let rest = rest
-        .strip_prefix(". ")
-        .or_else(|| rest.strip_prefix(") "))?;
-    Some(rest.trim().to_string())
-}
-
 impl Machine for ReactiveAgentMachine {
     type State = ReactiveState;
 
@@ -500,6 +400,12 @@ impl Machine for ReactiveAgentMachine {
     ) -> Reaction<ReactiveState> {
         use ReactiveState::*;
 
+        // At rest, the messages held while a turn ran come first.
+        if state == Idle {
+            if let Some(reaction) = held_messages::at_rest(ctx, event, Self::person_turn) {
+                return reaction;
+            }
+        }
         match state {
             Top => Reaction::Ignored,
 
@@ -526,6 +432,13 @@ impl Machine for ReactiveAgentMachine {
                     }
                     Reaction::effects(vec![])
                 }
+                // A message is never dropped while a turn runs: it is held,
+                // and answered once the turn ends (a client that took an
+                // error for the turn's end sends one).
+                Event::UserMessage { text } => {
+                    held_messages::hold(ctx, text);
+                    Reaction::effects(vec![])
+                }
                 Event::Goal {
                     command,
                     awaits_answer,
@@ -544,15 +457,7 @@ impl Machine for ReactiveAgentMachine {
                     vec![Self::compact_effect(None)],
                     "compaction requested; summarising the conversation",
                 ),
-                Event::UserMessage { text } => {
-                    goal_flow::begin_person_turn(ctx);
-                    let ls = start_loop(ctx);
-                    Reaction::transition(
-                        Generating,
-                        vec![ls.stamp(Self::first_turn_effect(text))],
-                        "user sent message; starting turn",
-                    )
-                }
+                Event::UserMessage { text } => Self::person_turn(ctx, text),
                 // Steering that arrives at rest (the turn ended first) was
                 // never delivered: the host sees no `Steered` before the
                 // turn's end and sends it as the next message itself.
@@ -1107,6 +1012,57 @@ mod tests {
         assert_eq!(hsm.state(), ReactiveState::Generating);
         assert_eq!(out.effects.len(), 1);
         assert_eq!(out.effects[0].kind(), EffectKind::CallLlm);
+    }
+
+    /// Ends the running turn; the signal entering Idle posts, if any.
+    fn end_turn(hsm: &mut Hsm<ReactiveAgentMachine>, ctx: &mut Context) -> Option<Event> {
+        let ended = hsm.dispatch(
+            &Event::LlmFailed {
+                error: "boom".into(),
+            },
+            ctx,
+        );
+        assert_eq!(hsm.state(), ReactiveState::Idle);
+        ended.effects.into_iter().find_map(|e| match e {
+            Effect::EmitInternal { name, payload } => {
+                Some(Event::Internal(InternalEvent::Custom { name, payload }))
+            }
+            _ => None,
+        })
+    }
+
+    /// The text the turn `effects` start sends the model, as JSON.
+    fn asked(effects: &[Effect]) -> String {
+        serde_json::to_string(effects).unwrap()
+    }
+
+    /// A message that arrives while a turn runs (a client that took an error
+    /// for the end of the turn sent it) is never dropped: it is held, and the
+    /// held messages are answered once the turn ends, one turn each, in the
+    /// order they came, ahead of one that comes after the turn ended.
+    #[test]
+    fn a_message_sent_during_a_turn_is_answered_after_it_in_order() {
+        let (mut hsm, mut ctx) = make_hsm();
+        hsm.dispatch(&Event::user_message("first"), &mut ctx);
+        let held = hsm.dispatch(&Event::user_message("second"), &mut ctx);
+        assert_eq!(hsm.state(), ReactiveState::Generating);
+        assert!(held.effects.is_empty(), "held, not answered mid-turn");
+        hsm.dispatch(&Event::user_message("third"), &mut ctx);
+
+        let asks_for_second = end_turn(&mut hsm, &mut ctx).expect("a message is held");
+        // One sent at rest, before the held ones were asked for, waits behind them.
+        let started = hsm.dispatch(&Event::user_message("fourth"), &mut ctx);
+        assert!(asked(&started.effects).contains("second"));
+        // The signal finds that turn running and changes nothing.
+        assert!(hsm.dispatch(&asks_for_second, &mut ctx).effects.is_empty());
+
+        for next in ["third", "fourth"] {
+            let signal = end_turn(&mut hsm, &mut ctx).expect("a message is held");
+            let started = hsm.dispatch(&signal, &mut ctx);
+            assert_eq!(hsm.state(), ReactiveState::Generating);
+            assert!(asked(&started.effects).contains(next), "{next}");
+        }
+        assert!(end_turn(&mut hsm, &mut ctx).is_none(), "nothing left held");
     }
 
     #[test]
