@@ -96,11 +96,7 @@ impl Grid {
                     self.cells[r][c] = src;
                 }
             }
-            for r in bot.saturating_sub(count)..bot {
-                for c in left..right {
-                    self.cells[r][c] = Cell::default();
-                }
-            }
+            self.clear_rows(bot.saturating_sub(count), bot, left, right);
         } else {
             let count = (-rows) as usize;
             for r in (top + count..bot).rev() {
@@ -110,10 +106,15 @@ impl Grid {
                 }
             }
             let clear_end = (top + count).min(bot);
-            for r in top..clear_end {
-                for c in left..right {
-                    self.cells[r][c] = Cell::default();
-                }
+            self.clear_rows(top, clear_end, left, right);
+        }
+    }
+
+    /// Resets the cells of rows `top..bot`, columns `left..right`, to blank.
+    fn clear_rows(&mut self, top: usize, bot: usize, left: usize, right: usize) {
+        for row in self.cells.iter_mut().take(bot).skip(top) {
+            if let Some(cells) = row.get_mut(left..right) {
+                cells.fill_with(Cell::default);
             }
         }
     }

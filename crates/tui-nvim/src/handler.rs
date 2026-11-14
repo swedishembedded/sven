@@ -312,8 +312,8 @@ mod tests {
         let event = grid_line_event(0, 0, &[("X", 0, 4)]);
         handler.handle_grid_line(&[event]).await;
         let g = grid.lock().await;
-        for i in 0..4 {
-            assert_eq!(g.cells[0][i].text, "X", "col {i}");
+        for (i, cell) in g.cells[0].iter().take(4).enumerate() {
+            assert_eq!(cell.text, "X", "col {i}");
         }
         assert_eq!(g.cells[0][4].text, " ", "col 4 must be untouched");
     }
