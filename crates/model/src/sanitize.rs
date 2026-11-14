@@ -54,10 +54,19 @@ fn strip_if_unsupported(
     rewrite_parts(messages, target, &mut |_| Some(placeholder.to_string()))
 }
 
+/// The most image data one request carries, in bytes of its data URLs,
+/// whatever the server states. A server refuses a request over its own body
+/// limit (whale's is 32 MiB) and that refusal comes back on every later step
+/// of the conversation, so the images are kept well within it, leaving room
+/// for the text. Images are sent as the model sees them; one left out is still
+/// in the conversation, and the agent looks at it again when it needs to.
+pub const MAX_IMAGE_BYTES_PER_REQUEST: usize = 16 * 1024 * 1024;
+
 /// Per-request image limits applied to the outgoing request.
 ///
 /// When the images of `messages` exceed `limits` (their number, or the pixels
-/// summed over all of them), the OLDEST images are replaced in place by a
+/// summed over all of them) or [`MAX_IMAGE_BYTES_PER_REQUEST`], the OLDEST
+/// images are replaced in place by a
 /// short text note and the newest are kept: the newest are the ones the
 /// current step needs. Newest first, an image is kept while the images kept
 /// so far plus this one fit; the first image that does not fit and every
@@ -65,12 +74,10 @@ fn strip_if_unsupported(
 /// unreadable bytes) counts as over a pixel limit, because a request that may
 /// be refused is never sent; its note says so.
 ///
-/// Unknown limits change nothing. The caller's conversation is untouched:
-/// this works on the copy that becomes the request.
+/// Unknown limits leave the count and pixels unbounded; the byte budget
+/// always holds. The caller's conversation is untouched: this works on the
+/// copy that becomes the request.
 pub fn limit_images(messages: Vec<Message>, limits: ImageLimits) -> Vec<Message> {
-    if !limits.is_known() {
-        return messages;
-    }
     let mut urls = Vec::new();
     let messages = rewrite_parts(messages, InputModality::Image, &mut |url| {
         urls.push(url.to_string());
@@ -90,6 +97,7 @@ pub fn limit_images(messages: Vec<Message>, limits: ImageLimits) -> Vec<Message>
 #[derive(Clone, Copy)]
 enum Excess {
     Count(u32),
+    Bytes(usize),
     Pixels(u64),
     SizeUnreadable(u64),
 }
@@ -106,14 +114,18 @@ fn plan_notes(urls: &[String], limits: ImageLimits) -> Vec<Option<String>> {
         })
         .collect();
     let mut notes = vec![None; urls.len()];
-    let (mut kept, mut kept_pixels) = (0u32, 0u64);
+    let (mut kept, mut kept_pixels, mut kept_bytes) = (0u32, 0u64, 0usize);
     let mut stopped_by: Option<Excess> = None;
     for i in (0..urls.len()).rev() {
         if stopped_by.is_none() {
             stopped_by = excess(limits, kept, kept_pixels, sizes[i]);
+            if stopped_by.is_none() && kept_bytes + urls[i].len() > MAX_IMAGE_BYTES_PER_REQUEST {
+                stopped_by = Some(Excess::Bytes(MAX_IMAGE_BYTES_PER_REQUEST));
+            }
             if stopped_by.is_none() {
                 kept += 1;
                 kept_pixels += sizes[i].map_or(0, |(w, h)| u64::from(w) * u64::from(h));
+                kept_bytes += urls[i].len();
             }
         }
         if let Some(reason) = stopped_by {
@@ -153,6 +165,11 @@ fn omission_note(url: &str, size: Option<(u32, u32)>, reason: Excess) -> String 
     };
     let why = match reason {
         Excess::Count(n) => format!("the server takes at most {n} images per request"),
+        Excess::Bytes(b) => format!(
+            "a request carries at most {} MB of images; it is still a file of the \
+             conversation, so attach it again to look at it if it is needed",
+            b / (1024 * 1024)
+        ),
         Excess::Pixels(p) => {
             format!("the server takes at most {p} pixels of images per request")
         }
@@ -538,6 +555,45 @@ mod tests {
             4,
             "the input conversation is not edited"
         );
+    }
+
+    /// Whatever limits the server states, or none, a request never carries
+    /// more image bytes than [`MAX_IMAGE_BYTES_PER_REQUEST`]: the newest
+    /// images that fit stay, every older one becomes a note saying why and
+    /// that the image is still there to attach again.
+    #[test]
+    fn the_newest_images_within_the_byte_budget_stay_whatever_the_server_states() {
+        let quarter = MAX_IMAGE_BYTES_PER_REQUEST / 4;
+        // A quarter of the budget each, its `data:` prefix included.
+        let big = |tag: char| {
+            format!(
+                "data:image/png;base64,{}",
+                tag.to_string().repeat(quarter - 64)
+            )
+        };
+        let urls: Vec<String> = ['a', 'b', 'c', 'd', 'e', 'f']
+            .into_iter()
+            .map(big)
+            .collect();
+        for limits in [
+            ImageLimits::default(),
+            ImageLimits {
+                max_images: Some(10),
+                max_pixels: None,
+            },
+        ] {
+            let out = limit_images(vec![images_msg(&urls[..3]), images_msg(&urls[3..])], limits);
+            let kept = kept_urls(&out);
+            assert_eq!(kept, urls[2..].to_vec(), "the newest four fit");
+            let notes = notes_in(&out);
+            assert_eq!(notes.len(), 2, "{notes:?}");
+            assert!(
+                notes.iter().all(
+                    |n| n.contains("at most 16 MB of images;") && n.contains("attach it again")
+                ),
+                "{notes:?}"
+            );
+        }
     }
 
     #[test]
