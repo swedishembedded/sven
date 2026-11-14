@@ -12,7 +12,13 @@ use crate::{
 
 #[cfg(test)]
 impl App {
+    /// An app for a test. The test process keeps every per-user directory
+    /// (config, model cache, data) under a root of its own, so a test never
+    /// reads the person's cached model lists or writes into their data.
     pub fn for_testing() -> (Self, tokio::sync::mpsc::Receiver<AgentRequest>) {
+        static ROOT: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        let root = ROOT.get_or_init(|| tempfile::tempdir().expect("a temporary state root"));
+        sven_roots::set_state_root(root.path()).expect("the tests' own state root");
         let opts = AppOptions {
             mode: sven_vocab::AgentMode::Agent,
             initial_prompt: None,
