@@ -49,7 +49,11 @@ unless `tui.show_thinking` is set; while it streams, the status bar says
 
 **Input box** - a multi-line text field. `Enter` sends the message, `Alt+Enter`
 inserts a newline (`Shift+Enter` and `Ctrl+J` also work). `Ctrl+Up` / `Ctrl+Down`
-walk through the history of messages you sent.
+walk through the history of messages you sent. Paste a whole plan into it, up
+to 100 KB of text, and the agent acts on it as written. A longer paste is
+attached instead: it is kept as a file in sven's data directory
+(`sven/pastes/`), the box shows it as an attachment, and the message asks the
+agent to read it in full. The pasted path of an image is attached the same way.
 
 **Agents panel** - one line summing up the session's subagents, `▸ Agents · 2
 running · 1 done · 1m 14s · 12.3k tok`; open it for a row per agent. See [the
