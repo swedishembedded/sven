@@ -248,6 +248,32 @@ impl App {
                 // Normalise line endings first.
                 let normalised: String = text.replace("\r\n", "\n").replace('\r', "\n");
 
+                // Text that would make the message too long to send as text
+                // is kept in a file the message attaches, as whale's chat
+                // does; up to the limit it goes into the box, straight into
+                // the conversation.
+                if self.input.paste_overflows(&normalised) {
+                    let pastes = crate::app::input_state::pastes_dir();
+                    match crate::app::input_state::keep_pasted_text(&pastes, &normalised) {
+                        Ok(attachment) => {
+                            self.ui
+                                .push_toast(crate::app::ui_state::Toast::info(format!(
+                                    "Pasted text attached as {} (over {} KB)",
+                                    attachment.display_name(),
+                                    sven_vocab::message::MAX_MESSAGE_BYTES / 1024
+                                )));
+                            self.input.attachments.push(attachment);
+                        }
+                        Err(e) => self
+                            .ui
+                            .push_toast(crate::app::ui_state::Toast::error(format!(
+                                "Could not keep the pasted text as a file in {}: {e}",
+                                pastes.display()
+                            ))),
+                    }
+                    return false;
+                }
+
                 // ── Per-line path / image detection ───────────────────────────
                 // Only image files (png, jpg, etc.) are attached as context
                 // objects; all other paths (directories, code files, text files)

@@ -5,20 +5,43 @@
 
 use std::path::PathBuf;
 
+use sven_vocab::message::MAX_MESSAGE_BYTES;
+
 // ── InputAttachment ───────────────────────────────────────────────────────────
 
-/// An image the user attached to the current message via paste.
-///
-/// Only image files (png, jpg, gif, ...) are represented here; non-image paths
-/// are inserted inline as plain text rather than being attached.
+/// What an attachment is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentKind {
+    /// An image file the person pasted the path of.
+    Image,
+    /// Text too long to send as the message's own ([`MAX_MESSAGE_BYTES`]),
+    /// kept in a file of its own: its size in bytes.
+    Text { bytes: usize },
+}
+
+/// A file attached to the current message: an image pasted by path, or text
+/// too long for the message itself. The agent receives the path.
 #[derive(Debug, Clone)]
 pub struct InputAttachment {
     pub path: PathBuf,
+    pub kind: AttachmentKind,
 }
 
 impl InputAttachment {
+    /// An image file.
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            kind: AttachmentKind::Image,
+        }
+    }
+
+    /// Text of `bytes` bytes, kept at `path`.
+    pub fn text(path: PathBuf, bytes: usize) -> Self {
+        Self {
+            path,
+            kind: AttachmentKind::Text { bytes },
+        }
     }
 
     /// Short display name (just the file name, not the full path).
@@ -26,27 +49,62 @@ impl InputAttachment {
         self.path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("(image)")
+            .unwrap_or("(file)")
     }
 
     /// Icon/prefix character for display.
     pub fn icon(&self, ascii: bool) -> &'static str {
-        if ascii {
-            "[img] "
-        } else {
-            "🖼  "
+        match (self.kind, ascii) {
+            (AttachmentKind::Image, true) => "[img] ",
+            (AttachmentKind::Image, false) => "🖼  ",
+            (AttachmentKind::Text { .. }, true) => "[txt] ",
+            (AttachmentKind::Text { .. }, false) => "📄 ",
         }
     }
 
     /// Text injected into the submitted message (the agent receives the path).
     pub fn to_message_text(&self) -> String {
-        format!("[Image: {}]", self.path.display())
+        match self.kind {
+            AttachmentKind::Image => format!("[Image: {}]", self.path.display()),
+            AttachmentKind::Text { bytes } => format!(
+                "[Pasted text, {} KB, in {}: read it in full before acting on it]",
+                bytes.div_ceil(1024),
+                self.path.display()
+            ),
+        }
     }
 
     /// Full path as a string for display in a compact form.
     pub fn full_path(&self) -> String {
         self.path.display().to_string()
     }
+}
+
+/// Where text too long for a message is kept: sven's data directory.
+pub(crate) fn pastes_dir() -> PathBuf {
+    sven_roots::data_dir()
+        .unwrap_or_else(sven_roots::temp_dir)
+        .join("sven")
+        .join("pastes")
+}
+
+/// Keeps `text` in a new file under `dir`, named for when it was pasted and
+/// what it holds, and returns it as an attachment.
+pub(crate) fn keep_pasted_text(
+    dir: &std::path::Path,
+    text: &str,
+) -> std::io::Result<InputAttachment> {
+    use std::hash::{Hash, Hasher};
+    std::fs::create_dir_all(dir)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let path = dir.join(format!("paste-{stamp}-{:016x}.md", hasher.finish()));
+    std::fs::write(&path, text)?;
+    Ok(InputAttachment::text(path, text.len()))
 }
 
 /// Returns `true` when the path has an image file extension.
@@ -123,6 +181,42 @@ impl InputState {
             history_draft: None,
             attachments: Vec::new(),
         }
+    }
+
+    /// Takes what the box holds as the message to send: its attachments'
+    /// lines, then the typed text, and the typed text alone (for history).
+    /// Typed text too long for a message (typed, not pasted) is kept as an
+    /// attachment, as a long paste is. `None` when there is nothing to send.
+    pub fn take_message(
+        &mut self,
+        pastes: &std::path::Path,
+    ) -> std::io::Result<Option<(String, String)>> {
+        let text = std::mem::take(&mut self.buffer).trim().to_string();
+        self.cursor = 0;
+        self.scroll_offset = 0;
+        let typed = if text.len() > MAX_MESSAGE_BYTES {
+            self.attachments.push(keep_pasted_text(pastes, &text)?);
+            String::new()
+        } else {
+            text
+        };
+        let lines: Vec<String> = self
+            .attachments
+            .drain(..)
+            .map(|a| a.to_message_text())
+            .collect();
+        let full = match (lines.is_empty(), typed.is_empty()) {
+            (true, _) => typed.clone(),
+            (false, true) => lines.join("\n"),
+            (false, false) => format!("{}\n{typed}", lines.join("\n")),
+        };
+        Ok((!full.is_empty()).then_some((full, typed)))
+    }
+
+    /// Whether pasting `text` would make the message too long to send as
+    /// text, so it is to be attached instead.
+    pub fn paste_overflows(&self, text: &str) -> bool {
+        self.buffer.len() + text.len() > MAX_MESSAGE_BYTES
     }
 
     /// Inserts dictated text at the cursor; see [`insert_dictation`].
@@ -363,5 +457,73 @@ mod history_tests {
         assert_eq!(&buffer[..cursor], "h världen");
         // A cursor past the end is clamped.
         assert_eq!(dictate("ö", 99, "x"), ("ö x".into(), 4));
+    }
+}
+
+#[cfg(test)]
+mod long_message_tests {
+    use super::*;
+
+    #[test]
+    fn a_paste_up_to_the_limit_goes_into_the_box_and_one_past_it_is_attached() {
+        let mut state = InputState::new();
+        state.buffer = "a".repeat(10);
+        assert!(!state.paste_overflows(&"b".repeat(MAX_MESSAGE_BYTES - 10)));
+        assert!(state.paste_overflows(&"b".repeat(MAX_MESSAGE_BYTES - 9)));
+    }
+
+    #[test]
+    fn long_text_is_kept_as_a_file_the_message_names_for_the_agent_to_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = format!("# The plan\n{}", "step\n".repeat(30_000));
+        let mut state = InputState::new();
+        state
+            .attachments
+            .push(keep_pasted_text(dir.path(), &plan).unwrap());
+        state.buffer = "execute this plan".into();
+
+        let (full, typed) = state.take_message(dir.path()).unwrap().unwrap();
+
+        let kept = &state_paths(dir.path())[0];
+        assert_eq!(std::fs::read_to_string(kept).unwrap(), plan);
+        assert_eq!(
+            full,
+            format!(
+                "[Pasted text, {} KB, in {}: read it in full before acting on it]\nexecute this plan",
+                plan.len().div_ceil(1024),
+                kept.display()
+            )
+        );
+        assert_eq!(typed, "execute this plan");
+        assert!(state.attachments.is_empty() && state.buffer.is_empty());
+    }
+
+    #[test]
+    fn typed_text_too_long_for_a_message_is_attached_as_a_paste_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = InputState::new();
+        state.buffer = "x".repeat(MAX_MESSAGE_BYTES + 1);
+
+        let (full, typed) = state.take_message(dir.path()).unwrap().unwrap();
+
+        assert!(full.starts_with("[Pasted text, 101 KB, in "), "{full}");
+        assert!(sven_vocab::message::fits_message(&full));
+        assert_eq!(typed, "", "a file's worth of text is not kept in history");
+    }
+
+    #[test]
+    fn an_empty_box_sends_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(InputState::new()
+            .take_message(dir.path())
+            .unwrap()
+            .is_none());
+    }
+
+    fn state_paths(dir: &std::path::Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect()
     }
 }

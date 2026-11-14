@@ -12,6 +12,7 @@ voice = ["dep:cpal", "dep:opus", "dep:ogg", "dep:sven-audio"]
 
 [dependencies]
 sven-vocab     = { path = "../vocab" }
+sven-roots     = { path = "../roots" }
 sven-model     = { path = "../model" }
 sven-model-drivers = { path = "../model-drivers" }
 sven-session-store     = { path = "../session-store" }

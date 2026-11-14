@@ -180,38 +180,7 @@ impl App {
 
             Action::Submit => {
                 self.ui.completion = None;
-                let text = std::mem::take(&mut self.input.buffer).trim().to_string();
-                self.input.cursor = 0;
-                self.input.scroll_offset = 0;
-                if text.is_empty() && self.input.attachments.is_empty() {
-                    return false;
-                }
-                // Prepend attachment paths to the submitted text.
-                let full_text = if self.input.attachments.is_empty() {
-                    text.clone()
-                } else {
-                    let att_text: String = self
-                        .input
-                        .attachments
-                        .iter()
-                        .map(|a| a.to_message_text())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if text.is_empty() {
-                        att_text
-                    } else {
-                        format!("{att_text}\n{text}")
-                    }
-                };
-                self.input.attachments.clear();
-                // Save to history (only the user-typed text, not the attachment metadata).
-                if !text.is_empty() {
-                    self.input.push_history(&text);
-                }
-                if full_text.is_empty() {
-                    return false;
-                }
-                return self.submit_user_input(&full_text).await;
+                return self.submit_the_box().await;
             }
 
             Action::CompletionNext => {
@@ -235,35 +204,7 @@ impl App {
                         // immediately so the user only has to press Enter once.
                         if self.input.buffer.trim().starts_with('/') {
                             self.ui.completion = None;
-                            let text = std::mem::take(&mut self.input.buffer).trim().to_string();
-                            self.input.cursor = 0;
-                            self.input.scroll_offset = 0;
-                            if text.is_empty() && self.input.attachments.is_empty() {
-                                return false;
-                            }
-                            let full_text = if self.input.attachments.is_empty() {
-                                text.clone()
-                            } else {
-                                let att_text: String = self
-                                    .input
-                                    .attachments
-                                    .iter()
-                                    .map(|a| a.to_message_text())
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                if text.is_empty() {
-                                    att_text
-                                } else {
-                                    format!("{att_text}\n{text}")
-                                }
-                            };
-                            self.input.attachments.clear();
-                            if !text.is_empty() {
-                                self.input.push_history(&text);
-                            }
-                            if !full_text.is_empty() {
-                                return self.submit_user_input(&full_text).await;
-                            }
+                            return self.submit_the_box().await;
                         }
                     }
                 }

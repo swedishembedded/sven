@@ -83,6 +83,27 @@ impl App {
 
     // ── Submit path ───────────────────────────────────────────────────────────
 
+    /// Sends what the input box holds (Enter, or a completed slash command):
+    /// its attachments' lines and the typed text, which goes into history.
+    pub(crate) async fn submit_the_box(&mut self) -> bool {
+        let pastes = crate::app::input_state::pastes_dir();
+        match self.input.take_message(&pastes) {
+            Ok(Some((full, typed))) => {
+                self.input.push_history(&typed);
+                self.submit_user_input(&full).await
+            }
+            Ok(None) => false,
+            Err(e) => {
+                self.ui
+                    .push_toast(crate::app::ui_state::Toast::error(format!(
+                        "Could not keep the long message as a file in {}: {e}",
+                        pastes.display()
+                    )));
+                false
+            }
+        }
+    }
+
     /// Process user input text: dispatch slash commands or send as a message.
     pub(crate) async fn submit_user_input(&mut self, text: &str) -> bool {
         if text.starts_with('/') {
