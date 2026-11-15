@@ -33,7 +33,13 @@ impl App {
         };
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut app = Self::new(sven_frontend::Settings::default(), opts);
-        app.agent.tx = Some(tx);
+        app.agent.tx = Some(tx.clone());
+        // As `run` does: the session keeps its agent's sender, so switching
+        // away and back reaches the same agent.
+        let active = app.sessions.active_id.clone();
+        if let Some(entry) = app.sessions.get_mut(&active) {
+            entry.agent_tx = Some(tx);
+        }
         (app, rx)
     }
 

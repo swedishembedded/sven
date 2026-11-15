@@ -400,7 +400,8 @@ stay queued, and sven returns to idle. `Ctrl+C` does not quit sven; use `/quit`.
 
 To stop only a tool call that is taking too long, press `Ctrl+X` in the input
 box: the call started last stops, the agent is told it was cancelled, and the
-turn goes on without its result.
+turn goes on without its result. In a sub-agent's session it stops that
+sub-agent's call started last, and the sub-agent goes on.
 
 ---
 

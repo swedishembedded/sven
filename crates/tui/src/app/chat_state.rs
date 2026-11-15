@@ -266,6 +266,26 @@ impl ChatState {
         }
     }
 
+    /// The tool calls in this chat that have no result yet, in the order
+    /// they were made.
+    pub fn unanswered_tool_calls(&self) -> Vec<String> {
+        use sven_model::MessageContent;
+        let mut calls: Vec<String> = Vec::new();
+        for segment in &self.segments {
+            let ChatSegment::Message(message) = segment else {
+                continue;
+            };
+            match &message.content {
+                MessageContent::ToolCall { tool_call_id, .. } => calls.push(tool_call_id.clone()),
+                MessageContent::ToolResult { tool_call_id, .. } => {
+                    calls.retain(|id| id != tool_call_id)
+                }
+                _ => {}
+            }
+        }
+        calls
+    }
+
     /// The highlighted segment, or the first segment of the highlighted run.
     pub fn focused_segment(&self) -> Option<usize> {
         self.focus.map(ChatFocus::index)

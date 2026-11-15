@@ -691,12 +691,29 @@ impl App {
     /// answered as cancelled and the turn goes on, unlike an interrupt.
     pub(crate) async fn cancel_running_tool(&mut self) {
         use crate::app::ui_state::Toast;
-        let latest = self
-            .agent
-            .tool_start_times
-            .iter()
-            .max_by_key(|(_, started)| **started)
-            .map(|(id, _)| id.clone());
+        // In a sub-agent's session the call is the sub-agent's latest still
+        // running, stopped through the parent's agent, which runs it.
+        let sub_agent_parent = self
+            .sessions
+            .get(&self.sessions.active_id)
+            .filter(|entry| entry.buffer_handle.is_some())
+            .and_then(|entry| entry.parent_id.clone());
+        let (latest, tx) = match sub_agent_parent {
+            Some(parent) => (
+                self.chat.unanswered_tool_calls().pop(),
+                self.sessions
+                    .get(&parent)
+                    .and_then(|entry| entry.agent_tx.clone()),
+            ),
+            None => (
+                self.agent
+                    .tool_start_times
+                    .iter()
+                    .max_by_key(|(_, started)| **started)
+                    .map(|(id, _)| id.clone()),
+                self.agent.tx.clone(),
+            ),
+        };
         let Some(call_id) = latest else {
             self.ui.push_toast(Toast::info("No tool call is running"));
             return;
@@ -707,7 +724,7 @@ impl App {
             .get(&call_id)
             .cloned()
             .unwrap_or_else(|| "the tool call".into());
-        let sent = match &self.agent.tx {
+        let sent = match tx {
             Some(tx) => tx.send(AgentRequest::CancelTool { call_id }).await.is_ok(),
             None => false,
         };
@@ -1246,6 +1263,68 @@ mod submit_integration_tests {
             other => panic!("expected CancelTool, got {other:?}"),
         }
         assert!(app.is_agent_busy(), "the turn goes on");
+    }
+
+    /// Viewing a sub-agent's session, Ctrl+X stops that sub-agent's call
+    /// started last, by the id it gave it; the parent's agent, which runs the
+    /// sub-agent, is asked.
+    #[tokio::test]
+    async fn ctrl_x_in_a_sub_agents_session_stops_its_running_call() {
+        let (mut app, mut rx) = App::for_testing();
+        app.inject_input("delegate it");
+        app.dispatch_action(Action::Submit).await;
+        let _turn = recv_resubmit_for_test(&mut rx);
+        let parent = app.sessions.active_id.clone();
+        event(
+            &mut app,
+            sven_vocab::SessionEvent::SubagentStarted {
+                call_id: "call_task".into(),
+                handle_id: "buf_0001".into(),
+                description: "look around".into(),
+                prompt: "look".into(),
+            },
+        )
+        .await;
+        for (id, done) in [("child_done", true), ("child_slow", false)] {
+            let started = sven_vocab::SubagentUpdate::ToolCallStarted {
+                id: id.into(),
+                name: "shell".into(),
+                args: serde_json::json!({"shell_command": "sleep 600"}),
+            };
+            event(
+                &mut app,
+                sven_vocab::SessionEvent::SubagentEvent {
+                    call_id: "call_task".into(),
+                    handle_id: "buf_0001".into(),
+                    update: started,
+                },
+            )
+            .await;
+            if done {
+                event(
+                    &mut app,
+                    sven_vocab::SessionEvent::SubagentEvent {
+                        call_id: "call_task".into(),
+                        handle_id: "buf_0001".into(),
+                        update: sven_vocab::SubagentUpdate::ToolCallFinished {
+                            id: id.into(),
+                            name: "shell".into(),
+                            output: "ok".into(),
+                            is_error: false,
+                        },
+                    },
+                )
+                .await;
+            }
+        }
+        let child = app.sessions.children[&parent][0].clone();
+        app.switch_session(child).await;
+
+        app.dispatch_action(Action::CancelRunningTool).await;
+        match rx.try_recv() {
+            Ok(AgentRequest::CancelTool { call_id }) => assert_eq!(call_id, "child_slow"),
+            other => panic!("expected CancelTool, got {other:?}"),
+        }
     }
 
     /// An error is told, not taken for the turn's end: a turn retries a
