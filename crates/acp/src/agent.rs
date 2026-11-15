@@ -51,6 +51,7 @@ const NOTIFY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 
 use sven_bootstrap::session_handles::HumanGate;
+use sven_bootstrap::task_tool::{CancelToolParams, CANCEL_TOOL_METHOD};
 use sven_bootstrap::Config;
 use sven_bootstrap::RuntimeContext;
 use sven_frontend::{Gates, SessionController, SessionOptions, SessionSpec};
@@ -707,6 +708,28 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         Ok(())
     }
 
+    /// The one extension a parent sends: stop one call of a session by the
+    /// id it was reported under ([`CANCEL_TOOL_METHOD`]). Anything else, or
+    /// a call no longer running, changes nothing.
+    async fn ext_notification(
+        &self,
+        args: agent_client_protocol::ExtNotification,
+    ) -> AcpResult<()> {
+        if &*args.method != CANCEL_TOOL_METHOD {
+            debug!(method = %args.method, "ACP: ignoring an unknown extension notification");
+            return Ok(());
+        }
+        let Ok(params) = serde_json::from_str::<CancelToolParams>(args.params.get()) else {
+            warn!("ACP {CANCEL_TOOL_METHOD}: malformed params");
+            return Ok(());
+        };
+        if let Some(entry) = self.get_session(&params.session_id) {
+            let stopped = entry.session.lock().await.cancel_tool(&params.tool_call_id);
+            debug!(session = %params.session_id, call = %params.tool_call_id, stopped, "ACP {CANCEL_TOOL_METHOD}");
+        }
+        Ok(())
+    }
+
     async fn set_session_mode(
         &self,
         args: SetSessionModeRequest,
@@ -966,5 +989,100 @@ mod tests {
     #[tokio::test]
     async fn an_unanswered_permission_request_is_denied_when_its_wait_runs_out() {
         assert_eq!(ask(Duration::from_millis(20)).await, Some(false));
+    }
+
+    /// A parent stops one call of its child by the id the child reported it
+    /// under: that call is answered as cancelled and the turn goes on to its
+    /// next reply.
+    #[tokio::test]
+    async fn one_call_is_stopped_by_its_id_and_the_turn_goes_on() {
+        use agent_client_protocol::Agent as _;
+        use agent_client_protocol::{SessionUpdate, ToolCallStatus};
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("responses.yaml");
+        std::fs::write(
+            &script,
+            r#"
+responses:
+  - match_type: contains
+    pattern: "wait for it"
+    tool_calls:
+      - id: hangs
+        tool: shell
+        args:
+          shell_command: "sleep 600"
+    after_tool_reply: "went on without it"
+"#,
+        )
+        .unwrap();
+        let mut config = Config::default();
+        config.model.provider = "mock".into();
+        config.model.name = "mock-model".into();
+        config.model.mock_responses_file = Some(script.to_string_lossy().into_owned());
+        let (conn_tx, mut conn_rx) = mpsc::unbounded_channel();
+        let agent = SvenAcpAgent::new(Arc::new(config), conn_tx);
+        let id = agent
+            .new_session(NewSessionRequest::new(dir.path()))
+            .await
+            .expect("a session")
+            .session_id;
+        let turn = agent.prompt(PromptRequest::new(id.clone(), vec!["wait for it".into()]));
+        tokio::pin!(turn);
+        let mut stopped = None;
+        let mut said = String::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let ended = loop {
+            tokio::select! {
+                ended = &mut turn => break ended,
+                Some(message) = conn_rx.recv() => match message {
+                    ConnMessage::SessionUpdate(notification, ack) => {
+                        let _ = ack.send(());
+                        match notification.update {
+                            SessionUpdate::ToolCall(call) if call.tool_call_id.0.as_ref() == "hangs" => {
+                                if call.status != ToolCallStatus::InProgress {
+                                    stopped = Some(call.status);
+                                }
+                            }
+                            SessionUpdate::AgentMessageChunk(chunk) => {
+                                if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
+                                    said.push_str(&text.text);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    ConnMessage::RequestPermission { request, response_tx } => {
+                        let allow = request.options[0].option_id.clone();
+                        let _ = response_tx.send(RequestPermissionResponse::new(
+                            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(allow)),
+                        ));
+                        // Allowed, it runs: the parent stops it.
+                        let params = serde_json::value::to_raw_value(&sven_bootstrap::task_tool::CancelToolParams {
+                            session_id: id.to_string(),
+                            tool_call_id: "hangs".into(),
+                        })
+                        .unwrap();
+                        agent
+                            .ext_notification(agent_client_protocol::ExtNotification::new(
+                                sven_bootstrap::task_tool::CANCEL_TOOL_METHOD,
+                                params.into(),
+                            ))
+                            .await
+                            .expect("taken");
+                    }
+                },
+                () = tokio::time::sleep_until(deadline) => panic!("the turn did not end: {said:?}"),
+            }
+        };
+        assert_eq!(
+            ended.expect("the turn ends").stop_reason,
+            StopReason::EndTurn
+        );
+        assert_eq!(
+            stopped,
+            Some(ToolCallStatus::Failed),
+            "the call was answered as stopped"
+        );
+        assert!(said.contains("went on without it"), "{said:?}");
     }
 }

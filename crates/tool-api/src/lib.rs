@@ -17,6 +17,7 @@ pub mod display;
 pub mod events;
 pub mod files;
 pub mod grep_match;
+pub mod nested_calls;
 pub mod params;
 pub mod path_scope;
 pub mod policy;

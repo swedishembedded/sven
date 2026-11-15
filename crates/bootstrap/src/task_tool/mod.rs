@@ -99,6 +99,7 @@ use sven_workspace::SharedAgents;
 mod admission;
 mod approver;
 mod brief;
+mod call_stops;
 mod confined_child;
 mod finding;
 mod handback;
@@ -142,6 +143,19 @@ pub const CAPABILITY_META_KEY: &str = "sven.capability";
 /// the files the call made or names, by handle (`ArtifactRef`s), so the
 /// parent relays them with its own result and its client shows them.
 pub const ARTIFACTS_META_KEY: &str = "sven.artifacts";
+
+/// The extension notification by which a parent stops one call of its
+/// `sven acp serve` child, by the id the child reported it under; the turn
+/// goes on. Its params are [`CancelToolParams`].
+pub const CANCEL_TOOL_METHOD: &str = "sven/cancel_tool";
+
+/// What [`CANCEL_TOOL_METHOD`] carries.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelToolParams {
+    pub session_id: String,
+    pub tool_call_id: String,
+}
 
 // ── TaskTool ─────────────────────────────────────────────────────────────────
 
@@ -765,6 +779,8 @@ impl Tool for TaskTool {
                 chunks: self.chunks.clone(),
                 ledger: Arc::clone(&self.ledger),
             },
+            // The child's calls are stopped one by one as the parent's are.
+            calls: sven_tool_api::nested_calls::current(),
         };
         let mut output = self.runner.run(args).await;
         if let Some(worktree) = isolated {

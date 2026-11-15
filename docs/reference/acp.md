@@ -155,6 +155,12 @@ The bridge layer in `crates/acp/src/bridge.rs` translates sven's internal `Agent
 
 `TextComplete` and `ThinkingComplete` carry nothing the deltas did not. Events not listed above (e.g. `ContextCompacted`, collab, harness and sub-agent events) are not sent; they carry no information that ACP clients currently consume.
 
+## Stopping one call
+
+Besides `session/cancel`, which stops the whole turn, the server takes one extension notification, `_sven/cancel_tool`, with params `{"sessionId": "...", "toolCallId": "..."}`. It stops that one call of the session's running turn, by the `toolCallId` its `ToolCall` notification carried: the call is reported `Failed`, saying the person stopped it, and the turn goes on to its next reply. A call that already ended, or an unknown session, changes nothing.
+
+sven sends it itself when it runs another sven as a sub-agent: each of the child's calls can be stopped from the parent, the terminal or the web, as the parent's own are.
+
 ## Concurrency model
 
 The ACP trait requires `?Send` futures, so the entire server runs inside a `tokio::task::LocalSet`.  Session state is held in a `RefCell<HashMap<...>>` (safe because `LocalSet` is single-threaded).  Each session's `AgentEvent` receiver is wrapped in a `tokio::sync::Mutex` so two prompts cannot drain the same session concurrently, and cancellation is implemented via a `oneshot` channel stored inside the session entry.

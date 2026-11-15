@@ -108,6 +108,9 @@ pub(super) struct SpawnArgs {
     pub(super) cancel_rx: tokio::sync::oneshot::Receiver<()>,
     /// How the child's answer is handed back and accounted.
     pub(super) reporting: Reporting,
+    /// Where the parent's executor lets the child's calls be stopped one by
+    /// one; `None` when it does not.
+    pub(super) calls: Option<Arc<dyn sven_tool_api::nested_calls::NestedCalls>>,
 }
 
 /// The parent's terms the child's server is started with, beyond the
@@ -203,6 +206,8 @@ struct DriveArgs<'a, Exit> {
     inactivity: Duration,
     /// Permission requests of the child being answered right now.
     pending: Rc<Cell<usize>>,
+    /// Where the child's calls are registered so each can be stopped alone.
+    calls: Option<Arc<dyn sven_tool_api::nested_calls::NestedCalls>>,
 }
 
 /// Runs one prompt against `agent`: handshake, mode switch, then the prompt
@@ -230,6 +235,7 @@ where
         updates,
         inactivity: silence,
         pending,
+        calls,
     } = args;
     let mut final_text = String::new();
 
@@ -290,6 +296,8 @@ where
     tokio::pin!(out_of_time);
     tokio::pin!(exited);
 
+    // The child's calls, each stoppable by its id from the parent.
+    let (mut stops, mut stopped_calls) = super::call_stops::ChildCallStops::new(calls);
     let end = loop {
         tokio::select! {
             biased;
@@ -297,6 +305,13 @@ where
             _ = &mut cancel_rx => {
                 debug!("task: parent cancelled - forwarding ACP session/cancel");
                 break SessionEnd::Cancelled;
+            }
+            Some(call) = stopped_calls.recv() => {
+                debug!(call = %call, "task: one call of the child stopped - forwarding");
+                agent
+                    .ext_notification(super::call_stops::cancel_tool_notification(&session_id.to_string(), call))
+                    .await
+                    .ok();
             }
             result = &mut prompt_task => {
                 break match result {
@@ -334,6 +349,7 @@ where
             notification = notifications.next() => match notification {
                 Some(notification) => {
                     inactivity.as_mut().reset(Instant::now() + silence);
+                    stops.note(&notification.update);
                     if let Some(text) = updates.forward(&notification).await {
                         final_text.push_str(&text);
                     }
@@ -486,6 +502,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
         tool_event_tx,
         cancel_rx,
         reporting,
+        calls,
     } = args;
 
     // ── Spawn child process ───────────────────────────────────────────────────
@@ -668,6 +685,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
             updates: &updates,
             inactivity: INACTIVITY_TIMEOUT,
             pending,
+            calls,
         },
     )
     .await;
@@ -1118,6 +1136,8 @@ mod tests {
         cancelled: Cell<bool>,
         /// The media types of the images its prompt carried.
         images: std::cell::RefCell<Vec<String>>,
+        /// The calls its parent stopped one by one.
+        stopped_calls: std::cell::RefCell<Vec<String>>,
     }
 
     #[async_trait(?Send)]
@@ -1159,6 +1179,110 @@ mod tests {
             self.cancelled.set(true);
             Ok(())
         }
+        async fn ext_notification(
+            &self,
+            args: agent_client_protocol::ExtNotification,
+        ) -> AcpResult<()> {
+            assert_eq!(&*args.method, super::super::CANCEL_TOOL_METHOD);
+            let params: super::super::CancelToolParams =
+                serde_json::from_str(args.params.get()).unwrap();
+            assert_eq!(params.session_id, "s");
+            self.stopped_calls.borrow_mut().push(params.tool_call_id);
+            Ok(())
+        }
+    }
+
+    /// The parent's turn scope, as its executor registers calls with it.
+    struct Scoped(sven_kernel::CancelScope);
+    impl sven_tool_api::nested_calls::NestedCalls for Scoped {
+        fn register(&self, id: &str) -> sven_tool_api::nested_calls::NestedCall {
+            let call = self.0.call(id);
+            sven_tool_api::nested_calls::NestedCall::new(call.cancelled_owned(), call)
+        }
+    }
+
+    /// The person stops one call the child runs, by the id the child
+    /// reported it under, as they stop one of the parent's: the child is told
+    /// to stop that call alone, and the session goes on. Once the child says
+    /// the call ended, the id is not there to stop.
+    #[tokio::test]
+    async fn one_call_of_the_child_is_stopped_from_the_parent_by_its_id() {
+        use agent_client_protocol::{SessionUpdate, ToolCall, ToolCallStatus};
+        let agent = Rc::new(FakeAgent {
+            hang: true,
+            ..FakeAgent::default()
+        });
+        let turn = sven_kernel::CancelScope::new();
+        let (tool_event_tx, _events) = mpsc::channel(16);
+        let updates = UpdateSink {
+            tool_event_tx,
+            call_id: "c".into(),
+            handle_id: "h".into(),
+            transcript: Cell::new(0),
+            artifacts: std::cell::RefCell::default(),
+        };
+        let (notify, notifications) = futures::channel::mpsc::unbounded();
+        let (stop_session, cancel_rx) = tokio::sync::oneshot::channel();
+        let said = |status| {
+            SessionNotification::new(
+                "s",
+                SessionUpdate::ToolCall(ToolCall::new("child-1", "shell").status(status)),
+            )
+        };
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let driving = drive(
+                    Rc::clone(&agent),
+                    DriveArgs {
+                        workdir: PathBuf::from("."),
+                        mode: "agent".into(),
+                        prompt: "do it".into(),
+                        images: Vec::new(),
+                        deadline: None,
+                        notifications,
+                        cancel_rx,
+                        exited: std::future::pending::<()>(),
+                        updates: &updates,
+                        inactivity: INACTIVITY_TIMEOUT,
+                        pending: Rc::new(Cell::new(0)),
+                        calls: Some(Arc::new(Scoped(turn.clone()))),
+                    },
+                );
+                let person = async {
+                    notify
+                        .unbounded_send(said(ToolCallStatus::InProgress))
+                        .unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while !turn.cancel_call("child-1") {
+                        assert!(
+                            Instant::now() < deadline,
+                            "the child's call is never stoppable"
+                        );
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    while agent.stopped_calls.borrow().is_empty() {
+                        assert!(
+                            Instant::now() < deadline,
+                            "the stop never reached the child"
+                        );
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    assert_eq!(*agent.stopped_calls.borrow(), ["child-1"]);
+                    assert!(!agent.cancelled.get(), "the child's session goes on");
+                    assert!(!turn.is_cancelled(), "and so does the parent's turn");
+
+                    notify.unbounded_send(said(ToolCallStatus::Failed)).unwrap();
+                    while turn.cancel_call("child-1") {
+                        assert!(Instant::now() < deadline, "an ended call stays stoppable");
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    let _ = stop_session.send(());
+                };
+                let ((end, _), ()) = tokio::join!(driving, person);
+                assert!(matches!(end, SessionEnd::Cancelled), "{end:?}");
+            })
+            .await;
     }
 
     async fn run(agent: Rc<FakeAgent>, deadline: Option<Instant>) -> SessionEnd {
@@ -1205,6 +1329,7 @@ mod tests {
                     updates: &updates,
                     inactivity,
                     pending: Rc::new(Cell::new(pending_requests)),
+                    calls: None,
                 },
             ))
             .await;

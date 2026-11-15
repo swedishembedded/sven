@@ -48,6 +48,12 @@ impl CallScope {
     pub async fn cancelled(&self) {
         self.token.cancelled().await;
     }
+
+    /// The same as [`cancelled`](Self::cancelled), owning what it waits on,
+    /// so it can be handed to another task.
+    pub fn cancelled_owned(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        self.token.clone().cancelled_owned()
+    }
 }
 
 impl Drop for CallScope {

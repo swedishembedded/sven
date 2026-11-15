@@ -41,6 +41,18 @@ use sven_tool_api::call_records::CallRecorder;
 use sven_tool_registry::{ToolCall, ToolOutput, ToolRegistry, DISCOVERY_TOOL};
 use sven_turn::instructions::Activator;
 
+/// The calls a tool runs on someone's behalf, registered under the turn
+/// its own call runs in: stopped by id ([`CancelScope::cancel_call`]) or
+/// with the turn.
+struct TurnCalls(CancelScope);
+
+impl sven_tool_api::nested_calls::NestedCalls for TurnCalls {
+    fn register(&self, id: &str) -> sven_tool_api::nested_calls::NestedCall {
+        let call = self.0.call(id);
+        sven_tool_api::nested_calls::NestedCall::new(call.cancelled_owned(), call)
+    }
+}
+
 /// What a call the person cancelled while it ran answers: the model reads
 /// it as the call's result and goes on without it.
 pub const CANCELLED_BY_PERSON: &str =
@@ -421,9 +433,15 @@ impl EffectExecutor for ToolExecutor {
                 // still used below for `output_category`.
                 let registry = Arc::clone(&registry);
                 let call = tool_call.clone();
+                // The calls the tool runs on someone's behalf (a sub-agent's)
+                // can be stopped by their ids like this one.
+                let nested: Arc<dyn sven_tool_api::nested_calls::NestedCalls> =
+                    Arc::new(TurnCalls(cancel.clone()));
                 let task = sven_rt::spawn(sven_tool_api::call_records::scope(
                     recorder.clone(),
-                    async move { sized_for_model(registry.execute(&call).await) },
+                    sven_tool_api::nested_calls::scope(nested, async move {
+                        sized_for_model(registry.execute(&call).await)
+                    }),
                 ));
                 let abort = task.abort_handle();
                 let finished = tokio::select! {
@@ -1653,6 +1671,72 @@ mod watchdog_tests {
             std::future::pending::<()>().await;
             unreachable!()
         }
+    }
+
+    /// Runs one call of its own (a sub-agent's, `child-call`) and answers
+    /// once the person stops that call: its own call goes on.
+    struct DelegatingTool;
+    #[async_trait::async_trait]
+    impl Tool for DelegatingTool {
+        fn name(&self) -> &str {
+            "delegating"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
+        fn description(&self) -> &str {
+            "runs a call of its own"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        async fn execute(&self, call: &sven_tool_api::ToolCall) -> sven_tool_api::ToolOutput {
+            let calls = sven_tool_api::nested_calls::current().expect("the executor provides it");
+            let mut child = calls.register("child-call");
+            child.stopped().await;
+            sven_tool_api::ToolOutput::ok(&call.id, "its call was stopped; went on without it")
+        }
+    }
+
+    /// A call a tool runs on someone's behalf (a sub-agent's) is stopped by
+    /// its id like the tool's own: the tool hears of it and its own call goes
+    /// on; once it ended, the id is not there to stop.
+    #[tokio::test]
+    async fn a_call_a_tool_runs_for_it_is_stopped_by_its_id() {
+        let mut registry = ToolRegistry::new();
+        registry.register(DelegatingTool);
+        let cancel = sven_kernel::CancelScope::new();
+        let mut exec =
+            ToolExecutor::new(Arc::new(registry), HashSet::new()).with_cancel(cancel.clone());
+        let rt = sven_kernel::ErasedRuntime::spawn(
+            Box::new(sven_hsm::Hsm::new(super::tests::OneShotMachine::new())),
+            sven_hsm::Context::new(),
+            sven_hsm::PermissionPolicy::builder().build(),
+            super::tests::NoOpExec,
+            16,
+        );
+        sven_kernel::EffectExecutor::execute(
+            &mut exec,
+            effect("delegating"),
+            &rt.sink(),
+            &sven_hsm::ObservationSink::default(),
+        )
+        .await;
+        sven_rt::sleep(Duration::from_millis(20)).await;
+        assert!(cancel.cancel_call("child-call"));
+        rt.wait_done().await;
+        let report = rt.join().await.unwrap();
+        let received = report
+            .ctx
+            .fact("received_event")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        assert!(received.contains("ToolSucceeded"), "{received}");
+        assert!(!cancel.is_cancelled(), "the run goes on");
+        assert!(!cancel.cancel_call("child-call"), "gone once it ended");
     }
 
     /// A cancelled run leaves no tool working on its behalf.
