@@ -53,7 +53,7 @@ pub(crate) const BACKLOG: usize = 4096;
 /// The bridge never waits on `event_tx` while the kernel speaks, so the
 /// broadcast never laps it and drops an event at random (a turn's end among
 /// them, which would leave its client waiting for good). What the receiver
-/// has not taken is held, up to [`BACKLOG`]; past it, the oldest live update
+/// has not taken is held, up to 4096 events; past it, the oldest live update
 /// is let go (a text or thinking delta, tool progress, a token count: what a
 /// later event repeats in full), and the receiver is told once. A turn's
 /// end, its results and its errors are always kept.
