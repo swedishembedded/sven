@@ -31,6 +31,7 @@ mod goal;
 mod harness_authz;
 mod harness_child_records;
 mod harness_children;
+mod harness_compact_profile;
 mod harness_compile;
 mod harness_conversation_trace;
 mod harness_cut_off;

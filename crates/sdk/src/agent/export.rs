@@ -44,7 +44,10 @@ impl Agent {
         running_requests: &[crate::meter::Metered],
         running_marks: &[crate::state::CompactionMark],
     ) -> atif::Trajectory {
-        let mut agent = sven_session_store::default_agent_profile();
+        let mut agent = sven_session_store::with_run_profile(
+            sven_session_store::default_agent_profile(),
+            self.engine.config().agent.profile.id(),
+        );
         agent.model_name.clone_from(&self.state.model);
         if !self.state.tools.is_empty() {
             agent.tool_definitions = Some(self.state.tools.clone());

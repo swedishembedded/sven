@@ -772,8 +772,7 @@ impl CiRunner {
                            new_steps: &[TraceStep],
                            subagent_trajectories: &[Trajectory],
                            outcome: Option<&SessionOutcome>| {
-            let agent_profile = trace_session::default_agent_profile()
-                .with_model(format!("{}/{}", model_cfg.provider, model_cfg.name));
+            let agent_profile = ui_output::agent_profile(&self.config, &model_cfg);
             let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent_profile);
             trajectory.session_id = Some(run_session_id.clone());
             trajectory.steps = existing_steps
@@ -1348,8 +1347,7 @@ impl CiRunner {
         // summary with the actual trace document (also what --output-trace
         // would have written to a file).
         if opts.output_format == OutputFormat::Json {
-            let agent_profile = trace_session::default_agent_profile()
-                .with_model(format!("{}/{}", model_cfg.provider, model_cfg.name));
+            let agent_profile = ui_output::agent_profile(&self.config, &model_cfg);
             let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent_profile);
             trajectory.session_id = Some(run_session_id.clone());
             trajectory.steps = final_trajectory_steps.clone();

@@ -41,6 +41,8 @@ pub(crate) struct Completion<'a> {
     pub skills: sven_workspace::SharedSkills,
     /// Whether the `skill` tool leaves out where skills are (`tools.hide_locations`).
     pub hide_skill_locations: bool,
+    /// The run profile: a fixed one narrows the registry to its own tools.
+    pub profile: crate::RunProfile,
     pub disabled: &'a [String],
     /// When set, every tool not named here is removed too.
     pub only: Option<&'a [String]>,
@@ -50,13 +52,18 @@ pub(crate) struct Completion<'a> {
 /// applies the `tools.disabled` / `tools.only` name policy last, so a disabled
 /// name is gone whoever registered it.
 pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) {
-    for tool in completion.mcp_tools {
+    let compact = completion.profile == crate::RunProfile::Compact;
+    if compact {
+        crate::compact_profile::restrict(registry);
+    }
+    // A fixed profile offers no MCP tool and no `tools` tool to load from.
+    for tool in completion.mcp_tools.into_iter().filter(|_| !compact) {
         registry.register(tool);
     }
     for tool in completion.extra_tools {
         registry.register_arc(tool);
     }
-    if let Some(deferred) = completion.deferred {
+    if let Some(deferred) = completion.deferred.filter(|_| !compact) {
         crate::tool_discovery::enable(registry, deferred.mode, deferred.ranker);
     }
     if let (Some(ranker), true) = (completion.skill_ranker, registry.get("skill").is_some()) {

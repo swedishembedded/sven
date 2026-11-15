@@ -24,8 +24,8 @@ use super::live_trajectory;
 pub use super::outcome::{HarnessFailure, HarnessOutcome};
 use super::record::{start_checkpoint, Recorder};
 use super::run_support::{
-    checkpoint_at, conclusion_of, harness_tools, interrupted_failure, outcome_of, publish_trace,
-    settle_cancel, WIND_DOWN,
+    checkpoint_at, conclusion_of, config_for, harness_tools, interrupted_failure, outcome_of,
+    publish_trace, settle_cancel, WIND_DOWN,
 };
 use super::scratchpad::{Choices, Scratchpad};
 use super::trajectory::Evidence;
@@ -406,7 +406,8 @@ impl HarnessRun {
         // trajectory to embed.
         let children = sven_bootstrap::child_records::ChildRecords::default();
         let trajectory_slot = live_trajectory::Slot::default();
-        let mut builder = RuntimeBuilder::new(self.engine.config(), HARNESS_MODE)
+        let config = config_for(&self.plan, self.engine.config());
+        let mut builder = RuntimeBuilder::new(config, HARNESS_MODE)
             .with_cancel_handle(Arc::clone(&abort_slot))
             .with_decoding(bounds.decoding)
             .with_child_records(children.clone())

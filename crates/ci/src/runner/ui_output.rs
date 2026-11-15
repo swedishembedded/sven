@@ -11,7 +11,7 @@
 //! stderr diagnostic trace and the ATIF trajectory, all folded from the
 //! session's [`UiEvent`] stream.
 
-use atif::Trajectory;
+use atif::{AgentProfile, Trajectory};
 use sven_bootstrap::Config;
 use sven_hsm::UiEvent;
 use sven_model::{FunctionCall, Message, MessageContent, Role};
@@ -108,6 +108,19 @@ impl CiOutState {
     }
 }
 
+/// The agent a run's trajectory names: sven, the model the run used and, under
+/// a fixed run profile, the profile's version.
+pub(super) fn agent_profile(
+    config: &Config,
+    model: &sven_model_drivers::ModelConfig,
+) -> AgentProfile {
+    sven_session_store::with_run_profile(
+        trace_session::default_agent_profile()
+            .with_model(format!("{}/{}", model.provider, model.name)),
+        config.agent.profile.id(),
+    )
+}
+
 /// Write this run's ATIF trajectory to the project auto-log, stamped with the
 /// reward its outcome earned.
 ///
@@ -132,8 +145,7 @@ pub(super) fn write_trajectory(
         return;
     };
 
-    let agent = trace_session::default_agent_profile()
-        .with_model(format!("{}/{}", config.model.provider, config.model.name));
+    let agent = agent_profile(config, &config.model);
     let mut trajectory = Trajectory::new(trace_session::ATIF_SCHEMA_VERSION, agent);
     trajectory.session_id = Some(trace_session::new_session_id());
     trajectory.steps = state.assembler.finish();

@@ -110,7 +110,7 @@ pub mod harness_plan {
 /// binary reads, including its detection of a locally served model, so an
 /// application configured once works for both.
 pub mod config {
-    pub use sven_bootstrap::Config;
+    pub use sven_bootstrap::{compact_profile, Config, RunProfile};
 
     /// Loads the configuration the `sven` binary reads: [`Config::load`].
     ///

@@ -55,6 +55,7 @@ both for that step and the steps after it.
 | `--resolve HOST=ADDR` | `network.resolve` | Repeatable. Resolve a host name to an address for direct connections. |
 | `--disable-tool NAME` | `tools.disabled` | Repeatable. Remove a tool from the session: `--disable-tool shell` runs an agent with no command execution. |
 | `--context-assembly MODE` | `context.assembly.mode` | `off`, `demote` or `reconstruct`; see [Addressable context](../internals/context-assembly.md). |
+| `--profile PROFILE` | `agent.profile` | `default` or `compact`: `compact` sends a fixed short system prompt and the three compact definitions of `read_file`, `write_file` and `shell`, for a small-context model; see [Run profiles](../guides/run-profiles.md). |
 | `--orchestration MODE` | `agent.orchestration` | `off` or `plan`: whether the agent is offered `plan_tasks`; see [Orchestration](../concepts/orchestration.md). |
 | `-c, --config FILE` | auto-discovery | A configuration file merged over every file found by the [normal lookup](configuration.md#config-file-location). |
 

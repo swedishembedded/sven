@@ -342,6 +342,11 @@ agent:
   # Leave unset to use the built-in prompt.
   # system_prompt: "You are a careful coding assistant..."
 
+  # The run profile: `default`, or `compact` for a small-context model
+  # (a fixed short prompt and three compact tool definitions).
+  # See guides/run-profiles.md. `--profile` overrides it.
+  profile: default
+
   # Wall-clock limit of one headless workflow step, in seconds (0 = no limit).
   max_step_timeout_secs: 0
 
@@ -795,6 +800,7 @@ Controls the agent's autonomy and defaults.
 | `max_step_timeout_secs` | `0` | Wall-clock limit of one headless workflow step; `0` = no limit. `--step-timeout` overrides it |
 | `max_run_timeout_secs` | `14400` (4 hours) | Wall-clock limit of a whole headless run, covering every wait in it: model, tools, approvals and questions. The run ends with exit code `124`. `0` = no limit. `--run-timeout` overrides it; see [CI pipeline](../guides/headless.md#timeouts). While a limit applies, each model request ends with a line stating the minutes used and left |
 | `child_run_timeout_secs` | `3600` | Wall-clock budget of each child agent run (a parallel SDLC task, a `task` sub-agent); the child is stopped when it runs out. `0` = no limit |
+| `profile` | `default` | `compact` sends a fixed short system prompt and the compact definitions of `read_file`, `write_file` and `shell`, with no other built-in tool, no MCP server and no skills, memory or project knowledge, and records `compact/1` in the trajectory; see [Run profiles](../guides/run-profiles.md). `--profile` overrides it |
 | `orchestration` | `off` | `plan` offers the agent `plan_tasks`, which runs a task graph it submits as parallel isolated sub-agents; see [Orchestration](../concepts/orchestration.md). `--orchestration` overrides it |
 | `orchestration_max_parallel` | `4` | Most `plan_tasks` children running at once |
 | `orchestration_max_fanout` | `8` | Widest layer of side-by-side tasks a graph may have |

@@ -37,6 +37,11 @@ must not be withheld. A state of a machine that names its tools explicitly (an
 SDLC phase, a harness agent step) is offered exactly those, in full: it has
 already decided what it needs.
 
+A [run profile](../guides/run-profiles.md) that fixes the request (`compact`)
+sits above these modes: it offers its own three tools in full, with compact
+definitions, and no `tools` tool, so nothing is deferred and nothing is
+indexed.
+
 ## What the model sees
 
 **Core tools**, always in full, in name order: `edit_file`, `grep`,

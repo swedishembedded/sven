@@ -61,6 +61,33 @@ pub(super) fn interrupted_failure(state: &HarnessRunState) -> Option<Event> {
     }
 }
 
+/// The run profile a plan's `agent.profile` asks the host for: `compact` is
+/// the only one that changes what a session sends.
+pub(super) fn declared_profile(
+    plan: &sven_harness_spec::HarnessPlan,
+) -> sven_bootstrap::RunProfile {
+    match plan.profile.as_deref() {
+        Some("compact") => sven_bootstrap::RunProfile::Compact,
+        _ => sven_bootstrap::RunProfile::Default,
+    }
+}
+
+/// `config` for a run of `plan`: with the run profile the plan declares, when
+/// it declares one that changes what a session sends.
+pub(super) fn config_for(
+    plan: &sven_harness_spec::HarnessPlan,
+    config: Arc<sven_bootstrap::Config>,
+) -> Arc<sven_bootstrap::Config> {
+    match declared_profile(plan) {
+        profile if profile == config.agent.profile || profile.id().is_none() => config,
+        profile => {
+            let mut declared = (*config).clone();
+            declared.agent.profile = profile;
+            Arc::new(declared)
+        }
+    }
+}
+
 /// The tools only a harness's own steps call - the gate command runner and
 /// the snapshot reader - followed by the host's own tools. They exist for every
 /// harness run whatever toolset the engine has, confined to the project root;

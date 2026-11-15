@@ -12,6 +12,7 @@ pub mod question_ledger;
 mod queue;
 pub mod record_steps;
 pub mod reward;
+mod run_profile;
 pub mod session_resolve;
 pub mod step_ledger;
 pub mod step_request;
@@ -47,6 +48,7 @@ pub use reward::{
     apply_outcome_to_trajectory, trajectory_reward, OutcomeFold, RunConclusion, SessionOutcome,
     SessionReward, Verdict,
 };
+pub use run_profile::with_run_profile;
 pub use session_resolve::resolve_session_id;
 pub use title::{make_title, sanitize_llm_title};
 pub use trace_session::{

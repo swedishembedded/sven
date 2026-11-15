@@ -20,6 +20,7 @@
       "orchestration_max_graphs": 3,
       "orchestration_max_parallel": 4,
       "orchestration_max_tasks": 24,
+      "profile": "default",
       "stream_idle_timeout_secs": 600,
       "system_prompt": "You are a careful coding assistant.",
       "thinking_timeout_secs": 300,

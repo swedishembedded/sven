@@ -139,6 +139,12 @@ pub struct AgentConfig {
     #[serde(default)]
     pub system_prompt: Option<String>,
 
+    /// The run profile: `default` (sven's own prompt and tools as
+    /// configured) or `compact` (a fixed short prompt and three compact tool
+    /// definitions, for a small-context model). `--profile` overrides it.
+    #[serde(default)]
+    pub profile: super::RunProfile,
+
     /// Per-step wall-clock timeout in seconds (0 = no limit).
     /// Can be set in config, overridden by frontmatter or CLI flag.
     #[serde(default)]
@@ -260,6 +266,7 @@ impl AgentConfig {
             "compaction_overhead_reserve",
             "compaction_output_reserve",
             "system_prompt",
+            "profile",
             "max_step_timeout_secs",
             "max_run_timeout_secs",
             "max_thinking_tokens",
@@ -359,6 +366,7 @@ impl Default for AgentConfig {
             compaction_overhead_reserve: default_compaction_overhead_reserve(),
             compaction_output_reserve: default_compaction_output_reserve(),
             system_prompt: None,
+            profile: super::RunProfile::default(),
             max_step_timeout_secs: 0,
             max_run_timeout_secs: DEFAULT_MAX_RUN_TIMEOUT_SECS,
             child_run_timeout_secs: default_child_run_timeout_secs(),

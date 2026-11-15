@@ -27,6 +27,7 @@ mod disclosure;
 mod listing;
 mod ocr;
 mod orchestration;
+mod profile;
 mod tools;
 
 use std::path::Path;
@@ -46,6 +47,7 @@ pub use disclosure::DisclosureConfig;
 pub use listing::ListingConfig;
 pub use ocr::{OcrConfig, Specs};
 pub use orchestration::Orchestration;
+pub use profile::RunProfile;
 pub use tools::ToolsConfig;
 
 /// Everything a session is configured by.

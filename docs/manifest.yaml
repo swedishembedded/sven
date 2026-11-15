@@ -40,6 +40,8 @@ navigation:
       - docs/guides/browser-sessions.md
       - source: docs/guides/independent-agents.md
         description: "Run sven as an independent actor on a network you control: an egress allowlist or proxy, emulated hostnames, a state root of its own and no shared files."
+      - source: docs/guides/run-profiles.md
+        description: "Fix the system prompt and tool definitions a session sends, so a small-context model is driven and examined on the same short request."
       - docs/guides/troubleshooting.md
   - title: Concepts
     pages:

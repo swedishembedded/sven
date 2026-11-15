@@ -50,7 +50,7 @@ pub struct HarnessPlan {
     /// Declared limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limits: Option<PlanLimits>,
-    /// The tool profile the workflow declared (`none`, `coding`):
+    /// The tool profile the workflow declared (`none`, `coding`, `compact`):
     /// what the host must provide for the plan's agent steps. Absent in
     /// version 1 plans.
     #[serde(default, skip_serializing_if = "Option::is_none")]

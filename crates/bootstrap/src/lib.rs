@@ -23,6 +23,7 @@
 pub mod child_records;
 pub mod child_spawner;
 pub mod cli_registry;
+pub mod compact_profile;
 pub mod config;
 pub mod connectors;
 pub mod context;
@@ -40,6 +41,7 @@ mod instruction_wiring;
 pub mod kernel_bridge;
 mod mcp_setup;
 mod mode_policy;
+mod model_provider;
 pub mod modes;
 mod questions;
 pub mod registry;
@@ -56,7 +58,7 @@ pub mod ui_test_dispatch;
 pub use cli_registry::build_cli_tool_registry;
 pub use config::{
     AgentConfig, AssemblyConfig, AssemblyMode, Config, ContextSettings, DisclosureConfig,
-    ListingConfig, Orchestration, ToolsConfig,
+    ListingConfig, Orchestration, RunProfile, ToolsConfig,
 };
 pub use context::{BuiltinTools, Questions, RuntimeContext, ToolSetProfile};
 pub use context_query::{

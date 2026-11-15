@@ -61,6 +61,8 @@ pub(super) struct Evidence {
     conversations: Vec<(String, Conversation)>,
     children: Vec<ChildRecord>,
     model: String,
+    /// The run profile the plan declared, when it fixes the request.
+    run_profile: Option<&'static str>,
     tools: Vec<serde_json::Value>,
     bundle_digest: Option<String>,
     /// What each command gate step last stored (`passed`, `detail`,
@@ -179,6 +181,7 @@ impl Evidence {
             conversations,
             children,
             model,
+            run_profile: super::run_support::declared_profile(plan).id(),
             tools,
             bundle_digest: bundle_digest.map(str::to_string),
             gate_results,
@@ -397,7 +400,10 @@ fn step_totals(trajectory: &atif::Trajectory, steps: u64) -> atif::FinalMetrics 
 
 /// The agent profile every trajectory of the run carries.
 fn run_agent(evidence: &Evidence) -> atif::AgentProfile {
-    let mut agent = sven_session_store::default_agent_profile();
+    let mut agent = sven_session_store::with_run_profile(
+        sven_session_store::default_agent_profile(),
+        evidence.run_profile,
+    );
     agent.model_name = Some(evidence.model.clone());
     if !evidence.tools.is_empty() {
         agent.tool_definitions = Some(evidence.tools.clone());

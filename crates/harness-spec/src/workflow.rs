@@ -106,6 +106,9 @@ pub enum Profile {
     None,
     /// File inspection, editing, search and shell.
     Coding,
+    /// The host's `compact` run profile: `read_file`, `write_file` and
+    /// `shell`, each with a compact definition, and no other built-in tool.
+    Compact,
 }
 
 impl Profile {
@@ -115,6 +118,7 @@ impl Profile {
         match self {
             Self::None => "none",
             Self::Coding => "coding",
+            Self::Compact => "compact",
         }
     }
 
@@ -124,6 +128,7 @@ impl Profile {
         match self {
             Self::None => &[],
             Self::Coding => &["ReadFile", "WriteFile", "DeleteFile", "ExecuteShell"],
+            Self::Compact => &["ReadFile", "WriteFile", "ExecuteShell"],
         }
     }
 }

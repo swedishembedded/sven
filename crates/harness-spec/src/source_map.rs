@@ -43,7 +43,7 @@ pub struct SourceRef {
 /// Never read from a document: only the lowering sets it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Lowering {
-    /// The tool profile the workflow declared (`none` or `coding`).
+    /// The tool profile the workflow declared (`none`, `coding` or `compact`).
     pub profile: String,
     /// The `execution.scratchpad` template (over inputs), when declared.
     pub scratchpad: Option<String>,

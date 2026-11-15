@@ -31,6 +31,7 @@ mod rc;
 pub use rc::RcAction;
 #[cfg(feature = "network")]
 mod orchestration;
+mod profile;
 mod replay;
 mod task;
 mod team;
@@ -39,6 +40,7 @@ mod tool;
 pub use assembly::ContextAssemblyArg;
 pub use disclosure::DisclosureFlags;
 pub use orchestration::OrchestrationArg;
+pub use profile::ProfileArg;
 
 // `AcpCommands`/`McpCommands` live in `sven-acp`/`sven-mcp` themselves,
 // shared verbatim with the standalone `sven-acp`/`sven-mcp` binaries rather
@@ -148,6 +150,14 @@ pub struct Cli {
     /// docs/concepts/orchestration.md.
     #[arg(long, value_enum, value_name = "MODE")]
     pub orchestration: Option<OrchestrationArg>,
+
+    /// The run profile (overrides `agent.profile`). `compact` sends a fixed
+    /// short system prompt and three compact tool definitions (`read_file`,
+    /// `write_file`, `shell`) and nothing else, for a model with a small
+    /// context window; the trajectory records the profile's version. See
+    /// docs/guides/run-profiles.md.
+    #[arg(long, value_enum, value_name = "PROFILE")]
+    pub profile: Option<ProfileArg>,
 
     /// A deferred tool to offer in full from the first request, added after
     /// the `tools.preload` of the configuration file. Repeatable. A name no
@@ -584,6 +594,16 @@ mod tests {
                 "{args:?}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn the_run_profile_is_chosen_with_a_flag_and_otherwise_left_to_configuration() {
+        assert_eq!(cli(&["fix it"]).profile, None);
+        assert_eq!(
+            cli(&["--profile", "compact", "fix it"]).profile,
+            Some(ProfileArg::Compact)
+        );
+        assert!(Cli::try_parse_from(["sven", "--profile", "tiny", "x"]).is_err());
     }
 
     #[test]

@@ -548,6 +548,8 @@ impl RuntimeBuilder {
         Arc<McpManager>,
         mpsc::Receiver<McpEvent>,
     )> {
+        let profile = self.config.agent.profile;
+        self.builtin_tools = profile.builtin_tools(self.builtin_tools);
         // ── Look up machine ───────────────────────────────────────────────────
         // Before anything starts: a session that cannot run as asked fails
         // here. The mode's policy comes from its registration, never guessed
@@ -576,22 +578,15 @@ impl RuntimeBuilder {
         // between the kernel and the model.
         let model: Arc<dyn sven_model::ModelProvider> = match self.model_provider_override.take() {
             Some(provider) => provider,
-            // `_probed` additionally asks the live server for its actual
-            // context window (a short-timeout, best-effort HTTP call) and
-            // clamps a hand-written `max_tokens` down to what the server can
-            // really serve - this is what stops sven from building a prompt
-            // the server will reject after already admitting the request.
-            // `build()` already does I/O two lines below (MCP connect), so
-            // this adds no new purity concern; it is a builder, not a
-            // transition.
-            None => Arc::from(sven_model_drivers::from_config_probed(&model_cfg).await?),
+            None => crate::model_provider::probed(&model_cfg).await?,
         };
 
         // ── MCP setup ────────────────────────────────────────────────────────
         let reused_mcp = self.shared_mcp_manager.is_some();
         let (mcp_manager, mcp_event_rx) = crate::mcp_setup::connect(crate::mcp_setup::McpSetup {
             shared: self.shared_mcp_manager.take(),
-            no_builtin_tools: self.builtin_tools == BuiltinTools::None,
+            no_builtin_tools: self.builtin_tools == BuiltinTools::None
+                || profile == crate::RunProfile::Compact,
             servers: &self.config.mcp_servers,
             allow_interactive_oauth: self.allow_interactive_oauth,
             wait_for_tools_ms: self.wait_for_mcp_tools_ms,
@@ -617,6 +612,7 @@ impl RuntimeBuilder {
         runtime.no_system = self.runtime_ctx.no_system;
         runtime.no_tools = self.runtime_ctx.no_tools;
         runtime.disclosure = self.config.instruction_disclosure();
+        crate::compact_profile::fix_prompt(profile, &mut runtime);
 
         let todos = Arc::new(tokio::sync::Mutex::new(Vec::<
             sven_tool_api::events::TodoItem,
@@ -703,6 +699,7 @@ impl RuntimeBuilder {
                 mcp_tools: mcp_manager.tools().await,
                 extra_tools: std::mem::take(&mut self.extra_tools),
                 deferred,
+                profile,
                 skill_ranker,
                 skills: runtime.skills.clone(),
                 hide_skill_locations: self.config.tools.hide_locations,

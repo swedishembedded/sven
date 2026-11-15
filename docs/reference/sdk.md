@@ -712,6 +712,9 @@ What the document says about the model's view of the run:
   trains on whole conversations excludes it. (A run whose observation events
   were dropped falls back to the kernel's thread, which holds only what survived
   each compaction; its compaction markers then lead the document.)
+- **Run profile.** A run under a fixed [run profile](../guides/run-profiles.md)
+  records its version in `agent.extra.sven.profile` (`compact/1`); a run under
+  `default` has no such key.
 - **Tools.** `agent.tool_definitions` are the schemas the model's requests
   carried in the agent's last step: the machine's named tools, else the tools
   registered for its mode. A tool the mode filters out, or that `Toolset` or

@@ -422,6 +422,9 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     if let Some(mode) = cli.orchestration {
         settings.runtime.agent.orchestration = mode.into();
     }
+    if let Some(profile) = cli.profile {
+        settings.runtime.agent.profile = profile.into();
+    }
 
     // ── Teammate mode ─────────────────────────────────────────────────────────
     // When --team-name is set (injected by spawn_teammate), skip the normal CI
