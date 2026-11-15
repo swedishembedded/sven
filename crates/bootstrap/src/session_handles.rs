@@ -349,6 +349,14 @@ impl RuntimeHandle {
         self.sink.emit(Event::UserCancelled).await
     }
 
+    /// Stops one tool call of the turn in flight, by the model's id for it:
+    /// it ends at once, answered as cancelled, and the turn goes on. `false`
+    /// when no such call is running.
+    #[must_use]
+    pub fn cancel_tool(&self, call_id: &str) -> bool {
+        self.turn.cancel_call(call_id)
+    }
+
     /// Asks the session to compact its conversation now: summarise it into
     /// notes the rest of the conversation stems from (announced as
     /// `ContextCompacted`, carrying the summary), whether or not the context

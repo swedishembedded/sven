@@ -92,6 +92,8 @@ pub enum Action {
 
     // Agent
     InterruptAgent,
+    /// Stop the tool call started last, of those running; the turn goes on.
+    CancelRunningTool,
     CycleMode,
 
     // Edit message (inline edit mode)
@@ -355,6 +357,7 @@ pub fn map_key(event: KeyEvent, cx: KeyContext) -> Option<Action> {
     match event.code {
         // ── Input-pane overrides come FIRST ───────────────────────────────────
         KeyCode::Char('c') if ctrl && in_input => Some(Action::InterruptAgent),
+        KeyCode::Char('x') if ctrl && in_input => Some(Action::CancelRunningTool),
         KeyCode::Char('u') if ctrl && in_input => Some(Action::InputDeleteToStart),
         KeyCode::Char('k') if ctrl && in_input => Some(Action::InputDeleteToEnd),
         KeyCode::Char('g') if ctrl && in_input => Some(Action::ToggleVoice),
@@ -658,6 +661,14 @@ mod tests {
         assert_eq!(
             map_key(ctrl_key('c'), input()),
             Some(Action::InterruptAgent)
+        );
+    }
+
+    #[test]
+    fn ctrl_x_stops_the_running_tool_call_inside_input() {
+        assert_eq!(
+            map_key(ctrl_key('x'), input()),
+            Some(Action::CancelRunningTool)
         );
     }
 

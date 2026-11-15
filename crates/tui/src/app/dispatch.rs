@@ -217,6 +217,10 @@ impl App {
                 self.interrupt_agent().await;
             }
 
+            Action::CancelRunningTool => {
+                self.cancel_running_tool().await;
+            }
+
             Action::ForceSubmitQueuedMessage => {
                 if let Some(idx) = self.queue.selected {
                     self.force_submit_queued_message(idx).await;

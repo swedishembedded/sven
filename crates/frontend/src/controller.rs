@@ -499,6 +499,14 @@ impl SessionController {
         self.session.cancel().await
     }
 
+    /// Stops one tool call of the turn in flight, by the model's id for it:
+    /// it is answered as cancelled and the turn goes on. `false` when no such
+    /// call is running.
+    #[must_use]
+    pub fn cancel_tool(&self, call_id: &str) -> bool {
+        self.session.cancel_tool(call_id)
+    }
+
     /// Compacts the conversation now: it is summarised, `ContextCompacted`
     /// carries the notes, and the answer ends with `TurnComplete`. A turn
     /// running is not interrupted and nothing is queued (a warning says so).

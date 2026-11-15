@@ -358,6 +358,13 @@ impl KernelAgentSession {
         self.handle.cancel().await
     }
 
+    /// Stop one tool call of the in-flight turn (see
+    /// [`RuntimeHandle::cancel_tool`]). `false` when no such call is running.
+    #[must_use]
+    pub fn cancel_tool(&self, call_id: &str) -> bool {
+        self.handle.cancel_tool(call_id)
+    }
+
     /// Compact the conversation now (see [`RuntimeHandle::compact`]). Returns
     /// `false` if the kernel queue is closed.
     pub async fn compact(&self) -> bool {

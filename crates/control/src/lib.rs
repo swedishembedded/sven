@@ -136,6 +136,12 @@ pub enum ControlCommand {
     /// Cancel a running session gracefully.
     CancelSession { session_id: Uuid },
 
+    /// Cancel one tool call of the session's running turn, by the model's
+    /// id for it: it is answered as cancelled and the turn goes on. Nothing
+    /// happens when no such call is running (it ended). Handled by the host,
+    /// not the kernel queue, so it yields no kernel event.
+    CancelTool { session_id: Uuid, call_id: String },
+
     /// Approve a tool call that is waiting for operator confirmation.
     ApproveTool { session_id: Uuid, call_id: String },
 
@@ -434,10 +440,12 @@ pub fn ui_event_to_control(ev: sven_hsm::UiEvent, session_id: Uuid) -> ControlEv
 ///
 /// The header a host sends when it attaches to an environment, naming what
 /// it can do (comma-separated): `ask-every-tool`, it honours
-/// [`ControlCommand::SendInput`]'s `ask_every_tool`.
+/// [`ControlCommand::SendInput`]'s `ask_every_tool`; `cancel-tool`, it stops
+/// one tool call on [`ControlCommand::CancelTool`] (a server offers that only
+/// for a host that says so).
 pub const HOST_CAPABILITIES_HEADER: &str = "x-sven-capabilities";
 /// The capabilities this host has, as [`HOST_CAPABILITIES_HEADER`] names them.
-pub const HOST_CAPABILITIES: &str = "ask-every-tool";
+pub const HOST_CAPABILITIES: &str = "ask-every-tool,cancel-tool";
 
 /// This is the single source of truth for the steering side of the control
 /// protocol:
@@ -496,6 +504,7 @@ pub fn control_command_session_id(cmd: &ControlCommand) -> Option<Uuid> {
         | ControlCommand::Notify { session_id, .. }
         | ControlCommand::SetModel { session_id, .. }
         | ControlCommand::CancelSession { session_id }
+        | ControlCommand::CancelTool { session_id, .. }
         | ControlCommand::ApproveTool { session_id, .. }
         | ControlCommand::DenyTool { session_id, .. }
         | ControlCommand::Subscribe { session_id }
@@ -508,6 +517,21 @@ pub fn control_command_session_id(cmd: &ControlCommand) -> Option<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The server asks for one tool call to stop by its session and the
+    /// model's id for the call; the host handles it, the kernel gets no event.
+    #[test]
+    fn cancel_tool_is_read_as_the_server_sends_it() {
+        let id = Uuid::nil();
+        let command: ControlCommand = serde_json::from_str(&format!(
+            r#"{{"type":"cancel_tool","session_id":"{id}","call_id":"call_9"}}"#
+        ))
+        .unwrap();
+        assert!(
+            matches!(&command, ControlCommand::CancelTool { session_id, call_id } if *session_id == id && call_id == "call_9")
+        );
+        assert!(control_command_to_kernel_event(&command).is_none());
+    }
 
     #[test]
     fn new_session_replace_history_is_off_by_default_and_omitted_when_off() {
@@ -650,7 +674,10 @@ mod tests {
         .unwrap();
         assert_eq!(asked["type"], "tool_needs_approval");
         assert_eq!(asked["answer_id"], "a1");
-        assert_eq!(HOST_CAPABILITIES, "ask-every-tool");
+        assert_eq!(
+            HOST_CAPABILITIES.split(',').collect::<Vec<_>>(),
+            ["ask-every-tool", "cancel-tool"]
+        );
     }
 
     /// Spec: a notice is its own command on the wire, with an optional ask

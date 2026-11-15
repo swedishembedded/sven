@@ -41,6 +41,11 @@ use sven_tool_api::call_records::CallRecorder;
 use sven_tool_registry::{ToolCall, ToolOutput, ToolRegistry, DISCOVERY_TOOL};
 use sven_turn::instructions::Activator;
 
+/// What a call the person cancelled while it ran answers: the model reads
+/// it as the call's result and goes on without it.
+pub const CANCELLED_BY_PERSON: &str =
+    "cancelled: the person stopped this call while it ran; it did not finish. Go on without its result, or try another way";
+
 /// Executes [`Effect::CallTool`] using the injected [`ToolRegistry`].
 pub struct ToolExecutor {
     registry: Arc<ToolRegistry>,
@@ -407,6 +412,10 @@ impl EffectExecutor for ToolExecutor {
             // object graph — with no error surfaced anywhere.
             let recorder = CallRecorder::new();
             let started = sven_rt::Instant::now();
+            // The call can be cancelled on its own, by its id, while it runs
+            // (`TurnScope::cancel_call`): it is answered as cancelled and the
+            // turn goes on.
+            let call_scope = cancel.call(&tool_call.id);
             let output = {
                 // Shadowed inside this block only; the outer `registry` is
                 // still used below for `output_category`.
@@ -431,6 +440,10 @@ impl EffectExecutor for ToolExecutor {
                             })
                             .await;
                         return;
+                    }
+                    () = call_scope.cancelled() => {
+                        abort.abort();
+                        Ok(Ok(ToolOutput::err(tool_call.id.clone(), CANCELLED_BY_PERSON)))
                     }
                     finished = sven_rt::timeout(tool_timeout, task) => finished,
                 };
@@ -790,6 +803,7 @@ mod tests {
                         Reaction::Handled(vec![])
                     } else {
                         ctx.set_fact("received_event_kind", format!("{:?}", e.kind()));
+                        ctx.set_fact("received_event", format!("{e:?}"));
                         Reaction::Transition {
                             target: TS::Done,
                             effects: vec![],
@@ -1675,6 +1689,65 @@ mod watchdog_tests {
             sven_rt::sleep(Duration::from_millis(10)).await;
         }
         panic!("the tool call kept running after its run was cancelled");
+    }
+
+    /// One call cancelled by its id (the person's X on it) ends at once: the
+    /// tool stops, the call is answered as cancelled for the model to read,
+    /// and the run is not cancelled.
+    #[tokio::test]
+    async fn one_cancelled_call_ends_at_once_and_the_run_goes_on() {
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut registry = ToolRegistry::new();
+        registry.register(HeldTool(Arc::clone(&stopped)));
+        let cancel = sven_kernel::CancelScope::new();
+        let mut exec =
+            ToolExecutor::new(Arc::new(registry), HashSet::new()).with_cancel(cancel.clone());
+        let rt = sven_kernel::ErasedRuntime::spawn(
+            Box::new(sven_hsm::Hsm::new(super::tests::OneShotMachine::new())),
+            sven_hsm::Context::new(),
+            sven_hsm::PermissionPolicy::builder().build(),
+            super::tests::NoOpExec,
+            16,
+        );
+        let held = effect("held");
+        let Effect::CallTool { call_id, .. } = &held else {
+            unreachable!()
+        };
+        let id = call_id.as_uuid().to_string();
+        sven_kernel::EffectExecutor::execute(
+            &mut exec,
+            held,
+            &rt.sink(),
+            &sven_hsm::ObservationSink::default(),
+        )
+        .await;
+        sven_rt::sleep(Duration::from_millis(20)).await;
+        assert!(
+            !cancel.cancel_call("another call"),
+            "only a running call is found"
+        );
+
+        assert!(cancel.cancel_call(&id));
+        rt.wait_done().await;
+        let report = rt.join().await.unwrap();
+        let received = report
+            .ctx
+            .fact("received_event")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        assert!(
+            received.contains("ToolFailed") && received.contains(crate::tool::CANCELLED_BY_PERSON),
+            "{received}"
+        );
+        assert!(
+            stopped.load(std::sync::atomic::Ordering::SeqCst),
+            "the tool stopped"
+        );
+        assert!(!cancel.is_cancelled(), "the run goes on");
+        assert!(
+            !cancel.cancel_call(&id),
+            "an answered call is not there to cancel again"
+        );
     }
 
     /// Same for a panic: it happens inside the spawned task, so nothing

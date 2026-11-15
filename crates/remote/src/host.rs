@@ -237,6 +237,8 @@ enum SessionCommand {
         answer: Permission,
     },
     Cancel,
+    /// Stop one tool call of the running turn, by the model's id for it.
+    CancelTool(String),
     /// The server asks how the session's goal stands.
     ReportGoal,
     /// Its conversation was archived or deleted: end it and forget it.
@@ -421,6 +423,18 @@ impl SessionActor {
                 if let Some(controller) = &self.controller {
                     controller.cancel().await;
                 }
+            }
+            SessionCommand::CancelTool(call_id) => {
+                let cancelled = self
+                    .controller
+                    .as_ref()
+                    .is_some_and(|c| c.cancel_tool(&call_id));
+                let what = if cancelled {
+                    "cancelled"
+                } else {
+                    "no such call running"
+                };
+                println!("[{}]   call {}: {what}", self.short(), printable(&call_id));
             }
             SessionCommand::ReportGoal => {
                 let goal = self.current_goal();

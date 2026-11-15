@@ -398,6 +398,10 @@ To stop a turn in progress, press `Ctrl+C` or `Esc` in the input box, or run
 `/abort`. The current turn is cancelled, partial output is kept, queued messages
 stay queued, and sven returns to idle. `Ctrl+C` does not quit sven; use `/quit`.
 
+To stop only a tool call that is taking too long, press `Ctrl+X` in the input
+box: the call started last stops, the agent is told it was cancelled, and the
+turn goes on without its result.
+
 ---
 
 ## Slash commands

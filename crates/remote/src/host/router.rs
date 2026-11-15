@@ -182,6 +182,10 @@ async fn route(
             (session_id, SessionCommand::Notice(event, start_turn))
         }
         ControlCommand::CancelSession { session_id } => (session_id, SessionCommand::Cancel),
+        ControlCommand::CancelTool {
+            session_id,
+            call_id,
+        } => (session_id, SessionCommand::CancelTool(call_id)),
         ControlCommand::ReportGoal { session_id } => (session_id, SessionCommand::ReportGoal),
         ControlCommand::ApproveTool {
             session_id,

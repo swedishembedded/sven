@@ -48,6 +48,9 @@ pub enum AgentRequest {
     /// `AgentEvent::Steered`. A turn that ends first never takes it, and the
     /// frontend sends it as the next message.
     Steer { content: String },
+    /// Stop one tool call of the running turn, by the model's id for it: it
+    /// is answered as cancelled and the turn goes on.
+    CancelTool { call_id: String },
     /// Replace conversation history and submit (edit-and-resubmit flow).
     Resubmit {
         messages: Vec<Message>,
@@ -274,6 +277,12 @@ pub(crate) async fn run_kernel_session_task(
                 {
                     end_with_error(&tx, e.to_string()).await;
                     break;
+                }
+            }
+
+            AgentRequest::CancelTool { call_id } => {
+                if !session.cancel_tool(&call_id) {
+                    debug!(%call_id, "no such tool call is running");
                 }
             }
 

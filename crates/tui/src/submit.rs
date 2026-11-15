@@ -687,6 +687,37 @@ impl App {
     /// Abort the in-flight agent turn, if any. Shared by every user-facing
     /// abort trigger (`Ctrl+C`, `Esc`, `/abort`) so they can never drift out
     /// of sync. No-op when the agent is idle.
+    /// Stops the tool call started last, of those running (Ctrl+X): it is
+    /// answered as cancelled and the turn goes on, unlike an interrupt.
+    pub(crate) async fn cancel_running_tool(&mut self) {
+        use crate::app::ui_state::Toast;
+        let latest = self
+            .agent
+            .tool_start_times
+            .iter()
+            .max_by_key(|(_, started)| **started)
+            .map(|(id, _)| id.clone());
+        let Some(call_id) = latest else {
+            self.ui.push_toast(Toast::info("No tool call is running"));
+            return;
+        };
+        let name = self
+            .chat
+            .tool_args
+            .get(&call_id)
+            .cloned()
+            .unwrap_or_else(|| "the tool call".into());
+        let sent = match &self.agent.tx {
+            Some(tx) => tx.send(AgentRequest::CancelTool { call_id }).await.is_ok(),
+            None => false,
+        };
+        self.ui.push_toast(if sent {
+            Toast::info(format!("Stopping {name}"))
+        } else {
+            Toast::error("The agent is not running")
+        });
+    }
+
     pub(crate) async fn interrupt_agent(&mut self) {
         if self.agent.busy {
             self.queue.abort_pending = true;
@@ -1183,6 +1214,38 @@ mod submit_integration_tests {
     async fn event(app: &mut App, event: sven_vocab::SessionEvent) {
         let active = app.sessions.active_id.clone();
         app.handle_agent_event(active, event).await;
+    }
+
+    /// Ctrl+X stops the tool call started last, of those running, and only
+    /// that one; with none running it says so and asks nothing.
+    #[tokio::test]
+    async fn ctrl_x_stops_the_tool_call_started_last() {
+        let (mut app, mut rx) = App::for_testing();
+        app.inject_input("look around");
+        app.dispatch_action(Action::Submit).await;
+        let _turn = recv_resubmit_for_test(&mut rx);
+
+        app.dispatch_action(Action::CancelRunningTool).await;
+        assert!(rx.try_recv().is_err(), "nothing running, nothing asked");
+
+        for id in ["call_slow", "call_slower"] {
+            event(
+                &mut app,
+                sven_vocab::SessionEvent::ToolCallStarted(sven_vocab::ToolCall {
+                    id: id.into(),
+                    name: "run_model".into(),
+                    args: serde_json::json!({}),
+                }),
+            )
+            .await;
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        app.dispatch_action(Action::CancelRunningTool).await;
+        match rx.try_recv() {
+            Ok(AgentRequest::CancelTool { call_id }) => assert_eq!(call_id, "call_slower"),
+            other => panic!("expected CancelTool, got {other:?}"),
+        }
+        assert!(app.is_agent_busy(), "the turn goes on");
     }
 
     /// An error is told, not taken for the turn's end: a turn retries a

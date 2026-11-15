@@ -13,9 +13,52 @@ use tokio_util::sync::CancellationToken;
 /// [`child`](Self::child), so cancelling a parent run reaches every child run
 /// it started, however deep; cancelling a child leaves its parent running.
 /// Clones share one state: cancelling any clone cancels them all.
+///
+/// A scope also keeps the [calls](Self::call) running under it by id, so one
+/// of them can be cancelled on its own ([`cancel_call`](Self::cancel_call))
+/// while the scope goes on.
 #[derive(Clone, Debug, Default)]
 pub struct CancelScope {
     token: CancellationToken,
+    calls: CallTokens,
+}
+
+/// The calls running under a scope, by id.
+type CallTokens =
+    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, CancellationToken>>>;
+
+/// The scope of one call running under a [`CancelScope`]: cancelled with
+/// that scope, or on its own by its id; it stops being findable by its id
+/// once dropped (the call ended).
+#[derive(Debug)]
+pub struct CallScope {
+    token: CancellationToken,
+    calls: CallTokens,
+    id: String,
+}
+
+impl CallScope {
+    /// `true` once the call, or the scope it runs under, is cancelled.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled()
+    }
+
+    /// Resolves once the call, or the scope it runs under, is cancelled.
+    pub async fn cancelled(&self) {
+        self.token.cancelled().await;
+    }
+}
+
+impl Drop for CallScope {
+    fn drop(&mut self) {
+        // A call's id is its own (the model's id for the call): nothing else
+        // is registered under it.
+        self.calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.id);
+    }
 }
 
 impl CancelScope {
@@ -31,6 +74,39 @@ impl CancelScope {
     pub fn child(&self) -> Self {
         Self {
             token: self.token.child_token(),
+            calls: CallTokens::default(),
+        }
+    }
+
+    /// The scope of the call `id` running under this one, findable by `id`
+    /// (see [`cancel_call`](Self::cancel_call)) for as long as it lives.
+    #[must_use = "the call can be cancelled only while its scope lives"]
+    pub fn call(&self, id: &str) -> CallScope {
+        let token = self.token.child_token();
+        self.calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.to_string(), token.clone());
+        CallScope {
+            token,
+            calls: std::sync::Arc::clone(&self.calls),
+            id: id.to_string(),
+        }
+    }
+
+    /// Cancels only the call `id` running under this scope; `false` when no
+    /// such call is running (it ended, or never ran here).
+    pub fn cancel_call(&self, id: &str) -> bool {
+        let calls = self
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match calls.get(id) {
+            Some(token) => {
+                token.cancel();
+                true
+            }
+            None => false,
         }
     }
 
@@ -133,6 +209,12 @@ impl TurnScope {
         self.current().cancel();
     }
 
+    /// Cancels only the call `id` of the turn in flight; the turn goes on.
+    /// `false` when no such call is running.
+    pub fn cancel_call(&self, id: &str) -> bool {
+        self.current().cancel_call(id)
+    }
+
     /// When the current turn was stopped, starts a fresh one under `run` and
     /// returns its scope; `None` while the current one is still live, or
     /// once the run itself is over.
@@ -167,6 +249,29 @@ mod tests {
 
         parent.cancel();
         assert!(sibling.is_cancelled());
+    }
+
+    /// One call of a turn is cancelled on its own, by its id: it stops, and
+    /// the turn and the other calls go on. A call that has ended is not
+    /// there to cancel; stopping the turn stops every call.
+    #[test]
+    fn one_call_is_cancelled_by_its_id_and_the_turn_goes_on() {
+        let run = CancelScope::new();
+        let turn = TurnScope::new(&run);
+        let slow = turn.current().call("call_slow");
+        let other = turn.current().call("call_other");
+
+        assert!(turn.cancel_call("call_slow"));
+        assert!(slow.is_cancelled());
+        assert!(!other.is_cancelled() && !turn.current().is_cancelled());
+
+        let ended = turn.current().call("call_done");
+        drop(ended);
+        assert!(!turn.cancel_call("call_done"), "an ended call is not there");
+        assert!(!turn.cancel_call("never"));
+
+        turn.cancel();
+        assert!(other.is_cancelled());
     }
 
     #[tokio::test]
