@@ -249,7 +249,7 @@ impl App {
                 let normalised: String = text.replace("\r\n", "\n").replace('\r', "\n");
 
                 // Text that would make the message too long to send as text
-                // is kept in a file the message attaches, as whale's chat
+                // is kept in a file the message attaches, as the web chat
                 // does; up to the limit it goes into the box, straight into
                 // the conversation.
                 if self.input.paste_overflows(&normalised) {

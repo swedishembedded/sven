@@ -60,7 +60,7 @@ const SHOWN_ARGS: usize = 4;
 const ARG_CHARS: usize = 60;
 
 /// A tool call as a log line names it: its name and the few arguments that
-/// say what it was asked (those in [`TELLING`] first, then the others in
+/// say what it was asked (the telling ones first, then the others in
 /// order), each a short line made safe to print. Nested values are left
 /// out: a log line names a call, it does not repeat it.
 #[must_use]

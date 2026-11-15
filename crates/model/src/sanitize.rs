@@ -56,7 +56,7 @@ fn strip_if_unsupported(
 
 /// The most image data one request carries, in bytes of its data URLs,
 /// whatever the server states. A server refuses a request over its own body
-/// limit (whale's is 32 MiB) and that refusal comes back on every later step
+/// limit (32 MiB is common) and that refusal comes back on every later step
 /// of the conversation, so the images are kept well within it, leaving room
 /// for the text. Images are sent as the model sees them; one left out is still
 /// in the conversation, and the agent looks at it again when it needs to.
