@@ -61,10 +61,27 @@ impl sven_hsm::Machine for OneTool {
                 }],
                 "run the tool",
             ),
-            (
-                S::Busy,
-                Event::ToolSucceeded { .. } | Event::ToolFailed { .. } | Event::UserCancelled,
-            ) => Reaction::transition(S::Idle, [], "the turn is over"),
+            (S::Busy, Event::ToolFailed { .. }) => {
+                Reaction::transition(S::Idle, [], "the turn is over")
+            }
+            // The turn's last result ends it, and says so.
+            (S::Busy, Event::ToolSucceeded { .. }) => Reaction::transition(
+                S::Idle,
+                [Effect::Announce {
+                    event: Box::new(sven_hsm::UiEvent::TurnComplete),
+                }],
+                "the turn is done",
+            ),
+            // The stop ends the turn, and says so: what a surface waits on.
+            (S::Busy, Event::UserCancelled) => Reaction::transition(
+                S::Idle,
+                [Effect::Announce {
+                    event: Box::new(sven_hsm::UiEvent::Aborted {
+                        partial_text: String::new(),
+                    }),
+                }],
+                "the person stopped the turn",
+            ),
             (S::Top, _) => Reaction::Ignored,
             _ => Reaction::parent(S::Top),
         }
@@ -88,6 +105,8 @@ struct SlowTool {
     /// Told each time a call starts: an inline call holds the runtime until
     /// it ends, so the state it has entered is not published before then.
     started: Arc<tokio::sync::Notify>,
+    /// The turn's endings announced: the stop's own effects ran.
+    ended: Arc<AtomicUsize>,
     inline: bool,
 }
 
@@ -99,6 +118,9 @@ impl EffectExecutor for SlowTool {
 
     async fn execute(&mut self, effect: Effect, sink: &EventSink, _obs: &ObservationSink) {
         let Effect::CallTool { call_id, .. } = effect else {
+            if matches!(effect, Effect::Announce { .. }) {
+                self.ended.fetch_add(1, Ordering::SeqCst);
+            }
             return;
         };
         let guard = Stopped(Arc::clone(&self.stopped));
@@ -133,6 +155,7 @@ impl EffectExecutor for SlowTool {
 async fn cancelling_a_turn(inline: bool) {
     let stopped = Arc::new(AtomicUsize::new(0));
     let started = Arc::new(tokio::sync::Notify::new());
+    let ended = Arc::new(AtomicUsize::new(0));
     let rt = ErasedRuntime::spawn(
         Box::new(Hsm::new(OneTool {
             id: sven_hsm::MachineId::new(),
@@ -145,6 +168,7 @@ async fn cancelling_a_turn(inline: bool) {
             scope: CancelScope::new(),
             stopped: Arc::clone(&stopped),
             started: Arc::clone(&started),
+            ended: Arc::clone(&ended),
             inline,
         },
         16,
@@ -170,6 +194,15 @@ async fn cancelling_a_turn(inline: bool) {
     .await
     .expect("the turn's work was stopped");
     assert!(!rt.status().done, "stopping a turn does not end the run");
+    // The stop is dispatched while the turn it stops is cancelled: what it
+    // does is the next turn's, never dropped with the stopped one's work.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while ended.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the stop announced that the turn ended");
 
     // The next turn starts with nothing cancelled: its work runs on.
     assert!(rt.post(Event::user_message("again")).await);
@@ -193,4 +226,60 @@ async fn cancelling_a_turn_stops_a_spawned_tool_and_not_the_next_one() {
 #[tokio::test]
 async fn cancelling_a_turn_drops_work_awaited_inline() {
     cancelling_a_turn(true).await;
+}
+
+/// The turn's last result is already queued when the person stops it: the
+/// machine ends the turn on that result, whose announcement must still reach
+/// the surface, since the stop that follows finds the machine at rest with
+/// nothing to end. The turn ends for the surface exactly once.
+#[tokio::test]
+async fn a_stop_that_comes_after_the_turns_last_result_still_ends_it_once() {
+    let stopped = Arc::new(AtomicUsize::new(0));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let ended = Arc::new(AtomicUsize::new(0));
+    let rt = ErasedRuntime::spawn(
+        Box::new(Hsm::new(OneTool {
+            id: sven_hsm::MachineId::new(),
+        })),
+        Context::new(),
+        PermissionPolicy::builder()
+            .allow_globally([ToolCapability::ReadFile])
+            .build(),
+        SlowTool {
+            scope: CancelScope::new(),
+            stopped: Arc::clone(&stopped),
+            started: Arc::clone(&started),
+            ended: Arc::clone(&ended),
+            inline: false,
+        },
+        16,
+    );
+    assert!(rt.post(Event::user_message("go")).await);
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .expect("the turn's work started");
+    tokio::time::timeout(Duration::from_secs(2), rt.wait_for_state("Busy"))
+        .await
+        .expect("the turn runs");
+
+    // The result arrives; before it is dispatched, the person stops the turn.
+    rt.cancel_turn();
+    assert!(
+        rt.post(Event::ToolSucceeded {
+            call_id: sven_hsm::ToolCallId::new(),
+            observation: Value::Null,
+        })
+        .await
+    );
+    assert!(rt.post(Event::UserCancelled).await);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while ended.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the turn's end reached the surface");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(ended.load(Ordering::SeqCst), 1, "and only once");
+    rt.abort();
 }

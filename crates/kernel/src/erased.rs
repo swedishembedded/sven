@@ -465,6 +465,17 @@ where
             ctx.push_tool_audit(record);
         }
         children.note_completion(&event);
+        // A stop cancels the turn, then tells the machine. Its own dispatch
+        // ends the stopped turn (an announcement that it ended, a goal
+        // paused): those effects belong to what comes after the stop, so they
+        // run under a fresh scope rather than being dropped with the stopped
+        // turn's work. Events dispatched between the two (a stopped call's
+        // result) are the stopped turn's: only their announcements run, below.
+        if matches!(event, Event::UserCancelled) {
+            if let Some(fresh) = turn.renew(&cancel) {
+                executor.bind_cancel(&fresh);
+            }
+        }
         let outcome = machine.dispatch(&event, &mut ctx);
         let event_kind = outcome.event;
         obs.emit(UiEvent::Transition {
@@ -472,19 +483,28 @@ where
             to: outcome.to.clone(),
             event: format!("{:?}", event_kind),
         });
-        let effects = outcome.effects;
+        let mut effects = outcome.effects;
         // Mirror the audit trail *before* running effects (see init above).
         trail.sync_from(&ctx);
         // The transition is complete and its effects have not begun: the tap
         // shows a long effect (a model turn) as in flight, not as over.
         tap_snapshot(&tap, machine.state_label(), &ctx);
         let this_turn = turn.current();
+        // Dispatched while its turn is stopped (a result that was already
+        // queued when the stop came): its work is the stopped turn's and is
+        // dropped, but an announcement that the turn ended is what the
+        // surface waits on, and the stop that follows may find the machine at
+        // rest with nothing left to end. Model: formal/tla/TurnStop.tla.
+        let stopped = this_turn.is_cancelled();
+        if stopped {
+            effects.retain(|effect| matches!(effect, Effect::Announce { .. }));
+        }
         tokio::select! {
             biased;
             () = cancel.cancelled() => {}
             // A stopped turn drops the effects awaited for it (a model
             // stream); what it spawned stops through the same scope.
-            () = this_turn.cancelled() => {}
+            () = this_turn.cancelled(), if !stopped => {}
             () = run_effects(
                 &policy,
                 StateLabel(machine.state_label()),

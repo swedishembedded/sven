@@ -73,6 +73,11 @@ suite=(
   "Goal|GoalReportDecides.cfg|violates:CompletionNeedsAPassingCheck|the model's report completes a goal whose check has not passed"
   "Goal|GoalStopRace.cfg|pass|stopped at any moment, a stopped answer's late end never closes the next: every end names its answer"
   "Goal|GoalNoAnswerIds.cfg|violates:NoWorkAfterTheAnswerEnded|turn ends that name no answer let a stopped answer's late end close the next one"
+  "TurnStop|TurnStop.cfg|pass|a stopped turn ends once for its surface, however the stop and the stopped call's result race, and asks the model nothing more"
+  "TurnStop|TurnStopAfterDispatch.cfg|violates:EveryTurnEndsOnce|renewing a stopped turn only after a dispatch drops the stop's own announcement when it is dispatched first"
+  "TurnStop|TurnStopRenewOnly.cfg|violates:EveryTurnEndsOnce|renewing on the stop alone drops the end of a final reply that was queued when the stop came"
+  "TurnStop|TurnStopAnnounceOnly.cfg|violates:StopPausesGoal|keeping announcements alone loses the stop's other effects, its goal left running"
+  "TurnStop|TurnStopEveryDispatch.cfg|violates:NoModelCallAfterStop|renewing before every dispatch runs the stopped call's continuation"
 )
 
 # Workers: TLC's own default is 1. Capped rather than unbounded because the

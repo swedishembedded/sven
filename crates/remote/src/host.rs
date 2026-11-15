@@ -1625,6 +1625,96 @@ responses:
         );
     }
 
+    /// Spec: a turn the person stops while a call of it waits for their
+    /// approval ends at once, and its question is withdrawn: the next turn's
+    /// calls are asked about in their own right, never queued behind a
+    /// question nobody will answer.
+    #[tokio::test]
+    async fn a_turn_stopped_while_a_call_waits_for_approval_leaves_nothing_waiting() {
+        let dir = tempfile::tempdir().unwrap();
+        let (actor, mut sent, mut asked) = scripted_session(
+            dir.path(),
+            r#"
+responses:
+  - match_type: contains
+    pattern: "first"
+    tool_calls:
+      - id: gated
+        tool: shell
+        args:
+          shell_command: "echo one"
+    after_tool_reply: "first done"
+  - match_type: contains
+    pattern: "second"
+    tool_calls:
+      - id: again
+        tool: shell
+        args:
+          shell_command: "echo two"
+    after_tool_reply: "second done"
+"#,
+        )
+        .await;
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        commands
+            .send(typed_by_another("first", "a", false))
+            .await
+            .unwrap();
+        let mut seen = Vec::new();
+        let mut asks = Vec::new();
+        let mut stopped_at = None;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let upload = tokio::select! {
+                upload = sent.recv() => upload.expect("the session is alive"),
+                Some(ask) = asked.recv() => {
+                    if let ControlEvent::ToolNeedsApproval { call_id, answer_id, .. } = ask {
+                        asks.push(answer_id.clone());
+                        if answer_id.as_deref() == Some("a") {
+                            // Left unanswered: the person stops the turn instead.
+                            stopped_at = Some(tokio::time::Instant::now());
+                            commands.send(SessionCommand::Cancel).await.unwrap();
+                        } else {
+                            commands.send(SessionCommand::Decide { call_id, answer: Permission::Allowed }).await.unwrap();
+                        }
+                    }
+                    continue;
+                }
+                () = tokio::time::sleep_until(deadline) => panic!("b did not end in time: {seen:?}, asked {asks:?}"),
+            };
+            let Upload::Event(event) = upload else {
+                continue;
+            };
+            let ControlEvent::Session {
+                event, answer_id, ..
+            } = *event
+            else {
+                continue;
+            };
+            if matches!(event, AgentEvent::Aborted { .. }) && answer_id.as_deref() == Some("a") {
+                let stopped_at = stopped_at.expect("asked before it was stopped");
+                assert!(
+                    stopped_at.elapsed() < Duration::from_secs(5),
+                    "the stopped turn ended at once"
+                );
+                commands
+                    .send(typed_by_another("second", "b", false))
+                    .await
+                    .unwrap();
+            }
+            let done =
+                matches!(event, AgentEvent::TurnComplete) && answer_id.as_deref() == Some("b");
+            seen.push((answer_id, event));
+            if done {
+                break;
+            }
+        }
+        task.abort();
+        assert_eq!(asks, [Some("a".to_string()), Some("b".to_string())]);
+        assert!(text_of(&seen, "b").contains("second done"), "{seen:?}");
+    }
+
     /// Spec (the server's model of shared turns): a message someone the
     /// conversation is shared with sent while the owner's turn runs never
     /// steers it: it is answered as a turn of its own, after it, and that

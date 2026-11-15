@@ -238,6 +238,33 @@ machine ends a stopped turn itself, once, whatever was in flight:
 `GoalStopRace.cfg` (stop at any moment) passes, and `GoalNoAnswerIds.cfg`
 keeps the unnamed protocol as the rejected design.
 
+### `TurnStop.tla` -- a stopped turn ends once and starts nothing more
+
+Models `crates/kernel/src/erased.rs`'s dispatch loop with
+`crates/kernel/src/cancel.rs::TurnScope` and the way a surface stops a turn
+(`session_handles.rs::cancel`): the turn's scope is cancelled first, which
+stops the work in flight, and `Event::UserCancelled` is posted after it,
+which the machine answers by ending the turn and announcing so. Every effect
+of a dispatch runs under the turn scope current then, and a cancelled scope
+drops them.
+
+The stop's event races the results of the work it stopped, and of work that
+finished just before it. The model found that the kernel lost the turn's end
+both ways. A stop dispatched before the stopped call's result ran under the
+scope it had itself stopped, so its own announcement was dropped. A model's
+final reply already queued when the stop came ended the turn in the machine
+with its announcement dropped, and the stop then found the machine at rest
+with nothing to end. Either way the surface was never told: a remote host
+held the person's next message behind a turn that was over. The kernel now
+renews the scope for the stop's own dispatch and never drops an announcement
+that the turn ended; the stopped turn's other work is still dropped.
+
+Checked: `TypeOK`, `EveryTurnEndsOnce`, `NoModelCallAfterStop`,
+`StopPausesGoal`. Each half of the fix is pinned by the configuration
+without it, and renewing before every dispatch (which would be simpler) by
+`NoModelCallAfterStop`: the stopped call's continuation would ask the model
+again after the stop.
+
 ### `lean/Sven/Goal.lean` -- the goal policy decides honestly for every value
 
 A model of `crates/machines/src/machines/goal.rs`, rule for rule, with proofs
