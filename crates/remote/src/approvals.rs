@@ -130,16 +130,27 @@ impl PermissionRequester for RemoteApprovals {
             args: call.args.clone(),
             answer_id: self.turn.get().answer_id,
         };
+        let short = &self.session_id.to_string()[..8];
         println!(
-            "[{}]   {} waits for approval in the conversation",
-            &self.session_id.to_string()[..8],
-            crate::printable::printable(&call.name)
+            "[{short}]   {} waits for approval in the conversation",
+            crate::printable::call_summary(&call.name, &call.args)
         );
         if self.ask.send(request).await.is_err() {
             self.pending.forget(&call.id);
             return Permission::Denied { reason: None };
         }
-        match tokio::time::timeout(self.timeout, answer).await {
+        let answered = tokio::time::timeout(self.timeout, answer).await;
+        let outcome = match &answered {
+            Ok(Ok(Permission::Allowed)) => "approved".to_string(),
+            Ok(Ok(Permission::Denied { .. })) => "denied".to_string(),
+            Ok(Err(_)) => "withdrawn".to_string(),
+            Err(_) => format!("not answered in {}s; denied", self.timeout.as_secs()),
+        };
+        println!(
+            "[{short}]   {} {outcome}",
+            crate::printable::printable(&call.name)
+        );
+        match answered {
             Ok(Ok(answer)) => {
                 if answer == Permission::Allowed {
                     self.approved
