@@ -9,15 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [5.5.0] - 2026-11-16
 
+### Added
+- **agent**: `--profile compact` (`agent.profile: compact`, also in a harness document and `Config::agent.profile` in the SDK) runs a session on a small, fixed request for small-context models: a short system prompt, compact definitions of `read_file`, `write_file` and `shell`, and the conversation, without the tool index, skills, memory, knowledge, todo, task and context tools or MCP servers. A one-line task's request is about 280 tokens. The tools behind it are the ordinary ones, so approval, audit and execution are unchanged; a trajectory records the profile it ran under.
+- **media**: the `models` tool says what each model's licence allows of commercial use, where the service states it, and `commercial_use: true` leaves out the models whose licence does not allow it (those whose licence is not stated stay). Asked to use only models it may use commercially, an agent uses it.
+- **sdk**: `EngineBuilder::audit_log` names the file every session's audit trail goes to.
+
+### Fixed
+- **sdk**: an engine built through the SDK sends the configured `agent.system_prompt` (a per-agent role still wins) and no longer offers skills and sub-agents found in the host user's home directory unless the application asks for them with `EngineBuilder::host_instructions(true)`. Project skills are unchanged.
+- **sdk**: the documentation states where the audit log is kept by default.
+
 ## [5.4.0] - 2026-11-15
+
+### Added
+- **task**: a call a sub-agent runs can be stopped on its own, by the id the sub-agent gave it, as the parent's own calls can: the sub-agent is told that call was stopped and goes on, and so does the turn.
+- **tui**: Ctrl+X in a sub-agent's session stops the call that sub-agent started last and has no result yet.
 
 ## [5.3.0] - 2026-11-15
 
+### Added
+- **turn**: one tool call can be stopped on its own while the turn goes on: the call ends at once, the model is told "cancelled: the person stopped this call while it ran", and continues. Stopping the turn still stops every call. It reaches a call from every frontend (`cancel_tool` on the control protocol, which `sven rc` honours and logs).
+- **rc**: the host's log says what each call was asked (its model, operation, path or command, cut short and safe to print), how long a slow or failed call ran and the first line of why it failed, how each turn ended and how long it ran, and each approval with its outcome.
+
+### Fixed
+- **kernel**: a stopped turn always ends for the frontend that shows it, exactly once. A stop that came while a call's result was on its way, or while the model's final reply was queued, could lose the turn's end and leave the frontend waiting.
+
 ## [5.2.1] - 2026-11-14
+
+### Changed
+- **image**: an image goes to a model at a long edge of up to 2576 px, the most any current model reads, so a screenshot's small text stays legible to the models that read that much; a screenshot stays PNG while it is small enough.
 
 ## [5.2.0] - 2026-11-14
 
+### Changed
+- **image**: every image that enters a conversation (a tool's result, an attachment, a generated image) is fitted once to the size models read and encoded small: a screenshot, diagram or drawing stays PNG so its text stays sharp, a photo or rendering becomes JPEG. Generated images no longer travel at full size with every later request.
+- **model**: a request carries at most the newest 4 images (fewer where the server takes fewer) and never more than 16 MB of them; each older image becomes a note that it is still a file of the conversation, to attach again when it is needed. A conversation with several generated images was refused by the service on every later step.
+- **sven service**: what an agent sends the sven service, and a host's uploads of its sessions' events, go gzip-compressed once the service says it takes them; a server that refuses a compressed body is asked plainly from then on. Other providers are asked plainly, as before.
+
+### Fixed
+- **turn**: compaction keeps what each image showed and the handle or path to attach it again from, instead of dropping the images with the compacted part of the conversation.
+
 ## [5.1.0] - 2026-11-14
+
+### Added
+- **tui**: a paste longer than a message may be (100 KB) is attached as a file the message names, asking for it to be read in full; text typed past the limit is attached the same way. Up to the limit a paste goes into the message as written.
+
+### Changed
+- **rc**: a message is at most 100 KB of text, counted the same way by every client; a host refuses a longer one at once, with an error, so it never reaches the model.
+
+### Fixed
+- **agent**: a message that arrives while a turn runs is held and answered when the turn ends, in the order sent; it was dropped without a word.
+- **tui**: an error no longer counts as the end of a turn, so a message sent after one waits for the turn to end instead of reaching an agent still at work.
+- **rc**: a host acknowledges a command only once it can carry it out, so a host that stopped routing commands no longer acknowledges and loses them.
+- **rc**: a turn's end is never lost when the server is slow to take a host's uploads; it waited forever, holding every later message behind it.
 
 ## [5.0.0] - 2026-11-14
 
@@ -36,7 +79,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.15.2] - 2026-11-13
 
+### Security
+- **media**: `run_model` asks the person about sharing data with a model only on the service's own refusal (HTTP 403 `data_sharing_not_allowed`) and only for a model id. An agent could get the refusal's code into an error of its own and put its own words in front of the person.
+
 ## [4.15.1] - 2026-11-13
+
+### Changed
+- **harness**: `--conversations` takes one JSON-lines file per run (a line per conversation, kept up to date as items finish, so a killed run keeps its finished items) instead of a file per conversation; an existing directory there is refused.
+- **model-drivers**: a run that wants the model's own token log-probabilities asks a brain server, over HTTP or D-Bus, for its `policy_trace` and reads the prompt and generated ids, the log-probabilities and the temperature they were scored at from it; a training server's own spelling of the capture is read as well, and a response cut off at the output-token ceiling is marked so.
+
+### Removed
+- **ablation**: `export-fixtures` and writing labelled train, validation and test splits; the run records a consumer reads are documented in the ablation benchmarks guide.
+
+### Fixed
+- **turn**: a call's identity reported across several stream frames is merged, so the log-probabilities' kind and temperature are no longer lost.
+- **sdk**: a probe of a seat without concepts is put outside the conversation, as documented, instead of counting as a reply that could unlock a fact.
+- **build**: `make docs` and `make check/wasm` honour `CARGO_TARGET_DIR`, and `sven-model-drivers` builds for wasm32 again.
 
 ## [4.15.0] - 2026-11-13
 
@@ -180,21 +238,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **xtask**: the file-size ratchet no longer counts a test module gated on `#[cfg(all(test, ...))]` as production code.
 
-## [4.6.0] - 2026-11-05
-
-### Added
-- **media**: video generation and editing as two tools against any OpenRouter-compatible `/videos` API (a local brain, OpenRouter, the sven service): `models` lists what each model renders, its edits and its price per second; `run_model` generates or edits a clip and writes it into the working directory, `output` saving it at a path of the caller's choosing. A request is named by what it asks (provider, model, arguments, input clip), so the same request, now or after a restart, answers the clip already made and is never paid for twice; a failed one is asked again under a new name. Configured by `tools.media` (`provider`, `dir`, `timeout_secs`).
-- **media**: `join_videos` and `sven media join` put MP4 clips one after another into one file by copying their samples (no re-encoding, no ffmpeg); clips encoded differently are refused by name, and each clip's sound is cut or padded to its picture so a film of many shots never drifts. `sven media probe` reads a clip's length, size, codec, frames and sound and checks every sample lies inside the file (`--seconds N --tolerance T`, `--min-seconds`, `--max-seconds`, `--require-audio`), for harness checks.
-- **harness**: `sven harness run --media-endpoint URL --media-key-file FILE` gives a run's agents `models` and `run_model`; a served run gets them when its descriptor names `models.media_base_url` (optional; protocol version unchanged), generating with the run's token. New sample `samples/harnesses/short-film`: a planned shot list, each shot rendered and checked before the next, the shots joined in order by the executor.
-
-### Changed
-- **media**: generating video with the configured provider (by default this machine's sven sign-in) is offered only in sven's own sessions. A harness run, a served run and an SDK embedding get it only with a video API and key of their own, so a run for someone else can never spend this machine's credit. `models` and `run_model` are unreplayable in a fork.
-- **cli**: the `Commands` enum moved to `src/cli/commands.rs` (re-exported; no change for users of `cli::Commands`).
+## [4.5.1] - 2026-11-05
 
 ### Fixed
-- **xtask**: the file-size ratchet no longer counts a test module gated on `#[cfg(all(test, ...))]` as production code.
-
-## [4.5.1] - 2026-11-05
+- **build**: sven builds and its tests pass again on every profile and platform (the minimal and feature-off builds, macOS and Windows) after the confined-run changes.
 
 ## [4.5.0] - 2026-11-05
 
@@ -331,15 +378,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.2.5] - 2026-10-30
 
-## [4.2.4] - 2026-10-30
-
 ### Changed
 - **install**: the installer installs into your own `~/.local/bin` and never asks for `sudo` (root still installs into `/usr/local/bin`). When that directory is not on your `PATH` yet it is added, once, to your shell's startup file (zsh, bash, fish, or `~/.profile`), and the installer checks that a new terminal finds `sven`, saying what to do if it does not. `SVEN_NO_MODIFY_PATH=1` leaves the startup files alone.
+
+## [4.2.4] - 2026-10-30
 
 ### Fixed
 - **install**: a `SVEN_INSTALL_DIR` that does not exist yet is created first, with `sudo` when needed. On macOS this failed with `/usr/local/bin/INS@...: No such file or directory`, because macOS's `install` never creates its destination.
 
 ## [4.2.3] - 2026-10-29
+
+### Fixed
+- **turn**: a model stream that goes silent past the idle limit is asked again with the transient backoff, instead of failing the turn.
 
 ## [4.2.2] - 2026-10-29
 
