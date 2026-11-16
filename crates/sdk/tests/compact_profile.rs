@@ -141,3 +141,52 @@ async fn a_compact_session_sends_the_fixed_request_and_runs_the_real_tools() {
         Some(json!({"sven": {"profile": compact_profile::ID}}))
     );
 }
+
+/// Spec: a run with a deadline tells the model its time exactly as a headless
+/// run with that timeout does, so an embedding application that collects
+/// episodes sends the requests a CLI run sends: the notice ends the user
+/// message and every tool result, and an earlier notice stays where it was.
+#[tokio::test]
+async fn a_run_with_a_deadline_ends_each_request_with_the_time_notice() {
+    let workspace = tempfile::tempdir().unwrap();
+    let requests = Arc::new(Mutex::new(Vec::<CompletionRequest>::new()));
+    let log = Arc::clone(&requests);
+    let provider = CallbackProvider::new(move |req| {
+        log.lock().unwrap().push(req.clone());
+        expert(req)
+    });
+    let mut config = Config::default();
+    config.agent.profile = RunProfile::Compact;
+    let engine = Engine::builder()
+        .config(config)
+        .model_provider(Arc::new(provider) as Arc<_>)
+        .project_root(workspace.path())
+        .approvals(sven_sdk::ApprovalPolicy::Auto)
+        .build()
+        .expect("an engine builds");
+    let mut agent = engine.agent("agent");
+    agent
+        .send_with(
+            "Write value=7 to note.txt, then tell me the value in it.",
+            sven_sdk::RunOptions::new().deadline(std::time::Duration::from_secs(780)),
+        )
+        .await
+        .expect("the run completes");
+    let notice = "Time: 0 of 13 min used, 13 min left; leave time to verify and finish.";
+    let requests = requests.lock().unwrap();
+    let text = |m: &sven_model::Message| match &m.content {
+        MessageContent::ToolResult { content, .. } => content.to_string(),
+        _ => m.as_text().unwrap_or_default().to_string(),
+    };
+    for req in requests.iter() {
+        let last = req.messages.last().expect("a request has messages");
+        assert!(text(last).ends_with(notice), "{:?}", text(last));
+    }
+    let last = requests.last().expect("requests were sent");
+    let carrying = last
+        .messages
+        .iter()
+        .filter(|m| m.role != Role::System && text(m).ends_with(notice))
+        .count();
+    assert_eq!(carrying, requests.len(), "every notice once sent stays");
+}

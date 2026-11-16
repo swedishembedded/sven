@@ -148,6 +148,8 @@ impl RunOptions {
     }
 
     /// Stops the run once `after` has elapsed ([`RunConclusion::Timeout`]).
+    /// The model is told its time as a headless run with that timeout tells
+    /// it: `Time: U of T min used, L min left; ...` ends every request.
     ///
     /// The SDK sets no deadline by default, so a gate handler that never
     /// replies holds a run without one; a model server that goes quiet is
