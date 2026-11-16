@@ -290,8 +290,8 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                     // its endpoints say), `sven/wan` as the service does.
                     let models = json!({"data": [{"id": "brain/mock-video", "supported_durations": [1, 2, 3], "supported_resolutions": ["480p"],
                         "generate_audio": false, "seed": true, "actions": [{"action": "extend", "edits": true}], "pricing_skus": {"duration_seconds": "0.01"}},
-                        {"id": "alibaba/wan-2.7", "allowed_passthrough_parameters": ["negative_prompt"], "supported_frame_images": ["first_frame"]},
-                        {"id": "sven/wan", "allowed_passthrough_parameters": ["negative_prompt"], "providers": ["atlas-cloud"]}]});
+                        {"id": "alibaba/wan-2.7", "allowed_passthrough_parameters": ["negative_prompt"], "supported_frame_images": ["first_frame"], "commercial_use": "allowed"},
+                        {"id": "sven/wan", "allowed_passthrough_parameters": ["negative_prompt"], "providers": ["atlas-cloud"], "commercial_use": "not_allowed"}]});
                     (200, "application/json", models.to_string().into_bytes())
                 } else if method == "GET" && path == "/v1/models/alibaba/wan-2.7/endpoints" {
                     let endpoints = json!({"data": {"endpoints": [{"provider_name": "AtlasCloud", "tag": "atlas-cloud"}]}});
@@ -316,7 +316,10 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                 } else {
                     (404, "application/json", b"{}".to_vec())
                 };
-                let head = format!("HTTP/1.1 {status} X\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reply.len());
+                let head = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    reply.len()
+                );
                 let _ = write.write_all(head.as_bytes()).await;
                 let _ = write.write_all(&reply).await;
             });

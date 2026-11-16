@@ -96,6 +96,9 @@ pub struct VideoModel {
     /// allowed sharing data with it (`needs_data_sharing`): a video is
     /// refused until they do.
     pub needs_data_sharing: bool,
+    /// What its licence says of commercial use (`commercial_use`): allowed,
+    /// not allowed, or None when not stated.
+    pub commercial_use: Option<bool>,
 }
 
 /// A server's video API, at its OpenAI-style base URL (ending in `/v1`).
@@ -212,6 +215,7 @@ fn parse_models(value: &Value) -> Vec<VideoModel> {
                             .collect(),
                         providers: m["providers"].as_array().map(|_| strings(&m["providers"])),
                         needs_data_sharing: m["needs_data_sharing"].as_bool() == Some(true),
+                        commercial_use: crate::invoke::commercial_use(&m["commercial_use"]),
                         actions: m["actions"]
                             .as_array()
                             .map(|a| {

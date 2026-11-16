@@ -246,6 +246,7 @@ async fn every_model(endpoint: &MediaEndpoint) -> Result<Vec<ListedModel>, Strin
                 known.output.push("video".into());
             }
             known.needs_data_sharing |= video.needs_data_sharing;
+            known.commercial_use = combined_licence(known.commercial_use, video.commercial_use);
             continue;
         }
         models.push(ListedModel {
@@ -266,12 +267,24 @@ async fn every_model(endpoint: &MediaEndpoint) -> Result<Vec<ListedModel>, Strin
             voices: Vec::new(),
             parameters: video_parameters(&video),
             needs_data_sharing: video.needs_data_sharing,
+            commercial_use: video.commercial_use,
         });
     }
     Ok(models)
 }
 
-/// One line per model: what it reads and makes, how it is run, its price.
+/// What two listings of one model say of its licence, together: not allowed
+/// when either says so, allowed when one says so and the other is silent.
+fn combined_licence(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+    match (a, b) {
+        (Some(false), _) | (_, Some(false)) => Some(false),
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        _ => None,
+    }
+}
+
+/// One line per model: what it reads and makes, how it is run, its price;
+/// what its licence says of commercial use, where its provider states it.
 fn line(model: &ListedModel) -> String {
     let mut line = format!(
         "{}: {} -> {}",
@@ -288,6 +301,11 @@ fn line(model: &ListedModel) -> String {
     }
     if model.needs_data_sharing {
         line.push_str("; may keep data: the user must allow it before it runs");
+    }
+    match model.commercial_use {
+        Some(true) => line.push_str("; licence allows commercial use"),
+        Some(false) => line.push_str("; licence does not allow commercial use"),
+        None => {}
     }
     let prices: Vec<String> = model
         .pricing
@@ -377,15 +395,27 @@ fn no_match(models: &[ListedModel], kind: Option<&str>) -> String {
         .collect();
     match kind {
         Some(kind) if !models.iter().any(|m| makes(m, kind)) => {
-            let means = KINDS.iter().find(|(k, _)| *k == kind).map(|(_, m)| format!(" ({m})")).unwrap_or_default();
+            let means = KINDS
+                .iter()
+                .find(|(k, _)| *k == kind)
+                .map(|(_, m)| format!(" ({m})"))
+                .unwrap_or_default();
             format!(
                 "No model this session can run makes {kind}{means}. It can run: {}. This list is every model there is, so another name will not find one: tell the person, say what could be done instead, and ask them how to go on.",
                 available.join(", ")
             )
         }
         Some(kind) => {
-            let of: Vec<String> = models.iter().filter(|m| makes(m, kind)).take(MAX_LISTED).map(line).collect();
-            format!("No {kind} model matches that; these are every {kind} model:\n{}", of.join("\n"))
+            let of: Vec<String> = models
+                .iter()
+                .filter(|m| makes(m, kind))
+                .take(MAX_LISTED)
+                .map(line)
+                .collect();
+            format!(
+                "No {kind} model matches that; these are every {kind} model:\n{}",
+                of.join("\n")
+            )
         }
         None => format!(
             "No model matches. It can run: {}. List one kind with `output` instead of guessing names, and ask the person if what they want is not there.",
@@ -417,7 +447,7 @@ impl Tool for ModelsTool {
         "List the models this session can run, by what they make (text, image, speech, audio, video, transcription)"
     }
     fn description(&self) -> &str {
-        "Lists the models this session can run. Call it once with no arguments first: it answers how many models make each kind (text, image, speech, audio for music and sound, video, transcription, embeddings), a few of each, and what nothing makes. Then list one kind with `output` (e.g. image, speech, audio; everyday words such as music or voice work too), narrowed with `input` (what it must read, e.g. image) or `query` (words in its id or name). Each line gives its id, what it reads and makes, the operation it is run as, its voices and list prices, which are for choosing between models: what a run is charged is often less and is shown to the person beside the conversation, so never add up or report costs from them. The list is everything there is: when nothing makes what the person asked for, tell them and ask, instead of searching under other names. Then ask for the chosen model's parameters."
+        "Lists the models this session can run. Call it once with no arguments first: it answers how many models make each kind (text, image, speech, audio for music and sound, video, transcription, embeddings), a few of each, and what nothing makes. Then list one kind with `output` (e.g. image, speech, audio; everyday words such as music or voice work too), narrowed with `input` (what it must read, e.g. image) or `query` (words in its id or name). Each line gives its id, what it reads and makes, the operation it is run as, its voices, what its licence says of commercial use where its provider states it, and list prices, which are for choosing between models: what a run is charged is often less and is shown to the person beside the conversation, so never add up or report costs from them. The list is everything there is: when nothing makes what the person asked for, tell them and ask, instead of searching under other names. When the person wants only models they may use commercially, pass `commercial_use: true`, which leaves out models whose licence does not allow it, prefer those whose licence allows it, and say so when you use one whose licence is not stated. Then ask for the chosen model's parameters."
     }
     fn parameters_schema(&self) -> Value {
         json!({
@@ -425,7 +455,8 @@ impl Tool for ModelsTool {
             "properties": {
                 "output": { "type": "string", "description": "What the model makes: text, image, speech (text to speech), audio (music, sound), video, transcription, embeddings" },
                 "input": { "type": "string", "description": "What the model must read: text, image, audio, file, video" },
-                "query": { "type": "string", "description": "Words that must appear in its id or name" }
+                "query": { "type": "string", "description": "Words that must appear in its id or name" },
+                "commercial_use": { "type": "boolean", "description": "true: leave out models whose licence does not allow commercial use (those whose licence is not stated stay)" }
             },
             "additionalProperties": false
         })
@@ -452,6 +483,11 @@ impl Tool for ModelsTool {
             Ok(models) => models,
             Err(error) => return ToolOutput::err(&call.id, error),
         };
+        let commercial = call.args.get("commercial_use").and_then(Value::as_bool) == Some(true);
+        let models: Vec<ListedModel> = models
+            .into_iter()
+            .filter(|m| !commercial || m.commercial_use != Some(false))
+            .collect();
         if output.is_none() && input.is_none() && query.is_none() {
             return ToolOutput::ok(&call.id, overview(&models));
         }

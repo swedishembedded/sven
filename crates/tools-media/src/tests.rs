@@ -362,7 +362,34 @@ async fn models_lists_what_each_model_renders_and_costs() {
     .await;
     assert_eq!(
         out.content,
-        "brain/mock-video: text -> video; run as video; duration_seconds $0.01\nalibaba/wan-2.7: text+image -> video; run as video\nsven/wan: text -> video; run as video"
+        "brain/mock-video: text -> video; run as video; duration_seconds $0.01\nalibaba/wan-2.7: text+image -> video; run as video; licence allows commercial use\nsven/wan: text -> video; run as video; licence does not allow commercial use"
+    );
+    // Asked for models it may use commercially: one whose licence does not
+    // allow it is left out, one whose licence is not stated stays.
+    let commercial = ModelsTool::new(MediaEndpoint {
+        base_url: fake.base_url.clone(),
+        api_key: "k".into(),
+    })
+    .execute(&ToolCall {
+        id: "c".into(),
+        name: "models".into(),
+        args: json!({"output": "video", "commercial_use": true}),
+    })
+    .await;
+    assert!(
+        commercial.content.contains("brain/mock-video"),
+        "{}",
+        commercial.content
+    );
+    assert!(
+        commercial.content.contains("alibaba/wan-2.7"),
+        "{}",
+        commercial.content
+    );
+    assert!(
+        !commercial.content.contains("sven/wan"),
+        "{}",
+        commercial.content
     );
     let schema = ModelSchemaTool::new(MediaEndpoint {
         base_url: fake.base_url.clone(),

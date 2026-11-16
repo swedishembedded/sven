@@ -62,6 +62,9 @@ pub struct ListedModel {
     /// allowed sharing data with it (`needs_data_sharing`): a call is
     /// refused until they do.
     pub needs_data_sharing: bool,
+    /// What its licence says of commercial use, as its provider states it
+    /// (`commercial_use`): allowed, not allowed, or None when not stated.
+    pub commercial_use: Option<bool>,
 }
 
 impl ListedModel {
@@ -186,7 +189,18 @@ fn listed(entry: &Value) -> Option<ListedModel> {
             entry["supported_parameters"].clone()
         },
         needs_data_sharing: entry["needs_data_sharing"].as_bool() == Some(true),
+        commercial_use: commercial_use(&entry["commercial_use"]),
     })
+}
+
+/// What a listing's `commercial_use` says: `allowed`, `not_allowed`, or
+/// nothing (not stated, or a value this version does not know).
+pub fn commercial_use(value: &Value) -> Option<bool> {
+    match value.as_str() {
+        Some("allowed") => Some(true),
+        Some("not_allowed") => Some(false),
+        _ => None,
+    }
 }
 
 /// The code a refusal names when the model may keep data and the person has
