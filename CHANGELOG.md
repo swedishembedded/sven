@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **changelog**: every release lists what it changed: the sections of 4.2.3, 4.2.5, 4.5.1, 4.15.1, 4.15.2 and 5.1.0 to 5.5.0 were empty, an entry of 4.2.5 was filed under 4.2.4, and 4.6.0 appeared twice.
+
 ## [5.5.0] - 2026-11-16
 
 ### Added
