@@ -176,7 +176,7 @@ async fn a_run_with_a_deadline_ends_each_request_with_the_time_notice() {
         .await
         .expect("the run completes");
     let notice = "Time: 0 of 13 min used, 13 min left; leave time to verify and finish.";
-    let requests = requests.lock().unwrap();
+    let requests = requests.lock().unwrap().clone();
     let text = |m: &sven_model::Message| match &m.content {
         MessageContent::ToolResult { content, .. } => content.to_string(),
         _ => m.as_text().unwrap_or_default().to_string(),
@@ -192,7 +192,6 @@ async fn a_run_with_a_deadline_ends_each_request_with_the_time_notice() {
         .filter(|m| m.role != Role::System && text(m).ends_with(notice))
         .count();
     assert_eq!(carrying, requests.len(), "every notice once sent stays");
-    drop(requests);
 
     let quiet = Arc::new(Mutex::new(Vec::<CompletionRequest>::new()));
     let log = Arc::clone(&quiet);
