@@ -287,11 +287,14 @@ impl Agent {
         // knows no project at all.
         let paths = self.engine.paths();
         let discovered = match paths.root() {
-            Some(root) => RuntimeContext::auto_detect_at(Some(root.to_path_buf())),
+            Some(root) => crate::run_support::detect_context(root, self.engine.host_instructions()),
             None => RuntimeContext::default(),
         };
         let runtime_ctx = RuntimeContext {
-            system_prompt_override: options.role.clone(),
+            system_prompt_override: options
+                .role
+                .clone()
+                .or_else(|| self.engine.config().agent.system_prompt.clone()),
             no_tools: options.no_tools,
             path_scope: paths,
             // An embedded engine never opens the user's own memory store; a

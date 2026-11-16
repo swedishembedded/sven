@@ -220,6 +220,17 @@ A gate also names its run: the `run_id` of a `HumanGate::Approval` is the
 `run_id` of the `RunEvent`s of the same run, so a host with one handler can
 route by it instead.
 
+### What an embedded agent reads from the host
+
+An agent's system prompt is `agent.system_prompt` of the engine's `Config` when
+that is set (a role given to one agent overrides it), otherwise sven's own
+prompt. An embedded engine reads no skills or sub-agents from the host user's
+home directory (`~/.agents`, `~/.cursor`, ...): the agent is shaped by the
+application and its project, never by whichever user runs the process. Skills
+and sub-agents of the project root are still found. An application that wants
+the `sven` application's behaviour calls `EngineBuilder::host_instructions(true)`.
+The agent never opens the user's memory store either; register a tool for that.
+
 ### The user seat
 
 When the counterpart is a whole conversation partner (a client, a student)

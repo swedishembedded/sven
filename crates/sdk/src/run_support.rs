@@ -16,6 +16,27 @@ use sven_hsm::ApprovalId;
 
 use crate::run::Decision;
 
+/// The context a session detects at `root`: git, CI, project knowledge, and
+/// the skills and sub-agents of the project. Those of the host user's home
+/// directory are read only when the application opted in
+/// ([`crate::EngineBuilder::host_instructions`]), so an embedded agent is not
+/// shaped by whichever user runs the process.
+pub(crate) fn detect_context(
+    root: &std::path::Path,
+    host_instructions: bool,
+) -> sven_bootstrap::RuntimeContext {
+    let root = Some(root.to_path_buf());
+    if host_instructions {
+        return sven_bootstrap::RuntimeContext::auto_detect_at(root);
+    }
+    let skills = sven_workspace::discover_skills_anchored(root.as_deref(), None, false);
+    sven_bootstrap::RuntimeContext::auto_detect_with(
+        root,
+        sven_workspace::SharedSkills::new(skills),
+        sven_workspace::SharedAgents::new(Vec::new()),
+    )
+}
+
 /// How long a stopped run is given to report what it had before it is left.
 const WIND_DOWN: Duration = Duration::from_secs(5);
 

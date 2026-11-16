@@ -39,6 +39,9 @@ pub struct Engine {
     /// Where every session's audit trail goes, when the host named a file
     /// ([`EngineBuilder::audit_log`]); `None` keeps the default location.
     audit_log: Option<std::path::PathBuf>,
+    /// Whether sessions read skills and sub-agents from the host user's home
+    /// ([`EngineBuilder::host_instructions`]).
+    host_instructions: bool,
     /// The most a harness run on this engine may do, whatever its document
     /// declares; `None` leaves the document's own declaration the whole cap.
     host_capabilities: Option<Arc<[sven_hsm::ToolCapability]>>,
@@ -273,6 +276,10 @@ impl Engine {
     }
 
     /// The audit log the host named, when it named one.
+    pub(crate) fn host_instructions(&self) -> bool {
+        self.host_instructions
+    }
+
     pub(crate) fn audit_log(&self) -> Option<&std::path::Path> {
         self.audit_log.as_deref()
     }
@@ -352,6 +359,9 @@ pub struct EngineBuilder {
     machines: Option<sven_machines::ModeRegistry>,
     project_root: Option<std::path::PathBuf>,
     audit_log: Option<std::path::PathBuf>,
+    /// Whether sessions read skills and sub-agents from the host user's home
+    /// ([`EngineBuilder::host_instructions`]).
+    host_instructions: bool,
     host_capabilities: Option<Vec<sven_hsm::ToolCapability>>,
     model_roles: std::collections::BTreeMap<String, Arc<dyn ModelProvider>>,
 }
@@ -473,6 +483,16 @@ impl EngineBuilder {
     #[must_use]
     pub fn audit_log(mut self, path: impl Into<std::path::PathBuf>) -> Self {
         self.audit_log = Some(path.into());
+        self
+    }
+
+    /// Lets sessions read skills and sub-agents from the host user's home
+    /// directory (`~/.agents`, `~/.cursor`, ...), as the `sven` application
+    /// does. Off by default: an embedded agent is shaped by its application
+    /// and its project, never by whichever user runs the process.
+    #[must_use]
+    pub fn host_instructions(mut self, enabled: bool) -> Self {
+        self.host_instructions = enabled;
         self
     }
 
@@ -637,6 +657,7 @@ impl EngineBuilder {
             machines: self.machines.map(Arc::new),
             paths,
             audit_log: self.audit_log,
+            host_instructions: self.host_instructions,
             host_capabilities: self.host_capabilities.map(Into::into),
             model_roles: Arc::new(self.model_roles),
             harnesses: Arc::new(sven_harness_runtime::HarnessRegistry::new()),

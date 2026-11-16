@@ -351,7 +351,7 @@ impl HarnessRun {
             .unwrap_or_else(|| self.engine.paths());
         let root = paths.root().map(std::path::Path::to_path_buf);
         let discovered = match paths.root() {
-            Some(root) => RuntimeContext::auto_detect_at(Some(root.to_path_buf())),
+            Some(root) => crate::run_support::detect_context(root, self.engine.host_instructions()),
             None => RuntimeContext::default(),
         };
         let runtime_ctx = RuntimeContext {
