@@ -300,11 +300,13 @@ impl Agent {
             // An embedded engine never opens the user's own memory store; a
             // host that wants memory adds its tool with `Engine::builder().tool`.
             memory_home: None,
-            // A run with a deadline tells the model its time as the headless
-            // runner does (`Time: U of T min used, ...` at the end of each
-            // request), so an embedded run sees the requests a CLI run with
-            // the same timeout sees.
-            time_budget: bounds.deadline.map(sven_turn::TimeBudget::starting_now),
+            // A run that announces its deadline tells the model its time as
+            // the headless runner does (`Time: U of T min used, ...` at the
+            // end of each request).
+            time_budget: bounds
+                .deadline
+                .filter(|_| bounds.announce_deadline)
+                .map(sven_turn::TimeBudget::starting_now),
             ..discovered
         };
 

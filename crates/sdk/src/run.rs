@@ -118,6 +118,7 @@ pub struct RunOptions {
     pub(crate) cancel: Option<CancelToken>,
     pub(crate) suspend: Option<CancelToken>,
     pub(crate) deadline: Option<Duration>,
+    pub(crate) announce_deadline: bool,
     pub(crate) max_output_tokens: Option<u64>,
     pub(crate) decoding: sven_turn::Decoding,
 }
@@ -148,8 +149,6 @@ impl RunOptions {
     }
 
     /// Stops the run once `after` has elapsed ([`RunConclusion::Timeout`]).
-    /// The model is told its time as a headless run with that timeout tells
-    /// it: `Time: U of T min used, L min left; ...` ends every request.
     ///
     /// The SDK sets no deadline by default, so a gate handler that never
     /// replies holds a run without one; a model server that goes quiet is
@@ -158,6 +157,19 @@ impl RunOptions {
     #[must_use]
     pub fn deadline(mut self, after: Duration) -> Self {
         self.deadline = Some(after);
+        self
+    }
+
+    /// Tells the model the run's deadline ([`Self::deadline`]) as a headless
+    /// run with that timeout does: `Time: U of T min used, L min left; leave
+    /// time to verify and finish.` ends every request, and a notice once
+    /// sent stays where it was. Off by default; an application that collects
+    /// episodes for a model that will be run headless turns it on, so the
+    /// model is trained on the requests it will be sent. Without a deadline
+    /// it changes nothing.
+    #[must_use]
+    pub fn announce_deadline(mut self, on: bool) -> Self {
+        self.announce_deadline = on;
         self
     }
 

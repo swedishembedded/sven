@@ -142,10 +142,11 @@ async fn a_compact_session_sends_the_fixed_request_and_runs_the_real_tools() {
     );
 }
 
-/// Spec: a run with a deadline tells the model its time exactly as a headless
-/// run with that timeout does, so an embedding application that collects
-/// episodes sends the requests a CLI run sends: the notice ends the user
-/// message and every tool result, and an earlier notice stays where it was.
+/// Spec: a run that announces its deadline tells the model its time exactly
+/// as a headless run with that timeout does, so an embedding application that
+/// collects episodes sends the requests a CLI run sends: the notice ends the
+/// user message and every tool result, and an earlier notice stays where it
+/// was. A deadline alone announces nothing.
 #[tokio::test]
 async fn a_run_with_a_deadline_ends_each_request_with_the_time_notice() {
     let workspace = tempfile::tempdir().unwrap();
@@ -168,7 +169,9 @@ async fn a_run_with_a_deadline_ends_each_request_with_the_time_notice() {
     agent
         .send_with(
             "Write value=7 to note.txt, then tell me the value in it.",
-            sven_sdk::RunOptions::new().deadline(std::time::Duration::from_secs(780)),
+            sven_sdk::RunOptions::new()
+                .deadline(std::time::Duration::from_secs(780))
+                .announce_deadline(true),
         )
         .await
         .expect("the run completes");
@@ -189,4 +192,37 @@ async fn a_run_with_a_deadline_ends_each_request_with_the_time_notice() {
         .filter(|m| m.role != Role::System && text(m).ends_with(notice))
         .count();
     assert_eq!(carrying, requests.len(), "every notice once sent stays");
+    drop(requests);
+
+    let quiet = Arc::new(Mutex::new(Vec::<CompletionRequest>::new()));
+    let log = Arc::clone(&quiet);
+    let provider = CallbackProvider::new(move |req| {
+        log.lock().unwrap().push(req.clone());
+        expert(req)
+    });
+    let mut config = Config::default();
+    config.agent.profile = RunProfile::Compact;
+    let engine = Engine::builder()
+        .config(config)
+        .model_provider(Arc::new(provider) as Arc<_>)
+        .project_root(workspace.path())
+        .approvals(sven_sdk::ApprovalPolicy::Auto)
+        .build()
+        .expect("an engine builds");
+    engine
+        .agent("agent")
+        .send_with(
+            "Write value=7 to note.txt, then tell me the value in it.",
+            sven_sdk::RunOptions::new().deadline(std::time::Duration::from_secs(780)),
+        )
+        .await
+        .expect("the run completes");
+    let quiet = quiet.lock().unwrap();
+    assert!(
+        quiet
+            .iter()
+            .flat_map(|r| &r.messages)
+            .all(|m| !text(m).contains("min used")),
+        "a deadline alone announces nothing"
+    );
 }
