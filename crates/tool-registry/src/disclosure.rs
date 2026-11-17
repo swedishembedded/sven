@@ -41,6 +41,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock, Weak};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sven_hsm::ToolCallId;
 use sven_tool_api::{Tool, ToolCall};
 use sven_vocab::{AgentMode, ToolSchema};
@@ -118,14 +119,51 @@ pub struct OfferedTools {
     pub withheld: Vec<String>,
 }
 
-/// The definition of `tool` as a model request carries it.
+/// The definition of `tool` as a model request carries it: its own
+/// parameters and the optional intent every call may carry
+/// ([`sven_vocab::intent`]), which [`ToolRegistry::execute`] takes off again.
 pub(crate) fn schema_of(tool: &dyn Tool, is_mcp: bool) -> ToolSchema {
     ToolSchema {
         name: tool.name().to_string(),
         description: tool.description().to_string(),
-        parameters: tool.parameters_schema(),
+        parameters: if tool.offers_intent() {
+            with_intent(tool.parameters_schema())
+        } else {
+            tool.parameters_schema()
+        },
         is_mcp,
     }
+}
+
+/// `parameters` with the optional intent argument added: only to an object
+/// schema, never required, and never over a parameter of that name the tool
+/// has itself.
+fn with_intent(mut parameters: Value) -> Value {
+    use sven_vocab::intent::{INTENT, INTENT_DESCRIPTION};
+    let Some(schema) = parameters.as_object_mut() else {
+        return parameters;
+    };
+    if schema.get("type").is_some_and(|t| t != "object") {
+        return parameters;
+    }
+    let properties = schema
+        .entry("properties")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if let Some(properties) = properties.as_object_mut() {
+        properties.entry(INTENT).or_insert_with(
+            || serde_json::json!({ "type": "string", "description": INTENT_DESCRIPTION }),
+        );
+    }
+    parameters
+}
+
+/// Whether `tool` has a parameter named like the intent itself, which it then
+/// receives as sent.
+pub(crate) fn takes_own_intent(tool: &dyn Tool) -> bool {
+    tool.parameters_schema()
+        .get("properties")
+        .and_then(Value::as_object)
+        .is_some_and(|properties| properties.contains_key(sven_vocab::intent::INTENT))
 }
 
 /// `true` for a tool that is always offered in full under deferral.

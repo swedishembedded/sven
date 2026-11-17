@@ -27,6 +27,7 @@ mod conclusion;
 pub mod cost;
 pub mod goal;
 pub mod harness;
+pub mod intent;
 pub mod ledger;
 pub mod message;
 mod mode;

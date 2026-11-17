@@ -264,6 +264,11 @@ pub enum ControlEvent {
         action: String,
         title: String,
         category: String,
+        /// The few words the model gave the call to say what it is for
+        /// (`sven_vocab::intent`), shown as its label; absent when it gave
+        /// none. A server that predates it reads the rest.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        intent: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
     },

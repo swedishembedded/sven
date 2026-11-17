@@ -86,20 +86,29 @@ pub fn render_tool_call_collapsed(
         String::new()
     };
 
-    let summary_part = if summary.is_empty() {
+    // Reserve ~20 cols for icon + space + label + duration; the rest is for
+    // the intent the model gave the call (its label, `sven_vocab::intent`)
+    // and, dimmed after it, what it worked on.
+    let overhead = 2 + icon.len() + 1 + label.len() + 8; // 8 for duration "  99.9s"
+    let mut room = max_cols.saturating_sub(overhead);
+    let intent_part = match sven_vocab::intent::intent_of(args) {
+        Some(intent) => {
+            let shown = truncate_to_width(&intent, room);
+            room = room.saturating_sub(unicode_width::UnicodeWidthStr::width(shown.as_str()) + 2);
+            format!("  {shown}")
+        }
+        None => String::new(),
+    };
+    let summary_part = if summary.is_empty() || room == 0 {
         String::new()
     } else {
-        // Reserve ~20 cols for icon + space + label + duration; use rest for summary.
-        let overhead = 2 + icon.len() + 1 + label.len() + 8; // 8 for duration "  99.9s"
-        format!(
-            "  {}",
-            truncate_to_width(&summary, max_cols.saturating_sub(overhead))
-        )
+        format!("  {}", truncate_to_width(&summary, room))
     };
 
     vec![
         Span::styled(format!("{icon} "), icon_style),
         Span::styled(label, label_style),
+        Span::styled(intent_part, Style::default().fg(TEXT)),
         Span::styled(summary_part, summary_style),
         Span::styled(dur_str, dur_style),
     ]
@@ -517,7 +526,44 @@ mod tests {
     use ratatui::style::Color;
     use serde_json::json;
 
-    use super::render_file_tool_call;
+    use super::{render_file_tool_call, render_tool_call_collapsed};
+
+    fn text_of(spans: &[ratatui::text::Span<'_>]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// Spec: a call's row says what it is for (the intent the model gave it),
+    /// then, dimmed, what it worked on; without an intent it reads as before.
+    #[test]
+    fn a_row_shows_the_calls_intent_before_what_it_worked_on() {
+        let with = render_tool_call_collapsed(
+            "shell",
+            &json!({"intent": "List the files", "shell_command": "ls -la"}),
+            None,
+            None,
+            80,
+        );
+        let row = text_of(&with);
+        assert!(row.contains("List the files"), "{row}");
+        assert!(row.find("List the files") < row.find("ls -la"), "{row}");
+        let without = render_tool_call_collapsed(
+            "shell",
+            &json!({"shell_command": "ls -la"}),
+            None,
+            None,
+            80,
+        );
+        assert!(!text_of(&without).contains("List"), "{}", text_of(&without));
+        // Too narrow for both: the intent is kept, cut, and the rest gives way.
+        let narrow = text_of(&render_tool_call_collapsed(
+            "shell",
+            &json!({"intent": "List every file in the project root", "shell_command": "ls -la"}),
+            None,
+            None,
+            30,
+        ));
+        assert!(narrow.contains("List"), "{narrow}");
+    }
 
     #[test]
     fn edit_file_diff_renders_colored_lines() {

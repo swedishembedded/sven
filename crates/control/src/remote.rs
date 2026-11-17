@@ -378,6 +378,7 @@ mod tests {
             action: "Shell".into(),
             title: "ls -la".into(),
             category: "shell".into(),
+            intent: None,
             duration_ms: None,
         };
         assert_eq!(
@@ -391,12 +392,13 @@ mod tests {
             action: "Shell".into(),
             title: "ls -la".into(),
             category: "shell".into(),
+            intent: Some("List the files".into()),
             duration_ms: Some(1_250),
         };
-        assert_eq!(
-            serde_json::to_value(&finished).unwrap()["duration_ms"],
-            1_250
-        );
+        let finished = serde_json::to_value(&finished).unwrap();
+        assert_eq!(finished["duration_ms"], 1_250);
+        // The model's few words for the call, when it gave them.
+        assert_eq!(finished["intent"], "List the files");
     }
 
     #[test]

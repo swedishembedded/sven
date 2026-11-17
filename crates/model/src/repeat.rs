@@ -36,7 +36,8 @@ pub const REPEAT_NOTE_MARK: &str = "\n\n[sven note: ";
 #[must_use]
 pub fn call_identity(name: &str, arguments: &str) -> String {
     let canonical = match serde_json::from_str::<Value>(arguments) {
-        Ok(value) => canonical(value, true),
+        // A reworded intent does not make a repeated call a new one.
+        Ok(value) => canonical(sven_vocab::intent::without_intent(&value), true),
         Err(_) => Value::String(collapse_whitespace(arguments)),
     };
     format!("{name}\u{1}{canonical}")
@@ -141,6 +142,23 @@ pub fn earlier_identical_results(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Spec: two calls that differ only in the intent the model gave them
+    /// are the same call (`sven_vocab::intent`).
+    #[test]
+    fn a_reworded_intent_is_the_same_call() {
+        assert_eq!(
+            call_identity("shell", r#"{"intent":"List files","shell_command":"ls"}"#),
+            call_identity(
+                "shell",
+                r#"{"shell_command":"ls","intent":"See what is here"}"#
+            ),
+        );
+        assert_ne!(
+            call_identity("shell", r#"{"shell_command":"ls"}"#),
+            call_identity("shell", r#"{"shell_command":"pwd"}"#)
+        );
+    }
     use crate::FunctionCall;
 
     fn call(id: &str, name: &str, arguments: &str) -> Message {

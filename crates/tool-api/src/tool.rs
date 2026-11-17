@@ -35,6 +35,13 @@ pub trait Tool: sven_rt::MaybeSend + sven_rt::MaybeSync {
     }
     /// JSON Schema for parameters
     fn parameters_schema(&self) -> Value;
+    /// Whether the definition a model is offered carries the optional intent
+    /// argument (`sven_vocab::intent`), a few words each call gives to say
+    /// what it is for. A tool kept to the fewest tokens (the compact profile
+    /// for small-context models) declines it.
+    fn offers_intent(&self) -> bool {
+        true
+    }
     /// Approval level a permission requester in front of the registry
     /// applies (the ACP server's IDE prompt, the MCP server). In an agent
     /// session the kernel decides from [`Self::kernel_capability`] instead.

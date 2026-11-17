@@ -39,7 +39,7 @@ use sven_hsm::{
     ProposedToolCall,
 };
 
-use sven_vocab::TurnRequest;
+use sven_vocab::{intent::without_intent, TurnRequest};
 
 use super::loop_nudges::{
     progress_instruction, EMPTY_TURN_NUDGE, EMPTY_TURN_WRAPUP_NUDGE, MAX_ROUNDS_NUDGE,
@@ -312,7 +312,7 @@ pub struct CallIdentity {
     pub fingerprint: String,
 }
 
-/// Identity of a tool call for stall detection.
+/// Identity of a tool call for stall detection (its intent taken off by the caller).
 fn call_fingerprint(name: &str, args: &Value) -> String {
     use std::hash::Hasher;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -332,7 +332,7 @@ fn register_calls(ls: &mut LoopState, tool_calls: &[ProposedToolCall]) {
                 tc.call_id,
                 CallIdentity {
                     name: tc.name.clone(),
-                    fingerprint: call_fingerprint(&tc.name, &tc.args),
+                    fingerprint: call_fingerprint(&tc.name, &without_intent(&tc.args)),
                 },
             )
         })
@@ -845,6 +845,31 @@ pub fn on_tool_result(ctx: &mut Context, call_id: &ToolCallId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Spec: stall detection sees what a call does: a call repeated with a
+    /// reworded intent is the same call (`sven_vocab::intent`).
+    #[test]
+    fn a_reworded_intent_does_not_hide_a_repeated_call() {
+        let fingerprint = |args: serde_json::Value| {
+            let mut ls = LoopState::default();
+            let call_id = ToolCallId::new();
+            let proposed = sven_hsm::ProposedToolCall {
+                call_id,
+                name: "shell".into(),
+                args,
+                capability: ToolCapability::ExecuteShell,
+            };
+            register_calls(&mut ls, &[proposed]);
+            ls.call_registry[&call_id].fingerprint.clone()
+        };
+        let a = fingerprint(serde_json::json!({"intent": "List files", "shell_command": "ls"}));
+        assert_eq!(
+            a,
+            fingerprint(serde_json::json!({"intent": "Look again", "shell_command": "ls"}))
+        );
+        assert_eq!(a, fingerprint(serde_json::json!({"shell_command": "ls"})));
+        assert_ne!(a, fingerprint(serde_json::json!({"shell_command": "pwd"})));
+    }
     use sven_hsm::{context::Context, permissions::ToolCapability};
 
     fn make_ctx() -> Context {

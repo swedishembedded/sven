@@ -156,6 +156,10 @@ impl Tool for CompactTool {
     fn parameters_schema(&self) -> Value {
         self.schema.clone()
     }
+    /// The fewest tokens a definition can have: no intent to fill in.
+    fn offers_intent(&self) -> bool {
+        false
+    }
     fn default_policy(&self) -> ApprovalPolicy {
         self.inner.default_policy()
     }

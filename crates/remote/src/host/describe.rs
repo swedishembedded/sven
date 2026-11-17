@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! A tool call in words, for a server that shows the conversation.
 //!
-//! Every word comes from what the model already wrote: the tool's own
-//! one-line summary of its arguments (`sven_tool_api::tool_smart_summary`,
-//! the same the terminal shows), and its name made readable. Nothing asks the
-//! model to describe its own calls, so describing them costs no tokens.
+//! Every word comes from what the model already wrote: the few words of
+//! intent it gave the call (`sven_vocab::intent`, the call's label), the
+//! tool's own one-line summary of its arguments
+//! (`sven_tool_api::tool_smart_summary`, the same the terminal shows; a
+//! command shows itself), and its name made readable.
 
 use std::time::Instant;
 
@@ -20,6 +21,8 @@ pub(super) struct Described {
     pub action: String,
     pub title: String,
     pub category: String,
+    /// What the model said the call is for (`sven_vocab::intent`).
+    pub intent: Option<String>,
 }
 
 /// A tool name as words: `read_file` is "Read file", an MCP tool's
@@ -54,6 +57,7 @@ pub(super) fn describe(name: &str, args: &Value) -> Described {
         },
         action,
         category,
+        intent: sven_vocab::intent::intent_of(args),
     }
 }
 
@@ -81,6 +85,7 @@ impl super::SessionActor {
             action: described.action,
             title: described.title,
             category: described.category,
+            intent: described.intent,
             duration_ms,
         })
     }
@@ -100,6 +105,22 @@ mod tests {
         );
         assert_eq!(described.title, "ls -la");
         assert_eq!(described.category, "shell");
+    }
+
+    /// Spec: the intent the model gave a call is its label; the call itself
+    /// (a command, as it runs) stays its title.
+    #[test]
+    fn a_call_carries_the_intent_the_model_gave_it() {
+        let described = describe(
+            "shell",
+            &json!({"intent": " List the\nfiles ", "shell_command": "ls -la"}),
+        );
+        assert_eq!(described.intent.as_deref(), Some("List the files"));
+        assert_eq!(described.title, "ls -la");
+        assert_eq!(
+            describe("shell", &json!({"shell_command": "ls"})).intent,
+            None
+        );
     }
 
     #[test]

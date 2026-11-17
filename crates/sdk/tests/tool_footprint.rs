@@ -31,12 +31,14 @@ use sven_turn::ledger::schema_tokens;
 /// from 3 810 when the coding set gained joining clips into a film
 /// (`join_videos` ~175), and from 3 990 when `task` gained isolated
 /// worktree writers and per-action handles (~616 now), and from 4 170 when
-/// it gained an API request tool (`http_request`, ~165).
-const CODING_CEILING: u32 = 4_340;
+/// it gained an API request tool (`http_request`, ~165), and from 4 340
+/// when every tool took the optional intent a call is labelled by
+/// (`sven_vocab::intent`, ~16 a tool).
+const CODING_CEILING: u32 = 4_705;
 /// Estimated tokens of every definition `Toolset::research()` offers. Raised
-/// from 2 390 for the same two goal tools, and from 2 680 for the same
-/// growth of `task`.
-const RESEARCH_CEILING: u32 = 2_850;
+/// from 2 390 for the same two goal tools, from 2 680 for the same growth of
+/// `task`, and from 2 850 for the same intent.
+const RESEARCH_CEILING: u32 = 3_070;
 
 /// The definitions the model was offered on its first request.
 async fn offered(toolset: Toolset, home: &std::path::Path) -> Vec<ToolSchema> {

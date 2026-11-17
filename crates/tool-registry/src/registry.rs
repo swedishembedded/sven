@@ -332,6 +332,18 @@ impl ToolRegistry {
                 }
             }
         }
+        // The intent is for the person following the call, not for the tool
+        // (`sven_vocab::intent`): a tool with no parameter of that name never
+        // sees it.
+        if !crate::disclosure::takes_own_intent(tool.as_ref())
+            && call.args.get(sven_vocab::intent::INTENT).is_some()
+        {
+            let call = ToolCall {
+                args: sven_vocab::intent::without_intent(&call.args),
+                ..call.clone()
+            };
+            return tool.execute(&call).await;
+        }
         tool.execute(call).await
     }
 
@@ -1081,5 +1093,129 @@ mod tests {
         assert_eq!(reg.output_category("file"), OutputCategory::FileContent);
         assert_eq!(reg.output_category("echo"), OutputCategory::Generic);
         assert_eq!(reg.output_category("missing"), OutputCategory::Generic);
+    }
+
+    /// A tool of its own `intent` parameter (an MCP server's may have one).
+    struct OwnIntentTool;
+
+    #[async_trait]
+    impl Tool for OwnIntentTool {
+        fn name(&self) -> &str {
+            "own_intent"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
+        fn description(&self) -> &str {
+            "classifies an intent"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object", "properties": { "intent": { "type": "integer" } }, "required": ["intent"] })
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, format!("echo:{}", call.args))
+        }
+    }
+
+    /// Spec: every tool offered to a model takes an optional intent, never
+    /// a required one, and a tool with a parameter of that name keeps its own.
+    #[test]
+    fn every_offered_tool_takes_an_optional_intent() {
+        let mut reg = ToolRegistry::new();
+        reg.register(EchoTool { name: "echo" });
+        reg.register(OwnIntentTool);
+        let schemas = reg.schemas();
+        let echo = schemas.iter().find(|s| s.name == "echo").unwrap();
+        assert_eq!(
+            echo.parameters["properties"]["intent"],
+            json!({ "type": "string", "description": sven_vocab::intent::INTENT_DESCRIPTION })
+        );
+        assert!(echo
+            .parameters
+            .get("required")
+            .is_none_or(|r| !r.as_array().unwrap().contains(&json!("intent"))));
+        let own = schemas.iter().find(|s| s.name == "own_intent").unwrap();
+        assert_eq!(
+            own.parameters["properties"]["intent"],
+            json!({ "type": "integer" })
+        );
+    }
+
+    /// A tool kept to the fewest tokens, as the compact profile's are.
+    struct TerseTool;
+
+    #[async_trait]
+    impl Tool for TerseTool {
+        fn name(&self) -> &str {
+            "terse"
+        }
+        fn kernel_capability(&self) -> sven_tool_api::ToolCapability {
+            sven_tool_api::ToolCapability::ReadFile
+        }
+        fn description(&self) -> &str {
+            "reads"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object", "properties": { "path": { "type": "string" } } })
+        }
+        fn offers_intent(&self) -> bool {
+            false
+        }
+        fn default_policy(&self) -> ApprovalPolicy {
+            ApprovalPolicy::Auto
+        }
+        async fn execute(&self, call: &ToolCall) -> ToolOutput {
+            ToolOutput::ok(&call.id, format!("echo:{}", call.args))
+        }
+    }
+
+    /// Spec: a tool that declines the intent is offered as it is, and still
+    /// never sees one a model sends anyway.
+    #[tokio::test]
+    async fn a_tool_that_declines_the_intent_is_offered_without_it() {
+        let mut reg = ToolRegistry::new();
+        reg.register(TerseTool);
+        let schemas = reg.schemas();
+        assert_eq!(
+            schemas[0].parameters,
+            json!({ "type": "object", "properties": { "path": { "type": "string" } } })
+        );
+        let call = ToolCall {
+            id: "c".into(),
+            name: "terse".into(),
+            args: json!({ "intent": "x", "path": "a" }),
+        };
+        assert_eq!(
+            reg.execute(&call).await.content,
+            format!("echo:{}", json!({ "path": "a" }))
+        );
+    }
+
+    /// Spec: a tool never sees the intent it was not built to take; one that
+    /// has a parameter of that name gets it as sent.
+    #[tokio::test]
+    async fn a_tool_runs_without_the_intent_unless_it_takes_one() {
+        let mut reg = ToolRegistry::new();
+        reg.register(EchoTool { name: "echo" });
+        reg.register(OwnIntentTool);
+        let call = |name: &str, args: Value| ToolCall {
+            id: "c".into(),
+            name: name.into(),
+            args,
+        };
+        let echoed = reg
+            .execute(&call(
+                "echo",
+                json!({ "intent": "List files", "path": "." }),
+            ))
+            .await;
+        assert_eq!(echoed.content, format!("echo:{}", json!({ "path": "." })));
+        let own = reg
+            .execute(&call("own_intent", json!({ "intent": 3 })))
+            .await;
+        assert_eq!(own.content, format!("echo:{}", json!({ "intent": 3 })));
     }
 }

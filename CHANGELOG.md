@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **tools**: every tool call may carry a few words of intent ("List the files in the project root"), an optional argument each tool's definition now offers and the registry takes off again before the tool runs. It labels the call wherever steps are listed: the terminal's tool row (before the command, dimmed), and the remote host's description of the call, which a server shows. Calls that differ only in their intent are the same call to stall detection and the repeated-result note. A tool with a parameter of that name keeps its own, and the compact profile's tools offer none. The definitions cost ~16 tokens more a tool.
+
 ## [5.6.0] - 2026-11-17
 
 ### Fixed
