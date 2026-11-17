@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use sven_model::SamplingParams;
+use sven_sdk::model::SamplingParams;
 use sven_sdk::{Engine, RunOptions};
 
 struct Args {

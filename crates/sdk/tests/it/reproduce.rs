@@ -227,7 +227,7 @@ async fn run(scripts: Vec<Vec<ResponseEvent>>) -> atif::Trajectory {
         .send_with(
             "weather in Lund?",
             RunOptions::new()
-                .sampling(sven_model::SamplingParams {
+                .sampling(sven_sdk::model::SamplingParams {
                     seed: Some(42),
                     ..Default::default()
                 })

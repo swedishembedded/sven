@@ -175,9 +175,11 @@ impl RunOptions {
 
     /// Sends these sampling controls (temperature, top-p, top-k, seed) with
     /// every model request of the run, children's included. A provider that
-    /// cannot honour one refuses the request rather than ignoring it.
+    /// cannot honour one refuses the request rather than ignoring it. The
+    /// type is [`crate::model::SamplingParams`], so a caller sets them through
+    /// the SDK alone.
     #[must_use]
-    pub fn sampling(mut self, sampling: sven_model::SamplingParams) -> Self {
+    pub fn sampling(mut self, sampling: crate::model::SamplingParams) -> Self {
         self.decoding.sampling = sampling;
         self
     }

@@ -16,8 +16,8 @@
 
 use std::sync::Arc;
 
-use sven_model::SamplingParams;
 use sven_model_mock::MockProvider;
+use sven_sdk::model::SamplingParams;
 use sven_sdk::{Engine, RunOptions};
 
 fn engine() -> Engine {

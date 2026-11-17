@@ -201,8 +201,8 @@ pub mod model {
     pub use sven_model::repeat;
     pub use sven_model::{
         CompletionRequest, ContentPart, FunctionCall, Message, MessageContent, ModelProvider,
-        ResponseEvent, ResponseFormat, ResponseStream, Role, ToolContentPart, ToolResultContent,
-        ToolSchema,
+        ResponseEvent, ResponseFormat, ResponseStream, Role, SamplingParams, ToolContentPart,
+        ToolResultContent, ToolSchema,
     };
 }
 

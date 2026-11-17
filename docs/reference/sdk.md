@@ -349,6 +349,12 @@ match outcome.conclusion {
 }
 ```
 
+`RunOptions::sampling` fixes the decoding of every model request of the run,
+children's included: a `sven_sdk::model::SamplingParams` with temperature,
+top-p, top-k and seed, each optional. A provider that cannot honour one refuses
+the request rather than ignoring it; `want_logprobs(true)` additionally asks for
+the sampled token ids and log-probabilities.
+
 A stop from outside says why in the trajectory: the aborted turn is filed as
 `[aborted: <reason>]`. `cancel.cancel_with("repetition stop: ...")` gives the
 reason; a plain `cancel()` reads "run cancelled by the caller", the deadline
