@@ -351,9 +351,20 @@ match outcome.conclusion {
 
 `RunOptions::sampling` fixes the decoding of every model request of the run,
 children's included: a `sven_sdk::model::SamplingParams` with temperature,
-top-p, top-k and seed, each optional. A provider that cannot honour one refuses
-the request rather than ignoring it; `want_logprobs(true)` additionally asks for
-the sampled token ids and log-probabilities.
+top-p, top-k and seed, each optional; `want_logprobs(true)` additionally asks
+for the sampled token ids and log-probabilities. A provider declares which
+controls it honours (`ModelProvider::sampling_controls`): the driver registry
+says what each API applies (every OpenAI-protocol server temperature and top-p;
+brain, Google, Cohere and brain over D-Bus all four; Anthropic all but the
+seed), and a server adds to that by naming more in its model listing
+(`supported_parameters` or `capabilities`). A run that sets a control its
+provider does not declare fails with `CallError::SamplingRefused`, which names
+the controls, before anything is sent. With `model.sampling_best_effort: true`
+the controls are sent anyway, the run warns once, and each step records them
+under `extra.sven.sampling_unhonoured`; `extra.sven.sampling_honoured` lists
+the controls that took effect (a seed the server echoes counts as honoured).
+A provider of the application's own (`model_provider`) reads the controls
+itself and declares all four unless it says otherwise.
 
 A stop from outside says why in the trajectory: the aborted turn is filed as
 `[aborted: <reason>]`. `cancel.cancel_with("repetition stop: ...")` gives the

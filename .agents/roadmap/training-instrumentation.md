@@ -19,7 +19,9 @@ trajectory; the round trip against a real server (`make test/e2e/capture`); a br
 `policy_trace` (asked for with `policy_trace: true`: prompt and generated ids, whole-vocabulary log-probs and their
 temperature), the policy version, tokenizer and chat-template digests and the log-probability kind
 (`policy`/`sampler`) a server reports, and a `truncated` mark on a response cut off at the
-output-token ceiling; every run of an agent keeps its metrics, whatever ended the runs before.
+output-token ceiling; every run of an agent keeps its metrics, whatever ended the runs before;
+which requested sampling controls took effect (`sampling_honoured`), with a control a provider
+does not honour refused or, on explicit best effort, recorded as `sampling_unhonoured`.
 
 ## Still open
 

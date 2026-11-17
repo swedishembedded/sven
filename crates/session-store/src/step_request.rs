@@ -74,9 +74,14 @@ pub fn record_response(
     // What identifies the decode goes under `extra.sven`; the first request of
     // the step that reported a field fixes it.
     let identity = &sampled.identity;
-    let facts: [(&str, Option<Value>); 12] = [
+    let controls = |set: sven_vocab::SamplingControls| (!set.is_empty()).then(|| json!(set));
+    let facts: [(&str, Option<Value>); 14] = [
         ("seed", sampled.seed.map(Value::from)),
         ("decoding", sampled.decoding.as_ref().map(|d| json!(d))),
+        // Which of the controls the request set took effect, and which were
+        // only sent on best effort: a learner's "seeded" reads the first.
+        ("sampling_honoured", controls(sampled.sampling_honoured)),
+        ("sampling_unhonoured", controls(sampled.sampling_unhonoured)),
         (
             "adapter",
             identity

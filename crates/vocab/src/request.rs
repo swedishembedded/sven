@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ledger::ReportedUsage;
+use crate::sampling::SamplingControls;
 use crate::served::ServedIdentity;
 use crate::turn::TurnDecoding;
 use crate::SessionEvent;
@@ -49,6 +50,16 @@ pub struct Sampled {
     /// any were made (a harness step can set them per turn).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decoding: Option<Box<TurnDecoding>>,
+    /// The sampling controls the request set that took effect: the provider
+    /// declares it honours them, or the server reported using them (a seed it
+    /// echoed). A consumer's "seeded" means `Seed` is here.
+    #[serde(default, skip_serializing_if = "SamplingControls::is_empty")]
+    pub sampling_honoured: SamplingControls,
+    /// The sampling controls the request set that the provider does not
+    /// declare it honours: sent only because the configuration allows best
+    /// effort, so nothing says they took effect.
+    #[serde(default, skip_serializing_if = "SamplingControls::is_empty")]
+    pub sampling_unhonoured: SamplingControls,
     /// The response ended at the output-token ceiling, not because the model
     /// stopped: its last tokens are a cut-off, not a finished answer.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -66,6 +77,8 @@ impl Sampled {
             && self.prompt_token_ids.is_empty()
             && self.identity.is_empty()
             && self.decoding.is_none()
+            && self.sampling_honoured.is_empty()
+            && self.sampling_unhonoured.is_empty()
             && !self.truncated
     }
 }

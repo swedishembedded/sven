@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **model**: a sampling control is honoured, refused, or knowingly sent best-effort, never silently ignored. A provider declares the controls it honours (`ModelProvider::sampling_controls`; per driver in the registry, plus what a server names in its model listing's `supported_parameters` or `capabilities`): every OpenAI-protocol server temperature and top-p, brain, Google, Cohere and D-Bus all four, Anthropic all but the seed. A run that sets another (a `seed` or `top_k` to a generic OpenAI-compatible server) fails before sending with a typed error naming it (`CallError::SamplingRefused` in the SDK), unless `model.sampling_best_effort: true`: then it is sent, the run warns once, and the trajectory records it under `extra.sven.sampling_unhonoured`. `extra.sven.sampling_honoured` lists the controls that took effect, and the requested seed is recorded as the seed in effect only where it is honoured.
+
 ### Fixed
 - **sdk**: an agent driven through several runs keeps the token ids, log-probabilities and usage of every request on its step. A call the machine answered itself (refused by the gate, not approved, not loaded) or one a stopped run left open put a result in the kernel's thread that no observation announced; the agent then judged its events lost and took every earlier run's requests off their steps. The turn executor now emits a `ToolCallFinished` (an error) for every call it answers on the machine's behalf, a stopped run answers its open calls with why they did not run, and a run that does lose events replaces only its own part of the record. `Usage::tool_calls`/`tool_errors` count answered-without-running calls as errors.
 

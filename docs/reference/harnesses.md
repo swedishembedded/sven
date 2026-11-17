@@ -91,7 +91,11 @@ defaulted). The settings travel with each model request (`thinking.enabled` as
 `chat_template_kwargs.enable_thinking` to servers that read it, never to the
 `openai` driver), and the trajectory records, for every request, what it was sent
 with under `extra.sven.decoding` of its step. A setting that does not resolve
-fails the run with `invalid_setting`.
+fails the run with `invalid_setting`. A sampling control the model's provider
+does not declare it honours (a `seed` or `top_k` to a generic OpenAI-compatible
+server) fails the turn naming it, unless the model's configuration sets
+`sampling_best_effort` (see the SDK reference); `extra.sven.sampling_honoured`
+says which took effect.
 **Model roles.** `agent.model` and a task's `model` name a *role*, never an
 endpoint or key. The host maps roles to providers
 (`EngineBuilder::model_role(role, provider)`; on the command line

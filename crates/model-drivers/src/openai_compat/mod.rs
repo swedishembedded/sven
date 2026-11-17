@@ -373,6 +373,10 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         true
     }
 
+    fn sampling_controls(&self) -> sven_model::SamplingControls {
+        crate::registry_sampling(self.driver_name)
+    }
+
     fn endpoint_host(&self) -> Option<String> {
         crate::url_host(&self.chat_url)
     }

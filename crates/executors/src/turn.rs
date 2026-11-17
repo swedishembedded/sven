@@ -156,9 +156,9 @@ pub struct TurnExecutor {
     /// Limits forwarded to every `stream_turn` call (main turn and
     /// compaction turn alike). See [`Self::with_turn_limits`].
     limits: sven_turn::TurnLimits,
-    /// Models already warned about for lacking tool calling, so each is
-    /// mentioned once per session however many turns it serves.
-    warned_without_tools: std::collections::HashSet<String>,
+    /// What the session was already warned about, so each warning is said
+    /// once however many turns it applies to.
+    warned: notices::Warned,
     /// The request being answered leaves the end of the person's turn to its
     /// machine ([`TurnRequest::machine_ends_turn`]); see [`Self::end_turn`].
     machine_ends_turn: bool,
@@ -208,7 +208,7 @@ impl TurnExecutor {
             call_id_to_thread,
             cancel_handle,
             empty_turns: Arc::new(Mutex::new(HashMap::new())),
-            warned_without_tools: std::collections::HashSet::new(),
+            warned: notices::Warned::default(),
             machine_ends_turn: false,
             decisions: None,
             context: None,
@@ -434,12 +434,6 @@ impl EffectExecutor for TurnExecutor {
         }
 
         notices::report_served_model_change(model.as_ref(), obs);
-        notices::warn_if_tools_unsupported(
-            &mut self.warned_without_tools,
-            model.as_ref(),
-            !tool_schemas.is_empty(),
-            obs,
-        );
 
         // Observable request shape (debug level → `-v` stderr in headless
         // mode). The e2e suite asserts on `tool_schemas=`/`system_messages=`
@@ -463,6 +457,9 @@ impl EffectExecutor for TurnExecutor {
         // `sven_model::budget::effective_input_budget`'s doc comment.
         let context_window = model.catalog_context_window();
         let limits = self.limits.with_turn_decoding(&req.decoding);
+        let offering_tools = !tool_schemas.is_empty();
+        let warned = &mut self.warned;
+        notices::warn_before_request(warned, model.as_ref(), offering_tools, &limits, obs);
         let configured_max_output =
             limits.cap_output(limits::response_cap(model.as_ref(), context_window));
         self.announce_budget(context_window, configured_max_output, obs);
@@ -770,6 +767,7 @@ impl EffectExecutor for TurnExecutor {
         let turn = match result {
             Ok(turn) => turn,
             Err(e) => {
+                notices::file_sampling_refusal(&self.store, &e);
                 let msg = replies::failure_text(&format!("{e:#}"));
                 obs.emit(UiEvent::Error(msg.clone()));
                 let _ = sink.emit(Event::LlmFailed { error: msg }).await;

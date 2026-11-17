@@ -76,6 +76,17 @@ fn parse_served_model(entry: &Value) -> Option<ServedModel> {
         .as_ref()
         .map(|caps| caps.iter().any(|c| TOOL_CAPABILITIES.contains(&c.as_str())))
         .or(parameters);
+    // A sampling control the server names, as a request parameter it honours
+    // or as a capability, is one it applies.
+    let sampling = entry
+        .get("supported_parameters")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .chain(capabilities.iter().flatten().map(String::as_str))
+        .filter_map(sven_model::SamplingControl::from_name)
+        .collect();
     let adapter = entry.get("adapter").and_then(|a| {
         Some(AdapterRef {
             id: a.get("id")?.as_str()?.to_string(),
@@ -97,6 +108,7 @@ fn parse_served_model(entry: &Value) -> Option<ServedModel> {
         input_modalities: sven_model::catalog::served_input_modalities(entry),
         image_limits: sven_model::catalog::served_image_limits(entry),
         adapter,
+        sampling,
     })
 }
 
@@ -226,6 +238,8 @@ pub(crate) struct LiveState {
     input_modalities: Mutex<Option<Vec<sven_model::catalog::InputModality>>>,
     /// Per-request image limits as the server stated them; unknown = default.
     image_limits: Mutex<sven_model::catalog::ImageLimits>,
+    /// The sampling controls the server says it applies; none until it does.
+    sampling: Mutex<sven_model::SamplingControls>,
     /// The adapter seen on the last answering probe; the outer `None` until
     /// there is one, so the first answer is a baseline and not a change.
     adapter: Mutex<Option<Option<AdapterRef>>>,
@@ -245,6 +259,7 @@ impl LiveState {
             tools: AtomicU8::new(TOOLS_UNKNOWN),
             input_modalities: Mutex::new(None),
             image_limits: Mutex::new(sven_model::catalog::ImageLimits::default()),
+            sampling: Mutex::new(sven_model::SamplingControls::NONE),
             adapter: Mutex::new(None),
             pending_change: Mutex::new(None),
             last_probe: Mutex::new(None),
@@ -269,6 +284,10 @@ impl LiveState {
 
     pub(crate) fn image_limits(&self) -> sven_model::catalog::ImageLimits {
         *self.image_limits.lock().expect("image limits poisoned")
+    }
+
+    pub(crate) fn sampling(&self) -> sven_model::SamplingControls {
+        *self.sampling.lock().expect("sampling poisoned")
     }
 
     pub(crate) fn tool_support(&self) -> Option<bool> {
@@ -339,6 +358,7 @@ impl LiveState {
             *self.input_modalities.lock().expect("modalities poisoned") =
                 m.input_modalities.clone();
             *self.image_limits.lock().expect("image limits poisoned") = m.image_limits;
+            *self.sampling.lock().expect("sampling poisoned") = m.sampling;
         }
         if served.is_some() {
             self.note_adapter(entry.and_then(|m| m.adapter.clone()));

@@ -489,6 +489,7 @@ fn bounded(
         max_output_tokens: configured_cap,
         input_modalities: None,
         live: Some(live),
+        sampling_best_effort: false,
     }
 }
 

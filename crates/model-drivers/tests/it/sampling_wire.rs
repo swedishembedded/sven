@@ -454,3 +454,85 @@ async fn no_thinking_budget_is_sent_when_none_is_set() {
     let body = body_for(|port| format!("http://127.0.0.1:{port}/v1"), request).await;
     assert!(body.get("thinking_budget").is_none(), "{body}");
 }
+
+// ── Which sampling controls a provider honours ────────────────────────────────
+
+use sven_model::{SamplingControl, SamplingControls};
+
+fn declared(provider: &str) -> SamplingControls {
+    let cfg = ModelConfig {
+        provider: provider.into(),
+        name: "m".into(),
+        api_key: Some("key".into()),
+        base_url: Some("http://127.0.0.1:9/v1".into()),
+        ..ModelConfig::default()
+    };
+    from_config(&cfg).unwrap().sampling_controls()
+}
+
+/// The OpenAI protocol has no `top_k`, and a generic server may drop `seed`
+/// without a word; only what every such server applies is declared.
+#[test]
+fn a_generic_openai_compatible_server_honours_temperature_and_top_p() {
+    let expected = SamplingControls::of(&[SamplingControl::Temperature, SamplingControl::TopP]);
+    for provider in ["openai", "vllm", "ollama", "openrouter"] {
+        assert_eq!(declared(provider), expected, "{provider}");
+    }
+}
+
+/// brain's chat API applies every control (and echoes the seed it used).
+#[test]
+fn a_brain_server_honours_every_sampling_control() {
+    assert_eq!(declared("brain"), SamplingControls::ALL);
+}
+
+/// Each protocol declares what its API applies: Anthropic has no seed.
+#[test]
+fn a_native_protocol_declares_what_its_api_applies() {
+    assert_eq!(
+        declared("anthropic"),
+        SamplingControls::of(&[
+            SamplingControl::Temperature,
+            SamplingControl::TopP,
+            SamplingControl::TopK
+        ])
+    );
+}
+
+/// A local server that lists `seed` and `top_k` among a model's
+/// `supported_parameters` (or its `capabilities`) is believed.
+#[tokio::test]
+async fn a_server_that_advertises_seed_and_top_k_honours_them() {
+    use crate::common::{list, Server};
+    let server = Server::start(list(vec![serde_json::json!({
+        "id": "m", "supported_parameters": ["temperature", "top_p", "top_k", "seed", "tools"]
+    })]))
+    .await;
+    let provider = sven_model_drivers::from_config_probed(&server.config("m"))
+        .await
+        .unwrap();
+    assert_eq!(provider.sampling_controls(), SamplingControls::ALL);
+
+    let silent = Server::start(list(vec![serde_json::json!({"id": "m"})])).await;
+    let provider = sven_model_drivers::from_config_probed(&silent.config("m"))
+        .await
+        .unwrap();
+    assert_eq!(
+        provider.sampling_controls(),
+        SamplingControls::of(&[SamplingControl::Temperature, SamplingControl::TopP])
+    );
+}
+
+/// Best effort is the configuration's explicit choice, off by default.
+#[test]
+fn best_effort_is_off_unless_configured() {
+    let mut cfg = ModelConfig {
+        provider: "openai".into(),
+        name: "m".into(),
+        api_key: Some("key".into()),
+        ..ModelConfig::default()
+    };
+    assert!(!from_config(&cfg).unwrap().sampling_best_effort());
+    cfg.sampling_best_effort = true;
+    assert!(from_config(&cfg).unwrap().sampling_best_effort());
+}

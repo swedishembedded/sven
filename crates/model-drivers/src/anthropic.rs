@@ -128,6 +128,10 @@ impl AnthropicProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl sven_model::ModelProvider for AnthropicProvider {
+    fn sampling_controls(&self) -> sven_model::SamplingControls {
+        crate::registry_sampling("anthropic")
+    }
+
     fn name(&self) -> &str {
         "anthropic"
     }
@@ -438,7 +442,7 @@ impl sven_model::ModelProvider for AnthropicProvider {
 /// Almost every payload maps to exactly one event ([`parse_anthropic_event`]).
 /// The exception is a `message_delta` with `stop_reason == "max_tokens"`:
 /// that frame carries **both** the turn's only output-token usage report and
-/// the truncation signal, so it yields `[Usage, MaxTokens]` — usage first,
+/// the truncation signal, so it yields `[Usage, MaxTokens]` - usage first,
 /// so token tracking and billing see the output tokens of truncated turns
 /// before the turn ends.
 pub(crate) fn parse_anthropic_events(v: &Value) -> Vec<anyhow::Result<ResponseEvent>> {
@@ -527,7 +531,7 @@ pub(crate) fn parse_anthropic_event(v: &Value) -> anyhow::Result<ResponseEvent> 
             // the agent knows any in-flight tool-call arguments were
             // truncated. The streaming path goes through
             // `parse_anthropic_events`, which emits the accompanying usage
-            // *before* the MaxTokens signal — `message_delta` is the only
+            // *before* the MaxTokens signal - `message_delta` is the only
             // event carrying output tokens, and truncated turns are the most
             // expensive ones, so dropping it here would leave every
             // max-length turn's output tokens untracked (and, in the cloud

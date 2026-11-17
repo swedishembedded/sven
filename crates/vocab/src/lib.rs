@@ -34,6 +34,7 @@ mod mode;
 pub mod notice;
 pub mod provenance;
 pub mod request;
+pub mod sampling;
 pub mod served;
 mod todo;
 mod tool_image;
@@ -58,6 +59,7 @@ pub use conclusion::announces_unfinished_work;
 pub use mode::AgentMode;
 pub use notice::{Notice, NoticeError};
 pub use request::{RequestFold, RequestRecord, Sampled};
+pub use sampling::{SamplingControl, SamplingControls};
 pub use served::{
     context_budget_text, describe_adapter, served_model_changed_text, AdapterRef, ContextBudget,
     LogprobKind, ServedIdentity,

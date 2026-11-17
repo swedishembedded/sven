@@ -479,6 +479,7 @@ pub async fn stream_turn_attributed(
         .unwrap_or(limits.thinking)
         .resolve();
 
+    let sampling = limits.sampling_account(model)?;
     let manifest = PromptManifest::describe(&messages, sections, &tools, dynamic_suffix.as_deref());
     let req = CompletionRequest {
         messages,
@@ -531,6 +532,8 @@ pub async fn stream_turn_attributed(
         decoding: Some(limits.recorded_decoding())
             .filter(|d| !d.is_empty())
             .map(Box::new),
+        sampling_honoured: sampling.honoured,
+        sampling_unhonoured: sampling.unhonoured,
         ..Sampled::default()
     };
 
@@ -673,7 +676,7 @@ pub async fn stream_turn_attributed(
             }
             ResponseEvent::Served { model, seed } => {
                 sampled.model = Some(model);
-                sampled.seed = seed;
+                sampled.seed = sampling.seed_in_effect(seed);
             }
             ResponseEvent::PromptTokens { ids } => sampled.prompt_token_ids.extend(ids),
             ResponseEvent::Identity(identity) => {
@@ -681,6 +684,7 @@ pub async fn stream_turn_attributed(
                 if identity.seed.is_some() {
                     sampled.seed = identity.seed;
                 }
+                sampling.note_reported_seed(&mut sampled, identity.seed);
                 sampled.identity.merge(identity);
             }
             ResponseEvent::Done => {

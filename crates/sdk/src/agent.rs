@@ -654,7 +654,13 @@ impl Agent {
         // `SessionEvent::Error` as fatal to the turn.
         if stopped.is_none() {
             if let Some(message) = failure {
-                return Err(CallError::Infrastructure(anyhow::anyhow!(message)));
+                let refused = bundle
+                    .handle
+                    .read_conversation(|store| store.sampling_refusal().cloned());
+                return Err(match refused {
+                    Some(refused) => CallError::SamplingRefused(refused),
+                    None => CallError::Infrastructure(anyhow::anyhow!(message)),
+                });
             }
         }
         let rounds_ran_out = self.state.kernel.as_ref().is_some_and(|snapshot| {

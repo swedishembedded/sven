@@ -36,6 +36,9 @@ pub struct ThreadStore {
     /// Why the caller is stopping the run, set just before it cancels the
     /// turn in flight; the turn executor labels the aborted turn with it.
     stop_reason: Option<String>,
+    /// A request refused for its sampling controls; see
+    /// [`Self::set_sampling_refusal`].
+    sampling_refusal: Option<sven_model::SamplingRefused>,
     /// The agent's todo list, kept here (outside the conversation) so a
     /// compaction can carry it through verbatim.
     todos: Vec<sven_vocab::TodoItem>,
@@ -132,6 +135,18 @@ impl ThreadStore {
     /// Takes the reason given by [`Self::set_stop_reason`].
     pub fn take_stop_reason(&mut self) -> Option<String> {
         self.stop_reason.take()
+    }
+
+    /// Records that a request was refused because its provider does not
+    /// honour sampling controls it set.
+    pub fn set_sampling_refusal(&mut self, refused: sven_model::SamplingRefused) {
+        self.sampling_refusal = Some(refused);
+    }
+
+    /// The refusal filed by [`Self::set_sampling_refusal`], if any.
+    #[must_use]
+    pub fn sampling_refusal(&self) -> Option<&sven_model::SamplingRefused> {
+        self.sampling_refusal.as_ref()
     }
 
     /// Appends a composed system prompt to a thread as its system message and

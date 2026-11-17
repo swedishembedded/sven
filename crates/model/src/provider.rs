@@ -58,6 +58,10 @@ pub struct ServedModel {
     pub image_limits: ImageLimits,
     /// The adapter currently applied to this model, when the server reports one.
     pub adapter: Option<AdapterRef>,
+    /// The sampling controls the server says it applies to this model
+    /// (`supported_parameters` or `capabilities` naming them); empty when it
+    /// names none.
+    pub sampling: crate::SamplingControls,
 }
 
 /// What a server reports it is serving, in the order it reported it.
@@ -122,6 +126,27 @@ pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
     /// model must not call one. A provider that does not is never sent
     /// [`crate::ToolChoice::None`]; callers leave the tools out instead.
     fn supports_tool_choice_none(&self) -> bool {
+        false
+    }
+
+    /// The sampling controls this provider honours: a request that sets one
+    /// outside this set is refused before it is sent, unless
+    /// [`Self::sampling_best_effort`] allows sending it anyway.
+    ///
+    /// The default is every control: a provider that reads
+    /// [`crate::CompletionRequest::sampling`] itself (an in-process model, a
+    /// test double) sees each control and answers for it. A driver that
+    /// translates the request for a server declares only what that server is
+    /// known to apply, by its protocol or because it said so.
+    fn sampling_controls(&self) -> crate::SamplingControls {
+        crate::SamplingControls::ALL
+    }
+
+    /// Whether the configuration allows sending sampling controls this
+    /// provider does not declare it honours, on the understanding that they
+    /// may be ignored. Off by default; a run that does it warns once and
+    /// records them as sent, not honoured.
+    fn sampling_best_effort(&self) -> bool {
         false
     }
 
@@ -224,5 +249,15 @@ pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
     /// back to a text transcript (see `sven-tools-fs`' `attach_file` tool).
     fn supports_audio(&self) -> bool {
         self.input_modalities().contains(&InputModality::Audio)
+    }
+}
+
+impl crate::SamplingParams {
+    /// The controls these parameters set that `provider` does not declare it
+    /// honours: sending them is refused, unless the provider's configuration
+    /// allows best effort.
+    #[must_use]
+    pub fn unhonoured_by(&self, provider: &dyn ModelProvider) -> crate::SamplingControls {
+        self.controls().without(provider.sampling_controls())
     }
 }

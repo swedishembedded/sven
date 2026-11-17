@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
+pub use sven_vocab::{SamplingControl, SamplingControls};
 
 // ─── Content part types ───────────────────────────────────────────────────────
 
@@ -550,6 +551,47 @@ pub struct SamplingParams {
     /// Seed for deterministic sampling on providers that honour one.
     pub seed: Option<u64>,
 }
+
+impl SamplingParams {
+    /// The controls these parameters set.
+    #[must_use]
+    pub fn controls(&self) -> SamplingControls {
+        [
+            (self.temperature.is_some(), SamplingControl::Temperature),
+            (self.top_p.is_some(), SamplingControl::TopP),
+            (self.top_k.is_some(), SamplingControl::TopK),
+            (self.seed.is_some(), SamplingControl::Seed),
+        ]
+        .into_iter()
+        .filter_map(|(set, control)| set.then_some(control))
+        .collect()
+    }
+}
+
+/// A request asked for sampling controls its provider does not honour, and
+/// the configuration does not allow sending them best-effort: the request
+/// was refused rather than sent with them silently ignored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SamplingRefused {
+    /// The model the request was for.
+    pub model: String,
+    /// The controls it does not honour.
+    pub controls: SamplingControls,
+}
+
+impl std::fmt::Display for SamplingRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} does not honour the sampling control(s) {}, so the request was refused rather \
+             than sent with them ignored; leave them unset, use a provider that honours them, \
+             or set `model.sampling_best_effort: true` to send them without that guarantee",
+            self.model, self.controls
+        )
+    }
+}
+
+impl std::error::Error for SamplingRefused {}
 
 /// Whether the model may call the tools a request offers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

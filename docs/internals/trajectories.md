@@ -17,7 +17,9 @@ request a step covers:
 | `metrics.prompt_token_ids` | the prompt as the model read it | server echo (`prompt_token_ids`) |
 | `metrics.completion_token_ids` | the sampled tokens, in order | server echo (`token_ids`) |
 | `metrics.logprobs` | the log-probability of each sampled token under the distribution it was decoded from | server echo (`logprobs.content[].logprob`) |
-| `metrics.extra.sven.seed` | the seed the server reports it used (the requested one when it reports none) | the `seed` of the response's `brain` object, else the request |
+| `metrics.extra.sven.seed` | the seed the server reports it used (the requested one when it reports none and the provider honours seeds) | the `seed` of the response's `brain` object, else the request |
+| `metrics.extra.sven.sampling_honoured` | the sampling controls the request set that took effect: the provider declares it honours them, or the server echoed the seed asked for | the provider's declaration and the `brain` object |
+| `metrics.extra.sven.sampling_unhonoured` | controls the request set that the provider does not declare, sent only because `model.sampling_best_effort` allows it | the same |
 | `metrics.extra.sven.adapter` | `{id, digest}` of the adapter that answered | `adapter` of the `brain` object |
 | `metrics.extra.sven.base_digest` | `sha256:` of the base checkpoint | `base_digest` of the `brain` object |
 | `metrics.extra.sven.backend`, `engine` | the compute backend and engine build that decoded | `backend`, `engine` of the `brain` object |
@@ -133,7 +135,8 @@ the transcript like any other. Nested children are listed flat, each with its de
   run to run and are the only fields that do.
 - The seed recorded is the one the server reports it used, also for a request that
   carried none (the server draws one and echoes it); only a server that reports none
-  leaves the step with the requested seed or none.
+  leaves the step with the requested seed, and only when the provider honours seeds.
+  "Seeded" means `seed` is in `sampling_honoured`, not that one was sent.
 - Whether a decode repeats for the same seed is a property of the server, not of sven.
   The trajectory therefore records what lets a difference be explained rather than
   prevented: the seed, the sampled token ids and their log-probabilities, the answering

@@ -7,6 +7,8 @@
 //! and what their defaults are.  It does **not** contain construction logic -
 //! that lives in `from_config` (`sven-model-drivers`).
 
+use crate::{SamplingControl, SamplingControls};
+
 /// Metadata describing a registered model driver.
 #[derive(Debug, Clone)]
 pub struct DriverMeta {
@@ -28,7 +30,18 @@ pub struct DriverMeta {
     /// What the driver adds to the OpenAI-protocol requests it sends.
     /// Ignored by drivers that speak another protocol.
     pub requests: RequestExtras,
+    /// The sampling controls the provider's API applies. A request that sets
+    /// another is refused rather than sent to be ignored (see
+    /// `ModelProvider::sampling_controls`); a server may add to these by
+    /// naming more in its model listing.
+    pub sampling: SamplingControls,
 }
+
+/// What every OpenAI-protocol server applies. The protocol has no `top_k`,
+/// and its `seed` is one a server may drop without a word, so neither is
+/// assumed of a server that does not say it applies them.
+pub const OPENAI_SAMPLING: SamplingControls =
+    SamplingControls::of(&[SamplingControl::Temperature, SamplingControl::TopP]);
 
 /// What one OpenAI-protocol gateway needs on top of the plain protocol, as
 /// data: every such driver is the same client, configured by these.
@@ -86,6 +99,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "anthropic",
@@ -95,6 +109,11 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: SamplingControls::of(&[
+            SamplingControl::Temperature,
+            SamplingControl::TopP,
+            SamplingControl::TopK,
+        ]),
     },
     DriverMeta {
         id: "google",
@@ -104,6 +123,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: SamplingControls::ALL,
     },
     DriverMeta {
         id: "azure",
@@ -113,6 +133,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "aws",
@@ -122,6 +143,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: false,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "cohere",
@@ -131,6 +153,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: SamplingControls::ALL,
     },
     // ── Gateways ──────────────────────────────────────────────────────────────
     DriverMeta {
@@ -148,6 +171,7 @@ pub static DRIVERS: &[DriverMeta] = &[
             rewrite_options: Some(rewrite_openrouter_options),
             ..RequestExtras::NONE
         },
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "litellm",
@@ -157,6 +181,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: false,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "portkey",
@@ -169,6 +194,7 @@ pub static DRIVERS: &[DriverMeta] = &[
             headers_from_options: &[("portkey_virtual_key", "x-portkey-virtual-key")],
             ..RequestExtras::NONE
         },
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "vercel",
@@ -178,6 +204,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "cloudflare",
@@ -187,6 +214,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     // ── Fast inference platforms ───────────────────────────────────────────────
     DriverMeta {
@@ -197,6 +225,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "cerebras",
@@ -206,6 +235,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     // ── Open model platforms ───────────────────────────────────────────────────
     DriverMeta {
@@ -216,6 +246,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "fireworks",
@@ -225,6 +256,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "deepinfra",
@@ -234,6 +266,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "nebius",
@@ -243,6 +276,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "sambanova",
@@ -252,6 +286,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "huggingface",
@@ -261,6 +296,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "nvidia",
@@ -270,6 +306,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     // ── Specialized ───────────────────────────────────────────────────────────
     DriverMeta {
@@ -280,6 +317,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "mistral",
@@ -289,6 +327,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "xai",
@@ -298,6 +337,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     // ── Regional providers ────────────────────────────────────────────────────
     DriverMeta {
@@ -308,6 +348,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "moonshot",
@@ -317,6 +358,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "dashscope",
@@ -326,6 +368,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "glm",
@@ -335,6 +378,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "minimax",
@@ -344,6 +388,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "qianfan",
@@ -353,6 +398,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "sven",
@@ -362,6 +408,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     // ── Local / OSS ───────────────────────────────────────────────────────────
     DriverMeta {
@@ -372,6 +419,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: true,
         local: true,
         requests: RequestExtras::NONE,
+        sampling: SamplingControls::ALL,
     },
     DriverMeta {
         id: "ollama",
@@ -381,6 +429,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: false,
         local: true,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "vllm",
@@ -390,6 +439,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: false,
         local: true,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     DriverMeta {
         id: "lmstudio",
@@ -399,6 +449,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: false,
         local: true,
         requests: RequestExtras::NONE,
+        sampling: OPENAI_SAMPLING,
     },
     // ── Local IPC ─────────────────────────────────────────────────────────────
     DriverMeta {
@@ -413,6 +464,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: false,
         local: true,
         requests: RequestExtras::NONE,
+        sampling: SamplingControls::ALL,
     },
     // ── Testing ───────────────────────────────────────────────────────────────
     DriverMeta {
@@ -423,6 +475,7 @@ pub static DRIVERS: &[DriverMeta] = &[
         requires_api_key: false,
         local: false,
         requests: RequestExtras::NONE,
+        sampling: SamplingControls::ALL,
     },
 ];
 

@@ -10,7 +10,36 @@
 
 use std::time::Duration;
 
+use sven_model::{ModelProvider, SamplingControl, SamplingControls, SamplingRefused};
+use sven_vocab::Sampled;
+
 use crate::TurnLimits;
+
+/// What one turn's sampling controls come to with the provider that answers
+/// it: the controls that take effect, and those only sent on best effort.
+pub(crate) struct SamplingAccount {
+    asked_seed: Option<u64>,
+    pub(crate) honoured: SamplingControls,
+    pub(crate) unhonoured: SamplingControls,
+}
+
+impl SamplingAccount {
+    /// The seed the driver says is in effect when the server reports none:
+    /// the one asked for, which is in effect only where seeds are honoured.
+    pub(crate) fn seed_in_effect(&self, seed: Option<u64>) -> Option<u64> {
+        seed.filter(|_| !self.unhonoured.contains(SamplingControl::Seed))
+    }
+
+    /// A server that reports using the seed asked for honoured it, declared
+    /// or not.
+    pub(crate) fn note_reported_seed(&self, sampled: &mut Sampled, reported: Option<u64>) {
+        if reported.is_some() && reported == self.asked_seed {
+            let seed = SamplingControls::of(&[SamplingControl::Seed]);
+            sampled.sampling_honoured = sampled.sampling_honoured.union(seed);
+            sampled.sampling_unhonoured = sampled.sampling_unhonoured.without(seed);
+        }
+    }
+}
 
 impl TurnLimits {
     /// Lays one turn's decoding settings over these limits: each setting the
@@ -54,5 +83,30 @@ impl TurnLimits {
             first_response_timeout: self.stall.first_token.map(|d| d.as_secs()),
             deadline: self.deadline.map(|d| d.as_secs()),
         }
+    }
+
+    /// Accounts for these limits' sampling controls with `model`.
+    ///
+    /// # Errors
+    ///
+    /// [`SamplingRefused`] when a control is one `model` does not declare it
+    /// honours and its configuration does not allow sending it on best
+    /// effort: the request is refused before anything is sent.
+    pub(crate) fn sampling_account(
+        &self,
+        model: &dyn ModelProvider,
+    ) -> Result<SamplingAccount, SamplingRefused> {
+        let unhonoured = self.sampling.unhonoured_by(model);
+        if !unhonoured.is_empty() && !model.sampling_best_effort() {
+            return Err(SamplingRefused {
+                model: model.model_name().to_string(),
+                controls: unhonoured,
+            });
+        }
+        Ok(SamplingAccount {
+            asked_seed: self.sampling.seed,
+            honoured: self.sampling.controls().without(unhonoured),
+            unhonoured,
+        })
     }
 }

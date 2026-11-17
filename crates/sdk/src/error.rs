@@ -64,6 +64,14 @@ pub enum CallError {
         conclusion: crate::RunConclusion,
     },
 
+    /// The run set a sampling control (`seed`, `top_k`, ...) its provider
+    /// does not declare it honours, and the model's configuration does not
+    /// allow sending it on best effort (`model.sampling_best_effort`). The
+    /// refused request was not sent; [`sven_model::SamplingRefused::controls`]
+    /// names the controls.
+    #[error("{0}")]
+    SamplingRefused(sven_model::SamplingRefused),
+
     /// The kernel, transport or provider failed.
     ///
     /// Not a model mistake. Deliberately distinct so that an outage is never

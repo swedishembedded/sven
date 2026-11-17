@@ -57,6 +57,10 @@ impl GoogleProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl sven_model::ModelProvider for GoogleProvider {
+    fn sampling_controls(&self) -> sven_model::SamplingControls {
+        crate::registry_sampling("google")
+    }
+
     fn name(&self) -> &str {
         "google"
     }
@@ -473,8 +477,8 @@ fn parse_gemini_chunk(v: &Value) -> anyhow::Result<ResponseEvent> {
 ///
 /// The API key is deliberately **not** a query parameter. `reqwest::Error`'s
 /// `Display` appends `" for url (...)"`, and `sven-executors`' turn loop
-/// renders a failed request with `format!("{e:#}")` — anyhow's alternate form,
-/// which walks the whole source chain — then emits it as `UiEvent::Error` and
+/// renders a failed request with `format!("{e:#}")` - anyhow's alternate form,
+/// which walks the whole source chain - then emits it as `UiEvent::Error` and
 /// `Event::LlmFailed`. With the key in the URL, any transport error (DNS,
 /// timeout, TLS) wrote it to CI stderr, broadcast it to every node-control
 /// WebSocket client, and pushed it onto the cloud session feed. It travels in

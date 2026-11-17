@@ -70,6 +70,7 @@ mod reproduce;
 mod round_budget;
 mod run_bounds;
 mod run_decoding;
+mod sampling_contract;
 mod search;
 mod seat;
 mod state_version;

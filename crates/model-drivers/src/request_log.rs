@@ -286,6 +286,14 @@ impl ModelProvider for RecordingProvider {
         self.inner.supports_tool_choice_none()
     }
 
+    fn sampling_controls(&self) -> sven_model::SamplingControls {
+        self.inner.sampling_controls()
+    }
+
+    fn sampling_best_effort(&self) -> bool {
+        self.inner.sampling_best_effort()
+    }
+
     fn endpoint_host(&self) -> Option<String> {
         self.inner.endpoint_host()
     }

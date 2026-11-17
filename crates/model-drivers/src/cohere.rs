@@ -49,6 +49,10 @@ impl CohereProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl sven_model::ModelProvider for CohereProvider {
+    fn sampling_controls(&self) -> sven_model::SamplingControls {
+        crate::registry_sampling("cohere")
+    }
+
     fn name(&self) -> &str {
         "cohere"
     }

@@ -398,6 +398,10 @@ pub fn extract_blob_urls(messages: &[Message]) -> (Option<String>, Option<String
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl sven_model::ModelProvider for DbusProvider {
+    fn sampling_controls(&self) -> sven_model::SamplingControls {
+        crate::registry_sampling("dbus")
+    }
+
     fn name(&self) -> &str {
         "dbus"
     }

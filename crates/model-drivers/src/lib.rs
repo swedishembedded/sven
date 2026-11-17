@@ -181,6 +181,9 @@ struct ConfigBoundedProvider {
     /// What the live server last reported; `None` when the provider was built
     /// without probing ([`from_config`]).
     live: Option<Arc<discovery::LiveState>>,
+    /// `cfg.sampling_best_effort`: send sampling controls the provider does
+    /// not declare it honours instead of refusing the request.
+    sampling_best_effort: bool,
 }
 
 impl ConfigBoundedProvider {
@@ -218,6 +221,12 @@ fn parse_input_modalities(values: &[String]) -> Option<Vec<sven_model::catalog::
     } else {
         Some(out)
     }
+}
+
+/// The sampling controls the driver registry says driver `id`'s API applies.
+pub(crate) fn registry_sampling(id: &str) -> sven_model::SamplingControls {
+    sven_model::registry::get_driver(id)
+        .map_or(sven_model::SamplingControls::NONE, |meta| meta.sampling)
 }
 
 /// The `host[:port]` of `url`, for naming a server in an error.
@@ -303,6 +312,20 @@ impl ModelProvider for ConfigBoundedProvider {
 
     fn supports_tool_choice_none(&self) -> bool {
         self.inner.supports_tool_choice_none()
+    }
+
+    /// What the driver's API applies, and what the live server says it
+    /// applies on top.
+    fn sampling_controls(&self) -> sven_model::SamplingControls {
+        let advertised = self
+            .live
+            .as_ref()
+            .map_or(sven_model::SamplingControls::NONE, |l| l.sampling());
+        self.inner.sampling_controls().union(advertised)
+    }
+
+    fn sampling_best_effort(&self) -> bool {
+        self.sampling_best_effort
     }
 
     fn catalog_context_window(&self) -> Option<u32> {
@@ -556,6 +579,7 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
             .as_deref()
             .and_then(parse_input_modalities),
         live: None,
+        sampling_best_effort: cfg.sampling_best_effort,
     })))
 }
 
@@ -612,6 +636,7 @@ pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn Mod
             .as_deref()
             .and_then(parse_input_modalities),
         live: Some(live),
+        sampling_best_effort: cfg.sampling_best_effort,
     })))
 }
 
@@ -679,6 +704,7 @@ mod tests {
             max_output_tokens: None,
             input_modalities: None,
             live: Some(discovery::LiveState::new("m", true)),
+            sampling_best_effort: false,
         };
         assert!(bounded.is_local());
     }

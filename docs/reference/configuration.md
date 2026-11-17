@@ -648,6 +648,7 @@ Controls which language model sven talks to and how.
 | `driver_options` | - | Provider-specific options forwarded to the driver |
 | `enable_thinking` | unset | `brain` only: sent as `chat_template_kwargs.enable_thinking`; unset sends nothing and the served template decides |
 | `input_modalities` | the driver's answer | Any of `text`, `image`, `audio`; declares what a self-hosted endpoint accepts |
+| `sampling_best_effort` | `false` | Send sampling controls (`top_k`, `seed`, ...) the provider does not declare it honours instead of refusing the request; the run warns once and the trajectory records them as `sampling_unhonoured` |
 | `azure_resource`, `azure_deployment`, `azure_api_version` | - | Azure OpenAI endpoint; the deployment defaults to `name` |
 | `aws_region` | - | AWS Bedrock region (also `AWS_DEFAULT_REGION`) |
 | `mock_responses_file` | - | Path to YAML mock responses (mock provider only; also `SVEN_MOCK_RESPONSES`) |
