@@ -119,8 +119,18 @@ fn a_core_only_request_carries_fewer_schema_tokens_than_the_full_one() {
         ["read_file", "shell", "tools", "write_file"],
         "core tools, sorted by name; nothing deferred, MCP included"
     );
+    // What deferral saves is exactly the deferred tools' definitions: the
+    // core-only request carries the core tools as the full one does, and
+    // nothing else (a fixed share like a ratio would hinge on how small the
+    // stubs' schemas are, and on what every definition carries).
+    let core_in_full: Vec<ToolSchema> = full
+        .iter()
+        .filter(|s| names(&deferred).contains(&s.name.as_str()))
+        .cloned()
+        .collect();
+    assert_eq!(tokens(&deferred), tokens(&core_in_full));
     assert!(
-        tokens(&deferred) * 2 < tokens(&full),
+        tokens(&deferred) < tokens(&full),
         "core-only {} vs full {}",
         tokens(&deferred),
         tokens(&full)
