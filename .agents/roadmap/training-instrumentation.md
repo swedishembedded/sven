@@ -33,3 +33,12 @@ output-token ceiling.
    identity echo as the HTTP driver does.
 6. File tools rooted in a given directory (M), so an embedding application can run an agent
    against a copy of a repository without a sandbox shell.
+7. Step metrics are lost across runs of one `Agent` (M, found 2026-11-17). When a run's history does
+   not line up with the kernel's thread (`take_history` returns `events_intact = false`; observed
+   after a run stopped by the caller's cancel), `unplace_requests` takes every earlier request off
+   its step too, so the token ids, log-probabilities and usage of every earlier run vanish from
+   `Agent::trajectory()` although the server returned them. Measured with a logging proxy in front of
+   a brain server: 42 of 42 replies carried `policy_trace`, yet 13 of the 42 steps of an embedding
+   application's 8 episodes had no metrics; in each, the untraced steps were exactly those before the
+   last run that ended intact. Fix: keep earlier requests placed while the thread still begins with
+   the record they were placed on (no compaction), and give a repro with a cancelled first run.
