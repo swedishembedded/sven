@@ -134,7 +134,17 @@ pub enum ControlCommand {
     SetModel { session_id: Uuid, model: String },
 
     /// Cancel a running session gracefully.
-    CancelSession { session_id: Uuid },
+    CancelSession {
+        session_id: Uuid,
+        /// The answer the person stopped (the server's `answer_id` of its
+        /// input). A host stops only that one: the turn running it, or the
+        /// message waiting to be answered as it; for any other (one that
+        /// already ended) it does nothing, so a late or repeated stop never
+        /// reaches the next turn. Absent from servers that predate it, when
+        /// the turn running is stopped.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_id: Option<String>,
+    },
 
     /// Cancel one tool call of the session's running turn, by the model's
     /// id for it: it is answered as cancelled and the turn goes on. Nothing
@@ -503,7 +513,7 @@ pub fn control_command_session_id(cmd: &ControlCommand) -> Option<Uuid> {
         ControlCommand::SendInput { session_id, .. }
         | ControlCommand::Notify { session_id, .. }
         | ControlCommand::SetModel { session_id, .. }
-        | ControlCommand::CancelSession { session_id }
+        | ControlCommand::CancelSession { session_id, .. }
         | ControlCommand::CancelTool { session_id, .. }
         | ControlCommand::ApproveTool { session_id, .. }
         | ControlCommand::DenyTool { session_id, .. }
@@ -520,6 +530,36 @@ mod tests {
 
     /// The server asks for one tool call to stop by its session and the
     /// model's id for the call; the host handles it, the kernel gets no event.
+    /// Spec: a stop names the answer it stops, and one from a server that
+    /// names none still reads (as the turn running); one that names none is
+    /// sent without the field.
+    #[test]
+    fn a_stop_names_its_answer_and_an_older_one_still_reads() {
+        let session = "00000000-0000-0000-0000-000000000001";
+        let older: ControlCommand = serde_json::from_value(
+            serde_json::json!({"type": "cancel_session", "session_id": session}),
+        )
+        .unwrap();
+        assert!(matches!(
+            older,
+            ControlCommand::CancelSession {
+                answer_id: None,
+                ..
+            }
+        ));
+        let named: ControlCommand = serde_json::from_value(serde_json::json!({
+            "type": "cancel_session", "session_id": session, "answer_id": "a1"
+        }))
+        .unwrap();
+        assert!(
+            matches!(&named, ControlCommand::CancelSession { answer_id: Some(id), .. } if id == "a1")
+        );
+        assert!(serde_json::to_value(&older)
+            .unwrap()
+            .get("answer_id")
+            .is_none());
+    }
+
     #[test]
     fn cancel_tool_is_read_as_the_server_sends_it() {
         let id = Uuid::nil();

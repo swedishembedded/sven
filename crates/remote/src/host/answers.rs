@@ -100,6 +100,27 @@ impl Answers {
         }
     }
 
+    /// Whether the answer being written was stopped and is winding down.
+    pub(super) fn stopping(&self) -> bool {
+        self.waiting.front().is_some_and(|w| w.stopped)
+    }
+
+    /// The answers of the inputs held behind a stopped one.
+    pub(super) fn held_ids(&self) -> impl Iterator<Item = Option<&str>> {
+        self.held.iter().map(|input| input.answer_id.as_deref())
+    }
+
+    /// Drops the held input shown as answer `id`. False when none is.
+    pub(super) fn drop_held(&mut self, id: &str) -> bool {
+        let before = self.held.len();
+        self.held
+            .retain(|input| input.answer_id.as_deref() != Some(id));
+        if self.held.is_empty() {
+            self.held_since = None;
+        }
+        self.held.len() != before
+    }
+
     /// `input` to answer now, or `None` when it is held behind a stopped
     /// answer.
     pub(super) fn admit(&mut self, input: Input, now: Instant) -> Option<Input> {

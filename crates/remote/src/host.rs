@@ -54,6 +54,7 @@ mod router;
 mod services;
 mod slash;
 mod steering;
+mod stops;
 mod upload;
 
 pub use hosted::{restrict_to_hosted, restrict_to_working_dir, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
@@ -236,7 +237,9 @@ enum SessionCommand {
         call_id: String,
         answer: Permission,
     },
-    Cancel,
+    /// Stop the answer named (`None`: the turn running, from a server that
+    /// names none).
+    Cancel(Option<String>),
     /// Stop one tool call of the running turn, by the model's id for it.
     CancelTool(String),
     /// The server asks how the session's goal stands.
@@ -299,6 +302,10 @@ struct SessionActor {
     /// Messages sent while a turn ran, each answered in order once the
     /// turn before it ends ([`Self::answer_queued`]).
     queued: std::collections::VecDeque<Steer>,
+    /// Since when the agent has been at rest while a turn is still taken as
+    /// running: its ending never reached the host. Past [`answers::HOLD_LIMIT`]
+    /// the host ends the turn itself ([`Self::end_unheard`]).
+    rest_since: Option<Instant>,
     /// The model a test scripts in place of the server's.
     #[cfg(test)]
     scripted_model: Option<sven_model_drivers::ModelConfig>,
@@ -343,6 +350,7 @@ impl SessionActor {
             steering_input: false,
             steering: std::collections::VecDeque::new(),
             queued: std::collections::VecDeque::new(),
+            rest_since: None,
             #[cfg(test)]
             scripted_model: None,
             events_tx,
@@ -357,6 +365,7 @@ impl SessionActor {
     async fn run(mut self, mut commands: mpsc::Receiver<SessionCommand>) {
         loop {
             let deadline = self.answers.deadline();
+            let unheard = self.rest_since.map(|since| since + answers::HOLD_LIMIT);
             tokio::select! {
                 command = commands.recv() => match command {
                     Some(command) => {
@@ -373,6 +382,7 @@ impl SessionActor {
                     self.answers.give_up();
                     self.release_held().await;
                 }
+                () = sleep_until(unheard), if unheard.is_some() => self.end_unheard().await,
             }
         }
     }
@@ -416,14 +426,7 @@ impl SessionActor {
                     );
                 }
             }
-            SessionCommand::Cancel => {
-                if self.working {
-                    self.answers.stop();
-                }
-                if let Some(controller) = &self.controller {
-                    controller.cancel().await;
-                }
-            }
+            SessionCommand::Cancel(target) => self.stop(target).await,
             SessionCommand::CancelTool(call_id) => {
                 let cancelled = self
                     .controller
@@ -618,8 +621,13 @@ impl SessionActor {
 
     async fn forward(&mut self, event: AgentEvent) {
         match &event {
-            // The kernel's per-dispatch trace: for a debugger, not a reader.
-            AgentEvent::Transition { .. } => return,
+            // The kernel's per-dispatch trace: for a debugger, not a reader;
+            // the host reads only whether the agent came to rest.
+            AgentEvent::Transition { to, .. } => {
+                self.rest_since = (self.working && to == stops::AT_REST)
+                    .then(|| self.rest_since.unwrap_or_else(Instant::now));
+                return;
+            }
             AgentEvent::ToolCallStarted(call) => {
                 let line =
                     self.work_log
@@ -670,6 +678,7 @@ impl SessionActor {
             self.keep();
         }
         if finished {
+            self.rest_since = None;
             println!(
                 "[{}] {}",
                 self.short(),
@@ -1389,7 +1398,7 @@ mod tests {
             .send(input("/goal tidy the readme", "a"))
             .await
             .unwrap();
-        commands.send(SessionCommand::Cancel).await.unwrap();
+        commands.send(SessionCommand::Cancel(None)).await.unwrap();
         commands.send(input("/goal resume", "b")).await.unwrap();
 
         let mut tagged = Vec::new();
@@ -1603,7 +1612,7 @@ responses:
                 |event| match event {
                     AgentEvent::ToolCallStarted(_) if stopped_at.is_none() => {
                         stopped_at = Some(tokio::time::Instant::now());
-                        Some(SessionCommand::Cancel)
+                        Some(SessionCommand::Cancel(None))
                     }
                     _ => None,
                 },
@@ -1674,7 +1683,7 @@ responses:
                         if answer_id.as_deref() == Some("a") {
                             // Left unanswered: the person stops the turn instead.
                             stopped_at = Some(tokio::time::Instant::now());
-                            commands.send(SessionCommand::Cancel).await.unwrap();
+                            commands.send(SessionCommand::Cancel(None)).await.unwrap();
                         } else {
                             commands.send(SessionCommand::Decide { call_id, answer: Permission::Allowed }).await.unwrap();
                         }
@@ -2012,5 +2021,204 @@ responses:
         assert_eq!(first_line("list files\nthen more"), "list files");
         let long = "é".repeat(150);
         assert_eq!(first_line(&long).chars().count(), 100);
+    }
+
+    /// The script the stop tests share: "slow" runs a tool that takes a
+    /// while, "hang" one that never ends, anything else is answered at once.
+    const STOP_SCRIPT: &str = r#"
+responses:
+  - match_type: contains
+    pattern: "slow"
+    tool_calls:
+      - id: slow
+        tool: shell
+        args:
+          shell_command: "sleep 2"
+    after_tool_reply: "slow done"
+  - match_type: contains
+    pattern: "hang"
+    tool_calls:
+      - id: hangs
+        tool: shell
+        args:
+          shell_command: "sleep 600"
+    after_tool_reply: "never"
+  - match_type: contains
+    pattern: "second"
+    reply: "second done"
+"#;
+
+    /// Spec (TurnStops.tla `StopOnlyAsked`): a stop names the answer it
+    /// stops. One for an answer that already ended, arriving late (a second
+    /// click, a page that had not caught up), stops nothing: the turn
+    /// running now goes on to its end.
+    #[tokio::test]
+    async fn a_late_stop_for_an_answer_that_ended_stops_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (actor, mut sent, mut asked) = scripted_session(dir.path(), STOP_SCRIPT).await;
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        commands.send(typed("second", "a", false)).await.unwrap();
+        events_until_ended(&mut sent, &mut asked, &commands, |_| None, "a").await;
+        commands.send(typed("slow", "b", false)).await.unwrap();
+        let mut once = true;
+        let seen = events_until_ended(
+            &mut sent,
+            &mut asked,
+            &commands,
+            |event| match event {
+                AgentEvent::ToolCallStarted(_) if std::mem::take(&mut once) => {
+                    Some(SessionCommand::Cancel(Some("a".into())))
+                }
+                _ => None,
+            },
+            "b",
+        )
+        .await;
+        task.abort();
+        assert!(
+            matches!(seen.last(), Some((_, AgentEvent::TurnComplete))),
+            "b ran to its end: {seen:?}"
+        );
+        assert!(text_of(&seen, "b").contains("slow done"), "{seen:?}");
+    }
+
+    /// Spec (TurnStops.tla `StopOnlyAsked`): a stop for a message waiting
+    /// behind the running turn drops that message, which is reported
+    /// stopped and never answered, and leaves the running turn alone.
+    #[tokio::test]
+    async fn a_stop_for_a_waiting_message_drops_it_and_the_turn_goes_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let (actor, mut sent, mut asked) = scripted_session(dir.path(), STOP_SCRIPT).await;
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        commands.send(typed("slow", "a", false)).await.unwrap();
+        let later = commands.clone();
+        let mut once = true;
+        let seen = events_until_ended(
+            &mut sent,
+            &mut asked,
+            &commands,
+            |event| match event {
+                AgentEvent::ToolCallStarted(_) if std::mem::take(&mut once) => {
+                    later.try_send(typed("second", "b", false)).unwrap();
+                    Some(SessionCommand::Cancel(Some("b".into())))
+                }
+                _ => None,
+            },
+            "a",
+        )
+        .await;
+        // b's stop comes before a's end: wait a moment for anything of b's.
+        let mut after = Vec::new();
+        while let Ok(Some(Upload::Event(event))) =
+            tokio::time::timeout(Duration::from_millis(500), sent.recv()).await
+        {
+            if let ControlEvent::Session {
+                event, answer_id, ..
+            } = *event
+            {
+                after.push((answer_id, event));
+            }
+        }
+        task.abort();
+        let all: Vec<_> = seen.iter().chain(after.iter()).cloned().collect();
+        assert!(
+            all.iter().any(
+                |(id, e)| id.as_deref() == Some("b") && matches!(e, AgentEvent::Aborted { .. })
+            ),
+            "b is reported stopped: {all:?}"
+        );
+        assert!(
+            text_of(&all, "a").contains("slow done"),
+            "a ran to its end: {all:?}"
+        );
+        assert!(
+            text_of(&all, "b").is_empty(),
+            "b was never answered: {all:?}"
+        );
+    }
+
+    /// Spec (TurnStops.tla `DoneMeansAnswered`, `SteersOutliveStop`): a
+    /// message sent to steer a turn that is then stopped before it took the
+    /// message is not lost with it: it is answered next, as its own turn.
+    #[tokio::test]
+    async fn a_message_steered_into_a_stopped_turn_is_answered_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let (actor, mut sent, mut asked) = scripted_session(dir.path(), STOP_SCRIPT).await;
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        commands.send(typed("hang", "a", false)).await.unwrap();
+        let later = commands.clone();
+        let mut once = true;
+        let seen = tokio::time::timeout(
+            Duration::from_secs(30),
+            events_until_ended(
+                &mut sent,
+                &mut asked,
+                &commands,
+                |event| match event {
+                    AgentEvent::ToolCallStarted(_) if std::mem::take(&mut once) => {
+                        later.try_send(typed("second", "b", true)).unwrap();
+                        Some(SessionCommand::Cancel(Some("a".into())))
+                    }
+                    _ => None,
+                },
+                "b",
+            ),
+        )
+        .await
+        .expect("b is answered");
+        task.abort();
+        assert!(
+            seen.iter().any(
+                |(id, e)| id.as_deref() == Some("a") && matches!(e, AgentEvent::Aborted { .. })
+            ),
+            "a was stopped: {seen:?}"
+        );
+        assert!(
+            text_of(&seen, "b").contains("second done"),
+            "b was answered: {seen:?}"
+        );
+    }
+
+    /// Spec (TurnStops.tla `EverySettles`, `GiveUpRests`): a turn whose
+    /// ending never reaches the host (the agent came to rest, the ending was
+    /// lost) does not keep the host busy for good: once the agent has been
+    /// at rest for the hold limit, the host ends the answer itself and
+    /// answers the next message.
+    #[tokio::test]
+    async fn a_turn_whose_ending_is_lost_is_ended_once_the_agent_rests() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut actor, mut sent, mut asked) = scripted_session(dir.path(), STOP_SCRIPT).await;
+        // A turn running as answer "a", whose agent then comes to rest with
+        // no ending announced.
+        actor.answers.expect(Some("a".into()));
+        actor.working = true;
+        let agent = actor.events_tx.clone();
+        let (commands, inbox) = mpsc::channel(SESSION_QUEUE);
+        let task = tokio::spawn(actor.run(inbox));
+        agent
+            .send(AgentEvent::Transition {
+                from: "Generating".into(),
+                to: "Idle".into(),
+                event: "UserCancelled".into(),
+            })
+            .await
+            .unwrap();
+        commands.send(typed("second", "b", false)).await.unwrap();
+        let seen = tokio::time::timeout(
+            answers::HOLD_LIMIT + Duration::from_secs(30),
+            events_until_ended(&mut sent, &mut asked, &commands, |_| None, "b"),
+        )
+        .await
+        .expect("b is answered after the lost ending");
+        task.abort();
+        assert!(
+            seen.iter().any(|(id, e)| id.as_deref() == Some("a")
+                && matches!(e, AgentEvent::Aborted { .. } | AgentEvent::TurnComplete)),
+            "a was ended: {seen:?}"
+        );
+        assert!(text_of(&seen, "b").contains("second done"), "{seen:?}");
     }
 }

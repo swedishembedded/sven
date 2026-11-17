@@ -51,20 +51,23 @@ impl SessionActor {
     }
 
     /// The turn ended without taking the steering messages sent to it: they
-    /// are the next message, as one, answered as the last one's answer. After
-    /// a stop they are not: the person stopped the work, so theirs end.
+    /// are the next message, as one, answered as the last one's answer.
+    /// After a stop they are first in line, each its own: the person stopped
+    /// the turn, not the messages, which the agent never saw (a turn's
+    /// steering is dropped when the next starts), so each is still answered
+    /// (`HostStops.lean`, `a_stopped_turn_puts_its_steering_first`). One the
+    /// person stops too is dropped there ([`Self::stop`]).
     pub(super) async fn steer_left_over(&mut self, stopped: bool) {
-        let Some(last) = self.steering.pop_back() else {
-            return;
-        };
-        let mut earlier = std::mem::take(&mut self.steering);
         if stopped {
-            earlier.push_back(last);
-            for steer in earlier {
-                self.upload(AgentEvent::TurnComplete, steer.answer_id).await;
+            for steer in std::mem::take(&mut self.steering).into_iter().rev() {
+                self.queued.push_front(steer);
             }
             return;
         }
+        let Some(last) = self.steering.pop_back() else {
+            return;
+        };
+        let earlier = std::mem::take(&mut self.steering);
         let mut input = attachments::Attached::default();
         for steer in earlier {
             self.upload(AgentEvent::TurnComplete, steer.answer_id).await;

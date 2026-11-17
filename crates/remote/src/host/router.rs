@@ -181,7 +181,10 @@ async fn route(
             }
             (session_id, SessionCommand::Notice(event, start_turn))
         }
-        ControlCommand::CancelSession { session_id } => (session_id, SessionCommand::Cancel),
+        ControlCommand::CancelSession {
+            session_id,
+            answer_id,
+        } => (session_id, SessionCommand::Cancel(answer_id)),
         ControlCommand::CancelTool {
             session_id,
             call_id,
@@ -481,7 +484,10 @@ mod tests {
         sessions.insert(shorter_id, shorter);
         let next = Uuid::new_v4();
         route(
-            ControlCommand::CancelSession { session_id: next },
+            ControlCommand::CancelSession {
+                session_id: next,
+                answer_id: None,
+            },
             &mut sessions,
             &context,
         )
@@ -503,7 +509,10 @@ mod tests {
             .map(|_| (Uuid::new_v4(), live_mailbox()))
             .collect();
         let refused = Uuid::new_v4();
-        let open = |id| ControlCommand::CancelSession { session_id: id };
+        let open = |id| ControlCommand::CancelSession {
+            session_id: id,
+            answer_id: None,
+        };
         route(open(refused), &mut sessions, &context).await;
         assert_eq!(sessions.len(), MAX_LIVE_SESSIONS);
         assert!(!sessions.contains_key(&refused));
@@ -542,7 +551,10 @@ mod tests {
                 activity: Arc::default(),
             },
         )]);
-        let cancel = |session_id| ControlCommand::CancelSession { session_id };
+        let cancel = |session_id| ControlCommand::CancelSession {
+            session_id,
+            answer_id: None,
+        };
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             for _ in 0..=SESSION_QUEUE {
                 route(cancel(wedged), &mut sessions, &context).await;
