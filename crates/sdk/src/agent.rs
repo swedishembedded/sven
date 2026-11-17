@@ -25,7 +25,9 @@ use crate::gates::{ask_through, forward, GateHandler, HumanGate};
 use crate::meter::Meter;
 use crate::method::{Method, Strategy};
 use crate::run::{Approval, Decision, Question, RunConclusion, RunId, RunOptions, RunOutcome};
-use crate::run_support::{parse_candidate, stop, Entry, TurnOptions};
+use crate::run_support::{
+    parse_candidate, stop, Entry, TurnOptions, BUDGET_REACHED, DEADLINE_REACHED,
+};
 use crate::state::AgentState;
 
 mod capture;
@@ -444,6 +446,7 @@ impl Agent {
         // messages once it ends (see `take_history`).
         let seeded = self.state.history.len();
         self.state.ensure_record();
+        let record_base = self.state.record.len();
         if let Some(message) = prompt {
             self.state.push_message(message);
         }
@@ -489,6 +492,8 @@ impl Agent {
         // Set by the first bound that fires; the run then winds down and
         // reports it rather than `Success`.
         let mut stopped: Option<RunConclusion> = None;
+        // What the stop said ended the run, for the calls it left unanswered.
+        let mut stop_reason: Option<String> = None;
         let cancel = bounds.cancel.clone().unwrap_or_default();
         let deadline = tokio::time::sleep(bounds.deadline.unwrap_or(Duration::MAX / 4));
         tokio::pin!(deadline);
@@ -504,6 +509,7 @@ impl Agent {
                         .reason()
                         .unwrap_or_else(|| "run cancelled by the caller".to_string());
                     stop(&bundle.handle, &abort_slot, wind_down.as_mut(), &why).await;
+                    stop_reason = Some(why);
                 }
                 () = &mut deadline, if stopped.is_none() && bounds.deadline.is_some() => {
                     stopped = Some(RunConclusion::Timeout);
@@ -511,9 +517,10 @@ impl Agent {
                         &bundle.handle,
                         &abort_slot,
                         wind_down.as_mut(),
-                        "run deadline reached",
+                        DEADLINE_REACHED,
                     )
                     .await;
+                    stop_reason = Some(DEADLINE_REACHED.to_string());
                 }
                 () = &mut wind_down, if stopped.is_some() => break,
                 event = observations.recv() => match event {
@@ -534,9 +541,10 @@ impl Agent {
                                         &bundle.handle,
                                         &abort_slot,
                                         wind_down.as_mut(),
-                                        "output-token budget reached",
+                                        BUDGET_REACHED,
                                     )
                                     .await;
+                                    stop_reason = Some(BUDGET_REACHED.to_string());
                                 }
                             }
                             SessionEvent::TextComplete(text) => {
@@ -613,9 +621,9 @@ impl Agent {
             Some(snapshot) => Some(snapshot),
             None => bundle.runtime.capture().await,
         };
-        let lined_up = self.take_history(&bundle.handle, seeded, run_marks);
+        let placeable_until = self.take_history(&bundle.handle, seeded, record_base, run_marks);
         let (usage, requests) = meter.finish(started.elapsed());
-        self.state.absorb_requests(requests, lined_up);
+        self.state.absorb_requests(requests, placeable_until);
         self.take_offered_tools(&bundle.handle, options.no_tools);
         // A run parked on a question or an approval continues its last step in
         // the next run, so that step is not settled yet.
@@ -623,6 +631,13 @@ impl Agent {
             snapshot.context.pending_question.is_some()
                 || snapshot.context.pending_approval.is_some()
         });
+        // A stopped run can leave calls the model made without a result. They
+        // are answered here, where they were made, rather than by the next
+        // run's first turn after its message: the record then reads in the
+        // order things happened and the next run's thread starts valid.
+        if let (Some(why), false) = (&stop_reason, parked) {
+            self.state.answer_open_calls(why);
+        }
         if let Some(why) = self.flush_journal(&[], &[], !parked) {
             self.publish(
                 run_id,

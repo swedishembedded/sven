@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **sdk**: an agent driven through several runs keeps the token ids, log-probabilities and usage of every request on its step. A call the machine answered itself (refused by the gate, not approved, not loaded) or one a stopped run left open put a result in the kernel's thread that no observation announced; the agent then judged its events lost and took every earlier run's requests off their steps. The turn executor now emits a `ToolCallFinished` (an error) for every call it answers on the machine's behalf, a stopped run answers its open calls with why they did not run, and a run that does lose events replaces only its own part of the record. `Usage::tool_calls`/`tool_errors` count answered-without-running calls as errors.
+
 ## [5.7.0] - 2026-11-17
 
 ### Added

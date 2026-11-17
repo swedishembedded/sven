@@ -19,7 +19,7 @@ trajectory; the round trip against a real server (`make test/e2e/capture`); a br
 `policy_trace` (asked for with `policy_trace: true`: prompt and generated ids, whole-vocabulary log-probs and their
 temperature), the policy version, tokenizer and chat-template digests and the log-probability kind
 (`policy`/`sampler`) a server reports, and a `truncated` mark on a response cut off at the
-output-token ceiling.
+output-token ceiling; every run of an agent keeps its metrics, whatever ended the runs before.
 
 ## Still open
 
@@ -33,12 +33,10 @@ output-token ceiling.
    identity echo as the HTTP driver does.
 6. File tools rooted in a given directory (M), so an embedding application can run an agent
    against a copy of a repository without a sandbox shell.
-7. Step metrics are lost across runs of one `Agent` (M, found 2026-11-17). When a run's history does
-   not line up with the kernel's thread (`take_history` returns `events_intact = false`; observed
-   after a run stopped by the caller's cancel), `unplace_requests` takes every earlier request off
-   its step too, so the token ids, log-probabilities and usage of every earlier run vanish from
-   `Agent::trajectory()` although the server returned them. Measured with a logging proxy in front of
-   a brain server: 42 of 42 replies carried `policy_trace`, yet 13 of the 42 steps of an embedding
-   application's 8 episodes had no metrics; in each, the untraced steps were exactly those before the
-   last run that ended intact. Fix: keep earlier requests placed while the thread still begins with
-   the record they were placed on (no compaction), and give a repro with a cancelled first run.
+7. (Done 2026-11-17.) Step metrics lost across runs of one `Agent`. Cause: a result the machine
+   answered (a refused, unapproved or unloaded call, and a call a stopped run left open) entered
+   the kernel's thread without an observation, so `take_history` saw one message more than the
+   run folded, judged events lost and took every request of every run off its step. Fixed in
+   the turn executor (it observes those results), the SDK (a stopped run answers its open calls)
+   and `take_history` (lost events replace only the run's own part of the record). See the doc,
+   "Every run of an agent keeps its metrics".

@@ -1,4 +1,4 @@
-//! `sven-executors` — effect executors for the Sven HSM runtime.
+//! `sven-executors` - effect executors for the Sven HSM runtime.
 //!
 //! # Purpose
 //!
@@ -15,7 +15,7 @@
 //! | [`tool`] | `CallTool` | `ToolSucceeded`, `ToolFailed` |
 //! | [`user`] | `AskUser`, `RequestHumanApproval` | `UserMessage`, `HumanApproved`, `HumanRejected` |
 //! | [`timer`] | `ScheduleTimeout`, `CancelTimeout` | `Timeout` |
-//! | [`audit`] | `PersistAudit` | *(none — appends to log file)* |
+//! | [`audit`] | `PersistAudit` | *(none - appends to log file)* |
 //! | [`internal`] | `EmitInternal` | `Internal::Custom` |
 //! | [`verify`] | `Verify` | `VerificationComplete` |
 //! | [`composite`] | all of the above | delegates |
@@ -62,7 +62,9 @@ pub use audit::{
 pub use chunks::{Assembled, CacheContext, ChunkSession, ContextAssembler};
 pub use composite::{CompositeExecutor, CompositeExecutorBuilder};
 pub use internal::InternalExecutor;
-pub use thread_store::{history_messages, GateJournal, GateVerdict, ThreadId, ThreadStore};
+pub use thread_store::{
+    history_messages, AnsweredOpenCall, GateJournal, GateVerdict, ThreadId, ThreadStore,
+};
 pub use timer::TimerExecutor;
 pub use tool::ToolExecutor;
 pub use turn::{CompactionConfig, CostPolicy, TurnExecutor};

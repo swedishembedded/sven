@@ -172,21 +172,72 @@ impl AgentState {
         }
     }
 
-    /// Keeps the account of the requests a run made. `lined_up` is whether
-    /// the history still holds the run's messages where the run observed them;
-    /// when it does not, the requests count towards the totals but are on no
-    /// step.
-    pub(crate) fn absorb_requests(&mut self, mut requests: Vec<Metered>, lined_up: bool) {
-        if !lined_up {
-            requests.iter_mut().for_each(|r| r.after = None);
+    /// Keeps the account of the requests a run made. `placeable_until` is
+    /// how much of the record still holds the run's messages where the run
+    /// observed them: a request whose response ended beyond it counts towards
+    /// the totals but is on no step.
+    pub(crate) fn absorb_requests(&mut self, mut requests: Vec<Metered>, placeable_until: usize) {
+        for request in &mut requests {
+            if request.after.is_some_and(|after| after > placeable_until) {
+                request.after = None;
+            }
         }
         self.requests.extend(requests);
     }
 
-    /// Takes every request off its step: a compaction replaced the front of
-    /// the history, so no earlier position in it means what it did.
+    /// Takes every request off its step: the record was replaced, so no
+    /// earlier position in it means what it did.
     pub(crate) fn unplace_requests(&mut self) {
         self.requests.iter_mut().for_each(|r| r.after = None);
+    }
+
+    /// Replaces the part of the record a run added (from `record_base` on)
+    /// with `run`, the messages the kernel's thread holds for that run, and
+    /// returns how much of the record still holds the run's messages where
+    /// its observations put them: up to the first message that does not take
+    /// the same place in both. Everything before `record_base` is untouched,
+    /// and so is where earlier requests are placed.
+    pub(crate) fn replace_run_record(&mut self, record_base: usize, run: &[Message]) -> usize {
+        let folded = self.record.get(record_base..).unwrap_or_default();
+        let agree = folded
+            .iter()
+            .zip(run)
+            .take_while(|(a, b)| same_place(a, b))
+            .count();
+        self.record.truncate(record_base);
+        self.record.extend_from_slice(run);
+        record_base + agree
+    }
+
+    /// Answers every tool call the history holds without a result, in both
+    /// the history and the record, saying the call was not run because of
+    /// `reason`. A stopped run leaves such calls; the next run's thread must
+    /// not start with them, and the record must say what became of them.
+    pub(crate) fn answer_open_calls(&mut self, reason: &str) {
+        let answered: std::collections::HashSet<&str> = self
+            .history
+            .iter()
+            .filter_map(|m| match &m.content {
+                MessageContent::ToolResult { tool_call_id, .. } => Some(tool_call_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        let open: Vec<String> = self
+            .history
+            .iter()
+            .filter_map(|m| match &m.content {
+                MessageContent::ToolCall { tool_call_id, .. }
+                    if !answered.contains(tool_call_id.as_str()) =>
+                {
+                    Some(tool_call_id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        for call_id in open {
+            let answer = sven_vocab::AnsweredCall::refused(call_id.clone(), reason).content;
+            self.push_message(Message::tool_result(&call_id, answer));
+        }
     }
 
     /// Starts the record from the history for a state that has none (one
@@ -296,5 +347,104 @@ impl AgentState {
     #[must_use]
     pub fn kernel(&self) -> Option<&Snapshot> {
         self.kernel.as_ref()
+    }
+}
+
+/// Whether two messages take the same place in a conversation: the same
+/// speaker saying the same kind of thing, about the same call. Steps are cut
+/// from a conversation by exactly this, so a request placed after a run of
+/// such messages lands on the same step either way, whatever the text (a tool
+/// result in the thread carries notes its observation did not).
+fn same_place(a: &Message, b: &Message) -> bool {
+    a.role == b.role
+        && match (&a.content, &b.content) {
+            (
+                MessageContent::ToolCall {
+                    tool_call_id: x, ..
+                },
+                MessageContent::ToolCall {
+                    tool_call_id: y, ..
+                },
+            )
+            | (
+                MessageContent::ToolResult {
+                    tool_call_id: x, ..
+                },
+                MessageContent::ToolResult {
+                    tool_call_id: y, ..
+                },
+            ) => x == y,
+            (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b),
+        }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(id: &str) -> Message {
+        Message {
+            role: sven_model::Role::Assistant,
+            content: MessageContent::ToolCall {
+                tool_call_id: id.into(),
+                function: sven_model::FunctionCall {
+                    name: "probe".into(),
+                    arguments: "{}".into(),
+                },
+            },
+            reasoning: None,
+        }
+    }
+
+    fn placed(after: usize) -> Metered {
+        Metered {
+            after: Some(after),
+            request: sven_vocab::RequestRecord::default(),
+        }
+    }
+
+    /// A run whose observations lost a message keeps the placement of every
+    /// earlier run's requests and of its own up to where the record and the
+    /// thread part ways.
+    #[test]
+    fn a_run_that_lost_events_keeps_earlier_placements() {
+        let mut state = AgentState::new("agent");
+        // Run 1 (intact): prompt, call, result, answer; one request placed
+        // after the call, one after the answer.
+        for message in [
+            Message::user("one"),
+            call("a"),
+            Message::tool_result("a", "ok"),
+            Message::assistant("done"),
+        ] {
+            state.push_message(message);
+        }
+        state.absorb_requests(vec![placed(2), placed(4)], usize::MAX);
+
+        // Run 2 folded prompt, call, then lost the call's result; the thread
+        // holds it, with notes the observation lacked, and the answer.
+        let base = state.record.len();
+        state.push_message(Message::user("two"));
+        state.push_message(call("b"));
+        state.push_message(Message::assistant("again"));
+        let thread = [
+            Message::user("two"),
+            call("b"),
+            Message::tool_result("b", "ok\n\n[note]"),
+            Message::assistant("again"),
+        ];
+        let until = state.replace_run_record(base, &thread);
+        state.absorb_requests(vec![placed(base + 2), placed(base + 3)], until);
+
+        assert_eq!(state.record.len(), base + thread.len());
+        assert!(
+            state.record[base..]
+                .iter()
+                .zip(&thread)
+                .all(|(a, b)| format!("{a:?}") == format!("{b:?}")),
+            "the run's part of the record is the thread's"
+        );
+        let placements: Vec<Option<usize>> = state.requests.iter().map(|r| r.after).collect();
+        assert_eq!(placements, vec![Some(2), Some(4), Some(base + 2), None]);
     }
 }

@@ -215,9 +215,11 @@ pub struct Usage {
     pub cached_tokens: Option<u64>,
     /// What the provider charged, in USD, when it says.
     pub cost_usd: Option<f64>,
-    /// Tool calls that ran to a result.
+    /// Tool calls that got a result, including those answered without
+    /// running (refused by the gate, not approved, not loaded).
     pub tool_calls: u64,
-    /// Of those, the ones whose result was an error.
+    /// Of those, the ones whose result was an error; every call answered
+    /// without running is one.
     pub tool_errors: u64,
     /// Model requests made.
     pub turns: u64,

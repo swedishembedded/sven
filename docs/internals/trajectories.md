@@ -55,6 +55,25 @@ The log-probability is the sampler's: the temperature-scaled, top-k and top-p tr
 softmax a token was drawn from, and `0.0` under greedy decoding. It is not the untruncated
 model distribution; a consumer that needs that scores the tokens with a forward pass.
 
+## Every run of an agent keeps its metrics
+
+An `Agent` driven through several runs keeps every request on the step it produced, whatever
+ended a run. Requests are placed by where their response ended in the record, so the record
+must hold exactly the messages the run observed. Two things keep it so:
+
+- Every result in the kernel's thread is observed. A call the machine answers itself (refused
+  by the gate, not approved by a person, not loaded, garbled arguments) gets its result from
+  the turn executor, which emits a `ToolCallFinished` (`is_error: true`) for it; a history
+  folded from observations otherwise holds one message fewer than the thread.
+- A run stopped from outside (cancel, deadline, output budget) answers the calls it left
+  without a result, in its own history and record, with `The call was not run: <reason>.`
+  The record then reads in the order things happened, and the next run's thread starts valid.
+
+If observations are lost anyway (a lagging subscriber), only the stopped run's own part of the
+record is replaced by the thread, and its requests keep their steps up to the first message
+where record and thread part ways; earlier runs are untouched. Only a compaction in a run that
+also lost events replaces the whole record and takes every request off its step.
+
 ## Capture, evaluation, reward and the training record are four things
 
 - **Capture** is the trajectory: what was said and done, and how it was decoded.

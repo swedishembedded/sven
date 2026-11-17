@@ -23,21 +23,27 @@ impl Agent {
     /// history is kept. Compactions of the primary thread are recorded so the
     /// trajectory can say the history is not the whole conversation.
     ///
-    /// Returns whether the history kept lines up with the observations the
-    /// run folded: it does not once events were dropped or a compaction
-    /// reshaped the thread, and the run's requests cannot then be placed on
-    /// steps (see `AgentState::absorb_requests`).
+    /// `record_base` is the length of the record before this run added to
+    /// it. Returns how much of the record still holds the run's messages
+    /// where its observations put them (see `AgentState::absorb_requests`):
+    /// all of it when the observations accounted for the whole thread.
     ///
     /// The record is left alone when the run's own events account for every
-    /// compaction the store saw: the events then folded the whole run, and
-    /// `marks` say where each compaction fired. Otherwise (events were lost)
-    /// the store's thread is the best account left and becomes the record.
+    /// message and compaction the store saw: the events then folded the whole
+    /// run, and `marks` say where each compaction fired. Otherwise (events
+    /// were lost) the store's account is the best one left. Without a
+    /// compaction the thread still begins with exactly the history this run
+    /// was seeded with, so only the run's own part of the record is replaced
+    /// and every earlier run keeps its record and the placement of its
+    /// requests. After a compaction nothing in the thread lines up with the
+    /// record any more, and the thread becomes the record.
     pub(super) fn take_history(
         &mut self,
         handle: &sven_bootstrap::RuntimeHandle,
         seeded: usize,
+        record_base: usize,
         marks: Vec<crate::state::CompactionMark>,
-    ) -> bool {
+    ) -> usize {
         let thread = sven_machines::mode::primary_thread(&self.state.mode);
         let state = &mut self.state;
         let (held, compactions) = handle.read_conversation(|store| {
@@ -69,27 +75,29 @@ impl Agent {
         // A compaction shrinks the thread, possibly below what the turn was
         // seeded with, so growth alone cannot tell a thread the machine used
         // from one it left at its seed.
-        if held.len() > seeded || (!compactions.is_empty() && !held.is_empty()) {
-            let events_intact = if compactions.is_empty() {
-                held.len() == self.state.history.len()
-            } else {
-                marks.len() == compactions.len()
-            };
-            self.state.compaction_marks.extend(
-                marks
-                    .into_iter()
-                    .filter(|_| events_intact && !compactions.is_empty()),
-            );
-            if !events_intact {
-                // The record is no better than the thread the store holds.
-                self.state.unplace_requests();
-                self.state.record.clone_from(&held);
-                self.state.compactions.extend(compactions);
-            }
-            self.state.history = held;
-            return events_intact;
+        if held.len() <= seeded && (compactions.is_empty() || held.is_empty()) {
+            return usize::MAX;
         }
-        true
+        let events_intact = if compactions.is_empty() {
+            held.len() == self.state.history.len()
+        } else {
+            marks.len() == compactions.len()
+        };
+        let placeable_until = if events_intact {
+            self.state
+                .compaction_marks
+                .extend(marks.into_iter().filter(|_| !compactions.is_empty()));
+            usize::MAX
+        } else if compactions.is_empty() {
+            self.state.replace_run_record(record_base, &held[seeded..])
+        } else {
+            self.state.unplace_requests();
+            self.state.record.clone_from(&held);
+            self.state.compactions.extend(compactions);
+            0
+        };
+        self.state.history = held;
+        placeable_until
     }
 
     /// Records the tools the model was offered, resolved exactly as the turn

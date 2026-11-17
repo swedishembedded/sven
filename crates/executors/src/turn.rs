@@ -366,15 +366,33 @@ impl EffectExecutor for TurnExecutor {
         };
         // Answer the calls the machine answered itself, then the instruction: a valid history.
         let answers = machine_answers(&self.call_id_to_thread, &req.answered_calls);
-        if let Ok(mut s) = self.store.lock() {
-            s.answer_open_calls(&thread_id, &answers);
-            s.open_thread(&thread_id, req.system.as_deref());
-            if !req.instruction.is_empty() {
-                match &req.origin {
-                    Some(origin) => s.append_labeled(&thread_id, instruction, origin),
-                    None => s.append(&thread_id, instruction),
+        let answered = match self.store.lock() {
+            Ok(mut s) => {
+                let answered = s.answer_open_calls(&thread_id, &answers);
+                s.open_thread(&thread_id, req.system.as_deref());
+                if !req.instruction.is_empty() {
+                    match &req.origin {
+                        Some(origin) => s.append_labeled(&thread_id, instruction, origin),
+                        None => s.append(&thread_id, instruction),
+                    }
                 }
+                answered
             }
+            Err(_) => Vec::new(),
+        };
+        // Every result in the thread is observed: an observer that folds the
+        // conversation from observations (an embedded agent's record, a
+        // frontend's transcript) would otherwise hold one message fewer than
+        // the thread for every call the machine answered.
+        for call in answered {
+            obs.emit(UiEvent::ToolCallFinished {
+                call_id: call.call_id,
+                tool_name: call.tool_name,
+                output: call.answer,
+                is_error: true,
+                images: Vec::new(),
+                artifacts: Vec::new(),
+            });
         }
         // A steering message is in the thread now: said, before the model sees it.
         if req.origin.as_deref() == Some(sven_vocab::turn::STEER_ORIGIN) {

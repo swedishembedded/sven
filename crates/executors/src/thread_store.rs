@@ -264,21 +264,33 @@ impl ThreadStore {
     /// Answers every tool call in `id` that has no result yet, so the thread
     /// is a history a provider accepts. `reasons` maps the model's call id to
     /// why the call was not run; a call without one is answered generically.
-    /// Returns how many calls were answered.
-    pub fn answer_open_calls(&mut self, id: &str, answers: &HashMap<String, String>) -> usize {
-        let open: Vec<String> = self
+    /// Returns the calls it answered, so the caller can say so to observers:
+    /// a result that enters the thread unannounced leaves every history
+    /// folded from observations one message short.
+    pub fn answer_open_calls(
+        &mut self,
+        id: &str,
+        reasons: &HashMap<String, String>,
+    ) -> Vec<AnsweredOpenCall> {
+        let open: Vec<(String, String)> = self
             .open_calls(id)
             .into_iter()
-            .map(|(call, _)| call.to_string())
+            .map(|(call, function)| (call.to_string(), function.name.clone()))
             .collect();
-        for call in &open {
-            let answer = answers
-                .get(call)
+        let mut answered = Vec::with_capacity(open.len());
+        for (call_id, tool_name) in open {
+            let answer = reasons
+                .get(&call_id)
                 .cloned()
                 .unwrap_or_else(|| "The call was not run: it was refused.".to_string());
-            self.append(id, Message::tool_result(call, answer));
+            self.append(id, Message::tool_result(&call_id, answer.clone()));
+            answered.push(AnsweredOpenCall {
+                call_id,
+                tool_name,
+                answer,
+            });
         }
-        open.len()
+        answered
     }
 
     /// The calls in thread `id` that no result answers, as the model made
@@ -615,6 +627,19 @@ impl GateJournal {
 
 /// The model's own call id for each refused call, mapped to its reason:
 /// the machine names calls by the kernel's id, the thread by the model's.
+/// A call [`ThreadStore::answer_open_calls`] answered on the machine's
+/// behalf: the model's id for it, the function it named and the result the
+/// thread now holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnsweredOpenCall {
+    /// The model's id for the call.
+    pub call_id: String,
+    /// The function the call named.
+    pub tool_name: String,
+    /// The result the thread now holds for it.
+    pub answer: String,
+}
+
 pub(crate) fn machine_answers(
     registry: &Mutex<HashMap<ToolCallId, (String, String)>>,
     answered: &[sven_vocab::AnsweredCall],
@@ -872,8 +897,12 @@ mod tests {
         store.append("t", Message::tool_result("ran", "ok"));
         store.append("t", call("refused"));
         let reasons = HashMap::from([("refused".to_string(), "a human said no".to_string())]);
-        assert_eq!(store.answer_open_calls("t", &reasons), 1);
-        assert_eq!(store.answer_open_calls("t", &reasons), 0);
+        let answered = store.answer_open_calls("t", &reasons);
+        assert_eq!(answered.len(), 1);
+        assert_eq!(answered[0].call_id, "refused");
+        assert_eq!(answered[0].tool_name, "deploy");
+        assert_eq!(answered[0].answer, "a human said no");
+        assert!(store.answer_open_calls("t", &reasons).is_empty());
         let last = format!("{:?}", store.snapshot("t").last().unwrap());
         assert!(last.contains("a human said no"), "{last}");
     }

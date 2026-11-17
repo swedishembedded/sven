@@ -37,6 +37,11 @@ pub(crate) fn detect_context(
     )
 }
 
+/// What a run past its deadline is stopped with.
+pub(crate) const DEADLINE_REACHED: &str = "run deadline reached";
+/// What a run that spent its output-token budget is stopped with.
+pub(crate) const BUDGET_REACHED: &str = "output-token budget reached";
+
 /// How long a stopped run is given to report what it had before it is left.
 const WIND_DOWN: Duration = Duration::from_secs(5);
 

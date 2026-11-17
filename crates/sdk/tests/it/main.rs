@@ -76,6 +76,7 @@ mod state_version;
 mod tool_rounds;
 mod toolsets;
 mod trajectory;
+mod trajectory_across_runs;
 mod trajectory_fidelity;
 mod trajectory_metrics;
 mod transient_retries;
