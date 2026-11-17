@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.6.0] - 2026-11-17
+
 ### Fixed
 - **rc**: a stop names the answer it stops (`cancel_session`'s `answer_id`): the host stops only the turn running it, or drops the message waiting as it, and does nothing for an answer that already ended, so a second click or a page that had not caught up never stops the next turn. A stop from a server that names none stops the running turn, as before.
 - **rc**: a turn whose ending never reached the host no longer keeps it busy for good: once the agent has rested past the hold limit, the host ends the turn itself and answers what waits.
