@@ -70,6 +70,6 @@ mod tests {
     #[test]
     fn only_a_fixed_profile_has_an_identifier() {
         assert_eq!(RunProfile::Default.id(), None);
-        assert_eq!(RunProfile::Compact.id(), Some("compact/1"));
+        assert_eq!(RunProfile::Compact.id(), Some("compact/2"));
     }
 }

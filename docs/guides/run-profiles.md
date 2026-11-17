@@ -21,7 +21,7 @@ configuration (`sven_sdk::config`).
 
 A session under it sends:
 
-- a system prompt of 134 estimated tokens, and nothing around it: no sven
+- a system prompt of 153 estimated tokens, and nothing around it: no sven
   identity, guidelines, project, git or CI context, skills, sub-agents,
   knowledge, tool index or todo list;
 - the definitions of three tools, `read_file`, `write_file` and `shell`, 122
@@ -42,7 +42,7 @@ Rules:
 - Facts come from files and command output, never from memory. Read before you answer.
 - Call one tool at a time with valid JSON arguments. Read its result before the next step.
 - If a tool returns an error, correct the arguments and try again.
-- When you have what the task needs, reply with the final answer as plain text and call no tool. Give only what the task asked for.
+- When the task names a file for your work or answer, write it with write_file. Then reply with a short final message and call no tool. If the task asks for the answer in your reply, give only that answer.
 ```
 
 The tool definitions, exactly (`name`, `description`, `parameters`):
@@ -97,11 +97,15 @@ fixed request.
 
 A trajectory written by a headless run, the SDK or a harness run under a fixed
 profile (the interactive terminal's saved trajectory does not) records `agent.extra.sven.profile`,
-for example `"compact/1"`; one written under `default` has no such key. The
+for example `"compact/2"`; one written under `default` has no such key. The
 version changes whenever the prompt or a definition does (a test pins both
 texts), so a consumer that trains on or examines episodes can select exactly
 the episodes of one request shape. The ATIF document does not store the system
 prompt as a step; the version identifies it.
+
+Versions: `compact/2` writes a file the task names for its work or answer before the
+final message. `compact/1` told the model to give the final answer as plain text and
+call no tool, which a small model followed even when the task graded a file it named.
 
 ## What a model server must return
 

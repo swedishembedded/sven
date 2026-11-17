@@ -33,7 +33,7 @@ use sven_vocab::AgentMode;
 
 /// The profile's identifier, `<name>/<version>`, recorded in a trajectory's
 /// `agent.extra.sven.profile`.
-pub const ID: &str = "compact/1";
+pub const ID: &str = "compact/2";
 
 /// The tools the profile offers, in the order a request lists them.
 pub const TOOLS: [&str; 3] = ["read_file", "write_file", "shell"];
@@ -47,7 +47,7 @@ Rules:
 - Facts come from files and command output, never from memory. Read before you answer.
 - Call one tool at a time with valid JSON arguments. Read its result before the next step.
 - If a tool returns an error, correct the arguments and try again.
-- When you have what the task needs, reply with the final answer as plain text and call no tool. Give only what the task asked for.";
+- When the task names a file for your work or answer, write it with write_file. Then reply with a short final message and call no tool. If the task asks for the answer in your reply, give only that answer.";
 
 /// What a compact definition says in place of the tool's own description and
 /// schema.
@@ -240,6 +240,6 @@ mod tests {
                                 "required": ["shell_command"]}},
             ])
         );
-        assert_eq!(ID, "compact/1");
+        assert_eq!(ID, "compact/2");
     }
 }
