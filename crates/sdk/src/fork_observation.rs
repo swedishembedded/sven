@@ -8,7 +8,8 @@
 //! Comparing a replayed observation with the recorded one.
 //!
 //! The sandbox injects values that belong to it, not to the work: the attempt's
-//! temporary directory, the clock, and the numbers a copied tree allocates, plus the
+//! temporary directory, the clock (a listing's times, how long a command ran), the account it runs commands as (the owner and group
+//! of a listing), and the numbers a copied tree allocates, plus the
 //! note the harness adds to a repeated result. A replayed observation is compared with
 //! those removed and with nothing else: what the student caused stays in the text, and
 //! its tree is checked by digest rather than here.
@@ -35,6 +36,7 @@ pub(crate) fn without_harness_values(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.contains(".tmp")
         && !MONTHS.iter().any(|m| text.contains(m))
         && !text.contains(HARNESS_NOTE)
+        && !text.contains(DURATION)
     {
         return std::borrow::Cow::Borrowed(text);
     }
@@ -43,6 +45,12 @@ pub(crate) fn without_harness_values(text: &str) -> std::borrow::Cow<'_, str> {
         if line.trim_start().starts_with(HARNESS_NOTE) {
             continue;
         }
+        // How long the command ran is the machine's, not the work's: the
+        // exit status before it stays.
+        let line = match line.split_once(DURATION) {
+            Some((status, _)) if line.starts_with("Exit: ") => status,
+            _ => line,
+        };
         lines.push(without_listing_values(line, &MONTHS));
     }
     // A note that closed the observation leaves its blank line behind.
@@ -54,6 +62,10 @@ pub(crate) fn without_harness_values(text: &str) -> std::borrow::Cow<'_, str> {
 /// The first words of the note the harness appends to a result a previous call
 /// returned unchanged.
 const HARNESS_NOTE: &str = "[sven note:";
+
+/// What the shell tool's closing line (`Exit: 0 | Duration: 0.1s`) says the
+/// command took, which another run of it takes differently.
+const DURATION: &str = " | Duration: ";
 
 /// One line of `without_harness_values`: the sandbox's numbers removed from an
 /// `ls -l`-style listing, whitespace collapsed, and every path into a temporary
@@ -86,6 +98,12 @@ fn without_listing_values(line: &str, months: &[&str; 12]) -> String {
             if j == 0 || j == 8 {
                 kept.push(f);
             }
+            continue;
+        }
+        // The owner and group are the account the sandbox runs its commands
+        // as (`agent` in one, the user's own in another), not the work.
+        if stamp && (j == 2 || j == 3) {
+            kept.push(if j == 2 { "<owner>" } else { "<group>" });
             continue;
         }
         if stamp && (5..8).contains(&j) {
@@ -148,6 +166,27 @@ mod harness_value_tests {
         let recorded = "total 16\ndrwx------+       4 user user 4096 Oct 24 19:26 .\ndrwx------+       6 user user 4096 Oct 24 19:26 ..\nlrwxrwxrwx+       1 user user   41 Oct 24 19:26 .sven -> /sandbox/attempt-a/.tmpAAAAAA/state\n-rw-------+       1 user user 4365 Jan  1  1970 README.md\ndrwx------+       2 user user 4096 Jan  1  1970 tests";
         let replayed = "total 16\ndrwx------+       4 user user 4096 Oct 25 18:31 .\ndrwx------+       4 user user 4096 Oct 25 18:31 ..\nlrwxrwxrwx+       1 user user   43 Oct 25 18:31 .sven -> /sandbox/attempt-b/.tmpBBBBBB/state\n-rw-------+       1 user user 4365 Jan  1  1970 README.md\ndrwx------+       2 user user 4096 Jan  1  1970 tests";
         assert_eq!(n(recorded), n(replayed));
+    }
+
+    #[test]
+    fn how_long_a_command_ran_is_not_the_observation_but_how_it_exited_is() {
+        let recorded = "NameError: name 'json' is not defined\n\nExit: 1 | Duration: 0.0s";
+        assert_eq!(n(recorded), n(&recorded.replace("0.0s", "0.1s")));
+        assert_ne!(n(recorded), n(&recorded.replace("Exit: 1", "Exit: 0")));
+    }
+
+    #[test]
+    fn a_listing_made_as_another_account_is_the_same_observation() {
+        // A real refusal: an examiner's sandbox runs the agent as `agent`, a
+        // replay on the host as the user; the student's entries are the same.
+        let recorded = "drwxrwxr-x+ 4 agent agent 4096 Nov 18 16:25 .\n-rw-rw-r--+ 1 agent agent 4203 Nov 18 16:25 contract.md";
+        let replayed = "drwxrwxr-x+ 4 marsch nogroup 4096 Nov 18 17:58 .\n-rw-rw-r--+ 1 marsch nogroup 4203 Nov 18 17:58 contract.md";
+        assert_eq!(n(recorded), n(replayed));
+        assert_ne!(
+            n(recorded),
+            n(&replayed.replace("4203 Nov", "4204 Nov")),
+            "the size of the student's file is still compared"
+        );
     }
 
     #[test]

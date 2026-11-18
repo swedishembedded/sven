@@ -203,6 +203,11 @@ pub mod model {
     /// [`repeat::earlier_identical_results`]. A caller that bounds repetition
     /// from outside compares calls the same way the agent's own notes do.
     pub use sven_model::repeat;
+    /// The time a run has left, as the line a request ends with: a property
+    /// of the requests, never stored in the history. An application that
+    /// reads a recorded request's messages back as history removes it with
+    /// [`time_notice::without_time_notice`].
+    pub use sven_model::time_notice;
     pub use sven_model::{
         CompletionRequest, ContentPart, FunctionCall, Message, MessageContent, ModelProvider,
         ResponseEvent, ResponseFormat, ResponseStream, Role, SamplingControl, SamplingControls,
