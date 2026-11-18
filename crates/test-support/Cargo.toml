@@ -1,0 +1,12 @@
+[package]
+name        = "sven-test-support"
+version.workspace = true
+edition     = "2021"
+description = "Helpers for sven's own tests, never a dependency of a shipped crate: writing an executable that a parallel test can run without ETXTBSY."
+license     = "Apache-2.0"
+publish     = false
+
+[dependencies]
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -51,6 +51,7 @@ sven-workspace   = "foundation"
 sven-vocab       = "foundation"
 sven-http        = "foundation"
 sven-roots       = "foundation"
+sven-test-support = "foundation"
 sven-memory-api  = "foundation"
 atif             = "foundation"
 

@@ -22,6 +22,7 @@ tracing       = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+sven-test-support = { path = "../test-support" }
 tempfile = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

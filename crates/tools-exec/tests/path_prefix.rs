@@ -22,11 +22,8 @@ const PROGRAM: &str = "only_in_the_prefix";
 
 /// A directory holding one executable script, `PROGRAM`, that prints `hello`.
 fn prefix_dir() -> tempfile::TempDir {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
-    let program = dir.path().join(PROGRAM);
-    std::fs::write(&program, "#!/bin/sh\necho hello\n").unwrap();
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    sven_test_support::write_executable(&dir.path().join(PROGRAM), "#!/bin/sh\necho hello\n");
     dir
 }
 

@@ -639,24 +639,20 @@ mod gdb_integration {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_client_that_never_becomes_ready_is_killed() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = tempfile::tempdir().unwrap();
         let pids = dir.path().join("pids");
         // First run is the reachability probe and reports success; the second
         // is the long-lived client, which stays silent forever.
         let fake_gdb = dir.path().join("fake-gdb");
-        std::fs::write(
+        sven_test_support::write_executable(
             &fake_gdb,
-            format!(
+            &format!(
                 "#!/bin/sh\necho $$ >> {pids}\n\
                  [ \"$(wc -l < {pids})\" = 1 ] && echo '^done'\n\
                  exec sleep 300\n",
                 pids = pids.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake_gdb, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
 
         // Long enough for the client to start and record itself on a loaded
         // machine (a shorter one could kill it before its first line, and
@@ -676,7 +672,12 @@ mod gdb_integration {
             .await;
         assert!(out.is_error, "{}", out.content);
 
-        let recorded = std::fs::read_to_string(&pids).unwrap();
+        let recorded = std::fs::read_to_string(&pids).unwrap_or_else(|e| {
+            panic!(
+                "no gdb run was recorded ({e}); the tool said: {}",
+                out.content
+            )
+        });
         let client: u32 = recorded
             .lines()
             .nth(1)

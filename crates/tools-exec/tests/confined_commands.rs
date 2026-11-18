@@ -15,7 +15,6 @@
 #![cfg(target_os = "linux")]
 
 use std::net::TcpListener;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use serde_json::{json, Value};
@@ -45,12 +44,10 @@ fn layout() -> Layout {
     }
     std::fs::write(bin.join("lib.sh"), "greeting=hello-from-lib\n").unwrap();
     let tool = bin.join("package-tool");
-    std::fs::write(&tool, ". \"${0%/*}/lib.sh\"\necho \"$greeting\"\n").unwrap();
-    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    sven_test_support::write_executable(&tool, ". \"${0%/*}/lib.sh\"\necho \"$greeting\"\n");
     std::fs::write(private.join("token"), "secret-token").unwrap();
     let gate_script = private.join("gate.sh");
-    std::fs::write(&gate_script, "#!/bin/sh\necho gate-ran\ncat \"$1\"\n").unwrap();
-    std::fs::set_permissions(&gate_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    sven_test_support::write_executable(&gate_script, "#!/bin/sh\necho gate-ran\ncat \"$1\"\n");
     Layout {
         _root: root,
         workspace,

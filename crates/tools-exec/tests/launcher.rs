@@ -12,7 +12,6 @@
 //! our services by sending an email to info@swedishembedded.com.
 #![cfg(target_os = "linux")]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use serde_json::json;
@@ -25,15 +24,13 @@ use sven_tools_exec::ShellTool;
 fn recording_launcher(dir: &Path) -> Vec<String> {
     let script = dir.join("launch.sh");
     let record = dir.join("record");
-    std::fs::write(
+    sven_test_support::write_executable(
         &script,
-        format!(
+        &format!(
             "#!/bin/sh\n{{ pwd; for a in \"$@\"; do printf '%s\\n' \"$a\"; done; }} > '{}'\nshift\nexec \"$@\"\n",
             record.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     vec![script.display().to_string(), "--flag".into()]
 }
 

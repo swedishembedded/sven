@@ -352,18 +352,14 @@ fn a_workspace_digest_covers_paths_and_contents_and_ignores_repository_state() {
 /// A launcher that records that it ran, then runs the rest of its arguments.
 #[cfg(unix)]
 fn marking_launcher(dir: &Path) -> Vec<String> {
-    use std::os::unix::fs::PermissionsExt;
     let script = dir.join("launch.sh");
-    std::fs::write(
+    sven_test_support::write_executable(
         &script,
-        format!(
+        &format!(
             "#!/bin/sh\necho \"$@\" >> '{}'\nexec \"$@\"\n",
             dir.join("seen").display()
         ),
-    )
-    .expect("the launcher is written");
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-        .expect("the launcher is executable");
+    );
     vec![script.display().to_string()]
 }
 
