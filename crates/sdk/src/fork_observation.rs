@@ -38,7 +38,9 @@ pub(crate) fn without_harness_values(text: &str) -> std::borrow::Cow<'_, str> {
         && !text.contains(HARNESS_NOTE)
         && !text.contains(DURATION)
     {
-        return std::borrow::Cow::Borrowed(text);
+        // Trailing whitespace is never compared: a harness note removed from
+        // one side leaves the other side's last line ending where it did.
+        return std::borrow::Cow::Borrowed(text.trim_end());
     }
     let mut lines: Vec<String> = Vec::with_capacity(text.lines().count());
     for line in text.split('\n') {
@@ -166,6 +168,16 @@ mod harness_value_tests {
         let recorded = "total 16\ndrwx------+       4 user user 4096 Oct 24 19:26 .\ndrwx------+       6 user user 4096 Oct 24 19:26 ..\nlrwxrwxrwx+       1 user user   41 Oct 24 19:26 .sven -> /sandbox/attempt-a/.tmpAAAAAA/state\n-rw-------+       1 user user 4365 Jan  1  1970 README.md\ndrwx------+       2 user user 4096 Jan  1  1970 tests";
         let replayed = "total 16\ndrwx------+       4 user user 4096 Oct 25 18:31 .\ndrwx------+       4 user user 4096 Oct 25 18:31 ..\nlrwxrwxrwx+       1 user user   43 Oct 25 18:31 .sven -> /sandbox/attempt-b/.tmpBBBBBB/state\n-rw-------+       1 user user 4365 Jan  1  1970 README.md\ndrwx------+       2 user user 4096 Jan  1  1970 tests";
         assert_eq!(n(recorded), n(replayed));
+    }
+
+    #[test]
+    fn a_repeat_note_on_a_result_that_ends_in_a_newline_is_still_only_the_note() {
+        // A real refusal: a file read whose content ends in a newline, recorded
+        // without the note, replayed with it.
+        let recorded = "L1:# Rule table\nL2:\n";
+        let replayed = "L1:# Rule table\nL2:\n\n[sven note: this exact call returned this exact result once before in this run, and the result is unchanged. Repeating it will not give you new information; take a different action.]";
+        assert_eq!(n(recorded), n(replayed));
+        assert_ne!(n(recorded), n("L1:# Rule table\nL2:x\n"));
     }
 
     #[test]
