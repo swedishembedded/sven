@@ -348,3 +348,59 @@ fn a_workspace_digest_covers_paths_and_contents_and_ignores_repository_state() {
         "repository and interpreter bookkeeping is not the workspace the model edits"
     );
 }
+
+/// A launcher that records that it ran, then runs the rest of its arguments.
+#[cfg(unix)]
+fn marking_launcher(dir: &Path) -> Vec<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let script = dir.join("launch.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> '{}'\nexec \"$@\"\n",
+            dir.join("seen").display()
+        ),
+    )
+    .expect("the launcher is written");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("the launcher is executable");
+    vec![script.display().to_string()]
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_fork_replays_shell_calls_through_the_engines_launcher() {
+    let student_tree = tempfile::tempdir().expect("a student tree");
+    base(student_tree.path(), "alpha");
+    let student = Arc::new(ScriptedMockProvider::new(vec![
+        calls("c1", "shell", r#"{"shell_command":"echo recorded"}"#),
+        says("ran it"),
+    ]));
+    let mut agent = engine(student_tree.path(), student).agent("agent");
+    agent
+        .send("run it")
+        .await
+        .expect("the student's turn completes");
+    let transcript = agent.state().transcript();
+    let recorded = RecordedState::of(&transcript, student_tree.path()).expect("recorded");
+
+    let fork_tree = tempfile::tempdir().expect("a fork tree");
+    base(fork_tree.path(), "alpha");
+    let outside = tempfile::tempdir().expect("a launcher directory");
+    let mut config = sven_sdk::config::Config::default();
+    config.tools.launcher = Some(marking_launcher(outside.path()));
+    let teacher = Arc::new(ScriptedMockProvider::new(vec![says("unused")]));
+    Engine::builder()
+        .model_provider(teacher as Arc<_>)
+        .toolset(Toolset::coding())
+        .project_root(fork_tree.path())
+        .config(config)
+        .build()
+        .expect("an engine builds")
+        .fork(&Fork::new(transcript, fork_tree.path(), recorded))
+        .await
+        .expect("the replay through the launcher matches the recording");
+
+    let seen = std::fs::read_to_string(outside.path().join("seen")).expect("the launcher ran");
+    assert!(seen.contains("bash -c echo recorded"), "{seen}");
+}

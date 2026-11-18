@@ -32,3 +32,16 @@ fn an_application_can_load_svens_own_configuration() {
         .build()
         .expect("an engine builds on the loaded configuration");
 }
+
+#[test]
+fn a_launcher_together_with_a_confinement_is_refused_when_the_engine_is_built() {
+    let mut config = Config::default();
+    config.tools.launcher = Some(vec!["sandbox-run".into()]);
+    config.tools.confine = Some(sven_sdk::config::CommandConfinement::default());
+    let refused = Engine::builder()
+        .config(config)
+        .build()
+        .err()
+        .expect("both set is refused");
+    assert!(refused.to_string().contains("launcher"), "{refused}");
+}

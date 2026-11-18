@@ -18,4 +18,6 @@ mod bounded_tests;
 #[cfg(test)]
 mod tests;
 
-pub use tool::{ShellTool, DEFAULT_CAPTURE_QUOTA_BYTES, DEFAULT_MAX_TIMEOUT_SECS};
+pub use tool::{
+    ShellTool, DEFAULT_CAPTURE_QUOTA_BYTES, DEFAULT_MAX_TIMEOUT_SECS, LAUNCHER_WITH_CONFINEMENT,
+};

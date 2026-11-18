@@ -97,6 +97,13 @@ pub struct ToolsConfig {
     /// never read from a configuration file.
     #[serde(skip)]
     pub confine: Option<sven_tools_exec::confine::CommandConfinement>,
+    /// `[program, args...]`: the `shell` tool starts `program args... bash -c
+    /// <command>` instead of `bash -c <command>`, in the call's working
+    /// directory, so an application can run commands in its own sandbox. Set
+    /// by an embedding application in code, never read from a configuration
+    /// file. Refused together with [`Self::confine`] ([`Self::check_launcher`]).
+    #[serde(skip)]
+    pub launcher: Option<Vec<String>>,
     /// The `skill` tool never says where a skill is on this machine, only
     /// its files' paths relative to it. Set by sven itself for a hosted host
     /// (`restrict_to_hosted`), whose paths are the server's, never read from
@@ -137,6 +144,20 @@ impl ToolsConfig {
         .with("disclosure", DisclosureConfig::schema())
     }
 
+    /// Refuses a launcher together with a confinement: Landlock on the
+    /// launcher would confine the sandbox manager, not the command. An
+    /// application builds its engine through this check; a `shell` tool
+    /// built from a section that fails it refuses every command.
+    ///
+    /// # Errors
+    /// Both [`Self::launcher`] and [`Self::confine`] are set.
+    pub fn check_launcher(&self) -> Result<(), &'static str> {
+        if self.launcher.is_some() && self.confine.is_some() {
+            return Err(sven_tools_exec::LAUNCHER_WITH_CONFINEMENT);
+        }
+        Ok(())
+    }
+
     /// The `shell` tool this section configures, starting commands in `scope`.
     /// It has its own output buffers; a session gives it its own with
     /// [`ShellTool::with_buffers`].
@@ -149,6 +170,7 @@ impl ToolsConfig {
             policy: Arc::new(self.policy()),
             path_prefix: self.path_prefix.clone(),
             confine: self.confine.clone(),
+            launcher: self.launcher.clone(),
             ..ShellTool::default()
         }
     }
@@ -186,6 +208,7 @@ impl Default for ToolsConfig {
             disclosure: DisclosureConfig::default(),
             path_prefix: Vec::new(),
             confine: None,
+            launcher: None,
             hide_locations: false,
         }
     }

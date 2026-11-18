@@ -10,7 +10,7 @@ pub mod shell;
 
 pub use gate::{GateCommandTool, TrajectoryHook};
 pub use search_path::inherited_dirs as search_path_dirs;
-pub use shell::ShellTool;
+pub use shell::{ShellTool, LAUNCHER_WITH_CONFINEMENT};
 
 // ─── OutputCategory contract tests ───────────────────────────────────────────
 //

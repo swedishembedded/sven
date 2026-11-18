@@ -58,6 +58,12 @@ const NON_INTERACTIVE_ENV: [(&str, &str); 6] = [
     ("NO_COLOR", "1"),
 ];
 
+/// Why a launcher and a confinement cannot both be set.
+pub const LAUNCHER_WITH_CONFINEMENT: &str =
+    "tools.launcher and tools.confine are mutually exclusive: a launcher runs commands in the \
+     application's own sandbox, and confining the launcher would confine the sandbox manager, \
+     not the command";
+
 /// Built-in tool that runs a shell command.
 pub struct ShellTool {
     /// Wall time a command gets when the call names none.
@@ -95,6 +101,14 @@ pub struct ShellTool {
     /// kernel cannot enforce it. Set by the host that runs untrusted
     /// commands beside trusted work, never read from a configuration file.
     pub confine: Option<crate::confine::CommandConfinement>,
+    /// `[program, args...]`: every command is started as `program args...
+    /// bash -c <command>`, in the call's working directory, instead of as
+    /// `bash -c <command>`; the exit status is the launcher's. It is how an
+    /// application runs commands in its own sandbox. Set by the host, never
+    /// read from a configuration file, and refused together with
+    /// [`Self::confine`]: Landlock on the launcher would confine the sandbox
+    /// manager, not the command.
+    pub launcher: Option<Vec<String>>,
     /// The `TMPDIR` of every command: the session's scratch directory, so
     /// temporary files stay the session's own instead of the shared `/tmp`.
     /// A [`Self::confine`] sets its own and wins.
@@ -114,6 +128,7 @@ impl Default for ShellTool {
             buffers_readable: false,
             path_prefix: Vec::new(),
             confine: None,
+            launcher: None,
             tmpdir: None,
         }
     }
@@ -176,13 +191,27 @@ impl ShellTool {
         // On Unix/macOS: bash -c <command>
         // On Windows:    cmd /C <command>  (PowerShell is too verbose for tool use)
         #[cfg(unix)]
-        let mut cmd = {
-            let mut c = Command::new("bash");
-            c.arg("-c").arg(command);
-            c
+        let mut cmd = match &self.launcher {
+            None => {
+                let mut c = Command::new("bash");
+                c.arg("-c").arg(command);
+                c
+            }
+            Some(_) if self.confine.is_some() => return Err(LAUNCHER_WITH_CONFINEMENT.into()),
+            Some(launcher) => {
+                let (program, args) = launcher
+                    .split_first()
+                    .ok_or("the command launcher names no program")?;
+                let mut c = Command::new(program);
+                c.args(args).args(["bash", "-c", command]);
+                c
+            }
         };
         #[cfg(windows)]
         let mut cmd = {
+            if self.launcher.is_some() {
+                return Err("tools.launcher is not supported on Windows".into());
+            }
             let mut c = Command::new("cmd");
             c.args(["/C", command]);
             c

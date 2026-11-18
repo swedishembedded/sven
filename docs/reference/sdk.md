@@ -165,6 +165,18 @@ in-process tools, and the application's own tool confines the process-spawning
 ones; neither relies on detecting a violation afterwards. Both are pinned by
 `crates/sdk/tests/it/project_root_children.rs`.
 
+**Running commands in the application's own sandbox.** Setting
+`Config::tools.launcher` to `[program, args...]` (in code; it is never read
+from a configuration file) makes the built-in `shell` start `program args...
+bash -c <command>` in the call's working directory instead of `bash -c
+<command>`. Environment, process group, timeout, cancellation and output are
+those of any shell call, and the exit status is the launcher's. A launcher that
+runs the command elsewhere maps the working directory itself. A fork replays
+its recorded shell calls through the engine's launcher. A launcher together
+with `tools.confine` is refused by `EngineBuilder::build`: Landlock on the
+launcher would confine the sandbox manager, not the command. Not available on
+Windows. Pinned by `crates/tools-exec/tests/launcher.rs`.
+
 Without a root, paths resolve against the process working directory as they
 always have, the audit log goes to the user's state directory under the
 working directory's path, and nothing is discovered.

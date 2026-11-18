@@ -638,6 +638,10 @@ impl EngineBuilder {
             None => Arc::new(Config::default()),
         };
         config
+            .tools
+            .check_launcher()
+            .map_err(|e| CallError::Precondition(e.into()))?;
+        config
             .apply_network()
             .map_err(|e| CallError::Precondition(format!("the `network` section: {e}")))?;
         let paths = match &self.project_root {
