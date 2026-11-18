@@ -111,6 +111,10 @@ pub mod harness_plan {
 /// application configured once works for both.
 pub mod config {
     pub use sven_bootstrap::{compact_profile, Config, RunProfile};
+    /// What `tools.confine` confines the `shell` tool's commands to (Linux
+    /// Landlock): an embedding application that runs a model's commands in a
+    /// tree of its own sets it on the [`Config`] it builds an engine from.
+    pub use sven_tools_exec::confine::CommandConfinement;
 
     /// Loads the configuration the `sven` binary reads: [`Config::load`].
     ///

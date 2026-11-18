@@ -13,7 +13,7 @@
 //! * every replayed observation is the one the transcript recorded
 //!   ([`ForkError::ResultMismatch`]),
 //! * the workspace it leaves hashes to the digest recorded at that step
-//!   ([`ForkError::WorkspaceMismatch`]), and
+//!   ([`ForkError::WorkspaceMismatch`]), when the recording kept one, and
 //! * the visible transcript hashes to the one recorded
 //!   ([`ForkError::TranscriptMismatch`]).
 //!
@@ -91,10 +91,17 @@ const UNREPLAYABLE: &[(&str, &str)] = &[
 
 /// The digests a recording holds: the workspace at the fork step, and the
 /// visible transcript up to it.
+///
+/// A recording made at a step the run kept no tree for (a mid-run step of a
+/// run that kept only its final change) has no workspace digest: its fork is
+/// held to every replayed observation and to the transcript alone
+/// ([`RecordedState::observed`]).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecordedState {
-    /// [`workspace_digest`] of the tree the agent had left at the step.
-    pub workspace: String,
+    /// [`workspace_digest`] of the tree the agent had left at the step, when
+    /// the recording kept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
     /// [`transcript_digest`] of the turns the model was shown.
     pub transcript: String,
 }
@@ -104,7 +111,17 @@ impl RecordedState {
     #[must_use]
     pub fn new(workspace: impl Into<String>, transcript: impl Into<String>) -> Self {
         Self {
-            workspace: workspace.into(),
+            workspace: Some(workspace.into()),
+            transcript: transcript.into(),
+        }
+    }
+
+    /// A recording of `transcript` that kept no digest of the tree: a fork of
+    /// it is held to its observations and its transcript.
+    #[must_use]
+    pub fn observed(transcript: impl Into<String>) -> Self {
+        Self {
+            workspace: None,
             transcript: transcript.into(),
         }
     }
@@ -116,7 +133,7 @@ impl RecordedState {
     /// As [`workspace_digest`].
     pub fn of(transcript: &[Turn], root: &Path) -> io::Result<Self> {
         Ok(Self {
-            workspace: workspace_digest(root)?,
+            workspace: Some(workspace_digest(root)?),
             transcript: transcript_digest(transcript),
         })
     }
@@ -507,15 +524,17 @@ impl Engine {
         let calls = fork.calls()?;
         self.replay(fork, &calls).await?;
 
-        let actual = workspace_digest(workspace).map_err(|source| ForkError::Workspace {
-            path: workspace.clone(),
-            source,
-        })?;
-        if actual != fork.recorded.workspace {
-            return Err(ForkError::WorkspaceMismatch {
-                recorded: fork.recorded.workspace.clone(),
-                actual,
-            });
+        if let Some(recorded) = &fork.recorded.workspace {
+            let actual = workspace_digest(workspace).map_err(|source| ForkError::Workspace {
+                path: workspace.clone(),
+                source,
+            })?;
+            if &actual != recorded {
+                return Err(ForkError::WorkspaceMismatch {
+                    recorded: recorded.clone(),
+                    actual,
+                });
+            }
         }
 
         let mut state = AgentState::new(fork.mode.clone());

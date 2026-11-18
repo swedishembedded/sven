@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [5.8.0] - 2026-11-18
 
 ### Added
+- **sdk**: `config::CommandConfinement` is re-exported, so an embedding application can confine the `shell` tool of an engine it builds (`Config::tools.confine`) to the tree it runs a model's commands in, as a served run is.
 - **cli**: a headless run sets how every model request (sub-agents included) is sampled and asks for the sampled tokens back: `--temperature`, `--top-p`, `--top-k`, `--seed` and `--logprobs`, the SDK's `RunOptions::sampling` and `want_logprobs` for the command line. Before, only `model.temperature` reached a headless run, so its trajectory could carry neither a seed nor token ids and log-probabilities. The controls go through the same refusal and recording as the SDK's (`extra.sven.sampling_honoured`); a value out of range, or a flag on a run that is not a headless prompt run, exits 2 before anything runs.
 
 ### Changed
+- **sdk**: a fork's `RecordedState::workspace` is optional. A recording that kept no digest of the tree at its step (a mid-run step of a run that kept only its final change) is made with `RecordedState::observed(transcript)`, and its fork is held to every replayed observation and the transcript; a recording with a digest is held to it as before. Code that read the field as a `String` reads an `Option<String>`.
 - **model**: a sampling control is honoured, refused, or knowingly sent best-effort, never silently ignored. A provider declares the controls it honours (`ModelProvider::sampling_controls`; per driver in the registry, plus what a server names in its model listing's `supported_parameters` or `capabilities`): every OpenAI-protocol server temperature and top-p, brain, Google, Cohere and D-Bus all four, Anthropic all but the seed. A run that sets another (a `seed` or `top_k` to a generic OpenAI-compatible server) fails before sending with a typed error naming it (`CallError::SamplingRefused` in the SDK), unless `model.sampling_best_effort: true`: then it is sent, the run warns once, and the trajectory records it under `extra.sven.sampling_unhonoured`. `extra.sven.sampling_honoured` lists the controls that took effect, and the requested seed is recorded as the seed in effect only where it is honoured.
 
 ### Fixed

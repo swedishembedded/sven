@@ -232,6 +232,41 @@ async fn a_fork_is_refused_when_the_replayed_workspace_is_not_the_recorded_one()
 }
 
 #[tokio::test]
+async fn a_recording_without_a_workspace_digest_is_held_to_its_observations_alone() {
+    // A recording made mid-run often has no digest of the tree at the step
+    // (only the run's final change was kept): the fork is then held to every
+    // replayed observation and the transcript, and to nothing it cannot know.
+    let student_tree = tempfile::tempdir().expect("a student tree");
+    base(student_tree.path(), "alpha");
+    let (transcript, recorded) = student_run(student_tree.path()).await;
+    let observed = RecordedState::observed(recorded.transcript.clone());
+    assert_eq!(observed.workspace, None);
+
+    let fork_tree = tempfile::tempdir().expect("a fork tree");
+    base(fork_tree.path(), "alpha");
+    let teacher = Arc::new(ScriptedMockProvider::new(vec![says("unused")]));
+    engine(fork_tree.path(), teacher)
+        .fork(&Fork::new(
+            transcript.clone(),
+            fork_tree.path(),
+            observed.clone(),
+        ))
+        .await
+        .expect("the observations replay, so the fork is admitted");
+
+    let other_tree = tempfile::tempdir().expect("another tree");
+    base(other_tree.path(), "beta");
+    let teacher = Arc::new(ScriptedMockProvider::new(vec![says("unused")]));
+    let refused = engine(other_tree.path(), teacher)
+        .fork(&Fork::new(transcript, other_tree.path(), observed))
+        .await;
+    assert!(
+        matches!(refused, Err(ForkError::ResultMismatch { .. })),
+        "an observation that differs is still refused"
+    );
+}
+
+#[tokio::test]
 async fn a_fork_is_refused_before_replaying_when_the_transcript_hash_differs() {
     let student_tree = tempfile::tempdir().expect("a student tree");
     base(student_tree.path(), "alpha");
@@ -239,7 +274,10 @@ async fn a_fork_is_refused_before_replaying_when_the_transcript_hash_differs() {
 
     let fork_tree = tempfile::tempdir().expect("a fork tree");
     base(fork_tree.path(), "alpha");
-    let wrong = RecordedState::new(recorded.workspace.clone(), "sha256:0000".to_string());
+    let wrong = RecordedState {
+        transcript: "sha256:0000".to_string(),
+        ..recorded.clone()
+    };
 
     let teacher = Arc::new(ScriptedMockProvider::new(vec![says("unused")]));
     let refused = engine(fork_tree.path(), teacher)
