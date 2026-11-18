@@ -44,6 +44,7 @@ FAKE
 root="$WORK/pkgroot"
 rm -rf "\$root"
 mkdir -p "\$root/DEBIAN" "\$root/usr/bin" "\$root/usr/share/bash-completion/completions"
+chmod 0755 "\$root/DEBIAN"
 printf 'Package: sven\nVersion: 1.2.3\nArchitecture: all\nMaintainer: t <t@t>\nDescription: t\n' >"\$root/DEBIAN/control"
 printf '#!/bin/sh\necho sven 1.2.3\n' >"\$root/usr/bin/sven"
 chmod 755 "\$root/usr/bin/sven"

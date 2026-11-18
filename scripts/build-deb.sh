@@ -66,7 +66,9 @@ echo "Building ${PKG_NAME}.deb  (binary: ${BINARY})"
 
 # ── Create staging tree ───────────────────────────────────────────────────────
 rm -rf "${STAGING}"
-install -d \
+# An explicit mode: dpkg-deb refuses a control directory outside 0755-0775,
+# which a permissive umask (0000) would otherwise give it.
+install -d -m 0755 \
     "${STAGING}/DEBIAN" \
     "${STAGING}/usr/bin" \
     "${STAGING}/usr/share/applications" \

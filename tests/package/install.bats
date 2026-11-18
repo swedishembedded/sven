@@ -24,6 +24,13 @@ setup() {
   DEST="$BATS_TEST_TMPDIR/install"
   mkdir -p "$GH/download" "$BIN" "$DEST"
   fake_uname Linux x86_64
+  # A person, not root, unless a test says otherwise: the suite may itself
+  # run as root (a container), and root installs for everyone instead.
+  printf '#!/bin/sh
+[ "$1" = -u ] && { echo 1000; exit 0; }
+exec /usr/bin/id "$@"
+' >"$BIN/id"
+  chmod +x "$BIN/id"
 }
 
 # fake_uname OS ARCH: what `uname -s` and `uname -m` report.
@@ -157,6 +164,8 @@ run_install() {
 # it, and BSD `install` does not create directories: it writes a temporary
 # INS@XXXXXX in the destination and fails with "No such file or directory".
 @test "creates a missing directory with sudo before installing into it, as BSD install needs" {
+  # Root may write the protected tree anyway, so it would never need sudo.
+  [ "$(/usr/bin/id -u)" != 0 ] || skip "run as root, which no directory's mode keeps out"
   releases "v${MAJOR}.0.1"
   publish "v${MAJOR}.0.1" sven-linux-x86_64-musl
   local root="$BATS_TEST_TMPDIR/root"
