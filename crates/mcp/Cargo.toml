@@ -27,7 +27,6 @@ tokio                = { workspace = true }
 tracing              = { workspace = true }
 tracing-subscriber   = { workspace = true }
 uuid                 = { workspace = true }
-tokio-tungstenite    = { version = "0.24", features = ["rustls-tls-native-roots"] }
 futures-util         = { version = "0.3", default-features = false, features = ["sink", "std"] }
 rmcp = { workspace = true, features = ["server", "transport-io", "transport-streamable-http-server"] }
 sven-tools-exec      = { path = "../tools-exec" }

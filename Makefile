@@ -369,6 +369,18 @@ check: check/fmt check/gates check/arch check/features check/wasm check/clippy c
 check/fmt:
 	$(CARGO) fmt --all -- --check
 
+# clippy_no_warnings(<cargo selection args>): clippy over all targets with
+# -D warnings, then fail if the log holds any warning at all. Manifest lints are
+# warnings that -D warnings does not promote, so the log is the only place they
+# show; scripts/gates/cargo-warnings.sh counts both shapes.
+CLIPPY_LOG = $(or $(CARGO_TARGET_DIR),target)/clippy-warnings.log
+define clippy_no_warnings
+$(CARGO) clippy $(1) --all-targets --message-format=short -- -D warnings >$(CLIPPY_LOG) 2>&1; st=$$?; \
+cat $(CLIPPY_LOG); [ $$st -eq 0 ] || exit $$st; \
+w=$$(scripts/gates/cargo-warnings.sh $(CLIPPY_LOG)); \
+if [ -n "$$w" ]; then echo "cargo warnings:" >&2; echo "$$w" >&2; exit 1; fi
+endef
+
 ## check/features - the feature-off configurations build and lint clean: the
 ##   minimal assemblies (sven-bootstrap and sven-sdk without default features)
 ##   and the crates with feature-gated transports and media. The workspace
@@ -378,7 +390,7 @@ FEATURE_OFF_PACKAGES = sven-model-drivers sven-tools-fs sven-tools-gdb sven-boot
 check/features:
 	@for p in $(FEATURE_OFF_PACKAGES); do \
 		echo "clippy -p $$p --no-default-features"; \
-		$(CARGO) clippy -q -p $$p --no-default-features --all-targets -- -D warnings || exit 1; \
+		$(call clippy_no_warnings,-p $$p --no-default-features) || exit 1; \
 	done
 
 ## check/wasm - the browser-portable core builds for wasm32-unknown-unknown: the
@@ -396,9 +408,11 @@ check/wasm:
 	fi
 	$(RUSTUP_RUN) $(CARGO) check $(foreach p,$(WASM_PACKAGES),-p $(p)) --target wasm32-unknown-unknown --target-dir $(or $(CARGO_TARGET_DIR),target)/wasm
 
-## check/clippy - lint the workspace, warnings are errors
+## check/clippy - lint the workspace, warnings are errors (compiler, clippy and
+##   cargo's manifest lints such as `unused dependency`, which -D warnings does not
+##   turn into errors and which carry no file:line prefix)
 check/clippy:
-	$(CARGO) clippy --workspace --all-targets $(CARGO_FLAGS) -- -D warnings
+	@$(call clippy_no_warnings,--workspace $(CARGO_FLAGS))
 
 ## check/doc - rustdoc builds for the workspace with every intra-doc link
 ##   resolving (rustdoc stops documenting a crate at its first broken link, so

@@ -6,19 +6,19 @@ description = "GDB/MI debugging tools (connect, start-server, command, interrupt
 license     = "Apache-2.0"
 
 [dependencies]
-sven-tool-api = { path = "../tool-api" }
-sven-tool-registry = { path = "../tool-registry" }
+sven-tool-api = { path = "../tool-api", optional = true }
+sven-tool-registry = { path = "../tool-registry", optional = true }
 sven-config   = { path = "../config" }
-sven-hsm      = { path = "../hsm" }
-sven-vocab    = { path = "../vocab" }
+sven-hsm      = { path = "../hsm", optional = true }
+sven-vocab    = { path = "../vocab", optional = true }
 anyhow        = { workspace = true }
-async-trait   = { workspace = true }
+async-trait   = { workspace = true, optional = true }
 serde         = { workspace = true }
 serde_json    = { workspace = true }
 tokio         = { workspace = true }
-tracing       = { workspace = true }
+tracing       = { workspace = true, optional = true }
 regex         = { workspace = true }
-libc          = { workspace = true }
+libc          = { workspace = true, optional = true }
 
 # The GDB/MI client: what the `mi` feature adds. Without it the crate holds
 # only the `tools.gdb` configuration section, so a build that leaves the tools
@@ -30,7 +30,7 @@ gdbmi = { version = "0.0.2", optional = true }
 default = ["mi"]
 # The GDB tools themselves (Unix only -- GDB signal APIs are not available on
 # Windows, where enabling this feature adds nothing).
-mi = ["dep:gdbmi"]
+mi = ["dep:gdbmi", "dep:sven-tool-registry", "dep:sven-tool-api", "dep:sven-hsm", "dep:sven-vocab", "dep:async-trait", "dep:tracing", "dep:libc"]
 
 [[test]]
 name = "gdb_integration"
