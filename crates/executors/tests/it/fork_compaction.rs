@@ -311,6 +311,10 @@ async fn the_fork_sends_the_real_conversation_and_the_notes_replace_it() {
         Some(false),
         "reasoning cannot eat the reply budget"
     );
+    assert_eq!(
+        fork.thinking_budget, None,
+        "the notes set no reasoning cap: a server refuses an out-of-range budget"
+    );
     // The turn itself then ran on the notes alone, the task kept, and the
     // codewords survived.
     let after = r.requests.last().unwrap();

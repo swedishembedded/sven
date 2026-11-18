@@ -613,9 +613,13 @@ impl TurnExecutor {
         for thinking in [Some(false), None] {
             // The thinking-token cap guards against a reasoning loop in the
             // agent's own turns. Notes must not be thrown away (and the
-            // history with them) because the model reasoned about them.
+            // history with them) because the model reasoned about them, so
+            // they set no cap: the reply budget bounds them. No cap is
+            // `None`, never a huge number, because the cap is also sent as
+            // the request's reasoning budget, which a server refuses out of
+            // its range (brain: at most 262144).
             let mut limits = self.limits;
-            limits.thinking.max_thinking_tokens = Some(u32::MAX);
+            limits.thinking.max_thinking_tokens = None;
             limits.enable_thinking = thinking;
             limits.tool_choice = sven_model::ToolChoice::None;
 
