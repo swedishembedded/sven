@@ -46,8 +46,9 @@ share a step: the step's own `prompt_token_ids` are then the first request's and
 sampled ids of all of them run together, so `extra.sven.requests` is the authority for
 per-request training data. Every field is absent when the server does not report it;
 none is guessed. Sampling that was asked for goes on every request: `RunOptions::sampling`
-(temperature, top-p, top-k, seed) and `RunOptions::want_logprobs` for the SDK, the same
-for every child the run starts.
+(temperature, top-p, top-k, seed) and `RunOptions::want_logprobs` for the SDK, and
+`--temperature`, `--top-p`, `--top-k`, `--seed` and `--logprobs` for a headless run, the
+same for every child the run starts.
 
 What each tool call cost in time is on the step that made it: `extra.sven.timing` holds the
 wall-clock milliseconds of each call's execution (see the SDK reference, "Tool durations"). A

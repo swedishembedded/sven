@@ -114,6 +114,7 @@ async fn run(
             token_ledger: false,
             goal: None,
             output_trace: None,
+            decoding: Default::default(),
         })
         .await;
     std::process::exit(code);

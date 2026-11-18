@@ -107,6 +107,10 @@ pub struct RuntimeRunnerOptions {
     /// Where the run's trajectory is written (`--output-trace`); without it,
     /// the project's automatic log (`.sven/logs/`), when there is one.
     pub output_trace: Option<std::path::PathBuf>,
+    /// How every request of the run is sampled and whether the sampled
+    /// tokens are asked for (`--temperature`, `--top-p`, `--top-k`, `--seed`,
+    /// `--logprobs`).
+    pub decoding: sven_frontend::Decoding,
 }
 
 /// The terms of a goal whose objective is a headless run's whole prompt.
@@ -218,6 +222,7 @@ impl RuntimeRunner {
         let mut options = SessionOptions::new(Arc::clone(&self.config), runtime_ctx, events);
         options.allow_interactive_oauth = false;
         options.wait_for_mcp_tools_ms = Some(crate::output::MCP_TOOLS_WAIT_MS);
+        options.decoding = opts.decoding;
         let spec = SessionSpec {
             machine: kernel_mode.to_string(),
             permissions: opts.agent_mode,
@@ -490,6 +495,7 @@ mod tests {
             token_ledger: false,
             goal: None,
             output_trace: None,
+            decoding: Default::default(),
         };
         assert!(format!("{opts:?}").contains("agent"));
     }

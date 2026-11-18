@@ -146,6 +146,9 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     if let Err(why) = cli.goal_terms() {
         return Err(run::UsageError(why).into());
     }
+    if let Err(why) = cli.decoding() {
+        return Err(run::UsageError(why).into());
+    }
 
     // In TUI mode writing to stderr corrupts the display.
     // Suppress all tracing output unless the caller explicitly opts in by

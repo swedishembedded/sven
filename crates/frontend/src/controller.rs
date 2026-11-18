@@ -84,6 +84,10 @@ pub struct SessionOptions {
     /// Where the turn executor parks the sender that interrupts the model
     /// call in flight.
     pub abort_slot: Option<AbortSlot>,
+    /// How every request of the session (and of the children it starts) is
+    /// sampled, and whether the sampled token ids and log-probabilities are
+    /// asked for. The default sets no control and asks for nothing.
+    pub decoding: sven_turn::Decoding,
     /// Test seam: the provider to run on instead of the one the model
     /// configuration names. See `ProviderFactory`.
     pub(crate) provider_factory: Option<ProviderFactory>,
@@ -118,6 +122,7 @@ impl SessionOptions {
             wait_for_mcp_tools_ms: None,
             permission_requester: None,
             abort_slot: None,
+            decoding: sven_turn::Decoding::default(),
             provider_factory: None,
         }
     }
@@ -657,6 +662,7 @@ async fn assemble(
         .with_agent_mode(spec.permissions)
         .with_approval_mode(options.approval)
         .with_allow_interactive_oauth(options.allow_interactive_oauth)
+        .with_decoding(options.decoding)
         .with_initial_history(history);
     if let Some(timeout_ms) = options.wait_for_mcp_tools_ms {
         builder = builder.with_wait_for_mcp_tools(timeout_ms);
@@ -984,5 +990,50 @@ mod tests {
         let events = turn(&mut rx).await;
 
         assert!(question_result(&events).contains("Axum"), "{events:?}");
+    }
+
+    /// The session's decoding goes on every request it sends: the sampling
+    /// controls and the ask for the sampled tokens back.
+    #[tokio::test]
+    async fn the_sessions_decoding_reaches_every_request() {
+        let (mut options, mut rx, _builds) = options("unused");
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        options.provider_factory = Some(Box::new(move |_, _| {
+            let record = Arc::clone(&record);
+            Some(Box::new(sven_model_mock::CallbackProvider::new(
+                move |req| {
+                    record
+                        .lock()
+                        .unwrap()
+                        .push((req.sampling, req.want_logprobs));
+                    vec![ResponseEvent::TextDelta("ok".into()), ResponseEvent::Done]
+                },
+            )))
+        }));
+        let sampling = sven_model::SamplingParams {
+            temperature: Some(0.7),
+            top_p: Some(0.9),
+            top_k: Some(20),
+            seed: Some(41),
+        };
+        options.decoding = sven_turn::Decoding {
+            sampling,
+            want_logprobs: true,
+        };
+        let spec = SessionSpec::for_mode(AgentMode::Agent, model("a"));
+        let (session, _mcp) = SessionController::open(options, spec, vec![])
+            .await
+            .unwrap();
+
+        session.post("hello".into()).await.unwrap();
+        turn(&mut rx).await;
+
+        let seen = seen.lock().unwrap();
+        assert!(!seen.is_empty(), "the model was asked");
+        assert!(
+            seen.iter().all(|&(s, logprobs)| s == sampling && logprobs),
+            "{seen:?}"
+        );
     }
 }

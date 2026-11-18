@@ -58,6 +58,7 @@ pub(crate) async fn run_ci(
     let project_root = find_project_root().ok();
     // Checked in `run_cli` before anything ran; read again for the runner.
     let goal = cli.goal_terms().map_err(anyhow::Error::msg)?;
+    let decoding = cli.decoding().map_err(anyhow::Error::msg)?;
     let mode = cli.agent_mode(config.agent.default_mode);
 
     // ── --resume in headless mode ────────────────────────────────────────────
@@ -300,6 +301,7 @@ pub(crate) async fn run_ci(
                 token_ledger: cli.token_ledger,
                 goal,
                 output_trace: cli.effective_output_trace().cloned(),
+                decoding,
             })
             .await;
         std::process::exit(code);
@@ -353,6 +355,7 @@ pub(crate) async fn run_ci(
         max_tokens_budget: cli.max_tokens,
         attachments: cli.attach,
         token_ledger: cli.token_ledger,
+        decoding,
     };
 
     CiRunner::new(config).run(opts).await

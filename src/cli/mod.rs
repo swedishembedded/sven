@@ -341,6 +341,34 @@ pub struct Cli {
     #[arg(long, value_name = "COMMAND", requires = "goal_turns")]
     pub goal_check: Option<String>,
 
+    /// Sample every model request of a headless run at this temperature
+    /// (0.0 to 2.0), overriding `model.temperature`. Sub-agents the run
+    /// starts sample the same way.
+    #[arg(long, value_name = "T")]
+    pub temperature: Option<f64>,
+
+    /// Nucleus-sampling mass (above 0.0, at most 1.0) of every model request
+    /// of a headless run.
+    #[arg(long, value_name = "P")]
+    pub top_p: Option<f64>,
+
+    /// Keep only the K most probable tokens (K at least 1) when sampling
+    /// every model request of a headless run.
+    #[arg(long, value_name = "K")]
+    pub top_k: Option<u32>,
+
+    /// Seed every model request of a headless run. A control the provider
+    /// does not honour is refused before anything is sent, unless
+    /// `model.sampling_best_effort` allows it; the trajectory records the
+    /// controls that took effect (`extra.sven.sampling_honoured`).
+    #[arg(long, value_name = "N")]
+    pub seed: Option<u64>,
+
+    /// Ask the model for the sampled token ids and their log-probabilities
+    /// (a brain server's `policy_trace`), recorded in each step's metrics.
+    #[arg(long)]
+    pub logprobs: bool,
+
     /// Append every model request this process sends, exactly as sent, and
     /// what came back to FILE (JSONL). `sven replay FILE` sends one again.
     #[arg(long, value_name = "FILE")]
@@ -440,6 +468,46 @@ impl Cli {
             .transpose()
             .map_err(|why| format!("--goal-check: {why}"))?;
         Ok(Some(sven_ci::GoalTerms { max_turns, check }))
+    }
+
+    /// How a headless run samples its requests and whether it asks for the
+    /// sampled tokens (`--temperature`, `--top-p`, `--top-k`, `--seed`,
+    /// `--logprobs`); the default sets nothing.
+    ///
+    /// # Errors
+    /// A value out of range, or a sampling flag on a run that is not a
+    /// headless prompt run: refused before anything runs.
+    pub fn decoding(&self) -> Result<sven_frontend::Decoding, String> {
+        let sampling = sven_model::SamplingParams {
+            temperature: self.temperature,
+            top_p: self.top_p,
+            top_k: self.top_k,
+            seed: self.seed,
+        };
+        let decoding = sven_frontend::Decoding {
+            sampling,
+            want_logprobs: self.logprobs,
+        };
+        if decoding == sven_frontend::Decoding::default() {
+            return Ok(decoding);
+        }
+        if self.command.is_some() || self.team_name.is_some() || !self.is_headless() {
+            return Err(
+                "--temperature, --top-p, --top-k, --seed and --logprobs set how a \
+                 headless run samples: give a PROMPT or pipe one in, with --headless"
+                    .to_string(),
+            );
+        }
+        if let Some(t) = self.temperature.filter(|t| !(0.0..=2.0).contains(t)) {
+            return Err(format!("--temperature {t}: must be from 0.0 to 2.0"));
+        }
+        if let Some(p) = self.top_p.filter(|p| !(*p > 0.0 && *p <= 1.0)) {
+            return Err(format!("--top-p {p}: must be above 0.0 and at most 1.0"));
+        }
+        if self.top_k == Some(0) {
+            return Err("--top-k 0: must be at least 1".to_string());
+        }
+        Ok(decoding)
     }
 
     /// Whether a headless run reads stdin: when --stdin asks for it, or when
@@ -642,6 +710,43 @@ mod tests {
             .goal_terms()
             .is_err());
         assert!(cli(&["--goal-turns", "3", "chats"]).goal_terms().is_err());
+    }
+
+    #[test]
+    fn sampling_flags_give_a_headless_run_its_decoding() {
+        let none = cli(&["fix it"]).decoding().unwrap();
+        assert_eq!(none, sven_frontend::Decoding::default());
+        let set = cli(&[
+            "--temperature",
+            "0.7",
+            "--top-p",
+            "0.9",
+            "--top-k",
+            "20",
+            "--seed",
+            "41",
+            "--logprobs",
+            "fix it",
+        ])
+        .decoding()
+        .unwrap();
+        assert_eq!(set.sampling.temperature, Some(0.7));
+        assert_eq!(set.sampling.top_p, Some(0.9));
+        assert_eq!(set.sampling.top_k, Some(20));
+        assert_eq!(set.sampling.seed, Some(41));
+        assert!(set.want_logprobs);
+        // Refused before anything runs: out of range, or not a headless run.
+        for args in [
+            &["--temperature", "-0.1", "fix it"][..],
+            &["--top-p", "0", "fix it"],
+            &["--top-p", "1.5", "fix it"],
+            &["--top-k", "0", "fix it"],
+            &["--seed", "-1", "fix it"],
+        ] {
+            let parsed = Cli::try_parse_from(std::iter::once("sven").chain(args.iter().copied()));
+            assert!(parsed.map_or(true, |c| c.decoding().is_err()), "{args:?}");
+        }
+        assert!(cli(&["--seed", "3", "chats"]).decoding().is_err());
     }
 
     #[test]

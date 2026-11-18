@@ -33,7 +33,7 @@
 //!
 //! The slash-command vocabulary (`SlashCommand`, `CommandRegistry`, and the
 //! builtin `/…` commands) lives in the lower-tier `sven-commands` crate, not
-//! here — this crate re-exports it at its historical `commands` module path
+//! here - this crate re-exports it at its historical `commands` module path
 //! (`pub use sven_commands as commands`) so `sven-tui` is unaffected.
 
 pub mod agent;
@@ -49,7 +49,7 @@ pub mod tool_view;
 pub mod types;
 
 /// Compatibility re-export of the `SlashCommand` vocabulary, which lives in
-/// `sven-commands` (a lower-tier crate — the commands only need `sven-vocab`,
+/// `sven-commands` (a lower-tier crate - the commands only need `sven-vocab`,
 /// `sven-workspace`, `sven-mcp-client`, `sven-model`, and `sven-machines`,
 /// never anything `sven-frontend`-specific), and this crate depends on it.
 /// Every existing `sven_frontend::commands::*` path keeps compiling.
@@ -73,4 +73,5 @@ pub use segment::{
 };
 pub use settings::{Settings, TuiConfig, VoiceConfig};
 pub use sven_session_model::{SubagentActivity, SubagentState};
+pub use sven_turn::Decoding;
 pub use types::{FrontendOptions, ModelDirective, QueuedMessage, SessionMeta};

@@ -214,6 +214,8 @@ pub struct CiOptions {
     /// Print one `[sven:ledger]` JSON line to stderr per model request
     /// (`--token-ledger`). The ledger is recorded in the trajectory either way.
     pub token_ledger: bool,
+    /// Every request's sampling and the ask for its tokens (`--seed`, `--logprobs`, ...).
+    pub decoding: sven_frontend::Decoding,
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -622,7 +624,8 @@ impl CiRunner {
             runtime_ctx,
             initial_mode,
             model_cfg.clone(),
-        );
+        )
+        .with_decoding(opts.decoding);
 
         let seed_count = if !existing_steps.is_empty() {
             // Loaded ATIF trajectory (--load-trace/--trace path).

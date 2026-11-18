@@ -12,7 +12,7 @@
 //! Per-step **mode** and **model** overrides (from workflow `## step`
 //! `<!-- sven: mode=… model=… -->` comments and frontmatter `models`) are hon
 //! oured by rebuilding a fresh kernel [`SessionBundle`] for every turn, seeded
-//! with the accumulated conversation history — the exact single-shot pattern of
+//! with the accumulated conversation history - the exact single-shot pattern of
 //! [`RuntimeRunner`](crate::RuntimeRunner) applied per step. This gives
 //! per-step overrides without needing a live model/mode swap on a running
 //! kernel.
@@ -60,6 +60,9 @@ pub struct KernelAgent {
     /// What the permission gate decided and what memory was read, across the
     /// turns run so far; each turn's session holds only its own.
     call_records: CallRecords,
+    /// How every turn's requests are sampled (`--temperature`, `--seed`,
+    /// ...) and whether the sampled tokens are asked for (`--logprobs`).
+    decoding: sven_frontend::Decoding,
 }
 
 impl KernelAgent {
@@ -79,7 +82,15 @@ impl KernelAgent {
             history: Vec::new(),
             wait_for_mcp_ms: crate::output::MCP_TOOLS_WAIT_MS,
             call_records: CallRecords::default(),
+            decoding: sven_frontend::Decoding::default(),
         }
+    }
+
+    /// Samples every turn's requests with `decoding`.
+    #[must_use]
+    pub fn with_decoding(mut self, decoding: sven_frontend::Decoding) -> Self {
+        self.decoding = decoding;
+        self
     }
 
     /// Override the mode used for subsequent turns (per-step `mode=` option).
@@ -146,6 +157,7 @@ impl KernelAgent {
             SessionOptions::new(Arc::clone(&self.config), self.runtime_ctx.clone(), events);
         options.allow_interactive_oauth = false;
         options.wait_for_mcp_tools_ms = Some(self.wait_for_mcp_ms);
+        options.decoding = self.decoding;
         let spec = SessionSpec::for_mode(self.agent_mode, self.model_cfg.clone());
         let (session, mcp_events) = SessionController::open(options, spec, history)
             .await
@@ -158,7 +170,7 @@ impl KernelAgent {
     /// accumulated history, streaming each mapped [`AgentEvent`] into `tx`.
     ///
     /// The user message and every resulting assistant/tool message are appended
-    /// to the internal history so the next turn sees the full context — exactly
+    /// to the internal history so the next turn sees the full context - exactly
     /// as the legacy `Agent` maintained its session across `submit` calls.
     pub async fn submit(&mut self, text: &str, tx: mpsc::Sender<AgentEvent>) -> anyhow::Result<()> {
         let (session, mut events_rx) = self.open_session(self.history.clone()).await?;
@@ -190,7 +202,7 @@ impl KernelAgent {
     /// content parts (image/audio) that can't be expressed as plain text.
     ///
     /// The kernel event vocabulary (`sven_hsm::Event::UserMessage`) only
-    /// carries a text payload — there is no parts-carrying variant, and
+    /// carries a text payload - there is no parts-carrying variant, and
     /// adding one is a cross-cutting change (new `Event` variant, every
     /// machine/executor that reads it) out of scope for a single attach
     /// flow. Instead this seeds the parts message directly into the fresh
