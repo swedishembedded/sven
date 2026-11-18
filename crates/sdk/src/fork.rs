@@ -37,6 +37,7 @@
 //! to info@swedishembedded.com.
 
 use crate::fork_observation::without_harness_values;
+pub use crate::fork_observation::{truncated_refusal, unparsed_refusal};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -433,14 +434,6 @@ pub enum ForkError {
         /// Why not.
         reason: String,
     },
-    /// The model's arguments are not JSON, so the call cannot be re-issued.
-    #[error("call {call_id}'s arguments to {tool} are not JSON")]
-    ArgumentsNotJson {
-        /// The call.
-        call_id: String,
-        /// The tool it names.
-        tool: String,
-    },
     /// The replayed observation is not the recorded one.
     #[error("call {call_id} to {tool} observed {replayed:?}, not the recorded {recorded:?}")]
     ResultMismatch {
@@ -618,11 +611,30 @@ impl Engine {
                 tool: record.name.clone(),
             });
         };
-        let args =
-            serde_json::from_str(&record.arguments).map_err(|_| ForkError::ArgumentsNotJson {
-                call_id: record.id.clone(),
-                tool: record.name.clone(),
-            })?;
+        let Ok(args) = serde_json::from_str(&record.arguments) else {
+            // The runtime answered a call whose arguments were not JSON without
+            // running it: garbled ([`unparsed_refusal`]) or cut off by the
+            // output limit ([`truncated_refusal`]), by why the reply stopped,
+            // which the transcript does not hold. The replay gives the answer
+            // the recording got, when it is one of the two.
+            let answers = [
+                unparsed_refusal(&record.name, &record.arguments),
+                truncated_refusal(&record.name, &record.arguments),
+            ];
+            let replayed = answers
+                .iter()
+                .find(|a| without_harness_values(a) == without_harness_values(recorded))
+                .unwrap_or(&answers[0]);
+            if without_harness_values(replayed) != without_harness_values(recorded) {
+                return Err(ForkError::ResultMismatch {
+                    call_id: record.id.clone(),
+                    tool: record.name.clone(),
+                    recorded: recorded.to_string(),
+                    replayed: replayed.clone(),
+                });
+            }
+            return Ok(replayed.clone());
+        };
         let output = tool
             .execute(&ToolCall {
                 id: record.id.clone(),

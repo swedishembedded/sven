@@ -153,6 +153,28 @@ fn without_temp_path(token: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// What the runtime answered a call to `tool` whose arguments (`raw`) were
+/// not valid JSON: it did not run it.
+#[must_use]
+pub fn unparsed_refusal(tool: &str, raw: &str) -> String {
+    sven_vocab::turn::AnsweredCall::refused(
+        String::new(),
+        &sven_tool_registry::refusal::unparsed_reason(tool, raw),
+    )
+    .content
+}
+
+/// What the runtime answered a call to `tool` whose arguments (`raw`) the
+/// output-token limit cut off: it did not run it.
+#[must_use]
+pub fn truncated_refusal(tool: &str, raw: &str) -> String {
+    sven_vocab::turn::AnsweredCall::refused(
+        String::new(),
+        &sven_tool_registry::refusal::truncated_reason(tool, raw),
+    )
+    .content
+}
+
 #[cfg(test)]
 mod harness_value_tests {
     use super::without_harness_values as n;

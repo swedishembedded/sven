@@ -11,7 +11,7 @@ pub mod fuzzy;
 pub mod index;
 pub mod matches;
 pub mod policy;
-mod refusal;
+pub mod refusal;
 pub mod registry;
 pub mod search;
 

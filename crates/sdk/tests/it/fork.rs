@@ -294,6 +294,42 @@ async fn a_fork_is_refused_before_replaying_when_the_transcript_hash_differs() {
     );
 }
 
+#[tokio::test]
+async fn a_call_the_runtime_refused_for_garbled_arguments_replays_as_that_refusal() {
+    // The model sent arguments that are not JSON; the runtime answered without
+    // running the tool. A replay must give the same answer, not run the tool.
+    let raw = r#"{"path": "input.txt"#;
+    let refusal = sven_sdk::fork::unparsed_refusal("read_file", raw);
+    let transcript = vec![
+        Turn::User {
+            text: "read it".into(),
+        },
+        Turn::Assistant {
+            text: String::new(),
+            tool_calls: vec![sven_sdk::ToolCallRecord {
+                id: "c1".into(),
+                name: "read_file".into(),
+                arguments: raw.into(),
+            }],
+        },
+        Turn::ToolResult {
+            call_id: "c1".into(),
+            text: refusal.clone(),
+        },
+    ];
+    let tree = tempfile::tempdir().expect("a tree");
+    base(tree.path(), "alpha");
+    let recorded = RecordedState::observed(sven_sdk::fork::transcript_digest(&transcript));
+    let teacher = Arc::new(ScriptedMockProvider::new(vec![says("unused")]));
+    engine(tree.path(), teacher)
+        .fork(&Fork::new(transcript, tree.path(), recorded))
+        .await
+        .expect("the refused call replays as the refusal it got");
+    assert!(refusal.starts_with(
+        "The call was not run: the arguments of the `read_file` call are not valid JSON"
+    ));
+}
+
 #[test]
 fn a_call_with_no_recorded_result_cannot_be_forked() {
     let mut transcript = vec![Turn::User {
