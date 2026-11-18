@@ -705,6 +705,7 @@ fn register_base_tools(reg: &mut ToolRegistry, params: BaseTools<'_>) {
     reg.register(
         cfg.tools
             .shell_tool(paths.clone())
+            .with_tmpdir(runtime.scratch_dir.clone())
             .with_buffers(buffer_store, buffers_readable),
     );
 

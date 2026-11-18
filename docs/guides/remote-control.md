@@ -193,19 +193,17 @@ The server chooses the tool calls and relays the approvals, so an approval
 the server answers is not a safeguard of this machine. These limits are
 enforced here, by default, whatever the server approves:
 
-- **Files.** The file tools (`read_file`, `write_file`, `edit_file`,
-  `find_file`, `grep` and the tools that take file paths) work only inside
-  the working directory; a path that leaves it, by `..` or a symlink, is
-  refused. The system prompt tells the agent so, and to clone, download and
-  create what those tools must open inside it rather than in `/tmp`. Even
-  inside it, sven's own directories are refused
-  (`<config dir>/sven` and `~/.config/sven`: the sign-in, stored provider
-  keys, configuration; `<data dir>/sven`: your chats, traces and the
-  sessions `sven rc` keeps), so starting `sven rc` in your home directory
-  does not expose them. So is anything that a program you run there later would
-  execute with your rights: `.git` (its hooks and configuration) and sven's
-  own configuration files (`.sven/`, `.sven.yaml`, `sven.yaml`), in any
-  directory below the working directory.
+- **Files.** The file tools and the shell start in the working directory
+  and are not held to it: sven sets no boundary of its own that a command
+  beside them would walk around anyway. To confine what the server can
+  reach, contain the whole process: run `sven rc` in a container with only
+  the project mounted, or remove tools (below). Each conversation keeps its
+  temporary files in a scratch directory of its own,
+  `<cache dir>/sven/scratch/<conversation>` (`~/.cache` on Linux,
+  `~/Library/Caches` on macOS), private to you, named in the agent's prompt
+  and set as the shell's `TMPDIR`, rather than in the shared `/tmp`. It
+  stays while the conversation does, across restarts, and is removed when
+  the conversation is.
 - **Web.** `web_fetch` reaches only the public internet, never this
   machine, your LAN or a cloud metadata service (`tools.web.public_only`).
 - **GDB.** The `gdb` tool runs only commands that debug the target:
@@ -216,13 +214,8 @@ enforced here, by default, whatever the server approves:
   `set logging`), as are a debug server command or gdb path the model
   spells out (`tools.gdb.allow_host_commands: false`). A server it discovers
   and the configured `gdb_path` still work.
-- **Shell.** The `shell` tool is allowed and starts in the working
-  directory, but nothing confines what a command touches. If the server must
-  not have that, remove the tool (below), or run `sven rc` in a container
-  with only the project mounted.
-
-`sven rc --wide-access` lifts the first three for a session you trust the
-server with entirely.
+`sven rc --wide-access` lifts the web and GDB limits for a session you trust
+the server with entirely.
 
 You decide which tools the server may use. The configuration `sven rc`
 reads (`--config`, or the files described in the

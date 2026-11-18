@@ -95,6 +95,10 @@ pub struct ShellTool {
     /// kernel cannot enforce it. Set by the host that runs untrusted
     /// commands beside trusted work, never read from a configuration file.
     pub confine: Option<crate::confine::CommandConfinement>,
+    /// The `TMPDIR` of every command: the session's scratch directory, so
+    /// temporary files stay the session's own instead of the shared `/tmp`.
+    /// A [`Self::confine`] sets its own and wins.
+    pub tmpdir: Option<std::path::PathBuf>,
 }
 
 impl Default for ShellTool {
@@ -110,11 +114,19 @@ impl Default for ShellTool {
             buffers_readable: false,
             path_prefix: Vec::new(),
             confine: None,
+            tmpdir: None,
         }
     }
 }
 
 impl ShellTool {
+    /// This tool, handing `dir` to every command as its `TMPDIR`.
+    #[must_use]
+    pub fn with_tmpdir(mut self, dir: Option<std::path::PathBuf>) -> Self {
+        self.tmpdir = dir;
+        self
+    }
+
     /// Keep this tool's output in a session's `buffers`. `readable` says the
     /// session can read a buffer back (the `task` tool's `read` and `grep`
     /// actions), so a result names its buffer and how to read it.
@@ -199,6 +211,9 @@ impl ShellTool {
         cmd.envs(NON_INTERACTIVE_ENV);
         if let Some(path) = crate::search_path::with_prefix(&self.path_prefix)? {
             cmd.env("PATH", path);
+        }
+        if let (None, Some(tmp)) = (&self.confine, &self.tmpdir) {
+            cmd.env("TMPDIR", tmp);
         }
         // setsid() in pre_exec creates a new session for the child, detaching
         // it from the controlling terminal.  Without this, a subprocess can

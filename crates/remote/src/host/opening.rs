@@ -64,9 +64,17 @@ impl SessionActor {
             &self.context.config,
             &dir,
             self.context.hosted,
-            self.context.wide_access,
             self.context.shared_workdir,
         )?;
+        // On a person's computer or in their environment, the agent's own
+        // place for temporary files. A hosted host's sandbox has its own.
+        if !self.context.hosted {
+            runtime.scratch_dir = sven_roots::cache_dir().and_then(|cache| {
+                super::hosted::scratch_dir(&cache, self.id)
+                    .map_err(|e| tracing::warn!("session {}: no scratch directory: {e:#}", self.id))
+                    .ok()
+            });
+        }
         // What its tools write, such as a converted document, can become a
         // file of this conversation, and of no other.
         runtime.conversation_files = Some(ConversationFiles(Arc::new(ConversationUpload {

@@ -57,7 +57,7 @@ mod steering;
 mod stops;
 mod upload;
 
-pub use hosted::{restrict_to_hosted, restrict_to_working_dir, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
+pub use hosted::{restrict_remote_session, restrict_to_hosted, HOSTED_SYSTEM_PROMPT, HOSTED_TOOLS};
 use inbox::command_loop;
 use router::{list_slash_commands, router};
 use services::use_server_services;
@@ -84,7 +84,7 @@ pub struct HostOptions {
     pub hosted: bool,
     /// The person chose to let the server's sessions reach beyond the
     /// working directory and the public internet (`sven rc --wide-access`):
-    /// otherwise [`restrict_to_working_dir`] applies.
+    /// otherwise [`restrict_remote_session`] applies.
     pub wide_access: bool,
     /// The working directory serves several conversations (a hosted host in
     /// a sandbox, one per person): each then works in a directory of its own
@@ -149,14 +149,13 @@ pub async fn run_host(options: HostOptions) -> anyhow::Result<()> {
     // Searches go to this server, which runs and bills them.
     let mut config = (*options.config).clone();
     if !options.hosted && !options.wide_access {
-        restrict_to_working_dir(&mut config);
+        restrict_remote_session(&mut config);
     }
     use_server_services(&mut config, &options.login);
     let context = Arc::new(SessionContext {
         config: Arc::new(config),
         working_dir: options.working_dir,
         hosted: options.hosted,
-        wide_access: options.wide_access,
         shared_workdir: options.shared_workdir,
         openai_base_url: options.login.openai_base_url,
         token: options.login.token,
@@ -192,8 +191,6 @@ struct SessionContext {
     working_dir: PathBuf,
     /// Run by a site for its own web conversations (`sven rc --hosted`).
     hosted: bool,
-    /// See [`HostOptions::wide_access`].
-    wide_access: bool,
     /// See [`HostOptions::shared_workdir`].
     shared_workdir: bool,
     openai_base_url: String,
@@ -208,6 +205,21 @@ struct SessionContext {
     asks: mpsc::Sender<ControlEvent>,
     /// How long a session opening waits for its MCP servers' tools.
     mcp_tools_wait_ms: u64,
+}
+
+impl SessionContext {
+    /// Everything this host keeps for a closed conversation goes with it:
+    /// its kept session, its files (where the working directory is shared)
+    /// and its scratch directory. A paused one keeps them all.
+    fn forget_conversation(&self, id: Uuid) {
+        if let Err(e) = self.sessions.forget(id) {
+            tracing::warn!("session {id}: could not forget it: {e:#}");
+        }
+        hosted::forget_conversation_files(&self.working_dir, self.shared_workdir, id);
+        if let Some(cache) = sven_roots::cache_dir() {
+            hosted::forget_scratch(&cache, id);
+        }
+    }
 }
 
 /// How long a session opening waits for its MCP servers to list their tools
@@ -461,14 +473,7 @@ impl SessionActor {
                 if let Some(controller) = &self.controller {
                     controller.cancel().await;
                 }
-                if let Err(e) = self.context.sessions.forget(self.id) {
-                    tracing::warn!("session {}: could not forget it: {e:#}", self.id);
-                }
-                hosted::forget_conversation_files(
-                    &self.context.working_dir,
-                    self.context.shared_workdir,
-                    self.id,
-                );
+                self.context.forget_conversation(self.id);
                 println!("[{}] closed", self.short());
             }
         }
@@ -875,7 +880,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut config = Config::default();
         config.agent.system_prompt = Some("You are a helpful assistant.".into());
-        let runtime = session_runtime(&config, dir.path(), true, false, true).unwrap();
+        let runtime = session_runtime(&config, dir.path(), true, true).unwrap();
         assert!(
             runtime.no_system,
             "the built-in prompt and its context sections are left out"
@@ -889,7 +894,7 @@ mod tests {
     #[test]
     fn a_hosted_session_without_a_configured_prompt_gets_one_that_names_no_path() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = session_runtime(&Config::default(), dir.path(), true, false, true).unwrap();
+        let runtime = session_runtime(&Config::default(), dir.path(), true, true).unwrap();
         assert!(runtime.no_system);
         let prompt = runtime
             .system_prompt_override
@@ -905,7 +910,7 @@ mod tests {
         let dir = std::path::Path::new("someone/project");
         let mut config = Config::default();
         config.agent.system_prompt = Some("Be terse.".into());
-        let runtime = session_runtime(&config, dir, false, true, false).unwrap();
+        let runtime = session_runtime(&config, dir, false, false).unwrap();
         assert!(
             !runtime.no_system,
             "the project context stays for a local session"
@@ -968,7 +973,6 @@ mod tests {
             config: Arc::new(config),
             working_dir: dir.to_path_buf(),
             hosted: false,
-            wide_access: true,
             shared_workdir: false,
             openai_base_url: String::new(),
             token: String::new(),
@@ -1322,7 +1326,6 @@ mod tests {
             config: Arc::new(mock_config()),
             working_dir: dir.path().to_path_buf(),
             hosted: false,
-            wide_access: true,
             shared_workdir: false,
             openai_base_url: String::new(),
             token: String::new(),
@@ -1366,7 +1369,6 @@ mod tests {
             config: Arc::new(mock_config()),
             working_dir: dir.path().to_path_buf(),
             hosted: false,
-            wide_access: true,
             shared_workdir: false,
             openai_base_url: String::new(),
             token: String::new(),
@@ -1469,7 +1471,6 @@ mod tests {
             config: Arc::new(mock_config()),
             working_dir: dir.to_path_buf(),
             hosted: false,
-            wide_access: true,
             shared_workdir: false,
             openai_base_url: String::new(),
             token: String::new(),

@@ -18,10 +18,10 @@ use crate::prompt_composer::Composer;
 pub struct PromptContext<'a> {
     /// Absolute path to the project root (from `.git` detection).
     pub project_root: Option<&'a Path>,
-    /// The directory the file tools are confined to (the session's
-    /// `PathScope` root), stated so the model puts files there the first
-    /// time; `None` when they are unconfined. Fixed for the session.
-    pub file_tool_root: Option<&'a Path>,
+    /// The session's own directory for temporary files (the shell's
+    /// `TMPDIR`), named so the model keeps its clones, downloads and
+    /// intermediate files there instead of in `/tmp`. Fixed for the session.
+    pub scratch_dir: Option<&'a Path>,
     /// Pre-formatted git context (branch, commit, dirty status).
     ///
     /// **Caching note**: this field is *volatile* - it changes on every commit
@@ -72,7 +72,7 @@ impl<'a> Default for PromptContext<'a> {
     fn default() -> Self {
         Self {
             project_root: None,
-            file_tool_root: None,
+            scratch_dir: None,
             git_context: None,
             project_context_file: None,
             ci_context: None,
@@ -98,7 +98,7 @@ impl<'a> PromptContext<'a> {
     pub fn stable_only(&self) -> Self {
         Self {
             project_root: self.project_root,
-            file_tool_root: self.file_tool_root,
+            scratch_dir: self.scratch_dir,
             git_context: None,
             project_context_file: self.project_context_file,
             ci_context: None,
@@ -632,17 +632,18 @@ pub fn compose_system_prompt(
         }
     };
 
-    let project_section = match ctx.file_tool_root {
-        Some(root) => format!(
+    let project_section = match ctx.scratch_dir {
+        Some(dir) => format!(
             "{project_section}{heading}\n\
-             - File tools reach only paths under `{root}`. Clone, download and \
-               create what they must open inside it, not in `/tmp`.",
+             - Scratch directory: `{dir}`, this session's own and the shell's \
+               `TMPDIR`. Put clones, downloads and intermediate files there \
+               instead of `/tmp`.",
             heading = if project_section.is_empty() {
                 "\n\n## Project Context"
             } else {
                 ""
             },
-            root = root.display(),
+            dir = dir.display(),
         ),
         None => project_section,
     };
@@ -885,32 +886,24 @@ mod tests {
         assert!(!pr.contains("Project root:"), "{pr}");
     }
 
-    /// A model that does not know its file tools stop at a directory clones
-    /// into `/tmp` with the shell, then has `read_file` refuse every path and
-    /// pays for each retry. Told once where they reach, it puts its files
-    /// there the first time.
+    /// Told where its own temporary files go, a model clones and downloads
+    /// there the first time rather than into the shared `/tmp`.
     #[test]
-    fn a_confined_file_tool_root_is_stated_with_where_to_put_files() {
-        let root = p("/workspace");
-        let confined = system_prompt(
+    fn a_scratch_directory_is_named_as_the_place_for_temporary_files() {
+        let scratch = p("cache/sven/scratch/c1");
+        let with = system_prompt(
             AgentMode::Agent,
             None,
             PromptContext {
-                file_tool_root: Some(&root),
+                scratch_dir: Some(&scratch),
                 ..Default::default()
             },
         );
-        assert!(
-            confined.contains("File tools reach only paths under `/workspace`"),
-            "{confined}"
-        );
-        assert!(confined.contains("not in `/tmp`"), "{confined}");
+        assert!(with.contains("`cache/sven/scratch/c1`"), "{with}");
+        assert!(with.contains("instead of `/tmp`"), "{with}");
 
-        let unconfined = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            !unconfined.contains("File tools reach only"),
-            "{unconfined}"
-        );
+        let without = system_prompt(AgentMode::Agent, None, empty());
+        assert!(!without.contains("Scratch directory"), "{without}");
     }
 
     #[test]

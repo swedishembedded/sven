@@ -55,31 +55,28 @@ pub const HOSTED_SYSTEM_PROMPT: &str = "You are sven, a helpful assistant. Answe
 /// prompt (or [`HOSTED_SYSTEM_PROMPT`]) and nothing else, since the working
 /// directory is the site's own sandbox, not something to tell a visitor about.
 ///
-/// On a person's computer the file tools are also confined to `working_dir`
-/// and kept out of the host's own credentials, unless `wide_access`
-/// ([`restrict_to_working_dir`]).
+/// Its tools start in `working_dir` and are held to nothing by sven: what a
+/// session can reach is the system's to decide (the person's own machine,
+/// a container, the kernel's confinement of a hosted host).
 ///
 /// # Errors
 ///
-/// The working directory cannot be used as the root of a confined scope.
+/// A hosted conversation's directory cannot be resolved.
 pub(super) fn session_runtime(
     config: &Config,
     working_dir: &Path,
     hosted: bool,
-    wide_access: bool,
     shared_workdir: bool,
 ) -> anyhow::Result<RuntimeContext> {
     let mut runtime = RuntimeContext::auto_detect_at(Some(working_dir.to_path_buf()));
     runtime.project_root = Some(working_dir.to_path_buf());
-    // A hosted host in a sandbox is held by the kernel to its person's
-    // environment, which holds every conversation of theirs; its sessions'
-    // path-taking tools are held to their own conversation's directory as
-    // well. A container serving one conversation is its own boundary.
-    if shared_workdir || (!hosted && !wide_access) {
-        runtime.path_scope = conversation_files(config, working_dir).into_iter().fold(
-            confined_scope(working_dir, &protected_locations())?,
-            PathScope::allowing_beneath,
-        );
+    // sven holds no session's tools to a directory: a person's computer
+    // and a container are the person's, and a hosted host is held by the
+    // kernel to its person's sandbox. A hosted conversation works in a
+    // directory of its own below the host's, so its relative paths start
+    // there.
+    if shared_workdir {
+        runtime.path_scope = PathScope::anchored(working_dir)?;
     }
     if hosted {
         runtime.no_system = true;
@@ -137,67 +134,46 @@ pub(super) fn forget_conversation_files(working_dir: &Path, shared: bool, id: uu
     }
 }
 
-/// What no tool of a remotely driven session may read or write, even when it
-/// lies inside the working directory (a session started in the home
-/// directory): the sign-in, the stored provider keys and sven's own
-/// configuration (`<config dir>/sven`, and `~/.config/sven`, read on every
-/// platform), and everything sven keeps in `<data dir>/sven`: the sessions
-/// this host keeps for other conversations, and the person's own chats and
-/// traces, which hold whatever they ever pasted into sven.
-fn protected_locations() -> Vec<PathBuf> {
-    let mut locations = Vec::new();
-    locations.extend(sven_roots::config_dir().map(|dir| dir.join("sven")));
-    locations.extend(sven_roots::home_dir().map(|home| home.join(".config").join("sven")));
-    locations.extend(sven_roots::data_dir().map(|dir| dir.join("sven")));
-    locations
+/// Where conversation `id` keeps its temporary files, below `cache` (the
+/// person's cache directory: `~/.cache` on Linux, `~/Library/Caches` on
+/// macOS), created private to the person when missing. The shared `/tmp`
+/// holds other programs' files and sockets; this is the conversation's own,
+/// and it stays while the conversation does, across a restarted host or a
+/// resumed environment.
+///
+/// # Errors
+///
+/// It cannot be created.
+pub(super) fn scratch_dir(cache: &Path, id: uuid::Uuid) -> anyhow::Result<PathBuf> {
+    let dir = cache.join("sven").join("scratch").join(id.to_string());
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder
+        .create(&dir)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
+    Ok(dir)
 }
 
-/// What no tool of a remotely driven session may write at any depth of the
-/// working directory, because a program the person runs there later executes
-/// it with their own rights, outside every confinement: git's hooks and
-/// configuration (`core.hooksPath`, `core.fsmonitor`), and sven's own
-/// configuration of a directory, which can start MCP servers.
-fn protected_names() -> impl Iterator<Item = &'static str> {
-    let config = sven_config::scope::DIRECTORY_FILE_NAMES
-        .iter()
-        .filter_map(|name| name.split('/').next());
-    std::iter::once(".git").chain(config)
-}
-
-fn confined_scope(working_dir: &Path, protected: &[PathBuf]) -> anyhow::Result<PathScope> {
-    let scope = PathScope::confined(working_dir)?.denying_names(protected_names());
-    Ok(protected
-        .iter()
-        .fold(scope, |scope, location| scope.denying(location)))
-}
-
-/// The directories sven itself fills with the conversation's files, below
-/// its denied configuration directory: the person's attachments, files
-/// fetched by handle, and what models made. A session's tools reach them;
-/// nothing else of `.sven` (and no denied name below them).
-fn conversation_files(config: &Config, working_dir: &Path) -> Vec<PathBuf> {
-    let mut dirs = vec![
-        working_dir.join(super::attachments::DIR),
-        working_dir.join(sven_tools_media::FETCHED_DIR),
-    ];
-    let media = &config.tools.media.dir;
-    if media.is_relative() {
-        dirs.push(working_dir.join(media));
+/// A closed conversation's scratch directory removed with it.
+pub(super) fn forget_scratch(cache: &Path, id: uuid::Uuid) {
+    let dir = cache.join("sven").join("scratch").join(id.to_string());
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!("conversation {id}: its scratch files were not removed: {e}"),
     }
-    dirs
 }
 
 /// What a remotely driven session on a person's computer may reach unless
 /// the person asks for more (`sven rc --wide-access`). The server chooses
-/// the tool calls and relays the approvals, so neither is a barrier: the
-/// file tools stay in the working directory (`session_runtime`), `web_fetch`
-/// reaches only the public internet (never this machine's network or a cloud
-/// metadata service), and gdb runs no host program the model spells out.
-/// Nor can the file tools leave behind what runs later outside the directory
-/// (git hooks, a sven configuration: `protected_names`).
-/// The `shell` tool is not confined to the directory; `tools.only` and
-/// `tools.disabled` remove it.
-pub fn restrict_to_working_dir(config: &mut Config) {
+/// the tool calls and relays the approvals, so neither is a barrier:
+/// `web_fetch` reaches only the public internet (never this machine's
+/// network or a cloud metadata service), and gdb runs no host program the
+/// model spells out. Files and commands are the system's to confine (a
+/// container); `tools.only` and `tools.disabled` remove tools.
+pub fn restrict_remote_session(config: &mut Config) {
     config.tools.web.public_only = true;
     config.tools.gdb.allow_host_commands = false;
 }
@@ -276,83 +252,67 @@ mod tests {
         assert!(config.mcp_servers.is_empty());
     }
 
-    /// A file tool on a person's computer cannot leave behind what runs later
-    /// outside the confinement with the person's own rights: git's hooks and
-    /// configuration, or a sven configuration (which can start MCP servers)
-    /// that sven reads when it next runs in that directory or one below it.
-    #[test]
-    fn a_confined_session_cannot_write_what_runs_later_outside_it() {
-        let tmp = tempfile::tempdir().unwrap();
-        let runtime = session_runtime(&Config::default(), tmp.path(), false, false, false).unwrap();
-        for path in [
-            ".git/hooks/pre-commit",
-            ".git/config",
-            "vendor/lib/.git/hooks/post-checkout",
-            ".sven/config.yaml",
-            ".sven.yaml",
-            ".sven.yml",
-            "sub/sven.yaml",
-            "sven.yml",
-        ] {
-            assert!(runtime.path_scope.resolve(path).is_err(), "{path}");
-        }
-        assert!(runtime.path_scope.resolve("src/main.rs").is_ok());
-    }
-
-    /// The person's own chats and traces, and this host's kept sessions, are
-    /// all under sven's data directory, which is protected as a whole.
-    #[test]
-    fn what_sven_keeps_about_the_person_is_protected() {
-        let protected = protected_locations();
-        let kept = [
-            crate::sessions::default_dir().unwrap(),
-            sven_roots::data_dir().unwrap().join("sven").join("chats"),
-            sven_roots::home_dir()
-                .unwrap()
-                .join(".config/sven/remote.yaml"),
-        ];
-        for path in kept {
-            assert!(
-                protected.iter().any(|p| path.starts_with(p)),
-                "{}",
-                path.display()
-            );
-        }
-    }
-
     #[test]
     fn a_remotely_driven_session_gets_a_public_only_web_and_no_gdb_host_commands() {
         let mut config = Config::default();
         assert!(!config.tools.web.public_only && config.tools.gdb.allow_host_commands);
-        restrict_to_working_dir(&mut config);
+        restrict_remote_session(&mut config);
         assert!(config.tools.web.public_only);
         assert!(!config.tools.gdb.allow_host_commands);
     }
 
+    /// sven holds no remotely driven session's tools to a directory of its
+    /// own making: a person's computer and a container are the person's,
+    /// and a hosted host is held by the kernel to its person's sandbox
+    /// (Landlock), whatever tools it offers. A check in sven would only be a
+    /// policy in the agent's way, as the shell beside it reaches everything.
     #[test]
-    fn file_tools_stay_in_the_working_directory_and_out_of_the_credentials() {
-        let home = tempfile::tempdir().unwrap();
-        let work = home.path().join("project");
-        let config_dir = home.path().join(".config/sven");
-        std::fs::create_dir_all(&work).unwrap();
-        std::fs::create_dir_all(&config_dir).unwrap();
-        std::fs::write(config_dir.join("remote.yaml"), "token: t").unwrap();
-
-        let scope = confined_scope(&work, std::slice::from_ref(&config_dir)).unwrap();
-        assert!(scope.resolve("src/main.rs").is_ok());
-        for outside in [
-            "../.config/sven/remote.yaml",
-            "/etc/passwd",
-            "../.ssh/id_ed25519",
-        ] {
-            assert!(scope.resolve(outside).is_err(), "{outside}");
+    fn sven_confines_no_session_s_tools_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        for (hosted, shared) in [(false, false), (true, false), (true, true)] {
+            let scope = session_runtime(&Config::default(), dir.path(), hosted, shared)
+                .unwrap()
+                .path_scope;
+            for path in [
+                "/etc/hosts",
+                "../elsewhere/notes.md",
+                ".git/hooks/pre-commit",
+                ".sven/config.yaml",
+                ".config/sven/config.yaml",
+            ] {
+                assert!(
+                    scope.resolve(path).is_ok(),
+                    "{path} (hosted {hosted}, shared {shared})"
+                );
+            }
         }
+    }
 
-        // Started in the home directory, the credentials are inside the
-        // working directory and still refused.
-        let scope = confined_scope(home.path(), &[config_dir]).unwrap();
-        assert!(scope.resolve("project/notes.md").is_ok());
-        assert!(scope.resolve(".config/sven/remote.yaml").is_err());
+    /// The agent's own place for temporary files, instead of the shared
+    /// `/tmp`: one per conversation, private to the person, kept while the
+    /// conversation is (a restarted host or resumed pod finds it again),
+    /// removed with it.
+    #[test]
+    fn each_conversation_has_a_private_scratch_directory_that_goes_with_it() {
+        let cache = tempfile::tempdir().unwrap();
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let scratch_a = scratch_dir(cache.path(), a).unwrap();
+        assert!(scratch_a.is_dir());
+        assert!(scratch_a.starts_with(cache.path().join("sven").join("scratch")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&scratch_a).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        std::fs::write(scratch_a.join("clone.txt"), "x").unwrap();
+        assert_eq!(scratch_dir(cache.path(), a).unwrap(), scratch_a);
+        assert!(scratch_a.join("clone.txt").exists(), "a restart keeps it");
+
+        let scratch_b = scratch_dir(cache.path(), b).unwrap();
+        forget_scratch(cache.path(), b);
+        assert!(!scratch_b.exists() && scratch_a.exists());
+        forget_scratch(cache.path(), b);
     }
 
     #[test]
@@ -363,13 +323,14 @@ mod tests {
         let dir_b = conversation_dir(work.path(), true, b).unwrap();
         assert!(dir_a.is_dir() && dir_b.is_dir() && dir_a != dir_b);
         assert!(dir_a.starts_with(work.path()) && dir_b.starts_with(work.path()));
-        // One conversation's tools cannot reach the other's files.
-        std::fs::write(dir_b.join("invoice.pdf"), "x").unwrap();
-        let scope_a = session_runtime(&Config::default(), &dir_a, true, false, true)
+        // Its relative paths start there.
+        let scope_a = session_runtime(&Config::default(), &dir_a, true, true)
             .unwrap()
             .path_scope;
-        assert!(scope_a.resolve("../").is_err());
-        assert!(scope_a.resolve(dir_b.join("invoice.pdf")).is_err());
+        assert_eq!(
+            scope_a.resolve("invoice.pdf").unwrap(),
+            dir_a.canonicalize().unwrap().join("invoice.pdf")
+        );
         // On a person's computer the conversation works in the directory
         // `sven rc` runs in.
         assert_eq!(
@@ -381,27 +342,6 @@ mod tests {
         assert!(!dir_b.exists() && dir_a.exists());
         forget_conversation_files(work.path(), false, a);
         assert!(dir_a.exists(), "a person's own directory is never removed");
-    }
-
-    /// The files sven keeps for the conversation below `.sven` are its
-    /// tools' to read: the attachment the person's message names by path
-    /// opens; sven's configuration beside it does not.
-    #[test]
-    fn a_session_reads_its_attachments_but_never_sven_s_configuration() {
-        let work = tempfile::tempdir().unwrap();
-        let scope = session_runtime(&Config::default(), work.path(), true, false, true)
-            .unwrap()
-            .path_scope;
-        for path in [
-            ".sven/attachments/f1/invoice.pdf",
-            ".sven/files/7b1d.pdf",
-            ".sven/media/page-1.png",
-        ] {
-            assert!(scope.resolve(path).is_ok(), "{path}");
-        }
-        for path in [".sven/config.yaml", ".sven/attachments/f1/.git/config"] {
-            assert!(scope.resolve(path).is_err(), "{path}");
-        }
     }
 
     #[test]
@@ -427,35 +367,5 @@ mod tests {
         let mut lax: Config = serde_yaml::from_str("ocr: {isolate: false}\n").unwrap();
         restrict_to_hosted(&mut lax);
         assert_eq!(lax.ocr.isolate, Some(true));
-    }
-
-    #[test]
-    fn only_a_person_computer_session_without_wide_access_is_confined() {
-        let dir = tempfile::tempdir().unwrap();
-        let config = Config::default();
-        let root = |hosted, wide, shared| {
-            session_runtime(&config, dir.path(), hosted, wide, shared)
-                .unwrap()
-                .path_scope
-                .root()
-                .map(Path::to_path_buf)
-        };
-        assert_eq!(
-            root(false, false, false),
-            Some(dir.path().canonicalize().unwrap())
-        );
-        assert_eq!(root(false, true, false), None);
-        // A container serving one conversation is its own boundary: its
-        // shell and file tools work across its workspace and the account's
-        // shared files, as before.
-        assert_eq!(root(true, false, false), None);
-        // A hosted session, held by the kernel to its person's environment,
-        // is also held to its own conversation's directory: documents of
-        // the person's other conversations are not its to read, also for
-        // someone the conversation is shared with.
-        assert_eq!(
-            root(true, false, true),
-            Some(dir.path().canonicalize().unwrap())
-        );
     }
 }

@@ -89,6 +89,13 @@ pub fn data_dir() -> Option<PathBuf> {
     under("data").or_else(dirs::data_dir)
 }
 
+/// Files that may be thrown away: `~/.cache` on Linux (`XDG_CACHE_HOME`),
+/// `~/Library/Caches` on macOS.
+#[must_use]
+pub fn cache_dir() -> Option<PathBuf> {
+    under("cache").or_else(dirs::cache_dir)
+}
+
 /// Logs and worktrees; where the platform has none, the data directory.
 #[must_use]
 pub fn state_dir() -> Option<PathBuf> {

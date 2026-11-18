@@ -87,6 +87,9 @@ pub struct AgentRuntimeContext {
     /// directory. Independent of `project_root`, which drives discovery and
     /// the prompt but confines nothing.
     pub path_scope: PathScope,
+    /// The session's own directory for temporary files: the shell's
+    /// `TMPDIR`, named in the prompt. `None` leaves both alone.
+    pub scratch_dir: Option<std::path::PathBuf>,
     /// Where a tool publishes a file it wrote as a file of the conversation,
     /// in a session of a service that keeps them (`sven rc`); `None`
     /// elsewhere.
@@ -126,7 +129,7 @@ impl AgentRuntimeContext {
         }
         let ctx = PromptContext {
             project_root: self.project_root.as_deref(),
-            file_tool_root: self.path_scope.root(),
+            scratch_dir: self.scratch_dir.as_deref(),
             git_context: self.git_context_note.as_deref(),
             project_context_file: self.project_context_file.as_deref(),
             ci_context: self.ci_context_note.as_deref(),

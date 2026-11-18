@@ -61,6 +61,9 @@ pub struct PathScope {
     /// The canonical root, or `None` for the process working directory with
     /// no confinement.
     root: Option<Arc<PathBuf>>,
+    /// Whether paths must stay beneath `root`; an [anchored](Self::anchored)
+    /// root is only where relative paths start.
+    contained: bool,
     /// Canonical locations inside the root that are refused all the same
     /// (see [`PathScope::denying`]).
     denied: Arc<Vec<PathBuf>>,
@@ -241,10 +244,26 @@ impl PathScope {
         }
         Ok(Self {
             root: Some(Arc::new(canonical)),
+            contained: true,
             denied: Arc::default(),
             denied_names: Arc::default(),
             allowed: Arc::default(),
             anchor: Anchor::default(),
+        })
+    }
+
+    /// Relative paths resolve against `dir` (an existing directory), which
+    /// is also where commands start; nothing is refused. For a session whose
+    /// directory is not the process's own and whose boundary, if any, is the
+    /// system's (a sandbox, a container), not this scope's.
+    ///
+    /// # Errors
+    ///
+    /// When `dir` does not exist, cannot be resolved, or is not a directory.
+    pub fn anchored(dir: impl AsRef<Path>) -> io::Result<Self> {
+        Ok(Self {
+            contained: false,
+            ..Self::confined(dir)?
         })
     }
 
@@ -261,7 +280,7 @@ impl PathScope {
     /// be must not silently fall back.
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     pub fn race_free(mut self) -> io::Result<Self> {
-        let Some(root) = self.root.as_deref() else {
+        let Some(root) = self.root.as_deref().filter(|_| self.contained) else {
             return Ok(self);
         };
         #[cfg(target_os = "linux")]
@@ -368,6 +387,9 @@ impl PathScope {
         let Some(root) = self.root.as_deref() else {
             return Ok(requested.to_path_buf());
         };
+        if !self.contained {
+            return Ok(normalise(&root.join(requested)));
+        }
         let unresolvable = |reason: String| PathScopeError::Unresolvable {
             requested: requested.to_path_buf(),
             root: root.clone(),
@@ -598,6 +620,24 @@ mod tests {
             PathBuf::from("/etc/passwd")
         );
         assert_eq!(s.root(), None);
+    }
+
+    /// A directory to work in, not a boundary: relative paths start there
+    /// (as the shell does), anything else means what it says.
+    #[test]
+    fn anchored_resolves_relative_paths_in_its_directory_and_refuses_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = PathScope::anchored(tmp.path()).unwrap();
+        let dir = s.root().unwrap().to_path_buf();
+        assert_eq!(dir, tmp.path().canonicalize().unwrap());
+        assert_eq!(s.resolve("notes.md").unwrap(), dir.join("notes.md"));
+        assert_eq!(
+            s.resolve("/etc/passwd").unwrap(),
+            PathBuf::from("/etc/passwd")
+        );
+        assert_eq!(s.resolve("../x").unwrap(), dir.parent().unwrap().join("x"));
+        assert!(s.resolve(".git/hooks/pre-commit").is_ok());
+        assert!(PathScope::anchored(tmp.path().join("missing")).is_err());
     }
 
     #[test]

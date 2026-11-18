@@ -71,6 +71,10 @@ pub struct RuntimeContext {
     /// default; detection never confines, so the CLI and TUI work on the
     /// process working directory as they always have.
     pub path_scope: PathScope,
+    /// The session's own directory for temporary files, given by the host
+    /// that keeps it (`sven rc`, one per conversation): the shell's `TMPDIR`,
+    /// named in the prompt. `None`: commands use the process's `TMPDIR`.
+    pub scratch_dir: Option<PathBuf>,
     /// The home directory the session keeps its semantic memory below
     /// (`.config/sven/memory/memory.sqlite`). `None` opens no store and offers
     /// no `semantic_memory` tool. Only detection resolves the user's real
@@ -153,6 +157,7 @@ impl RuntimeContext {
             knowledge,
             knowledge_drift_note,
             path_scope: PathScope::unconfined(),
+            scratch_dir: None,
             memory_home: sven_roots::home_dir(),
             conversation_files: None,
         }
@@ -189,6 +194,7 @@ impl RuntimeContext {
             knowledge: self.knowledge.clone(),
             knowledge_drift_note: self.knowledge_drift_note.clone(),
             path_scope: self.path_scope.clone(),
+            scratch_dir: self.scratch_dir.clone(),
             conversation_files: self.conversation_files.clone(),
             ..AgentRuntimeContext::default()
         }
