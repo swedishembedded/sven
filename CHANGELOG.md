@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.8.0] - 2026-11-18
+
 ### Added
 - **cli**: a headless run sets how every model request (sub-agents included) is sampled and asks for the sampled tokens back: `--temperature`, `--top-p`, `--top-k`, `--seed` and `--logprobs`, the SDK's `RunOptions::sampling` and `want_logprobs` for the command line. Before, only `model.temperature` reached a headless run, so its trajectory could carry neither a seed nor token ids and log-probabilities. The controls go through the same refusal and recording as the SDK's (`extra.sven.sampling_honoured`); a value out of range, or a flag on a run that is not a headless prompt run, exits 2 before anything runs.
 
