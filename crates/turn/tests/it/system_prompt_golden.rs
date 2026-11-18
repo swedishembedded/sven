@@ -75,6 +75,7 @@ fn path_activation() -> Option<Activation> {
 fn full<'a>(root: &'a std::path::Path, context_file: &'a std::path::Path) -> PromptContext<'a> {
     PromptContext {
         project_root: Some(root),
+        file_tool_root: None,
         git_context: Some("## Git\nbranch: main"),
         project_context_file: Some(context_file),
         ci_context: Some("## CI\nrunner: ci-1"),

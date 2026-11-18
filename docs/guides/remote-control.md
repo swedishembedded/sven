@@ -196,7 +196,9 @@ enforced here, by default, whatever the server approves:
 - **Files.** The file tools (`read_file`, `write_file`, `edit_file`,
   `find_file`, `grep` and the tools that take file paths) work only inside
   the working directory; a path that leaves it, by `..` or a symlink, is
-  refused. Even inside it, sven's own directories are refused
+  refused. The system prompt tells the agent so, and to clone, download and
+  create what those tools must open inside it rather than in `/tmp`. Even
+  inside it, sven's own directories are refused
   (`<config dir>/sven` and `~/.config/sven`: the sign-in, stored provider
   keys, configuration; `<data dir>/sven`: your chats, traces and the
   sessions `sven rc` keeps), so starting `sven rc` in your home directory

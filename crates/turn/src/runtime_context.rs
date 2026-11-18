@@ -126,6 +126,7 @@ impl AgentRuntimeContext {
         }
         let ctx = PromptContext {
             project_root: self.project_root.as_deref(),
+            file_tool_root: self.path_scope.root(),
             git_context: self.git_context_note.as_deref(),
             project_context_file: self.project_context_file.as_deref(),
             ci_context: self.ci_context_note.as_deref(),
