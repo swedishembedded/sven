@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.9.0] - 2026-11-18
+
 ### Added
 - **tools**: `Config::tools.launcher` (`Option<Vec<String>>`, set in code by an embedding application, never read from a configuration file) makes the `shell` tool start `program args... bash -c <command>` instead of `bash -c <command>`, in the call's working directory, with the same environment, process group, timeout and cancellation, output and footer; the exit status is the launcher's, so an application can run a model's commands in its own sandbox. A launcher together with `tools.confine` is refused when an engine is built (`EngineBuilder::build`), and a `shell` tool holding both refuses every command. A fork replays its shell calls through the engine's launcher, as a live call runs. Not supported on Windows (refused, not ignored).
 
