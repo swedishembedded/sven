@@ -42,3 +42,17 @@ does not honour refused or, on explicit best effort, recorded as `sampling_unhon
    the turn executor (it observes those results), the SDK (a stopped run answers its open calls)
    and `take_history` (lost events replace only the run's own part of the record). See the doc,
    "Every run of an agent keeps its metrics".
+8. Headless ATIF fidelity: a step records a tool's raw output, not the text the model was shown (output limits, truncation and
+   framing differ). A trainer that rebuilds contexts from the trajectory therefore differs from what was sampled, and has to read the
+   request log (`sven.request-log/1`) instead. Record the model-shown observation on the step. Acceptance: for a recorded run,
+   every step observation equals the matching tool message of the next request.
+9. Fork replay drift (`sdk/src/fork.rs`): a fork replays the recorded prefix and refuses when the world answers differently. On a
+   real pass over 1275 trials (543 failures) 260 forks were refused: calls with garbled arguments (now replayed as the runtime
+   answered them), a continuation whose prefix no longer matches, a mid-run system turn or a final reply, host-versus-sandbox
+   paths, `ls -l` owner and time fields, shell durations, error text that differs between builds, and nondeterministic output.
+   Next: replay with the recorded build and normalise the remaining nondeterministic fields. Acceptance: under 10% refused on a
+   real pass of at least 500 failures.
+10. A total token and cost cap per run, so that arms can be compared at equal budget (today only turn and wall-clock bounds bind).
+11. Done 2026-11-18/19: headless sampling flags (`--temperature --top-p --top-k --seed --logprobs`) honoured or refused; the
+    request log declared with its schema and counts; compaction notes no longer send an unbounded thinking budget (brain refused
+    them with 400); fork comparison ignores owner, group and duration fields; a shell launcher and trimmed observations in replay.
