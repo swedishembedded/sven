@@ -10,7 +10,7 @@ use std::time::Duration;
 use super::{
     exchange_start_credential_with, read_login_file, Backoff, LoginFile, StartCredentialRefused,
 };
-use crate::login::tests::{json, mock, Mock};
+use crate::login::tests::{json, mock, mock_on, Mock};
 use crate::login::RemoteLogin;
 
 const CREDENTIAL: &str = "START-CREDENTIAL-MUST-STAY-SECRET";
@@ -124,6 +124,89 @@ async fn a_discovery_document_on_another_origin_is_refused_before_the_credential
     assert_secret_free(&result);
     let message = format!("{:#}", result.unwrap_err());
     assert!(message.contains("same origin"), "{message}");
+    assert_eq!(start_requests(&m), 0);
+}
+
+/// The discovery document of a server at `base`, as `mock` serves it.
+fn discovery(base: &str) -> crate::login::tests::Canned {
+    json(
+        200,
+        &format!(
+            r#"{{"protocol_version":1,"authorize_url":"{base}/connect/sven",
+            "control_url":"{base}/api","openai_base_url":"{base}/v1"}}"#
+        ),
+    )
+}
+
+fn discovery_requests(mock: &Mock) -> usize {
+    mock.seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(path, _)| path == "/.well-known/sven-remote")
+        .count()
+}
+
+#[tokio::test]
+async fn a_server_that_fails_discovery_at_first_is_tried_again() {
+    // A gateway mid-restart answers 503 for a moment.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let m = mock_on(
+        listener,
+        HashMap::from([
+            (
+                "/.well-known/sven-remote",
+                VecDeque::from([json(503, "{}"), discovery(&base)]),
+            ),
+            ("/api/start", VecDeque::from([started()])),
+        ]),
+    )
+    .await;
+    let result = exchange(&m).await;
+    assert_secret_free(&result);
+    assert_eq!(result.unwrap().token, TOKEN);
+    assert_eq!(discovery_requests(&m), 2);
+}
+
+#[tokio::test]
+async fn a_server_not_reachable_at_first_is_reached_once_it_is_up() {
+    // A pod's first moments: its network is not there yet, or the server is
+    // not listening yet. The address refuses, then answers.
+    let port = {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        held.local_addr().unwrap().port()
+    };
+    let base = format!("http://127.0.0.1:{port}");
+    let file = LoginFile::new(&base, CREDENTIAL);
+    let up = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .unwrap();
+        mock_on(
+            listener,
+            HashMap::from([("/api/start", VecDeque::from([started()]))]),
+        )
+        .await
+    });
+    let result = exchange_start_credential_with(&file, FAST, std::future::pending()).await;
+    assert_secret_free(&result);
+    assert_eq!(result.unwrap().token, TOKEN);
+    drop(up.await.unwrap());
+}
+
+#[tokio::test]
+async fn a_server_that_is_no_remote_control_server_is_not_tried_again() {
+    let m = mock(HashMap::from([(
+        "/.well-known/sven-remote",
+        VecDeque::from([json(404, "{}")]),
+    )]))
+    .await;
+    let result = exchange(&m).await;
+    let message = format!("{:#}", result.unwrap_err());
+    assert!(message.contains("not a remote-control server"), "{message}");
+    assert_eq!(discovery_requests(&m), 1);
     assert_eq!(start_requests(&m), 0);
 }
 

@@ -160,8 +160,16 @@ pub async fn exchange_start_credential_with(
     backoff: Backoff,
     cancel: impl std::future::Future<Output = ()>,
 ) -> anyhow::Result<RemoteLogin> {
+    let cancel = std::pin::pin!(cancel);
+    let mut cancel = cancel;
     let server = crate::client::normalize_server(&file.server)?;
-    let found = crate::client::discover(&server).await?;
+    // Tried again within the same backoff as the start request: a pod's
+    // first request can find the server mid-restart, or its own network not
+    // there yet, and an environment that gave up at once stays failed.
+    let found = tokio::select! {
+        found = discover_with_retries(&server, backoff) => found?,
+        () = &mut cancel => anyhow::bail!("cancelled before the server answered"),
+    };
     // The credential goes where this names, and the token minted for it
     // after.
     crate::client::ensure_on_server(&server, &found, &[], "the start credential")?;
@@ -169,7 +177,7 @@ pub async fn exchange_start_credential_with(
     let url = format!("{}/start", found.control_url.trim_end_matches('/'));
     let started = tokio::select! {
         started = start_with_retries(&http, &url, &file.start_credential, backoff) => started?,
-        () = cancel => anyhow::bail!("cancelled before the server answered"),
+        () = &mut cancel => anyhow::bail!("cancelled before the server answered"),
     };
     Ok(RemoteLogin {
         server,
@@ -183,6 +191,30 @@ pub async fn exchange_start_credential_with(
         workspace_name: started.workspace_name,
         account: started.account,
     })
+}
+
+/// The server's discovery document, asked again while it cannot be reached
+/// or fails, for at most `backoff`; at once for a final answer.
+async fn discover_with_retries(
+    server: &str,
+    backoff: Backoff,
+) -> anyhow::Result<sven_control::remote::RemoteDiscovery> {
+    let mut wait = backoff.first;
+    let mut waited = Duration::ZERO;
+    loop {
+        let reason = match crate::client::discover_once(server).await {
+            Ok(found) => return Ok(found),
+            Err(crate::client::Discovery::Refused(e)) => return Err(e),
+            Err(crate::client::Discovery::Unreachable(e)) => e,
+        };
+        if waited >= backoff.total {
+            return Err(reason.context("the server could not be reached in time"));
+        }
+        tracing::warn!("discovery failed ({reason:#}); trying again in {wait:?}");
+        tokio::time::sleep(wait).await;
+        waited += wait;
+        wait = (wait * 2).min(backoff.longest);
+    }
 }
 
 /// One attempt's failure: worth another try, or final.

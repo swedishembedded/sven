@@ -219,13 +219,53 @@ pub(crate) fn http() -> anyhow::Result<reqwest::Client> {
 ///
 /// It cannot be reached, answers something else, or speaks a newer protocol.
 pub async fn discover(server: &str) -> anyhow::Result<RemoteDiscovery> {
+    match discover_once(server).await {
+        Ok(found) => Ok(found),
+        Err(Discovery::Unreachable(e) | Discovery::Refused(e)) => Err(e),
+    }
+}
+
+/// Why discovery did not answer: the server could not be reached or failed
+/// (worth another try), or it answered something final.
+pub(crate) enum Discovery {
+    Unreachable(anyhow::Error),
+    Refused(anyhow::Error),
+}
+
+/// [`discover`], telling a failure that may pass (no answer, a 5xx) from
+/// one that will not.
+pub(crate) async fn discover_once(server: &str) -> Result<RemoteDiscovery, Discovery> {
     let url = format!("{server}{DISCOVERY_PATH}");
-    let response = http()?
+    let response = http()
+        .map_err(Discovery::Refused)?
         .get(&url)
         .timeout(REQUEST_TIMEOUT)
         .send()
         .await
-        .map_err(|e| anyhow::anyhow!("could not reach {server}: {e}"))?;
+        // The whole chain: reqwest's own text ("error sending request")
+        // hides why (refused, a failed lookup, a proxy's answer, TLS).
+        .map_err(|e| {
+            Discovery::Unreachable(anyhow::anyhow!(
+                "could not reach {server}: {}",
+                sven_http::describe(&e)
+            ))
+        })?;
+    if response.status().is_server_error() {
+        return Err(Discovery::Unreachable(anyhow::anyhow!(
+            "{url} answered {}",
+            response.status()
+        )));
+    }
+    discovered(server, &url, response)
+        .await
+        .map_err(Discovery::Refused)
+}
+
+async fn discovered(
+    server: &str,
+    url: &str,
+    response: reqwest::Response,
+) -> anyhow::Result<RemoteDiscovery> {
     anyhow::ensure!(
         response.status().is_success(),
         "{server} is not a remote-control server ({url} answered {})",
