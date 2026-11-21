@@ -235,6 +235,27 @@ fn a_model_naming_a_provider_entry_is_expanded_into_it() {
 }
 
 #[test]
+fn driver_options_of_a_model_naming_a_provider_entry_survive_the_expansion() {
+    // `model.driver_options` next to `model.provider: <entry>` is a request
+    // setting the user asked for; the entry's own options sit beneath it.
+    let providers: Providers = serde_yaml::from_str(
+        "gw:\n  name: brain\n  base_url: http://localhost:8000/v1\n  driver_options:\n    top_n: 3\n    thinking_budget: 99\n",
+    )
+    .unwrap();
+    let mut model = ModelConfig {
+        provider: "gw".into(),
+        name: "main".into(),
+        driver_options: serde_json::json!({"thinking_budget": 16}),
+        ..ModelConfig::default()
+    };
+    settle(&mut model, &providers, true);
+    assert_eq!(
+        model.driver_options,
+        serde_json::json!({"thinking_budget": 16, "top_n": 3})
+    );
+}
+
+#[test]
 fn a_builtin_provider_is_left_as_configured() {
     let mut model = ModelConfig {
         provider: "anthropic".into(),

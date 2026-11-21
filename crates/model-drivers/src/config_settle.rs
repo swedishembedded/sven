@@ -147,7 +147,20 @@ fn expand_named_provider(model: &mut ModelConfig, providers: &Providers) {
             driver = %entry.name,
             "expanding named provider config"
         );
+        let requested = std::mem::take(&mut model.driver_options);
         *model = entry.to_model_config(&model.name);
+        merge_driver_options(&mut model.driver_options, requested);
+    }
+}
+
+/// Lays the options a `model:` section asked for over those of its endpoint,
+/// key by key, so a request setting written next to `provider:` is not lost
+/// to the expansion. A non-object value replaces the endpoint's options.
+fn merge_driver_options(base: &mut serde_json::Value, requested: serde_json::Value) {
+    match (base.as_object_mut(), requested) {
+        (_, serde_json::Value::Null) => {}
+        (Some(base), serde_json::Value::Object(requested)) => base.extend(requested),
+        (_, requested) => *base = requested,
     }
 }
 
