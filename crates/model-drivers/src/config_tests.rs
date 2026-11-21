@@ -256,6 +256,35 @@ fn driver_options_of_a_model_naming_a_provider_entry_survive_the_expansion() {
 }
 
 #[test]
+fn every_setting_a_model_section_gives_survives_the_expansion_of_its_named_provider() {
+    // Any field written next to `model.provider: <entry>` is the user's request and lies over the entry's own
+    // settings; a field it leaves unset keeps the entry's. `enable_thinking` was dropped silently here.
+    let providers: Providers = serde_yaml::from_str(
+        "gw:\n  name: brain\n  base_url: http://localhost:8000/v1\n  max_tokens: 4096\n  temperature: 0.9\n",
+    )
+    .unwrap();
+    let mut model = ModelConfig {
+        provider: "gw".into(),
+        name: "main".into(),
+        enable_thinking: Some(false),
+        temperature: Some(0.3),
+        session: Some("conversation-1".into()),
+        ..ModelConfig::default()
+    };
+    settle(&mut model, &providers, true);
+    assert_eq!(model.provider, "brain");
+    assert_eq!(model.enable_thinking, Some(false));
+    assert_eq!(model.temperature, Some(0.3));
+    assert_eq!(
+        model.max_tokens,
+        Some(4096),
+        "a field the model section left unset keeps the entry's"
+    );
+    assert_eq!(model.base_url.as_deref(), Some("http://localhost:8000/v1"));
+    assert_eq!(model.session.as_deref(), Some("conversation-1"));
+}
+
+#[test]
 fn a_builtin_provider_is_left_as_configured() {
     let mut model = ModelConfig {
         provider: "anthropic".into(),

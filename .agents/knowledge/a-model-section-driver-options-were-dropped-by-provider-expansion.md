@@ -16,3 +16,13 @@ field in the body did cap reasoning, which located the loss in sven's config set
 **Fix:** the options in `model:` are laid over the entry's `driver_options` key by key (model wins). Binaries built
 before the fix need the options under `providers.<entry>.models.<model>.driver_options` (or the entry's
 `driver_options`), which `to_model_config` honours.
+
+## Every other `model:` field was dropped the same way (2026-11-21)
+
+`enable_thinking: false` next to `provider: gateway` reached the rendered config of a bench trial, but the recorded
+requests carried no `chat_template_kwargs` and the 4B reasoned 3,600-8,800 characters per turn (sven-1db749d9, two vim
+trials). The expansion replaced the whole section, so only `driver_options` (fixed above) survived. Now every field the
+`model:` section sets (differs from `ModelConfig::default`) lies over the entry's, a field left at its default keeps
+the entry's, and the process-only `session` is carried over (`config_settle::overlay_requested`; spec
+`every_setting_a_model_section_gives_survives_the_expansion_of_its_named_provider`). Until a build with this is used,
+put the switch in `driver_options.chat_template_kwargs.enable_thinking`, which every build honours.

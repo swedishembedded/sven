@@ -147,10 +147,49 @@ fn expand_named_provider(model: &mut ModelConfig, providers: &Providers) {
             driver = %entry.name,
             "expanding named provider config"
         );
-        let requested = std::mem::take(&mut model.driver_options);
-        *model = entry.to_model_config(&model.name);
-        merge_driver_options(&mut model.driver_options, requested);
+        let mut requested = std::mem::take(model);
+        let driver_options = std::mem::take(&mut requested.driver_options);
+        *model = entry.to_model_config(&requested.name);
+        overlay_requested(model, &requested);
+        merge_driver_options(&mut model.driver_options, driver_options);
     }
+}
+
+/// Lays every setting the `model:` section gave over the expanded endpoint's,
+/// so nothing written next to `provider:` is lost to the expansion: a field
+/// whose value differs from [`ModelConfig::default`] was set and wins; one
+/// left at its default keeps the endpoint's. `provider` and `name` are the
+/// expansion's own, `driver_options` are merged key by key
+/// ([`merge_driver_options`]), and the process-only fields the file format
+/// skips (`session`, `detection_fallback`) are carried over as they are.
+fn overlay_requested(model: &mut ModelConfig, requested: &ModelConfig) {
+    let (Ok(serde_json::Value::Object(defaults)), Ok(serde_json::Value::Object(asked))) = (
+        serde_json::to_value(ModelConfig::default()),
+        serde_json::to_value(requested),
+    ) else {
+        return;
+    };
+    let Ok(serde_json::Value::Object(mut merged)) = serde_json::to_value(&*model) else {
+        return;
+    };
+    for (key, value) in asked {
+        if matches!(key.as_str(), "provider" | "name" | "driver_options") {
+            continue;
+        }
+        if defaults.get(&key) != Some(&value) {
+            merged.insert(key, value);
+        }
+    }
+    let session = model.session.take().or_else(|| requested.session.clone());
+    let fallback = model
+        .detection_fallback
+        .take()
+        .or_else(|| requested.detection_fallback.clone());
+    if let Ok(settled) = serde_json::from_value::<ModelConfig>(serde_json::Value::Object(merged)) {
+        *model = settled;
+    }
+    model.session = session;
+    model.detection_fallback = fallback;
 }
 
 /// Lays the options a `model:` section asked for over those of its endpoint,
