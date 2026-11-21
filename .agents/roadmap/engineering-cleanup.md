@@ -17,7 +17,7 @@ where it surfaced. This ledger removes the second declaration. Execution waits f
 
 EC-1 first (it unblocks every lane's `make check`). EC-2 and EC-3 are independent. EC-4 builds on EC-2.
 
-## EC-1 `crates/remote/src/client.rs` fails ARCH-007 (S, open)
+## EC-1 `crates/remote/src/client.rs` fails ARCH-007 (S, done)
 
 - **Problem.** 1094 lines, over the 800 production-line limit and not in `[[allow.large_file]]`, so `make check`
   fails for every change. It holds four things: server discovery (`normalize_server`, `discover`), five error types,
@@ -29,6 +29,8 @@ EC-1 first (it unblocks every lane's `make check`). EC-2 and EC-3 are independen
   allowlist entry.
 - **Safety net.** The crate's existing tests, unchanged; `cargo public-api` (or a `use` smoke test of every public
   path) to show the surface did not move.
+- **Done.** `client/{mod,discovery,errors,environment,conversation}.rs` (largest 310 lines) and the tests, unchanged
+  but for their imports, in `client/tests.rs`; `lib.rs`'s re-exports and every `crate::client::` path compile as before.
 
 ## EC-2 One declaration per configuration section (M, open)
 

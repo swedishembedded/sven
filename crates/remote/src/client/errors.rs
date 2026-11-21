@@ -1,9 +1,8 @@
 // Copyright (c) 2026 Martin Schröder <info@swedishembedded.com>
 //
 // SPDX-License-Identifier: Apache-2.0
-//! The errors a host's request to the sven service ends with that a caller
-//! acts on: each names one reason the server gave, so the caller can tell a
-//! token to renew from an environment someone else holds.
+//! The errors a host's requests to its server end in that its caller tells
+//! apart: each says what the person can do about it.
 
 use uuid::Uuid;
 
@@ -85,3 +84,21 @@ impl std::fmt::Display for Disconnected {
 }
 
 impl std::error::Error for Disconnected {}
+
+/// A command the server sent that this host cannot read (one of a newer
+/// protocol, or malformed). Reconnecting resends it from the same place, so
+/// a host that stops at it never moves on: it skips it by its `seq`.
+#[derive(Debug)]
+pub struct UnreadableCommand {
+    /// The command's position in the stream, when the payload still says.
+    pub seq: Option<u64>,
+    pub(super) reason: String,
+}
+
+impl std::fmt::Display for UnreadableCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "an unreadable command ({})", self.reason)
+    }
+}
+
+impl std::error::Error for UnreadableCommand {}
