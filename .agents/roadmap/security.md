@@ -25,3 +25,10 @@ Scope: Hardening `sven rc` so that a compromised remote-control server (which ch
   Landlock profile for non-hosted `sven rc` would close it.
 - `start_server` with `--wide-access` off still refuses only model-spelled
   commands; a discovered server command comes from project files.
+- The TUI names a new chat by asking `openrouter/free` (no key, the public
+  OpenRouter endpoint) before the configured model
+  (`sven_frontend::agent::AgentRequest::GenerateTitle`): the person's first
+  message leaves the machine for a provider they never configured. Found
+  2026-11-21 (lane PLAY); a session started with a prompt (`--interactive`)
+  is named locally and sends nothing, the rest is open. Fix: title with the
+  configured model only, or name locally.
