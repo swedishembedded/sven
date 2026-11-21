@@ -53,6 +53,11 @@ pub(crate) struct Completion<'a> {
 /// name is gone whoever registered it.
 pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) {
     let compact = completion.profile == crate::RunProfile::Compact;
+    let mcp_names: Vec<String> = completion
+        .mcp_tools
+        .iter()
+        .map(|t| sven_tool_api::Tool::name(t).to_string())
+        .collect();
     if compact {
         crate::compact_profile::restrict(registry);
     }
@@ -79,4 +84,74 @@ pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) 
         completion.disabled,
         completion.only,
     ));
+    for warning in surface_warnings(&registry.names(), completion.only, compact, &mcp_names) {
+        tracing::warn!("{warning}");
+    }
+}
+
+/// What a session's configuration asked for and did not get, said once at
+/// build: the `tools.only` names no registered tool has, and the MCP tools a
+/// compact profile leaves out. Either can leave a session without the tool a
+/// task depends on (with `tools.only` naming only an MCP tool, with none at
+/// all), which must not pass in silence.
+fn surface_warnings(
+    offered: &[String],
+    only: Option<&[String]>,
+    compact: bool,
+    mcp_names: &[String],
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if compact && !mcp_names.is_empty() {
+        warnings.push(format!(
+            "the compact profile offers no MCP tool; not offered: {}",
+            mcp_names.join(", ")
+        ));
+    }
+    if let Some(only) = only {
+        let missing: Vec<&str> = only
+            .iter()
+            .filter(|name| !offered.contains(name))
+            .map(String::as_str)
+            .collect();
+        if !missing.is_empty() {
+            warnings.push(format!(
+                "tools.only names tools this session does not offer: {}{}",
+                missing.join(", "),
+                if offered.is_empty() {
+                    "; the session offers no tool at all"
+                } else {
+                    ""
+                }
+            ));
+        }
+    }
+    warnings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::surface_warnings;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn an_allow_list_naming_an_mcp_tool_a_compact_profile_dropped_is_reported() {
+        let warnings =
+            surface_warnings(&[], Some(&names(&["vim-vim"])), true, &names(&["vim-vim"]));
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(
+            warnings[0].contains("compact profile offers no MCP tool")
+                && warnings[0].contains("vim-vim")
+        );
+        assert!(warnings[1].contains("vim-vim") && warnings[1].contains("no tool at all"));
+    }
+
+    #[test]
+    fn a_session_that_has_everything_it_asked_for_says_nothing() {
+        let offered = names(&["vim-vim"]);
+        assert!(surface_warnings(&offered, Some(&offered), false, &offered).is_empty());
+        assert!(surface_warnings(&names(&["read_file"]), None, true, &[]).is_empty());
+    }
 }
