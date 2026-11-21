@@ -33,6 +33,7 @@ mod tool_slots;
 
 mod prompt_composer;
 pub mod prompts;
+pub mod provenance;
 pub mod reconstruct;
 mod runtime_context;
 mod stall;

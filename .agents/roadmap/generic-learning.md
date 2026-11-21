@@ -20,12 +20,19 @@ The loop needs only the verifier, the tools, a token budget and state forks, and
 
 ## Capabilities
 
-| Id | Capability | Status | Acceptance | Depends on |
-|---|---|---|---|---|
-| GL-S1 | Total completion-token cap and turn cap per session, enforced by the agent; exhaustion is reported as a typed outcome distinct from infrastructure errors | gap (open item 10: no total token cap) | a session stops at the cap with the typed outcome; a recorded request shows the cap in force | GL-R1 for the per-turn part |
-| GL-S2 | Fork from a recorded state with a named context block removed (a hint, a knowledge page), the student sampling unhinted from there | partial: fork and replay exist; removing a named block does not | forking at state `s_t` with the block removed yields a session whose recorded requests lack the block's text | GL-B3 (task runner) |
-| GL-S4 | A person-guided session (`sven --interactive PROMPT`) recorded with the fidelity of a headless run | partial: since 06b2ecc5 the TUI sends what a headless run sends (append, sampling, time line) and marks typed turns `extra.sven.origin: human`; its `--record-requests` log is the headless format. Open: its ATIF trace is folded from the chat view, so steps lack per-request `metrics`, `extra.sven.timing`, `tool_definitions`, `final_metrics` and the outcome stamp the headless `StepAssembler` writes; and it offers `ask_question`, which a headless run does not | the trace of an interactive run of a scripted mock task equals the headless trace of the same turns step for step, apart from the `human` steps | none |
-| GL-S3 | Per-completion context provenance: which context blocks each completion saw, recorded with the trajectory | gap | every completion record lists its blocks; the training-data builder's same-observation check reads it structurally | none |
+Landed 2026-11-21; what each guarantees is described where it is used:
+
+- GL-S1, the run budget (`agent.max_completion_tokens`, `agent.max_turns`; typed `budget_exhausted` outcome, exit 4, the budget in force on every request-log line): `docs/reference/configuration.md#run-budget`.
+- GL-S2, forking from a recorded trajectory without a named context block (`--drop-context-block`, `agent.drop_context_blocks`): `docs/guides/request-replay.md#forking-without-a-context-block`.
+- GL-S3, per-completion context provenance (`context_blocks` on every ledger record of a trajectory): `docs/internals/token-ledger.md`.
+
+Open:
+
+| Id | Gap | Acceptance |
+|---|---|---|
+| GL-S2b | A fork starts from a whole trajectory; choosing state `s_t` inside it means giving `--load-trace` a trajectory cut at that step. A block that is not a system-prompt section (the dynamic suffix, a message) cannot be dropped. | `--load-trace` takes a step index; a named non-section block can be dropped |
+| GL-S4 | A person-guided session (`sven --interactive PROMPT`) recorded with the fidelity of a headless run; partial: since 06b2ecc5 the TUI sends what a headless run sends (append, sampling, time line) and marks typed turns `extra.sven.origin: human`; its `--record-requests` log is the headless format. Open: its ATIF trace is folded from the chat view, so steps lack per-request `metrics`, `extra.sven.timing`, `tool_definitions`, `final_metrics` and the outcome stamp the headless `StepAssembler` writes; and it offers `ask_question`, which a headless run does not | the trace of an interactive run of a scripted mock task equals the headless trace of the same turns step for step, apart from the `human` steps |
+| GL-S1b | Side-by-side sub-agents are each handed the whole remainder, so together they can take the parent past its bound (it stops at its next completion); a sub-agent whose turn fails reports no spending. | children share one reservation; a failed child's spending is still charged |
 
 ## Stop doing (sven)
 

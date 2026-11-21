@@ -436,7 +436,11 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
         }
         UiEvent::Error(e) => {
             state.had_error = true;
-            write_stderr(&format!("[sven:error] {e}"));
+            // A refusal of the run budget is reported once, as the run's
+            // conclusion (`run_budget::conclude`).
+            if !super::run_budget::ended_run() {
+                write_stderr(&format!("[sven:error] {e}"));
+            }
         }
         UiEvent::TurnComplete => {
             close_sven_section(state);

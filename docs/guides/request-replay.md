@@ -32,6 +32,12 @@ record: no provider ever receives it. A request whose system prompt a
 compaction rewrote carries no manifest, because its sections would describe
 text that is no longer there; its tools can still be swapped.
 
+When a run budget is in force (`agent.max_completion_tokens`,
+`agent.max_turns`), each request line also carries `run_budget`: the bounds,
+the completion tokens charged before the request and which completion of the
+run it is (`turn`). The request's own `max_output_tokens_override` is the
+output limit it was sent with, already lowered to what the budget left.
+
 ## Inspect
 
 ```sh
@@ -111,4 +117,26 @@ jq -s 'map(.calls[] | select(.valid | not)) | length' variant.jsonl
 
 A comparison at one decision point says how the model's next step changes, not
 whether a task is solved sooner; confirm a winner on tasks before adopting it.
+
+## Forking without a context block
+
+A replay asks for one decision. To let the agent go on from a recorded state
+without a block of its context (a hint given with `--append-system-prompt`, the
+knowledge listing), start a session from the recorded trajectory with that
+block dropped:
+
+```sh
+sven --headless --load-trace run.atif.json --drop-context-block system/append \
+  --output-trace fork.atif.json "continue"
+```
+
+The names are the ones each completion's ledger record lists under
+`context_blocks` (see [Token ledger](../internals/token-ledger.md)): any
+`system/<section>` of the ids above. Every system prompt of the forked session
+is composed without the named sections, so none of its recorded requests
+carries their text; the trajectory's messages are replayed as recorded.
+`agent.drop_context_blocks` sets the same in a configuration file. The
+recorded state is the whole trajectory given to `--load-trace`; to fork
+earlier, give it a trajectory cut at that step. Delegated sub-agents compose
+their own prompts and are not affected.
 Reference: [`sven replay`](../reference/cli.md#sessions-and-trajectories).

@@ -89,6 +89,10 @@ pub struct AgentRuntimeContext {
     /// in a session of a service that keeps them (`sven rc`); `None`
     /// elsewhere.
     pub conversation_files: Option<sven_tool_api::files::ConversationFiles>,
+    /// Ids of system-prompt sections left out of every system prompt this
+    /// context builds (`append`, `knowledge`, ...): a session forked without
+    /// a named context block. See `docs/guides/request-replay.md`.
+    pub dropped_sections: Vec<String>,
 }
 
 impl AgentRuntimeContext {
@@ -114,8 +118,19 @@ impl AgentRuntimeContext {
 
     /// [`Self::build_system_message`] with the named sections the text is
     /// made of, for a caller that keeps them beside the message it seeds.
+    ///
+    /// Sections named in [`Self::dropped_sections`] are left out; a prompt
+    /// left with none is no system message at all.
     #[must_use]
     pub fn build_system_prompt(&self, mode: AgentMode) -> Option<ComposedPrompt> {
+        let composed = self.compose_system_prompt(mode)?;
+        if self.dropped_sections.is_empty() {
+            return Some(composed);
+        }
+        Some(composed.without(&self.dropped_sections)).filter(|kept| !kept.text.is_empty())
+    }
+
+    fn compose_system_prompt(&self, mode: AgentMode) -> Option<ComposedPrompt> {
         if self.no_system {
             return compose_override(
                 self.system_prompt_override.as_deref(),

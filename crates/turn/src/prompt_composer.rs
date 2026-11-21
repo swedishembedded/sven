@@ -28,6 +28,22 @@ pub struct ComposedPrompt {
     pub sections: PromptSections,
 }
 
+impl ComposedPrompt {
+    /// This prompt without the sections whose ids are in `dropped`: their
+    /// bytes, leading separator included, are gone from the text and the
+    /// remaining sections are re-tiled over what is left.
+    #[must_use]
+    pub fn without(&self, dropped: &[String]) -> ComposedPrompt {
+        let mut composer = Composer::default();
+        for section in &self.sections.sections {
+            if !dropped.contains(&section.id) {
+                composer.push(&section.id, &self.text[section.range()]);
+            }
+        }
+        composer.finish()
+    }
+}
+
 /// Appends named sections to a growing system prompt.
 #[derive(Debug, Default)]
 pub(crate) struct Composer {
@@ -54,5 +70,35 @@ impl Composer {
             text: self.text,
             sections,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dropped_section_leaves_no_byte_and_the_rest_still_tile_the_text() {
+        let mut composer = Composer::default();
+        composer
+            .push("identity", "I am sven.")
+            .push("knowledge", "\n\nKnowledge: a.md")
+            .push("append", "\n\nHint: look in src/");
+        let composed = composer.finish();
+        let kept = composed.without(&["append".to_string()]);
+        assert_eq!(kept.text, "I am sven.\n\nKnowledge: a.md");
+        let ids: Vec<&str> = kept
+            .sections
+            .sections
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect();
+        assert_eq!(ids, ["identity", "knowledge"]);
+        assert_eq!(
+            kept.sections.get("knowledge"),
+            composed.sections.get("knowledge"),
+            "a kept section keeps its span and digest"
+        );
+        assert_eq!(composed.without(&[]), composed);
     }
 }

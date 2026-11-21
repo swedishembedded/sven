@@ -52,7 +52,8 @@ does not honour refused or, on explicit best effort, recorded as `sampling_unhon
    paths, `ls -l` owner and time fields, shell durations, error text that differs between builds, and nondeterministic output.
    Next: replay with the recorded build and normalise the remaining nondeterministic fields. Acceptance: under 10% refused on a
    real pass of at least 500 failures.
-10. A total token and cost cap per run, so that arms can be compared at equal budget (today only turn and wall-clock bounds bind).
+10. A cost cap per run, so that arms can be compared at equal cost. The completion-token and turn caps landed 2026-11-21
+    (`docs/reference/configuration.md#run-budget`).
 11. Done 2026-11-18/19: headless sampling flags (`--temperature --top-p --top-k --seed --logprobs`) honoured or refused; the
     request log declared with its schema and counts; compaction notes no longer send an unbounded thinking budget (brain refused
     them with 400); fork comparison ignores owner, group and duration fields; a shell launcher and trimmed observations in replay.

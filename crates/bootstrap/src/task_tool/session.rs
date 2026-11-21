@@ -36,6 +36,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::{debug, warn};
 
 use sven_hsm::ChildRunContract;
+use sven_model_drivers::run_budget::RunBudgetLimits;
 use sven_tool_api::{
     events::{SubagentUpdate, ToolEvent},
     tool::ToolOutput,
@@ -43,6 +44,7 @@ use sven_tool_api::{
 use sven_tools_fs::OutputBufferStore;
 use sven_vocab::ApprovalMode;
 
+use super::budget::{budget_spent, charge_run_budget};
 use super::handback::{transcript_bytes, Child, Reporting};
 use super::permission_client::AcpTaskClient;
 use super::report::{report, ReportContext, SessionEnd, TurnTokens};
@@ -129,6 +131,9 @@ pub(super) struct ServeTerms {
     pub(super) evidence_store: Option<PathBuf>,
     /// The state root a confined child gets in place of this process's own.
     pub(super) state_root: Option<PathBuf>,
+    /// What is left of this process's run budget when the child starts: the
+    /// child may spend no more, and what it spends is charged here.
+    pub(super) run_budget: RunBudgetLimits,
 }
 
 // ── The protocol exchange ─────────────────────────────────────────────────────
@@ -320,6 +325,7 @@ where
                         resp.usage.map(|u| TurnTokens {
                             input: u.input_tokens,
                             output: u.output_tokens,
+                            budget: budget_spent(resp.meta.as_ref()),
                         }),
                     ),
                     Ok(Err(e)) => {
@@ -414,6 +420,12 @@ fn serve_args(
     }
     if let Some(tokens) = contract.max_output_tokens {
         flag("max-output-tokens", tokens.to_string());
+    }
+    if let Some(tokens) = terms.run_budget.max_completion_tokens {
+        flag("max-completion-tokens", tokens.to_string());
+    }
+    if let Some(turns) = terms.run_budget.max_turns {
+        flag("max-turns", turns.to_string());
     }
     for tool in &terms.disabled_tools {
         flag("disable-tool", tool.clone());
@@ -691,6 +703,7 @@ pub(super) async fn run_acp_session(args: SpawnArgs, depth: u32) -> ToolOutput {
     .await;
     // What the child used is charged where the parent's own use is.
     if let SessionEnd::Finished(_, Some(tokens)) = &end {
+        charge_run_budget(tokens);
         let _ = tool_event_tx
             .send(ToolEvent::SubagentEvent {
                 call_id: call_id.clone(),
@@ -988,6 +1001,7 @@ mod tests {
             approval: ApprovalMode::Manual,
             command_patterns: Some((vec!["rm -rf /*".into()], vec!["ls *".into()])),
             evidence_store: None,
+            run_budget: RunBudgetLimits::default(),
         };
         let args = serve_args(Some("fast"), &contract, &terms, now);
         assert_eq!(
@@ -1057,6 +1071,45 @@ mod tests {
                 "--no-preload"
             ]
         );
+    }
+
+    #[test]
+    fn a_child_is_handed_what_is_left_of_the_run_budget() {
+        let terms = ServeTerms {
+            run_budget: RunBudgetLimits {
+                max_completion_tokens: Some(700),
+                max_turns: Some(3),
+            },
+            ..ServeTerms::default()
+        };
+        let args = serve_args(
+            None,
+            &contract_for(AgentMode::Agent),
+            &terms,
+            std::time::Instant::now(),
+        );
+        assert_eq!(
+            args[2..6],
+            ["--max-completion-tokens", "700", "--max-turns", "3"]
+        );
+    }
+
+    #[test]
+    fn a_childs_reported_spending_is_read_from_its_response() {
+        use sven_model_drivers::run_budget::Spent;
+        let mut meta = agent_client_protocol::Meta::new();
+        meta.insert(
+            sven_model_drivers::run_budget::SPENT_META_KEY.into(),
+            serde_json::json!({"completion_tokens": 42, "turns": 2}),
+        );
+        assert_eq!(
+            budget_spent(Some(&meta)),
+            Some(Spent {
+                completion_tokens: 42,
+                turns: 2
+            })
+        );
+        assert_eq!(budget_spent(None), None);
     }
 
     /// The child's kernel names the capability of a call it asks about; the

@@ -64,6 +64,13 @@ fn load_settings(cli: &Cli) -> anyhow::Result<Settings> {
             settings.runtime.tools.disabled.push(name.clone());
         }
     }
+    let agent = &mut settings.runtime.agent;
+    agent
+        .drop_context_blocks
+        .extend(cli.drop_context_blocks.iter().cloned());
+    agent
+        .dropped_sections()
+        .map_err(|e| run::UsageError(e.to_string()))?;
     Ok(settings)
 }
 
@@ -414,6 +421,9 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
         }
     }
     let mut settings = load_settings(&cli)?;
+    // Every completion of this run, delegated children's included, is held
+    // to `agent.max_completion_tokens` and `agent.max_turns`.
+    sven_model_drivers::run_budget::install(settings.runtime.agent.run_budget())?;
     cli.disclosure.apply(&mut settings.runtime);
     #[cfg(feature = "network")]
     sven_bootstrap::connectors::add_signed_in(&mut settings.runtime);

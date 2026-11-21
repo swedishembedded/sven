@@ -25,8 +25,7 @@
 use std::sync::Arc;
 
 use crate::Config;
-use sven_executors::user::{ApprovalRequest, UserQuestion};
-use sven_executors::ThreadStore;
+use sven_executors::{user::ApprovalRequest, user::UserQuestion, ThreadStore};
 use sven_hsm::{Context, Principal, ToolCallId};
 use sven_kernel::{EffectExecutor, ErasedRuntime};
 use sven_mcp_client::{McpEvent, McpManager};
@@ -612,6 +611,7 @@ impl RuntimeBuilder {
         runtime.no_system = self.runtime_ctx.no_system;
         runtime.no_tools = self.runtime_ctx.no_tools;
         runtime.disclosure = self.config.instruction_disclosure();
+        runtime.dropped_sections = self.config.agent.dropped_sections()?;
         crate::compact_profile::fix_prompt(profile, &mut runtime);
 
         let todos = Arc::new(tokio::sync::Mutex::new(Vec::<

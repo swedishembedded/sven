@@ -10,6 +10,9 @@ use agent_client_protocol::StopReason;
 pub(super) struct TurnTokens {
     pub(super) input: u64,
     pub(super) output: u64,
+    /// What the turn took of the run budget the child was handed, when its
+    /// server reported it.
+    pub(super) budget: Option<sven_model_drivers::run_budget::Spent>,
 }
 
 /// How a sub-agent's session ended.

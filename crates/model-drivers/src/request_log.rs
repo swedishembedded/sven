@@ -38,6 +38,10 @@ pub enum Record {
         provider: String,
         model: String,
         request: Box<CompletionRequest>,
+        /// The run budget the request was sent under, when one is
+        /// installed; the request's own output limit is already held to it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_budget: Option<crate::run_budget::InForce>,
     },
     /// What came back for request `seq`.
     Response { seq: u64, response: Response },
@@ -237,6 +241,7 @@ impl ModelProvider for RecordingProvider {
             provider: self.inner.name().to_string(),
             model: self.inner.model_name().to_string(),
             request: Box::new(req.clone()),
+            run_budget: crate::run_budget::installed().map(|budget| budget.in_force()),
         });
         let log = Arc::clone(&self.log);
         let stream = match self.inner.complete(req).await {

@@ -49,9 +49,9 @@ pub use artifact::{
 pub use cost::Amount;
 pub use harness::{HarnessEvent, PublishedFile};
 pub use ledger::{
-    ContextRecovery, ContextView, DecisionInference, DecisionTraceRecord, DemotionRecord,
-    LedgerSummary, ReportedUsage, RequestBreakdown, ToolActivity, STEP_DECISIONS_EXTRA_KEY,
-    STEP_METRICS_EXTRA_KEY,
+    ContextBlock, ContextRecovery, ContextView, DecisionInference, DecisionTraceRecord,
+    DemotionRecord, LedgerSummary, ReportedUsage, RequestBreakdown, ToolActivity,
+    STEP_DECISIONS_EXTRA_KEY, STEP_METRICS_EXTRA_KEY,
 };
 pub use tool_image::{ShownImages, ToolImage, MAX_IMAGES, MAX_IMAGE_BASE64_BYTES};
 

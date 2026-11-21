@@ -221,6 +221,24 @@ impl TurnUsage {
     }
 }
 
+/// The ACP stop reason of a turn the run budget ended.
+fn budget_stop_reason(bound: sven_model_drivers::run_budget::Bound) -> StopReason {
+    match bound {
+        sven_model_drivers::run_budget::Bound::Turns => StopReason::MaxTurnRequests,
+        sven_model_drivers::run_budget::Bound::CompletionTokens => StopReason::MaxTokens,
+    }
+}
+
+/// The response metadata that reports what a turn spent of the run budget.
+fn spent_meta(spent: sven_model_drivers::run_budget::Spent) -> agent_client_protocol::Meta {
+    let mut meta = agent_client_protocol::Meta::new();
+    meta.insert(
+        sven_model_drivers::run_budget::SPENT_META_KEY.to_string(),
+        serde_json::to_value(spent).unwrap_or_default(),
+    );
+    meta
+}
+
 // ─── Session entry ────────────────────────────────────────────────────────────
 
 /// Per-session state stored inside [`SvenAcpAgent`].
@@ -631,6 +649,10 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         // What the turn used, reported with its response so a client that
         // pays for this agent (a `task` parent) can charge it.
         let mut used = TurnUsage::default();
+        // What this turn takes of the process's run budget, reported with
+        // the response for a parent to charge.
+        let budget = sven_model_drivers::run_budget::installed();
+        let budget_before = budget.map(|b| b.spent());
 
         // Pin the oneshot receiver so it can be polled repeatedly in select!
         // without being moved on the first iteration.
@@ -688,11 +710,23 @@ impl agent_client_protocol::Agent for SvenAcpAgent {
         }
 
         if let Some(msg) = agent_error {
-            warn!(session = %session_id, error = %msg, "ACP prompt: kernel reported error");
-            return Err(Error::new(i32::from(ErrorCode::InternalError), msg));
+            // A turn the run budget ended is a stop, not a failure: the
+            // client learns which bound from the stop reason.
+            match budget.and_then(|b| b.exhausted()) {
+                Some(exhausted) => stop_reason = Some(budget_stop_reason(exhausted.bound)),
+                None => {
+                    warn!(session = %session_id, error = %msg, "ACP prompt: kernel reported error");
+                    return Err(Error::new(i32::from(ErrorCode::InternalError), msg));
+                }
+            }
         }
 
-        Ok(PromptResponse::new(stop_reason.unwrap_or(StopReason::EndTurn)).usage(used.into_acp()))
+        let response =
+            PromptResponse::new(stop_reason.unwrap_or(StopReason::EndTurn)).usage(used.into_acp());
+        Ok(match budget.zip(budget_before) {
+            Some((budget, before)) => response.meta(spent_meta(budget.spent().since(before))),
+            None => response,
+        })
     }
 
     async fn cancel(&self, args: CancelNotification) -> AcpResult<()> {

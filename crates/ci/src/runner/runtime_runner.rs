@@ -408,6 +408,10 @@ impl RuntimeRunner {
             (result, None)
         };
 
+        // A run its budget ended concludes as such, whatever error the
+        // refused completion surfaced as.
+        let result = super::run_budget::conclude(result);
+
         write_progress(&format!(
             "[sven:step:complete] 1/1 duration_ms={} tools={} success={}",
             started.elapsed().as_millis(),

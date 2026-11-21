@@ -251,6 +251,13 @@ pub struct Cli {
     #[arg(long, value_name = "TEXT")]
     pub append_system_prompt: Option<String>,
 
+    /// Compose every system prompt of the session without the context block
+    /// a trajectory records as NAME (`system/append`, `system/knowledge`,
+    /// ...); adds to `agent.drop_context_blocks`. With --load-trace, the run
+    /// is a fork of the recorded state without that block. Repeatable.
+    #[arg(long = "drop-context-block", value_name = "NAME")]
+    pub drop_context_blocks: Vec<String>,
+
     /// Suppress Sven's built-in system prompt (identity, guidelines, project/
     /// git/CI context, skills, agents, knowledge). With no other prompt flag,
     /// the session starts with zero system tokens before the first message.

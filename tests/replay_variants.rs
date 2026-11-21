@@ -60,6 +60,7 @@ fn write_log(dir: &Path) -> std::path::PathBuf {
         provider: "openai".into(),
         model: "scripted".into(),
         request: Box::new(request),
+        run_budget: None,
     };
     let file = dir.join("run.requests.jsonl");
     std::fs::write(

@@ -782,6 +782,9 @@ Controls the agent's autonomy and defaults.
 |-----|---------|-------------|
 | `default_mode` | `"agent"` | The mode of an interactive or headless run that gets no `--mode`: `research`, `plan`, `agent`, `chat` or `sdlc` |
 | `max_tool_rounds` | `200` | Maximum autonomous tool-call rounds before stopping |
+| `max_completion_tokens` | none | Most completion (output) tokens, reasoning included, that all model completions of the run may produce together; see [Run budget](#run-budget) |
+| `max_turns` | none | Most model completions of the run; see [Run budget](#run-budget) |
+| `drop_context_blocks` | `[]` | Context blocks every system prompt of the session is composed without, by their recorded names (`system/append`, `system/knowledge`, ...); an unknown name fails the start. `--drop-context-block` adds to it; see [Forking without a context block](../guides/request-replay.md#forking-without-a-context-block) |
 | `compaction_threshold` | `0.98` | Fraction of the input budget that triggers compaction |
 | `compaction_output_reserve` | `0.02` | Fraction of the window kept free for the response (reasoning included) when judging the conversation full |
 | `compaction_summary_tokens` | `10000` | Most tokens the compaction notes may take; also capped at a quarter of the window |
@@ -810,6 +813,38 @@ Controls the agent's autonomy and defaults.
 
 Increasing `max_tool_rounds` lets sven work on longer tasks without stopping.
 Decreasing it gives you more control by forcing sven to pause and ask.
+
+#### Run budget
+
+`max_completion_tokens` and `max_turns` bound a whole run: every model
+completion the process requests counts, the turns of the agent, compaction
+notes and any other request alike. A turn is one completion.
+
+- Each request's output limit is lowered to the completion tokens left, and
+  the tokens a completion may still produce are reserved while it streams, so
+  requests in flight together are never given the same tokens twice. A limit
+  that only stands for the room left in the context window is kept while it
+  is the tighter bound; the server then ends the reply at its context.
+- Each completion is charged the output tokens its response reports. A
+  response that reports none is charged everything it was allowed, and the
+  run says how many such completions it had (`[sven:warn] run budget: ...`).
+- When the run would need one more completion than the budget allows, the
+  request is not sent: the run ends with exit code `4`, the trajectory's
+  outcome is `budget_exhausted`, and stderr carries one line such as
+  `[sven:error] run budget exhausted: 4096 of 4096 completion tokens, 12 of 40 turns`.
+  A run that finishes on its last allowed completion finishes normally.
+- A `task` sub-agent runs in its own process and is started with what is
+  left (`acp serve --max-completion-tokens --max-turns`), so it can never
+  spend more than that. What it reports spending is charged to the parent
+  when its turn ends; a sub-agent whose turn fails reports nothing, and then
+  only its own bound holds. Sub-agents running side by side are each handed
+  the whole remainder, so together they can take the parent past its bound;
+  the parent then stops at its next completion.
+- A completion whose server ignores the output limit is charged what it
+  reports, past the bound if need be, with a warning in the log.
+
+The budget covers a headless run or an interactive session (`sven`) and an
+`acp serve` process; it is set once when the process starts.
 
 #### Context budget and compaction
 

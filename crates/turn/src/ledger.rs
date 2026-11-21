@@ -111,6 +111,8 @@ pub fn estimate_request(request: &CompletionRequest) -> RequestBreakdown {
     b.tool_activity = tool_activity(&request.messages);
     b.context_recovery = context_recovery(&request.messages);
 
+    b.context_blocks = crate::provenance::context_blocks(request);
+
     b.estimated_total = b.attributed_total();
     b
 }

@@ -99,6 +99,7 @@ use sven_workspace::SharedAgents;
 mod admission;
 mod approver;
 mod brief;
+mod budget;
 mod call_stops;
 mod confined_child;
 mod finding;
@@ -766,6 +767,9 @@ impl Tool for TaskTool {
                 command_patterns: self.command_patterns.clone(),
                 evidence_store: brief.evidence_store,
                 state_root: None,
+                run_budget: sven_model_drivers::run_budget::installed()
+                    .map(|budget| budget.remaining())
+                    .unwrap_or_default(),
             },
             workdir,
             model_override,

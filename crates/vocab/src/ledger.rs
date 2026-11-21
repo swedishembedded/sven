@@ -308,6 +308,26 @@ pub struct RequestBreakdown {
     /// tool-call content of the response; absent when the response had none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_token_ms: Option<u64>,
+    /// The context blocks this completion saw, in request order: which
+    /// sources its prompt was assembled from, each named by its kind and
+    /// identity and with the digest of its text. See [`ContextBlock`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_blocks: Vec<ContextBlock>,
+}
+
+/// One named block of a model request's context and the SHA-256 of its text.
+///
+/// Names say where a block came from, never what it says: `system/<section>`
+/// for a named section of the system prompt (`system/append`,
+/// `system/knowledge`, ...), `system` for a system prompt whose sections are
+/// not known, `system/dynamic_suffix` for the volatile block after it, and
+/// `tools` for the offered tool definitions. Two completions saw the same
+/// block exactly when name and digest agree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextBlock {
+    pub name: String,
+    /// Lowercase hexadecimal SHA-256 of the block's text.
+    pub sha256: String,
 }
 
 impl RequestBreakdown {

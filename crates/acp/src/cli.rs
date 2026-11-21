@@ -54,6 +54,16 @@ pub enum AcpCommands {
         #[arg(long, value_name = "TOKENS")]
         max_output_tokens: Option<u32>,
 
+        /// Lowers `agent.max_completion_tokens` to at most `TOKENS` for every
+        /// completion this server makes. The task tool passes what is left of
+        /// its own run's budget.
+        #[arg(long, value_name = "TOKENS")]
+        max_completion_tokens: Option<u64>,
+
+        /// Lowers `agent.max_turns` to at most `N` completions of this server.
+        #[arg(long, value_name = "N")]
+        max_turns: Option<u32>,
+
         /// Stops serving, and every session with it, after `SECS` seconds.
         #[arg(long, value_name = "SECS")]
         wall_clock_secs: Option<u64>,
@@ -185,6 +195,23 @@ fn apply_budgets(
     }
 }
 
+/// Holds `config` to the run budget a parent handed down, only ever lowering
+/// what the configuration allows.
+fn apply_run_budget(
+    config: &mut sven_bootstrap::Config,
+    handed: sven_model_drivers::run_budget::RunBudgetLimits,
+) {
+    fn lower<T: Ord + Copy>(own: Option<T>, handed: Option<T>) -> Option<T> {
+        match (own, handed) {
+            (Some(own), Some(handed)) => Some(own.min(handed)),
+            (own, handed) => own.or(handed),
+        }
+    }
+    let agent = &mut config.agent;
+    agent.max_completion_tokens = lower(agent.max_completion_tokens, handed.max_completion_tokens);
+    agent.max_turns = lower(agent.max_turns, handed.max_turns);
+}
+
 /// Runs a `sven acp` subcommand.
 pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
     match cmd {
@@ -193,6 +220,8 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
             provider,
             max_tool_rounds,
             max_output_tokens,
+            max_completion_tokens,
+            max_turns,
             wall_clock_secs,
             disable_tools,
             no_preload,
@@ -229,6 +258,15 @@ pub async fn run_acp_command(cmd: &AcpCommands) -> anyhow::Result<()> {
                 *max_output_tokens,
                 disable_tools,
             );
+            apply_run_budget(
+                &mut config,
+                sven_model_drivers::run_budget::RunBudgetLimits {
+                    max_completion_tokens: *max_completion_tokens,
+                    max_turns: *max_turns,
+                },
+            );
+            // Every session this process serves shares the one budget.
+            sven_model_drivers::run_budget::install(config.agent.run_budget())?;
             if *no_preload {
                 config.tools.preload.clear();
             }
@@ -324,6 +362,42 @@ mod tests {
         apply_budgets(&mut config, Some(50), Some(8000), &[]);
         assert_eq!(config.agent.max_tool_rounds, 3);
         assert_eq!(config.model.max_output_tokens, Some(1000));
+    }
+
+    #[test]
+    fn a_parent_run_budget_only_lowers_the_served_one() {
+        let cli = Cli::try_parse_from([
+            "sven",
+            "serve",
+            "--max-completion-tokens",
+            "900",
+            "--max-turns",
+            "4",
+        ])
+        .expect("the flags parse");
+        let AcpCommands::Serve {
+            max_completion_tokens,
+            max_turns,
+            ..
+        } = cli.acp;
+        let handed = sven_model_drivers::run_budget::RunBudgetLimits {
+            max_completion_tokens,
+            max_turns,
+        };
+        let mut config = sven_bootstrap::Config::default();
+        apply_run_budget(&mut config, handed);
+        assert_eq!(
+            (config.agent.max_completion_tokens, config.agent.max_turns),
+            (Some(900), Some(4))
+        );
+        let mut config = sven_bootstrap::Config::default();
+        config.agent.max_completion_tokens = Some(500);
+        config.agent.max_turns = Some(10);
+        apply_run_budget(&mut config, handed);
+        assert_eq!(
+            (config.agent.max_completion_tokens, config.agent.max_turns),
+            (Some(500), Some(4))
+        );
     }
 
     #[test]

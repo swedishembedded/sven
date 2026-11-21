@@ -21,14 +21,14 @@ use crate::output::{format_token_usage_line, tool_output_snippet, write_stderr, 
 use super::OutputFormat;
 
 /// Stream every step the assembler has newly closed (since `emitted`) to
-/// stdout as NDJSON — one ATIF `TraceStep` JSON object per line — when
+/// stdout as NDJSON - one ATIF `TraceStep` JSON object per line - when
 /// `output_format` is `Jsonl`. Always advances `*emitted` to the assembler's
 /// current closed-step count, regardless of output format, so a later call
 /// only ever sees steps closed after this one.
 ///
 /// This is the single place that keeps real-time JSONL streaming consistent
 /// with the turn-shaped step assembler: a step is only known complete (and
-/// thus emittable) once something closes it — a user message, a fresh
+/// thus emittable) once something closes it - a user message, a fresh
 /// thinking block, a context-compaction marker, or the final flush at the
 /// end of the run. That is coarser-grained than the old one-record-per-raw-
 /// event stream, but matches ATIF's turn-shaped `StepObject`: a `ToolCall`
@@ -54,13 +54,13 @@ pub(super) fn stream_new_steps(
 /// its ACP buffer `handle_id` (see `AgentEvent::SubagentStarted` /
 /// `AgentEvent::SubagentEvent`). Accumulates the subagent's own turn stream
 /// into an independent [`StepAssembler`], scoped to just this child, until a
-/// [`SubagentUpdate::Finished`]/[`SubagentUpdate::Failed`] closes it out —
+/// [`SubagentUpdate::Finished`]/[`SubagentUpdate::Failed`] closes it out -
 /// at which point [`finalize_subagent_child`] folds it into a standalone
 /// [`Trajectory`] and embeds it into the parent's own trace (see
 /// [`handle_event`]'s `AgentEvent::SubagentEvent` arm).
 pub(super) struct SubagentChildState {
     /// Document identity minted for this child at spawn time (with
-    /// [`trace_session::new_session_id`] — the same helper the rest of this
+    /// [`trace_session::new_session_id`] - the same helper the rest of this
     /// codebase mints session/trajectory ids with; there is no separate
     /// trajectory-id-only minting helper).
     trajectory_id: String,
@@ -68,7 +68,7 @@ pub(super) struct SubagentChildState {
     assembler: StepAssembler,
     /// Buffered `TextDelta`s not yet folded into `assembler`. Unlike the
     /// parent run's own `AgentEvent::TextDelta`/`TextComplete` pair,
-    /// [`SubagentUpdate`] has no "text complete" signal — deltas are
+    /// [`SubagentUpdate`] has no "text complete" signal - deltas are
     /// buffered here and flushed into `assembler` the next time a turn
     /// boundary is known (a tool call starting, or the subagent finishing).
     text_buf: String,
@@ -127,14 +127,14 @@ pub(super) struct StepState<'a> {
     /// exceeded. `handle_event` deliberately does **not** call
     /// `std::process::exit` itself for this condition: unlike the CI
     /// runner's other fatal-abort sites (timeout, consecutive tool errors,
-    /// step failure — all in `runner/mod.rs`, where `flush_trace` and
+    /// step failure - all in `runner/mod.rs`, where `flush_trace` and
     /// `effective_output_trace` are in scope), this handler has no access to
     /// the trace-flush closure, so exiting here would skip it entirely and
     /// the run would end with `--output-trace` unwritten. Instead, the
     /// caller (`runner/mod.rs`) checks this flag immediately after each
-    /// `handle_event` call — mirroring the existing
+    /// `handle_event` call - mirroring the existing
     /// `consecutive_tool_errors >= MAX_CONSECUTIVE_TOOL_ERRORS` check right
-    /// next to it — and flushes the partial trace before exiting with
+    /// next to it - and flushes the partial trace before exiting with
     /// `EXIT_BUDGET_EXHAUSTED` itself.
     pub budget_exhausted: &'a mut bool,
     /// In-progress subagent child state, keyed by ACP `handle_id`; see
@@ -159,7 +159,7 @@ pub(super) struct StepState<'a> {
 /// messages into `collected`, fold the event into `assembler`, and track
 /// response text / tool usage.
 pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
-    // Fold every event into the reward tally first — one insertion point that
+    // Fold every event into the reward tally first - one insertion point that
     // no future arm can forget.
     s.outcome.observe(&event);
     s.ledger.observe(&event, &mut *s.assembler);
@@ -303,7 +303,11 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             stream_new_steps(assembler, s.emitted_steps, output_format);
         }
         AgentEvent::Error(msg) => {
-            write_stderr(&format!("[sven:agent:error] {msg}"));
+            // A refusal of the run budget is reported once, as the run's
+            // conclusion (`run_budget::failure`).
+            if !super::run_budget::ended_run() {
+                write_stderr(&format!("[sven:agent:error] {msg}"));
+            }
             *failed = true;
         }
         AgentEvent::TodoUpdate(todos) => {
@@ -349,7 +353,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                         "[sven:error] Token budget exhausted: {} tokens used (budget: {}). Stopping.",
                         s.run_total_tokens, budget
                     ));
-                    // Signal the caller rather than exiting here — see
+                    // Signal the caller rather than exiting here - see
                     // `StepState::budget_exhausted`'s doc comment.
                     *s.budget_exhausted = true;
                 }
@@ -492,7 +496,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
 /// (looked up by `handle_id`, matching the `AgentEvent::SubagentStarted` that
 /// created it). `Finished`/`Failed` remove the entry and hand it to
 /// [`finalize_subagent_child`], which embeds the completed child trajectory
-/// into the parent's own trace right away — see [`StepState::completed_subagents`].
+/// into the parent's own trace right away - see [`StepState::completed_subagents`].
 ///
 /// If no entry exists for `handle_id` (e.g. a `SubagentEvent` arriving before
 /// its `SubagentStarted`, which should not happen given how the `task` tool
@@ -500,7 +504,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
 /// logged and otherwise ignored rather than panicking.
 ///
 /// `call_id` is the spawning `task` tool call's id (the same one
-/// `AgentEvent::ToolCallStarted`/`ToolCallFinished` carry for that call) —
+/// `AgentEvent::ToolCallStarted`/`ToolCallFinished` carry for that call) -
 /// threaded through to [`finalize_subagent_child`] so the embedded-trajectory
 /// observation can be correlated with that `tool_calls` entry; see
 /// [`StepAssembler::push_subagent_embedded`]'s doc comment for why that
@@ -529,7 +533,7 @@ fn handle_subagent_update(
                 return;
             };
             // A tool call always closes whatever thinking/text was buffered
-            // for the turn so far — mirrors the parent's own
+            // for the turn so far - mirrors the parent's own
             // thinking-then-tool-call ordering (see `StepAssembler::push_thinking`'s
             // doc comment).
             child.flush_buffered();
@@ -616,7 +620,7 @@ fn handle_subagent_update(
         // Per-subagent cost reporting has no natural home on a `TraceStep`
         // yet (the child's `Trajectory.final_metrics` would be the right
         // place, but populating it needs token counts this event doesn't
-        // carry, only `cost_usd`) — left as a follow-up; not folded into the
+        // carry, only `cost_usd`) - left as a follow-up; not folded into the
         // trace, silently ignored like the parent run's own per-event cost
         // deltas (which only ever surface via the aggregate `[sven:tokens]`
         // line, not per-turn).

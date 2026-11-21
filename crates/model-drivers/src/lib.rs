@@ -46,6 +46,7 @@ mod provider_check;
 pub mod reachable;
 pub mod request_log;
 mod resolve;
+pub mod run_budget;
 pub mod sven_service;
 mod thinking;
 #[cfg(not(target_arch = "wasm32"))]
@@ -572,17 +573,19 @@ pub fn from_config(cfg: &ModelConfig) -> anyhow::Result<Box<dyn ModelProvider>> 
     let (inner, context_window, max_output_tokens) = build_inner(cfg)?;
     let inner: Arc<dyn ModelProvider> = Arc::from(inner);
     listing::refresh_when_stale(&inner, cfg);
-    Ok(request_log::wrap(Box::new(ConfigBoundedProvider {
-        inner,
-        config_context_window: context_window,
-        max_output_tokens,
-        input_modalities: cfg
-            .input_modalities
-            .as_deref()
-            .and_then(parse_input_modalities),
-        live: None,
-        sampling_best_effort: cfg.sampling_best_effort,
-    })))
+    Ok(run_budget::wrap(request_log::wrap(Box::new(
+        ConfigBoundedProvider {
+            inner,
+            config_context_window: context_window,
+            max_output_tokens,
+            input_modalities: cfg
+                .input_modalities
+                .as_deref()
+                .and_then(parse_input_modalities),
+            live: None,
+            sampling_best_effort: cfg.sampling_best_effort,
+        },
+    ))))
 }
 
 /// Like [`from_config`], but additionally asks the live server what it is
@@ -629,17 +632,19 @@ pub async fn from_config_probed(cfg: &ModelConfig) -> anyhow::Result<Box<dyn Mod
         discovery::effective_base_url(cfg).is_some_and(|u| discovery::is_local_endpoint(&u));
     let live = discovery::LiveState::new(&cfg.name, local);
     live.refresh(&*inner).await;
-    Ok(request_log::wrap(Box::new(ConfigBoundedProvider {
-        inner,
-        config_context_window,
-        max_output_tokens,
-        input_modalities: cfg
-            .input_modalities
-            .as_deref()
-            .and_then(parse_input_modalities),
-        live: Some(live),
-        sampling_best_effort: cfg.sampling_best_effort,
-    })))
+    Ok(run_budget::wrap(request_log::wrap(Box::new(
+        ConfigBoundedProvider {
+            inner,
+            config_context_window,
+            max_output_tokens,
+            input_modalities: cfg
+                .input_modalities
+                .as_deref()
+                .and_then(parse_input_modalities),
+            live: Some(live),
+            sampling_best_effort: cfg.sampling_best_effort,
+        },
+    ))))
 }
 
 /// Steps 0-2 of [`from_config_probed`]: the configuration a session actually

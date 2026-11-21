@@ -10,6 +10,7 @@ mod deadline;
 mod event;
 mod helpers;
 mod outcome;
+mod run_budget;
 pub mod runtime_runner;
 mod ui_output;
 
@@ -34,9 +35,7 @@ use anyhow::Context;
 use tokio::sync::mpsc;
 
 use atif::{TraceStep, Trajectory};
-use sven_bootstrap::Config;
-use sven_bootstrap::RuntimeContext;
-use sven_bootstrap::TimeBudget;
+use sven_bootstrap::{Config, RuntimeContext, TimeBudget};
 use sven_machines::AgentEvent;
 use sven_model::{ContentPart, Message, MessageContent, Role};
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
@@ -1127,22 +1126,22 @@ impl CiRunner {
 
                         result = &mut submit_fut => {
                             if let Err(e) = result {
-                                write_stderr(&format!(
-                                    "[sven:fatal] Step {step_idx} ({label:?}) failed: {e:#}"
-                                ));
                                 // A hard submit failure is exactly the kind of
                                 // negative outcome the trajectory should record,
                                 // so flush before exiting rather than leaving no
                                 // document at all.
+                                let (conclusion, code) = run_budget::failure(&format!(
+                                    "[sven:fatal] Step {step_idx} ({label:?}) failed: {e:#}"
+                                ));
                                 if let Some(ref path) = effective_output_trace {
                                     flush_trace(
                                         path,
                                         &assembler.snapshot_including_pending(),
                                         &completed_subagents,
-                                        Some(&outcome_fold.conclude(RunConclusion::AgentError, None)),
+                                        Some(&outcome_fold.conclude(conclusion, None)),
                                     );
                                 }
-                                std::process::exit(EXIT_AGENT_ERROR);
+                                std::process::exit(code);
                             }
                             while let Ok(ev) = rx.try_recv() {
                                 handle_event(ev, &mut StepState {
@@ -1295,7 +1294,7 @@ impl CiRunner {
             }
 
             if failed {
-                write_stderr(&format!(
+                let (conclusion, code) = run_budget::failure(&format!(
                     "[sven:error] Step {step_idx} ({label:?}) reported an error. Aborting."
                 ));
                 if let Some(ref path) = effective_output_trace {
@@ -1303,10 +1302,10 @@ impl CiRunner {
                         path,
                         &assembler.snapshot_including_pending(),
                         &completed_subagents,
-                        Some(&outcome_fold.conclude(RunConclusion::AgentError, None)),
+                        Some(&outcome_fold.conclude(conclusion, None)),
                     );
                 }
-                std::process::exit(EXIT_AGENT_ERROR);
+                std::process::exit(code);
             }
 
             if step_idx < total {

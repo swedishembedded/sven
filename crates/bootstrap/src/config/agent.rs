@@ -82,6 +82,27 @@ pub struct AgentConfig {
     /// Maximum number of autonomous tool-call rounds before stopping
     #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: u32,
+    /// Most completion (output) tokens, reasoning included, that every model
+    /// completion of a headless run or of an `acp serve` process may produce
+    /// together, compaction notes and delegated children included. Each
+    /// request's output limit is lowered to what is left; a run that would
+    /// need another completion once none is left ends with the
+    /// budget-exhausted outcome. `None` (the default) is no bound. See
+    /// `docs/reference/configuration.md` for what it guarantees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<u64>,
+    /// Most model completions (turns) of such a run, counted like
+    /// `max_completion_tokens`. A run that ends on its last allowed
+    /// completion finishes normally. `None` (the default) is no bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+    /// Context blocks every system prompt of the session is composed
+    /// without, by the names a trajectory records them under
+    /// (`system/append`, `system/knowledge`, ...): with `--load-trace`, a
+    /// session forked from a recorded state without that block. An unknown
+    /// name fails the session's start. Empty (the default) drops nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drop_context_blocks: Vec<String>,
     /// Token fraction at which proactive compaction triggers (0.0-1.0),
     /// checked by `TurnExecutor` before every model request against the usable
     /// input budget (`sven_model::budget::effective_input_budget`), minus
@@ -259,6 +280,9 @@ impl AgentConfig {
         Schema::keys(&[
             "default_mode",
             "max_tool_rounds",
+            "max_completion_tokens",
+            "max_turns",
+            "drop_context_blocks",
             "compaction_threshold",
             "compaction_summary_tokens",
             "tool_result_token_cap",
@@ -297,6 +321,31 @@ impl AgentConfig {
                 "a compaction now asks for one set of notes on the whole conversation; remove the key",
             ),
         )
+    }
+
+    /// The run budget `max_completion_tokens` and `max_turns` set.
+    #[must_use]
+    pub fn run_budget(&self) -> sven_model_drivers::run_budget::RunBudgetLimits {
+        sven_model_drivers::run_budget::RunBudgetLimits {
+            max_completion_tokens: self.max_completion_tokens,
+            max_turns: self.max_turns,
+        }
+    }
+
+    /// The system-prompt sections [`Self::drop_context_blocks`] names.
+    ///
+    /// # Errors
+    ///
+    /// A name that is no droppable block, with the names that are.
+    pub fn dropped_sections(&self) -> anyhow::Result<Vec<String>> {
+        self.drop_context_blocks
+            .iter()
+            .map(|name| {
+                sven_turn::provenance::droppable_section(name)
+                    .map(str::to_string)
+                    .map_err(anyhow::Error::msg)
+            })
+            .collect()
     }
 
     /// The wall-clock budget of a child run, if bounded.
@@ -359,6 +408,9 @@ impl Default for AgentConfig {
         Self {
             default_mode: AgentMode::Agent,
             max_tool_rounds: 200,
+            max_completion_tokens: None,
+            max_turns: None,
+            drop_context_blocks: Vec::new(),
             compaction_threshold: default_compaction_threshold(),
             compaction_summary_tokens: default_compaction_summary_tokens(),
             tool_result_token_cap: default_tool_result_token_cap(),

@@ -40,6 +40,8 @@ allows; the `task` tool passes its sub-agent's budgets through them:
 | Flag | Effect |
 |------|--------|
 | `--max-tool-rounds N` | `agent.max_tool_rounds` becomes at most `N` |
+| `--max-completion-tokens N` | `agent.max_completion_tokens` becomes at most `N`: every completion of the process together (see [Run budget](configuration.md#run-budget)) |
+| `--max-turns N` | `agent.max_turns` becomes at most `N` completions of the process |
 | `--max-output-tokens TOKENS` | the model's output-token cap becomes at most `TOKENS` |
 | `--wall-clock-secs SECS` | the server, and every session in it, stops after `SECS` seconds |
 | `--disable-tool NAME` | the sessions never offer nor run `NAME` (repeatable; adds to `tools.disabled`) |
@@ -75,6 +77,12 @@ you made."
 
 Each prompt response reports the tokens the turn used (`usage`: input,
 output, total), so a client that pays for the agent can charge them.
+When a run budget is in force (`agent.max_completion_tokens`,
+`agent.max_turns`, or the flags above), the response's `_meta` also carries
+`sven.run_budget_spent`: the completion tokens and completions (`turns`) the
+turn took of it. A turn that ends because the budget refused its next
+completion is no error: it stops with `max_tokens` (the token bound) or
+`max_turn_requests` (the completion bound).
 
 ## IDE configuration
 
