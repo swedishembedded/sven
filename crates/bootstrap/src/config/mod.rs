@@ -37,7 +37,7 @@ use sven_config::{ConfigDocument, Schema};
 use sven_decision::config::DecisionConfig;
 use sven_http::egress::{EgressPolicy, NetworkConfig};
 use sven_mcp_client::{mcp_servers_schema, McpServers};
-use sven_model_drivers::{providers_schema, ModelConfig, Providers};
+use sven_model_drivers::{providers_schema, ModelConfig, ModelSection, Providers};
 
 pub use agent::AgentConfig;
 pub use context::{AssemblyConfig, AssemblyMode, ContextSettings};
@@ -337,7 +337,18 @@ impl Config {
     /// in code - stays `full`, so the tools such an application registers are
     /// in every request as before.
     pub fn settle_from(&mut self, document: &ConfigDocument) {
-        self.settle(document.contains("model"));
+        // The `model:` section as written, so that what it sets is told apart
+        // from what it leaves at its default. Every field of the patch is an
+        // `Option` of the type `Config` decoded, so a section that decode
+        // accepted reads here too; one it could not read had the whole file
+        // ignored, loudly, and settles as no section.
+        let section = document
+            .section::<ModelSection>("model")
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "the `model:` section cannot be read; no model is configured");
+                None
+            });
+        self.settle(section.as_ref());
         if !document.contains_path(&["tools", "disclosure", "mode"]) {
             self.tools.disclosure.mode = sven_tool_registry::Disclosure::Deferred;
         }
@@ -353,11 +364,12 @@ impl Config {
     }
 
     /// Settles the active model once the file is read: chosen from the
-    /// environment when the file names none (`model_configured` false),
-    /// expanded from the named provider it refers to, and checked against
-    /// the token limits it sets. See [`sven_model_drivers::config::settle`].
-    pub fn settle(&mut self, model_configured: bool) {
-        sven_model_drivers::config::settle(&mut self.model, &self.providers, model_configured);
+    /// environment when the file has no `model:` section (`section` is
+    /// `None`), expanded from the named provider it refers to with what the
+    /// section sets laid over it, and checked against the token limits it
+    /// sets. See [`sven_model_drivers::config::settle`].
+    pub fn settle(&mut self, section: Option<&ModelSection>) {
+        sven_model_drivers::config::settle(&mut self.model, &self.providers, section);
     }
 
     /// The model `spec` names - `provider/model`, a named provider, a catalog
@@ -561,6 +573,18 @@ mod tests {
         );
         assert_eq!(config.model.max_tokens, Some(54272));
         assert_eq!(config.model_reference(), "my_ollama/my-model");
+    }
+
+    #[test]
+    fn a_model_section_setting_a_default_over_its_named_provider_keeps_it() {
+        // `cache_tools: true` is the default; the file states it, so it wins
+        // over the entry's `false`.
+        let config = Config::from_document(&document(
+            "model: {provider: gw, name: main, cache_tools: true}\n\
+             providers:\n  gw:\n    name: brain\n    models:\n      main:\n        cache_tools: false\n",
+        ));
+        assert_eq!(config.model.provider, "brain");
+        assert!(config.model.cache_tools);
     }
 
     /// A removed key is reported with what replaces it, where the key is

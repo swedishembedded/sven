@@ -580,6 +580,148 @@ impl ModelConfig {
     }
 }
 
+/// The `model:` section as the file writes it: a patch, every field `None`
+/// unless the file sets it (an explicit `null` counts as unset). Decoded
+/// beside [`ModelConfig`] so that what was set can be told apart from what
+/// was left at its default, which a decoded [`ModelConfig`] cannot say: a
+/// section that names a provider entry lays exactly what it sets over that
+/// entry ([`Self::apply`]).
+///
+/// The fields are [`ModelConfig`]'s file keys, one for one (a test round-trips
+/// a fully populated [`ModelConfig`] through this type).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelSection {
+    /// [`ModelConfig::provider`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// [`ModelConfig::name`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// [`ModelConfig::api_key_file`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_file: Option<String>,
+    /// [`ModelConfig::api_key`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// [`ModelConfig::base_url`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// [`ModelConfig::max_tokens`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    /// [`ModelConfig::max_output_tokens`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    /// [`ModelConfig::max_input_tokens`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_input_tokens: Option<u32>,
+    /// [`ModelConfig::temperature`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    /// [`ModelConfig::azure_resource`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azure_resource: Option<String>,
+    /// [`ModelConfig::azure_deployment`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azure_deployment: Option<String>,
+    /// [`ModelConfig::azure_api_version`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azure_api_version: Option<String>,
+    /// [`ModelConfig::aws_region`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aws_region: Option<String>,
+    /// [`ModelConfig::cache_system_prompt`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_system_prompt: Option<bool>,
+    /// [`ModelConfig::extended_cache_time`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extended_cache_time: Option<bool>,
+    /// [`ModelConfig::cache_tools`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_tools: Option<bool>,
+    /// [`ModelConfig::cache_conversation`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_conversation: Option<bool>,
+    /// [`ModelConfig::cache_images`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_images: Option<bool>,
+    /// [`ModelConfig::cache_tool_results`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_tool_results: Option<bool>,
+    /// [`ModelConfig::driver_options`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub driver_options: Option<serde_json::Value>,
+    /// [`ModelConfig::enable_thinking`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_thinking: Option<bool>,
+    /// [`ModelConfig::mock_responses_file`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mock_responses_file: Option<String>,
+    /// [`ModelConfig::input_modalities`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_modalities: Option<Vec<String>>,
+    /// [`ModelConfig::sampling_best_effort`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sampling_best_effort: Option<bool>,
+}
+
+impl ModelSection {
+    /// Lays every setting this section gives over `model`; a field the
+    /// section leaves unset keeps `model`'s. `provider` and `name` select the
+    /// endpoint rather than configure it and are not applied here.
+    /// `driver_options` are merged key by key: an object's keys over
+    /// `model`'s, any other value in their place.
+    pub fn apply(&self, model: &mut ModelConfig) {
+        // A set field replaces `model`'s: `T` itself, or `Some(T)` where
+        // `model` holds an `Option<T>`.
+        macro_rules! set {
+            ($($field:ident),* $(,)?) => {$(
+                if let Some(value) = &self.$field {
+                    model.$field = value.clone().into();
+                }
+            )*};
+        }
+        set!(
+            api_key_file,
+            api_key,
+            base_url,
+            max_tokens,
+            max_output_tokens,
+            max_input_tokens,
+            temperature,
+            azure_resource,
+            azure_deployment,
+            azure_api_version,
+            aws_region,
+            cache_system_prompt,
+            extended_cache_time,
+            cache_tools,
+            cache_conversation,
+            cache_images,
+            cache_tool_results,
+            enable_thinking,
+            mock_responses_file,
+            input_modalities,
+            sampling_best_effort,
+        );
+        if let Some(requested) = &self.driver_options {
+            merge_driver_options(&mut model.driver_options, requested.clone());
+        }
+    }
+}
+
+/// Lays the options a `model:` section asked for over those of its endpoint,
+/// key by key, so a request setting written next to `provider:` is not lost
+/// to the expansion. A non-object value replaces the endpoint's options.
+fn merge_driver_options(base: &mut serde_json::Value, requested: serde_json::Value) {
+    match (base.as_object_mut(), requested) {
+        (_, serde_json::Value::Null) => {}
+        (Some(base), serde_json::Value::Object(requested)) => base.extend(requested),
+        (_, requested) => *base = requested,
+    }
+}
+
 /// Why a configuration's `api_key_env` does nothing, and what replaces it:
 /// said where the key is read, so the run does not fail later on a missing
 /// key with no hint.

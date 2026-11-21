@@ -74,7 +74,7 @@ fn detected_on(machine: &Machine) -> ModelConfig {
         std::env::set_var(key, value);
     }
     let mut model = ModelConfig::default();
-    settle(&mut model, &Providers::new(), false);
+    settle(&mut model, &Providers::new(), None);
     for (key, value) in saved {
         match value {
             Some(v) => std::env::set_var(key, v),
@@ -217,16 +217,10 @@ fn input_modalities_are_inherited_and_overridden_per_model() {
 
 #[test]
 fn a_model_naming_a_provider_entry_is_expanded_into_it() {
-    let providers: Providers = serde_yaml::from_str(
+    let model = settled(
         "my_ollama:\n  name: openai\n  base_url: http://localhost:8000/v1\n  models:\n    my-model:\n      max_tokens: 54272\n",
-    )
-    .unwrap();
-    let mut model = ModelConfig {
-        provider: "my_ollama".into(),
-        name: "my-model".into(),
-        ..ModelConfig::default()
-    };
-    settle(&mut model, &providers, true);
+        "provider: my_ollama\nname: my-model\n",
+    );
     // After expansion the provider is the driver, not the entry's name.
     assert_eq!(model.provider, "openai");
     assert_eq!(model.name, "my-model");
@@ -238,17 +232,10 @@ fn a_model_naming_a_provider_entry_is_expanded_into_it() {
 fn driver_options_of_a_model_naming_a_provider_entry_survive_the_expansion() {
     // `model.driver_options` next to `model.provider: <entry>` is a request
     // setting the user asked for; the entry's own options sit beneath it.
-    let providers: Providers = serde_yaml::from_str(
+    let model = settled(
         "gw:\n  name: brain\n  base_url: http://localhost:8000/v1\n  driver_options:\n    top_n: 3\n    thinking_budget: 99\n",
-    )
-    .unwrap();
-    let mut model = ModelConfig {
-        provider: "gw".into(),
-        name: "main".into(),
-        driver_options: serde_json::json!({"thinking_budget": 16}),
-        ..ModelConfig::default()
-    };
-    settle(&mut model, &providers, true);
+        "provider: gw\nname: main\ndriver_options: {thinking_budget: 16}\n",
+    );
     assert_eq!(
         model.driver_options,
         serde_json::json!({"thinking_budget": 16, "top_n": 3})
@@ -258,20 +245,22 @@ fn driver_options_of_a_model_naming_a_provider_entry_survive_the_expansion() {
 #[test]
 fn every_setting_a_model_section_gives_survives_the_expansion_of_its_named_provider() {
     // Any field written next to `model.provider: <entry>` is the user's request and lies over the entry's own
-    // settings; a field it leaves unset keeps the entry's. `enable_thinking` was dropped silently here.
+    // settings; a field it leaves unset keeps the entry's. `enable_thinking` was dropped silently here. A setting
+    // the process gives the model (`session`) is kept too.
     let providers: Providers = serde_yaml::from_str(
         "gw:\n  name: brain\n  base_url: http://localhost:8000/v1\n  max_tokens: 4096\n  temperature: 0.9\n",
     )
     .unwrap();
-    let mut model = ModelConfig {
-        provider: "gw".into(),
-        name: "main".into(),
-        enable_thinking: Some(false),
-        temperature: Some(0.3),
-        session: Some("conversation-1".into()),
-        ..ModelConfig::default()
-    };
-    settle(&mut model, &providers, true);
+    let section: ModelSection = serde_yaml::from_str(
+        "provider: gw\nname: main\nenable_thinking: false\ntemperature: 0.3\n",
+    )
+    .unwrap();
+    let mut model: ModelConfig = serde_yaml::from_str(
+        "provider: gw\nname: main\nenable_thinking: false\ntemperature: 0.3\n",
+    )
+    .unwrap();
+    model.session = Some("conversation-1".into());
+    settle(&mut model, &providers, Some(&section));
     assert_eq!(model.provider, "brain");
     assert_eq!(model.enable_thinking, Some(false));
     assert_eq!(model.temperature, Some(0.3));
@@ -291,7 +280,11 @@ fn a_builtin_provider_is_left_as_configured() {
         name: "claude-opus-4-5".into(),
         ..ModelConfig::default()
     };
-    settle(&mut model, &Providers::new(), true);
+    settle(
+        &mut model,
+        &Providers::new(),
+        Some(&ModelSection::default()),
+    );
     assert_eq!(
         (model.provider.as_str(), model.name.as_str()),
         ("anthropic", "claude-opus-4-5")
@@ -334,7 +327,11 @@ fn an_explicit_model_section_is_never_replaced_by_detection() {
         name: "test-model".into(),
         ..ModelConfig::default()
     };
-    settle(&mut model, &Providers::new(), true);
+    settle(
+        &mut model,
+        &Providers::new(),
+        Some(&ModelSection::default()),
+    );
     assert_eq!(model.provider, "anthropic");
 }
 
@@ -480,4 +477,145 @@ fn detected_brain_without_a_stored_key_has_no_fallback() {
     });
     assert_eq!(m.provider, "brain");
     assert!(m.detection_fallback.is_none());
+}
+
+/// The active model a file settles to: `providers:` and `model:` as written.
+fn settled(providers_yaml: &str, model_yaml: &str) -> ModelConfig {
+    let providers: Providers = serde_yaml::from_str(providers_yaml).unwrap();
+    let mut model: ModelConfig = serde_yaml::from_str(model_yaml).unwrap();
+    let section: ModelSection = serde_yaml::from_str(model_yaml).unwrap();
+    settle(&mut model, &providers, Some(&section));
+    model
+}
+
+/// One field of the active model, as the file format writes it.
+fn field_of(model: &ModelConfig, field: &str) -> serde_json::Value {
+    serde_json::to_value(model).unwrap()[field].clone()
+}
+
+#[test]
+fn a_field_the_model_section_sets_wins_over_its_named_provider_even_at_its_default() {
+    // (field, where the entry holds its value, the entry's value, the section's value). The section's value wins
+    // whether or not it is the field's default: a field set to `true` (the default) over an entry holding `false`
+    // was lost before.
+    let rows: &[(&str, &str, &str, &str)] = &[
+        ("cache_system_prompt", "model", "false", "true"),
+        ("cache_tools", "model", "false", "true"),
+        ("cache_conversation", "model", "false", "true"),
+        ("cache_images", "model", "false", "true"),
+        ("cache_tool_results", "model", "false", "true"),
+        ("extended_cache_time", "model", "true", "false"),
+        ("max_tokens", "model", "4096", "1000"),
+        ("max_output_tokens", "model", "512", "256"),
+        ("max_input_tokens", "model", "2048", "1024"),
+        ("temperature", "entry", "0.9", "0.3"),
+        ("base_url", "entry", "http://entry/v1", "http://section/v1"),
+        ("api_key_file", "entry", "/entry-key", "/section-key"),
+        ("api_key", "entry", "entry-key", "section-key"),
+        ("azure_resource", "entry", "entry", "section"),
+        ("azure_deployment", "entry", "entry", "section"),
+        ("azure_api_version", "entry", "2024-01-01", "2025-01-01"),
+        ("aws_region", "entry", "eu-north-1", "us-east-1"),
+        (
+            "mock_responses_file",
+            "entry",
+            "/entry.yaml",
+            "/section.yaml",
+        ),
+        ("input_modalities", "entry", "[text]", "[text, image]"),
+    ];
+    for (field, holder, entry, asked) in rows {
+        let providers = if *holder == "model" {
+            format!("gw:\n  name: brain\n  models:\n    main:\n      {field}: {entry}\n")
+        } else {
+            format!("gw:\n  name: brain\n  {field}: {entry}\n")
+        };
+        let entry_only = settled(&providers, "provider: gw\nname: main\n");
+        let expected: ModelConfig = serde_yaml::from_str(&format!("{field}: {asked}")).unwrap();
+        assert_ne!(
+            field_of(&entry_only, field),
+            field_of(&expected, field),
+            "{field}: the row must hold two different values"
+        );
+        let model = settled(
+            &providers,
+            &format!("provider: gw\nname: main\n{field}: {asked}\n"),
+        );
+        assert_eq!(
+            field_of(&model, field),
+            field_of(&expected, field),
+            "{field}"
+        );
+    }
+    // Fields an entry cannot hold are carried over as the section gives them.
+    for (field, asked) in [
+        ("sampling_best_effort", "true"),
+        ("enable_thinking", "false"),
+    ] {
+        let model = settled(
+            "gw:\n  name: brain\n",
+            &format!("provider: gw\nname: main\n{field}: {asked}\n"),
+        );
+        let expected: ModelConfig = serde_yaml::from_str(&format!("{field}: {asked}")).unwrap();
+        assert_eq!(
+            field_of(&model, field),
+            field_of(&expected, field),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn a_model_section_that_sets_nothing_leaves_its_named_provider_whole() {
+    let providers_yaml = "gw:\n  name: brain\n  base_url: http://entry/v1\n  temperature: 0.9\n  models:\n    main:\n      cache_tools: false\n      extended_cache_time: true\n      max_output_tokens: 512\n";
+    let providers: Providers = serde_yaml::from_str(providers_yaml).unwrap();
+    let model = settled(providers_yaml, "provider: gw\nname: main\n");
+    assert_eq!(
+        serde_json::to_value(&model).unwrap(),
+        serde_json::to_value(providers["gw"].to_model_config("main")).unwrap()
+    );
+}
+
+#[test]
+fn the_model_section_patch_carries_every_field_of_the_model_section() {
+    // A field added to `ModelConfig` and missed in `ModelSection` (or in its
+    // `apply`) would be read from the file and then lost to the expansion.
+    let populated = ModelConfig {
+        provider: "p".into(),
+        name: "n".into(),
+        api_key_file: Some("f".into()),
+        api_key: Some("k".into()),
+        base_url: Some("u".into()),
+        max_tokens: Some(3),
+        max_output_tokens: Some(1),
+        max_input_tokens: Some(2),
+        temperature: Some(0.5),
+        azure_resource: Some("r".into()),
+        azure_deployment: Some("d".into()),
+        azure_api_version: Some("v".into()),
+        aws_region: Some("a".into()),
+        cache_system_prompt: false,
+        extended_cache_time: true,
+        cache_tools: false,
+        cache_conversation: false,
+        cache_images: false,
+        cache_tool_results: false,
+        driver_options: serde_json::json!({"o": 1}),
+        enable_thinking: Some(true),
+        mock_responses_file: Some("m".into()),
+        session: None,
+        input_modalities: Some(vec!["text".into()]),
+        sampling_best_effort: true,
+        detection_fallback: None,
+    };
+    let written = serde_json::to_value(&populated).unwrap();
+    let section: ModelSection = serde_json::from_value(written.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&section).unwrap(), written);
+    let mut applied = ModelConfig {
+        provider: "p".into(),
+        name: "n".into(),
+        ..ModelConfig::default()
+    };
+    section.apply(&mut applied);
+    assert_eq!(serde_json::to_value(&applied).unwrap(), written);
 }

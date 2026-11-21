@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **config**: a `model:` section naming a provider entry lays exactly what it sets over that entry, even a value equal to the field's default: `cache_tools: true` over an entry whose model holds `cache_tools: false` was lost (and so were `cache_system_prompt`, `cache_conversation`, `cache_images`, `cache_tool_results` set to `true` and `extended_cache_time` set to `false`). The section is read as a typed patch (`ModelSection`, every field optional), with no JSON round trip that could fail and leave the section unapplied without a word.
+
 ### Changed
 - **prompt**: the system prompt names no tool. Its Guidelines carry one generic `### Tools` block (use the available tools as appropriate, with the fewest steps and tool calls that give a correct result); the mode sentences, the Skills, Subagents and Knowledge Base sections and the Active Instructions announcement no longer name `shell`, `read_file`, `edit_file`, `write_file`, `grep`, `skill`, `task`, `search_knowledge`, `list_knowledge`, `ask_question` or `plan_tasks`. Each tool's own description carries its advice (`shell`: builds, tests, git, `timeout_secs` for long runs; `grep`: read only the relevant ranges). Under deferred disclosure, the index of tools not loaded is in the `tools` tool's description, not a `## Deferred Tools` section, and the token ledger counts it under `tool_schemas`. The `orchestration` and `tool_index` prompt sections are gone. `PromptContext` and `AgentRuntimeContext` lose `core_tools`, `tool_index` and `orchestration`; `sven_turn::prompts::CoreTools` is removed, and `tool_discovery::index_section` is now `index_listing`.
 - **profile**: `compact/3`: the compact system prompt says "write that file" instead of naming `write_file`.
+- **config**: `sven_model_drivers::config::settle` and `Config::settle` take the `model:` section as written (`Option<&ModelSection>`, `None` when the file has none) instead of a `model_configured` flag. `ConfigDocument::section` reads one top-level section as a type.
 
 ## [5.9.2] - 2026-11-20
 

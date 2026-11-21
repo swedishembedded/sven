@@ -47,7 +47,7 @@ EC-1 first (it unblocks every lane's `make check`). EC-2 and EC-3 are independen
   checked to report no unknown key; one corpus test of real configuration files (an examiner's rendered config, a task
   image's `.sven.yaml`, the documented examples) whose warnings are pinned before the change and equal after.
 
-## EC-3 The model section as a typed patch (S/M, open)
+## EC-3 The model section as a typed patch (S/M, done)
 
 - **Problem.** `config_settle.rs::overlay_requested` (lines 165-193) lays a `model:` section over a named provider's
   entry by round-tripping both through `serde_json` and treating a field as "set" when it differs from

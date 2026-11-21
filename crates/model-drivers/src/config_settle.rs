@@ -11,23 +11,23 @@
 //! language models then you can procure our services by sending an email to
 //! info@swedishembedded.com.
 
-use super::{ModelConfig, Providers};
+use super::{ModelConfig, ModelSection, Providers};
 use tracing::{debug, warn};
 
 /// Settles the active model once the configuration is read, and warns about
 /// limits that cannot hold.
 ///
-/// With no `model:` section (`model_configured` false), the model is chosen
-/// from what the environment offers: the sven server signed in to, then a
-/// locally served brain, then
-/// OpenRouter, Anthropic and OpenAI keys, in that order. A `model.provider`
-/// naming one of `providers` is then expanded into that endpoint's settings
-/// with its per-model overrides.
-pub fn settle(model: &mut ModelConfig, providers: &Providers, model_configured: bool) {
-    if !model_configured {
+/// With no `model:` section (`section` is `None`), the model is chosen from
+/// what the environment offers: the sven server signed in to, then a locally
+/// served brain, then OpenRouter, Anthropic and OpenAI keys, in that order. A
+/// `model.provider` naming one of `providers` is then expanded into that
+/// endpoint's settings with its per-model overrides, and every setting the
+/// section gives is laid over them ([`ModelSection::apply`]).
+pub fn settle(model: &mut ModelConfig, providers: &Providers, section: Option<&ModelSection>) {
+    if section.is_none() {
         detect_model(model);
     }
-    expand_named_provider(model, providers);
+    expand_named_provider(model, providers, section);
     validate_token_limits(model, providers);
 }
 
@@ -138,8 +138,15 @@ fn brain_is_locally_detectable() -> bool {
 
 /// If `model.provider` names one of `providers`, replace `model` with that
 /// endpoint's settings and any per-model overrides registered for
-/// `model.name`. This is what makes the provider-first layout work.
-fn expand_named_provider(model: &mut ModelConfig, providers: &Providers) {
+/// `model.name`, then lay the `model:` section's own settings over them, so
+/// nothing written next to `provider:` is lost to the expansion. This is what
+/// makes the provider-first layout work. The process-only fields the file
+/// format skips (`session`, `detection_fallback`) are carried over.
+fn expand_named_provider(
+    model: &mut ModelConfig,
+    providers: &Providers,
+    section: Option<&ModelSection>,
+) {
     if let Some(entry) = providers.get(&model.provider) {
         debug!(
             provider = %model.provider,
@@ -147,59 +154,13 @@ fn expand_named_provider(model: &mut ModelConfig, providers: &Providers) {
             driver = %entry.name,
             "expanding named provider config"
         );
-        let mut requested = std::mem::take(model);
-        let driver_options = std::mem::take(&mut requested.driver_options);
+        let requested = std::mem::take(model);
         *model = entry.to_model_config(&requested.name);
-        overlay_requested(model, &requested);
-        merge_driver_options(&mut model.driver_options, driver_options);
-    }
-}
-
-/// Lays every setting the `model:` section gave over the expanded endpoint's,
-/// so nothing written next to `provider:` is lost to the expansion: a field
-/// whose value differs from [`ModelConfig::default`] was set and wins; one
-/// left at its default keeps the endpoint's. `provider` and `name` are the
-/// expansion's own, `driver_options` are merged key by key
-/// ([`merge_driver_options`]), and the process-only fields the file format
-/// skips (`session`, `detection_fallback`) are carried over as they are.
-fn overlay_requested(model: &mut ModelConfig, requested: &ModelConfig) {
-    let (Ok(serde_json::Value::Object(defaults)), Ok(serde_json::Value::Object(asked))) = (
-        serde_json::to_value(ModelConfig::default()),
-        serde_json::to_value(requested),
-    ) else {
-        return;
-    };
-    let Ok(serde_json::Value::Object(mut merged)) = serde_json::to_value(&*model) else {
-        return;
-    };
-    for (key, value) in asked {
-        if matches!(key.as_str(), "provider" | "name" | "driver_options") {
-            continue;
+        if let Some(section) = section {
+            section.apply(model);
         }
-        if defaults.get(&key) != Some(&value) {
-            merged.insert(key, value);
-        }
-    }
-    let session = model.session.take().or_else(|| requested.session.clone());
-    let fallback = model
-        .detection_fallback
-        .take()
-        .or_else(|| requested.detection_fallback.clone());
-    if let Ok(settled) = serde_json::from_value::<ModelConfig>(serde_json::Value::Object(merged)) {
-        *model = settled;
-    }
-    model.session = session;
-    model.detection_fallback = fallback;
-}
-
-/// Lays the options a `model:` section asked for over those of its endpoint,
-/// key by key, so a request setting written next to `provider:` is not lost
-/// to the expansion. A non-object value replaces the endpoint's options.
-fn merge_driver_options(base: &mut serde_json::Value, requested: serde_json::Value) {
-    match (base.as_object_mut(), requested) {
-        (_, serde_json::Value::Null) => {}
-        (Some(base), serde_json::Value::Object(requested)) => base.extend(requested),
-        (_, requested) => *base = requested,
+        model.session = requested.session;
+        model.detection_fallback = requested.detection_fallback;
     }
 }
 

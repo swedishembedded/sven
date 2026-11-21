@@ -200,6 +200,19 @@ impl ConfigDocument {
         })
     }
 
+    /// The top-level section `key` read as `T` on its own: `None` when the
+    /// document does not set it, an error when it cannot be read as `T`.
+    ///
+    /// # Errors
+    ///
+    /// The decoder's message.
+    pub fn section<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, serde_yaml::Error> {
+        self.root
+            .get(key)
+            .map(|value| serde_yaml::from_value(value.clone()))
+            .transpose()
+    }
+
     /// The document read as two types that each read their own sections, `A`
     /// and `B`. Defaults as [`Self::decode`] does, and for both at once: a
     /// document one of them cannot read is ignored in full, not in part.
