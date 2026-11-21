@@ -27,7 +27,8 @@ both for that step and the steps after it.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `PROMPT` | - | The task. Giving one makes the run headless. |
+| `PROMPT` | - | The task. Giving one makes the run headless, unless `--interactive` is given. |
+| `--interactive` | off | Run the TUI with `PROMPT` as its first message: watch the agent work on it and type further messages at any time. The session sends what a headless run of `PROMPT` sends: `--append-system-prompt`, the sampling flags (`--temperature`, `--top-p`, `--top-k`, `--seed`, `--logprobs`) and `--run-timeout`'s time line; the chat is named after `PROMPT`, so no request is made for a title. `--output-trace` saves each turn typed in the TUI with `extra.sven.origin` `human`; the `PROMPT` turn has no origin, as in a headless run. Needs a terminal on standard input and output; not with `--headless`, `--stdin` or `--goal-turns`. |
 | `--stdin` | off | Read stdin to the end and join it to `PROMPT` with a blank line as one user message (`cmd \| sven --stdin "fix these errors"`). Without `--stdin`, a run that has a `PROMPT` never reads stdin. Without a `PROMPT`, a non-terminal stdin is the task and is always read. |
 | `--goal-turns N` | off | Headless: take the whole prompt verbatim as the objective of a standing goal with `N` turns (1 to 500) and run it as a headless `/goal` does ([goals](../guides/goals.md)): exit 0 completed, 4 out of turns, 5 blocked, 6 paused. Quotes, line breaks and spacing are kept. Exits 2 for a prompt that is a `/goal` line, one over 4000 characters, or a workflow feature (`--file`, `--var`, a loaded trace, `--output-format`, ...); `--output-trace` writes its trajectory. |
 | `--goal-check COMMAND` | none | Needs `--goal-turns`. The command line, run in the project after each turn, that decides the goal: it passes on exit status 0 (600 s limit). Quoted as `/goal --check` takes it. |

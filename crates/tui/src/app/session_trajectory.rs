@@ -70,6 +70,14 @@ impl SessionEntry {
             session_state: None,
             buffer_handle: None,
             initial_prompt: None,
+            user_origins: user_step_origins(&trajectory.steps),
+            // A subagent's turns are its parent agent's; a person's own
+            // session goes on with what they type.
+            later_origin: meta
+                .as_ref()
+                .and_then(|m| m.parent_session_id.as_ref())
+                .is_none()
+                .then_some(sven_vocab::turn::HUMAN_ORIGIN),
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -136,6 +144,9 @@ impl SessionEntry {
             &records,
         );
 
+        let mut steps = steps;
+        self.label_user_steps(&mut steps[self.copied_context_steps.len()..]);
+
         let mut agent = sven_session_store::default_agent_profile();
         if let Some(m) = &model {
             agent = agent.with_model(m.clone());
@@ -167,5 +178,84 @@ impl SessionEntry {
         meta.apply_to_trajectory(&mut trajectory);
         sven_session_store::write_goal(&mut trajectory, self.goal.as_ref());
         trajectory
+    }
+
+    /// Records on each user step (`steps` holds the chat's own, in order)
+    /// where its turn came from: as [`Self::user_origins`] knows it, and
+    /// [`Self::later_origin`] past those.
+    fn label_user_steps(&self, steps: &mut [atif::TraceStep]) {
+        let users = steps
+            .iter_mut()
+            .filter(|s| s.source == atif::StepOrigin::User);
+        for (index, step) in users.enumerate() {
+            let origin = match self.user_origins.get(index) {
+                Some(known) => known.as_deref(),
+                None => self.later_origin,
+            };
+            if let Some(origin) = origin {
+                let extra = step.extra.get_or_insert_with(|| serde_json::json!({}));
+                if let Some(object) = extra.as_object_mut() {
+                    object
+                        .entry("sven")
+                        .or_insert_with(|| serde_json::json!({}))["origin"] =
+                        serde_json::json!(origin);
+                }
+            }
+        }
+    }
+}
+
+/// The origins the user steps of a saved trajectory record, in order.
+fn user_step_origins(steps: &[atif::TraceStep]) -> Vec<Option<String>> {
+    steps
+        .iter()
+        .filter(|s| s.source == atif::StepOrigin::User && s.is_copied_context != Some(true))
+        .map(|s| {
+            s.extra
+                .as_ref()
+                .and_then(|e| e.pointer("/sven/origin"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use sven_model::Message;
+
+    use super::*;
+    use crate::chat::segment::ChatSegment;
+
+    fn chat(messages: &[Message]) -> ChatState {
+        let mut chat = ChatState::new();
+        chat.set_segments(messages.iter().cloned().map(ChatSegment::Message).collect());
+        chat
+    }
+
+    fn origins(trajectory: &Trajectory) -> Vec<Option<String>> {
+        user_step_origins(&trajectory.steps)
+    }
+
+    #[test]
+    fn turns_a_person_typed_are_saved_as_human_and_the_given_prompt_is_not() {
+        let mut entry = SessionEntry::new_blank("t");
+        entry.user_origins = vec![None];
+        let mut messages = vec![
+            Message::user("the task"),
+            Message::assistant("done"),
+            Message::user("you missed the last line"),
+            Message::assistant("fixed"),
+        ];
+        let saved = entry.to_trajectory(&chat(&messages), None, None);
+        let human = Some(sven_vocab::turn::HUMAN_ORIGIN.to_string());
+        assert_eq!(origins(&saved), [None, human.clone()]);
+
+        // Opened again and continued: the saved origins stay as they were,
+        // and the new typed turn is the person's.
+        let reopened = SessionEntry::from_trajectory_into(&saved, entry.id.clone(), None, false);
+        messages.extend([Message::user("now commit"), Message::assistant("ok")]);
+        let continued = reopened.to_trajectory(&chat(&messages), None, None);
+        assert_eq!(origins(&continued), [None, human.clone(), human]);
     }
 }

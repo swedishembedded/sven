@@ -108,6 +108,9 @@ pub struct AppOptions {
     pub approval: ApprovalMode,
     /// The agent to talk to instead of a local session; none for a local one.
     pub agent_task: Option<AgentTask>,
+    /// What the command line says about the requests every local session of
+    /// this TUI sends (appended system text, sampling, the run's time limit).
+    pub launch: sven_frontend::agent::SessionLaunch,
 }
 
 /// A block of text for the pager, with an address the person can copy with
@@ -130,6 +133,8 @@ pub struct App {
     pub(crate) approval: ApprovalMode,
     /// Taken by `run` in place of the local session, when set.
     pub(crate) agent_task: Option<AgentTask>,
+    /// Given to every local session this TUI starts.
+    pub(crate) launch: sven_frontend::agent::SessionLaunch,
     pub(crate) session: crate::state::SessionState,
     pub(crate) command_registry: Arc<CommandRegistry>,
     pub(crate) completion_manager: CompletionManager,

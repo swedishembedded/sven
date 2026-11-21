@@ -130,6 +130,15 @@ pub(crate) struct SessionEntry {
     /// The session's standing goal as its agent last reported it; kept with
     /// the saved session and put back when it is opened again.
     pub goal: Option<sven_vocab::goal::Goal>,
+    /// Where the session's user turns came from, in order, as far as the
+    /// session knows: those of a loaded trajectory as it recorded them, then
+    /// `None` for each turn the command line gave (a prompt, a workflow's
+    /// steps). The user turns past these are saved with [`Self::later_origin`].
+    pub user_origins: Vec<Option<String>>,
+    /// The origin of every user turn past [`Self::user_origins`]: typed by
+    /// the person ([`sven_vocab::turn::HUMAN_ORIGIN`]) in a session of their
+    /// own, none in a subagent's, whose turns its parent agent gives.
+    pub later_origin: Option<&'static str>,
 }
 
 impl SessionEntry {
@@ -155,6 +164,8 @@ impl SessionEntry {
             session_state: None,
             buffer_handle: None,
             initial_prompt: None,
+            user_origins: Vec::new(),
+            later_origin: Some(sven_vocab::turn::HUMAN_ORIGIN),
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,
@@ -351,6 +362,8 @@ fn session_entry_from_unified(
         session_state: None,
         buffer_handle: None,
         initial_prompt: None,
+        user_origins: Vec::new(),
+        later_origin: Some(sven_vocab::turn::HUMAN_ORIGIN),
         agent_tx: None,
         agent_cancel: Arc::new(Mutex::new(None)),
         busy: false,
@@ -512,7 +525,7 @@ impl SessionManager {
     ///
     /// Lists BOTH native ATIF sessions and legacy YAML chats (tagged
     /// `is_legacy: true`) that have not yet been superseded by a same-id
-    /// `.json` file — see [`sven_session_store::list_all_sessions`]'s doc comment
+    /// `.json` file - see [`sven_session_store::list_all_sessions`]'s doc comment
     /// for the exact legacy-visibility policy. Opening a legacy entry and
     /// saving it writes a brand new `.json` file; the original `.yaml` is
     /// left untouched on disk.

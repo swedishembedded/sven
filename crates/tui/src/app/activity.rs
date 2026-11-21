@@ -67,6 +67,9 @@ impl SessionEntry {
             session_state: None,
             buffer_handle,
             initial_prompt: Some(prompt),
+            // The delegating agent gives every turn of a subagent.
+            user_origins: vec![None],
+            later_origin: None,
             agent_tx: None,
             agent_cancel: Arc::new(Mutex::new(None)),
             busy: false,

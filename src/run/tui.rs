@@ -264,6 +264,14 @@ pub(crate) async fn run_tui(
     };
 
     let mode = cli.agent_mode(settings.runtime.agent.default_mode);
+    let launch = sven_frontend::agent::SessionLaunch {
+        append_system_prompt: cli.append_system_prompt.clone(),
+        decoding: cli.decoding().map_err(super::UsageError)?,
+        run_timeout: cli
+            .run_timeout
+            .filter(|secs| *secs > 0)
+            .map(std::time::Duration::from_secs),
+    };
     let opts = AppOptions {
         mode,
         approval: cli.approval,
@@ -275,6 +283,7 @@ pub(crate) async fn run_tui(
         initial_queue,
         open_resume_picker,
         agent_task,
+        launch,
     };
 
     let app = App::new(settings, opts);

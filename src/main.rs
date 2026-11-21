@@ -143,6 +143,9 @@ async fn run_cli(cli: Cli, hosted: Hosted) -> anyhow::Result<()> {
     // Before anything runs: manual approval without a person to ask fails
     // here, never by hanging at the first prompt.
     cli.check_approval()?;
+    if let Err(why) = cli.check_interactive() {
+        return Err(run::UsageError(why).into());
+    }
     if let Err(why) = cli.goal_terms() {
         return Err(run::UsageError(why).into());
     }

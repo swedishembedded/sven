@@ -78,6 +78,7 @@ impl App {
             let cancel_handle_task = self.agent.cancel.clone();
             let shared_skills_task = self.shared_skills.clone();
             let shared_agents_task = self.shared_agents.clone();
+            let launch = self.launch.clone();
             let (mcp_tx, mcp_rx) = tokio::sync::oneshot::channel::<(
                 Arc<McpManager>,
                 tokio::sync::mpsc::Receiver<sven_mcp_client::McpEvent>,
@@ -95,6 +96,7 @@ impl App {
                     shared_skills_task,
                     shared_agents_task,
                     Some(mcp_tx),
+                    launch,
                 )
                 .await;
             });
@@ -294,7 +296,7 @@ impl App {
                 // fire on a timer, and it is gated on a busy flag. When nothing is
                 // busy the `select!` blocks on real events, so `terminal.draw()`
                 // runs only when state actually changes and (thanks to ratatui's
-                // cell diff) emits nothing for a stable view — no cursor flicker,
+                // cell diff) emits nothing for a stable view - no cursor flicker,
                 // and the user can select/copy terminal text. It follows that
                 // every path which sets a busy flag MUST have a path that clears
                 // it (the turn-exit guard);

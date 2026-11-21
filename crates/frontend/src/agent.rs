@@ -80,6 +80,22 @@ pub enum AgentRequest {
     },
 }
 
+/// How a person's session is launched: what the command line says about the
+/// requests it sends, the same things a headless run is given, so an
+/// interactive session and a headless run of the same task put the same
+/// request to the model apart from what the person types.
+#[derive(Debug, Clone, Default)]
+pub struct SessionLaunch {
+    /// Text appended to the system prompt (`--append-system-prompt`).
+    pub append_system_prompt: Option<String>,
+    /// How every request is sampled (`--temperature`, `--top-p`, `--top-k`,
+    /// `--seed`, `--logprobs`).
+    pub decoding: sven_turn::Decoding,
+    /// The wall-clock the session is given (`--run-timeout`): the model is
+    /// told how much of it is left, as in a headless run.
+    pub run_timeout: Option<std::time::Duration>,
+}
+
 /// Lightweight helper to generate a title from a given model configuration.
 async fn generate_title_with_config(
     cfg: &ModelConfig,
@@ -173,6 +189,7 @@ pub async fn kernel_session_task(
     shared_skills: SharedSkills,
     shared_agents: SharedAgents,
     mcp_manager_tx: Option<oneshot::Sender<(Arc<McpManager>, mpsc::Receiver<McpEvent>)>>,
+    launch: SessionLaunch,
 ) {
     run_kernel_session_task(
         config,
@@ -186,6 +203,7 @@ pub async fn kernel_session_task(
         shared_skills,
         shared_agents,
         mcp_manager_tx,
+        launch,
         None,
         None,
     )
@@ -205,18 +223,22 @@ pub(crate) async fn run_kernel_session_task(
     shared_skills: SharedSkills,
     shared_agents: SharedAgents,
     mcp_manager_tx: Option<oneshot::Sender<(Arc<McpManager>, mpsc::Receiver<McpEvent>)>>,
+    launch: SessionLaunch,
     provider_factory: Option<ProviderFactory>,
     mcp_tools_source: Option<McpToolsSource>,
 ) {
     // Reuses the caller's already-discovered skills/agents (the TUI discovers
     // them once at startup) instead of re-walking the search hierarchy here.
-    let runtime = RuntimeContext::auto_detect_with(
+    let mut runtime = RuntimeContext::auto_detect_with(
         sven_workspace::find_project_root().ok(),
         shared_skills,
         shared_agents,
     );
+    runtime.append_system_prompt = launch.append_system_prompt;
+    runtime.time_budget = launch.run_timeout.map(sven_turn::TimeBudget::starting_now);
     let title_limits = config.agent.turn_limits();
     let mut options = SessionOptions::new(config, runtime, tx.clone());
+    options.decoding = launch.decoding;
     options.approval = approval;
     options.gates = Gates::Modal(question_tx);
     options.abort_slot = Some(cancel_handle);
@@ -424,6 +446,30 @@ mod tests {
         mpsc::Receiver<QuestionRequest>,
         JoinHandle<()>,
     ) {
+        spawn_launched(
+            config,
+            startup_model,
+            mode,
+            provider_factory,
+            mcp_tools_source,
+            SessionLaunch::default(),
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn spawn_launched(
+        config: Arc<Config>,
+        startup_model: ModelConfig,
+        mode: AgentMode,
+        provider_factory: Option<ProviderFactory>,
+        mcp_tools_source: Option<McpToolsSource>,
+        launch: SessionLaunch,
+    ) -> (
+        mpsc::Sender<AgentRequest>,
+        mpsc::Receiver<AgentEvent>,
+        mpsc::Receiver<QuestionRequest>,
+        JoinHandle<()>,
+    ) {
         let (req_tx, req_rx) = mpsc::channel::<AgentRequest>(16);
         let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(256);
         let (question_tx, question_rx) = mpsc::channel::<QuestionRequest>(16);
@@ -440,6 +486,7 @@ mod tests {
             SharedSkills::empty(),
             SharedAgents::empty(),
             None,
+            launch,
             provider_factory,
             mcp_tools_source,
         ));
@@ -487,10 +534,73 @@ mod tests {
             .any(|m| m.as_text().map(|t| t.contains(needle)).unwrap_or(false))
     }
 
+    /// A launched session puts to the model what a headless run of the same
+    /// prompt does: the appended system text, the time line on the user's
+    /// turn, and the sampling it was given.
+    #[tokio::test]
+    async fn a_launched_session_sends_what_a_headless_run_sends() {
+        let seen: Arc<std::sync::Mutex<Vec<CompletionRequest>>> = Arc::default();
+        let record = Arc::clone(&seen);
+        let factory: ProviderFactory = Box::new(move |_cfg, _mode| {
+            let record = Arc::clone(&record);
+            Some(Box::new(sven_model_mock::CallbackProvider::new(
+                move |req| {
+                    record.lock().unwrap().push(req.clone());
+                    vec![ResponseEvent::TextDelta("ok".into()), ResponseEvent::Done]
+                },
+            )))
+        });
+        let sampling = sven_model::SamplingParams {
+            temperature: Some(0.5),
+            seed: Some(7),
+            ..Default::default()
+        };
+        let launch = SessionLaunch {
+            append_system_prompt: Some("APPENDED RULE".into()),
+            decoding: sven_turn::Decoding {
+                sampling,
+                want_logprobs: true,
+            },
+            run_timeout: Some(Duration::from_secs(600)),
+        };
+        let (req_tx, mut ev, _q, _h) = spawn_launched(
+            test_config(),
+            model_cfg("mock", "mock-model"),
+            AgentMode::Agent,
+            Some(factory),
+            None,
+            launch,
+        );
+        req_tx
+            .send(AgentRequest::Submit {
+                content: "do it".into(),
+                model_override: None,
+                mode_override: None,
+            })
+            .await
+            .unwrap();
+        turn_text(&mut ev).await;
+
+        let seen = seen.lock().unwrap();
+        let req = seen.first().expect("the model was asked");
+        let system = req.messages[0].as_text().unwrap_or_default();
+        assert!(system.contains("APPENDED RULE"), "{system}");
+        let user = req.messages[1].as_text().unwrap_or_default();
+        assert!(
+            user.starts_with("do it\n\nTime: 0 of 10 min used"),
+            "{user}"
+        );
+        assert!(
+            seen.iter()
+                .all(|r| r.sampling == sampling && r.want_logprobs),
+            "{seen:?}"
+        );
+    }
+
     // ── Behaviour 1: history seeding on Resubmit ───────────────────────────────
 
     /// On `Resubmit`, the next turn must stream against the frontend's edited
-    /// history — the replaced content must be gone and the edited content
+    /// history - the replaced content must be gone and the edited content
     /// present. A single provider (no mode/model change → no rebuild) records
     /// the exact request it saw.
     #[tokio::test]

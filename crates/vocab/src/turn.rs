@@ -28,6 +28,11 @@ pub const STATE_KEY: &str = "state";
 /// delivered at its next model request.
 pub const STEER_ORIGIN: &str = "steer";
 
+/// The origin of a user turn a person typed into an interactive session
+/// (`extra.sven.origin` of its trajectory step), as distinct from the prompt
+/// the session was started with.
+pub const HUMAN_ORIGIN: &str = "human";
+
 /// A request for the HSM to run a **single streaming turn**: stream the model
 /// against a conversation thread, collect proposed tool calls, and post
 /// `sven_hsm::Event::LlmTurnComplete` back to the machine.

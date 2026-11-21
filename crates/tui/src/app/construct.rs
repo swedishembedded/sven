@@ -118,6 +118,12 @@ impl App {
             initial_session_entry =
                 SessionEntry::from_trajectory_into(trajectory, restored_id, None, false);
         }
+        // The turns the command line gives (a workflow's steps, then the
+        // prompt) are not the person's typing; every later user turn is.
+        let given = opts.initial_queue.len() + usize::from(opts.initial_prompt.is_some());
+        initial_session_entry
+            .user_origins
+            .extend(std::iter::repeat_n(None, given));
         let active_session_id = initial_session_entry.id.clone();
         // `--trace PATH` is kept in sync after every turn; `--load-trace`-only
         // (or no flag at all) falls back to the canonical per-session path.
@@ -143,6 +149,13 @@ impl App {
             .as_ref()
             .and_then(sven_session_store::SvenSessionMeta::from_trajectory)
             .map(|m| m.title)
+            // A session started with a prompt is named after it here, so
+            // that no model request but the agent's own is made for a title.
+            .or_else(|| {
+                opts.initial_prompt
+                    .as_deref()
+                    .map(sven_session_store::make_title)
+            })
             .unwrap_or_else(|| "New chat".to_string());
 
         let mut app = Self {
@@ -150,6 +163,7 @@ impl App {
             tui_config,
             approval: opts.approval,
             agent_task: opts.agent_task,
+            launch: opts.launch,
             session: crate::state::SessionState::new(initial_model_cfg, opts.mode),
             command_registry: registry,
             completion_manager,

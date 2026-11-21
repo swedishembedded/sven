@@ -329,6 +329,17 @@ sven --resume 3f4a
 `--resume` with no ID opens the TUI with the session list showing. Headless runs
 need an explicit ID, and a headless resume appends to the same session.
 
+### Starting with a task
+
+`sven --interactive "TASK"` opens the TUI and sends `TASK` as the first
+message, as a headless run of `TASK` would send it (the same system prompt,
+`--append-system-prompt`, sampling flags and `--run-timeout` time line). You
+watch the agent work and type a correction whenever it goes wrong. With
+`--output-trace FILE` the session is saved as an ATIF trajectory after every
+turn; each message you typed is marked `extra.sven.origin: "human"`, so a
+reader tells the task from your guidance. `--record-requests FILE` logs every
+model request, as in a headless run.
+
 ### Conversation files
 
 A conversation file is a plain-text record of a session that you can edit. See

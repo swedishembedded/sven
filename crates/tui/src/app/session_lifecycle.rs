@@ -426,6 +426,7 @@ impl App {
             shared_skills,
             shared_agents,
             None, // mcp_manager_tx - not needed for sub-session restarts
+            self.launch.clone(),
         ));
     }
 }

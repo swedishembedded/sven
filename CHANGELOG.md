@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **cli**: `--interactive` runs the TUI with `PROMPT` as its first message, for a person who watches the agent and types corrections. The TUI's sessions now send what a headless run of the same prompt sends: `--append-system-prompt`, the sampling flags (`--temperature`, `--top-p`, `--top-k`, `--seed`, `--logprobs`, refused in the TUI before) and `--run-timeout`'s time line (`sven_frontend::agent::SessionLaunch`, a new argument of `kernel_session_task`). A session started with a prompt is named after it, so no model request is made for its title.
+- **tui**: the saved trajectory marks each user turn a person typed with `extra.sven.origin` `human` (`sven_vocab::turn::HUMAN_ORIGIN`); the turns the command line gave carry none, a loaded trajectory's turns keep theirs, and a subagent's turns (its parent agent's) carry none.
+
 ### Fixed
+- **tui**: `--append-system-prompt` and `--run-timeout` were silently ignored by the TUI.
 - **config**: a `model:` section naming a provider entry lays exactly what it sets over that entry, even a value equal to the field's default: `cache_tools: true` over an entry whose model holds `cache_tools: false` was lost (and so were `cache_system_prompt`, `cache_conversation`, `cache_images`, `cache_tool_results` set to `true` and `extended_cache_time` set to `false`). The section is read as a typed patch (`ModelSection`, every field optional), with no JSON round trip that could fail and leave the section unapplied without a word.
 
 ### Changed

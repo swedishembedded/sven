@@ -99,6 +99,15 @@ pub struct Cli {
     #[arg(long, short = 'H')]
     pub headless: bool,
 
+    /// Run the interactive TUI even with a PROMPT: the PROMPT is sent as the
+    /// first message, and the person watches the agent work on it and types
+    /// further messages at any time. The session sends what a headless run
+    /// of the PROMPT sends (`--append-system-prompt`, the sampling flags,
+    /// `--run-timeout`'s time line); turns the person types are saved with
+    /// the origin `human` in `--output-trace`. Needs a terminal.
+    #[arg(long, conflicts_with_all = ["headless", "stdin", "goal_turns"])]
+    pub interactive: bool,
+
     /// Agent mode: what the agent may do at all (research and plan never
     /// write). Default: `agent.default_mode` of the configuration, else agent.
     #[arg(long, short = 'm', value_enum)]
@@ -415,10 +424,26 @@ impl Cli {
     /// a TTY stdin but a piped stdout.  Without this check it would try to start
     /// the full TUI and write escape codes into the pipe, causing it to hang.
     pub fn is_headless(&self) -> bool {
-        self.headless
-            || self.prompt.is_some()
-            || !std::io::stdin().is_terminal()
-            || !std::io::stdout().is_terminal()
+        !self.interactive
+            && (self.headless
+                || self.prompt.is_some()
+                || !std::io::stdin().is_terminal()
+                || !std::io::stdout().is_terminal())
+    }
+
+    /// Refuses `--interactive` where no person can watch: a subcommand, or
+    /// standard input or output that is not a terminal.
+    pub fn check_interactive(&self) -> Result<(), String> {
+        if !self.interactive {
+            return Ok(());
+        }
+        if self.command.is_some() {
+            return Err("--interactive runs the TUI; a subcommand runs none".to_string());
+        }
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+            return Err("--interactive needs a terminal on standard input and output".to_string());
+        }
+        Ok(())
     }
 
     /// Refuses `--approval manual` anywhere but the interactive TUI: nobody
@@ -491,10 +516,13 @@ impl Cli {
         if decoding == sven_frontend::Decoding::default() {
             return Ok(decoding);
         }
-        if self.command.is_some() || self.team_name.is_some() || !self.is_headless() {
+        if self.command.is_some()
+            || self.team_name.is_some()
+            || !(self.is_headless() || self.interactive)
+        {
             return Err(
                 "--temperature, --top-p, --top-k, --seed and --logprobs set how a \
-                 headless run samples: give a PROMPT or pipe one in, with --headless"
+                 headless or --interactive run samples: give a PROMPT or pipe one in"
                     .to_string(),
             );
         }
@@ -747,6 +775,26 @@ mod tests {
             assert!(parsed.map_or(true, |c| c.decoding().is_err()), "{args:?}");
         }
         assert!(cli(&["--seed", "3", "chats"]).decoding().is_err());
+    }
+
+    #[test]
+    fn an_interactive_run_is_never_headless_and_samples_as_asked() {
+        let run = cli(&["--interactive", "--temperature", "0.6", "fix it"]);
+        assert!(!run.is_headless());
+        assert_eq!(run.decoding().unwrap().sampling.temperature, Some(0.6));
+        // Tests run without a terminal: refused before anything starts.
+        assert!(run.check_interactive().is_err());
+        assert!(cli(&["fix it"]).check_interactive().is_ok());
+        for args in [
+            &["--interactive", "--headless", "fix it"][..],
+            &["--interactive", "--stdin", "fix it"],
+            &["--interactive", "--goal-turns", "3", "fix it"],
+        ] {
+            assert!(
+                Cli::try_parse_from(std::iter::once("sven").chain(args.iter().copied())).is_err(),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]
