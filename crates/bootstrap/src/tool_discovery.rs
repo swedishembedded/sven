@@ -455,7 +455,7 @@ pub(crate) fn preload(
     warnings
 }
 
-/// What the discovery tool's description adds to [`DESCRIPTION`]: how loading
+/// What the discovery tool's description adds to its own text: how loading
 /// works and, while there are few enough, which tools are not loaded. `None`
 /// when `registry` defers nothing in `mode`.
 #[must_use]
