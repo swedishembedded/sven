@@ -298,7 +298,9 @@ impl Tool for ShellTool {
     fn description(&self) -> &str {
         "Run a non-interactive shell command (bash; cmd.exe on Windows); stdin is empty,\n\
          so prompts fail. Shows the first 20 and last 60 lines, then the exit code; the\n\
-         rest is kept under a buffer handle. Filter at the source or raise max_lines."
+         rest is kept under a buffer handle. Filter at the source or raise max_lines.\n\
+         Use it for builds, tests, git and running programs; pass timeout_secs for builds,\n\
+         test suites and other long runs."
     }
 
     fn parameters_schema(&self) -> Value {

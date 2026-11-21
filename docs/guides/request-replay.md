@@ -40,13 +40,13 @@ sven replay run.requests.jsonl --list
 
 ```
   14  messages=31   seed=- in=24510 cached=24100 out=312 calls=[grep({"pattern":...})] text="..."
-      identity#178976b8 mode#b4033878 project#978142c4 tool_index#dfc0e0cc skills#e208f848 guidelines.working_method#01fbdb91 guidelines.tools#bcbe52e7 | tools=23
+      identity#178976b8 mode#b4033878 project#978142c4 skills#e208f848 guidelines.working_method#01fbdb91 guidelines.tools#bcbe52e7 | tools=23
 ```
 
 The number is what `--request` takes. Each section id is followed by the
 first eight digits of its hash, so two recordings show at a glance which
 sections differ. The ids are `identity`, `mode`, `project`, `git`,
-`project_instructions`, `tool_index`, `skills`, `agents`, `knowledge`,
+`project_instructions`, `skills`, `agents`, `knowledge`,
 `knowledge_drift`, `ci`, `guidelines.working_method`, `guidelines.tools` and
 `append`; a custom system prompt is `custom`. A block with nothing to say has
 no section.

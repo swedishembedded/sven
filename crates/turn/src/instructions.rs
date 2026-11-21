@@ -245,9 +245,7 @@ impl Activator {
         }
         Some(format!(
             "## Active Instructions\n\n\
-             These apply to what this session is working on. Load a skill with the \
-             `skill` tool (`action: \"load\"`, `name`: its command), delegate with \
-             `task`, read a document with `search_knowledge`.\n\n{}",
+             These apply to what this session is working on.\n\n{}",
             lines.join("\n")
         ))
     }

@@ -22,6 +22,8 @@ pub(crate) struct DeferredDisclosure {
     pub mode: Arc<Mutex<AgentMode>>,
     /// Behind its `search`; BM25 when absent.
     pub ranker: Option<Arc<dyn sven_tool_registry::ToolRanker>>,
+    /// Its description, fixed once the registry is complete.
+    pub index: crate::tool_discovery::DiscoveryIndex,
 }
 
 /// What is added to or taken from a registry once the built-in tools are in
@@ -69,7 +71,7 @@ pub(crate) fn complete(registry: &mut ToolRegistry, completion: Completion<'_>) 
         registry.register_arc(tool);
     }
     if let Some(deferred) = completion.deferred.filter(|_| !compact) {
-        crate::tool_discovery::enable(registry, deferred.mode, deferred.ranker);
+        crate::tool_discovery::enable(registry, deferred.mode, deferred.ranker, deferred.index);
     }
     if let (Some(ranker), true) = (completion.skill_ranker, registry.get("skill").is_some()) {
         registry.register(

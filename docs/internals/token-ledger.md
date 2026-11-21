@@ -194,8 +194,8 @@ their own schemas, charged to their own names.
 
 `--tool-disclosure deferred` (the default for a program that reads the
 configuration file) sends the definitions of the core tools only. In the ledger
-the other tools' `schema:` lines disappear, the `tools` tool appears, and the
-system prompt gains a `Deferred Tools` section (counted in `system_runtime`).
+the other tools' `schema:` lines disappear and the `tools` tool appears; its
+definition carries the index of what is not loaded (counted in `tool_schemas`).
 `make benchmark/ledger DISCLOSURE=full|deferred` measures either mode, and the
 measured savings are in
 [tool-disclosure.md](tool-disclosure.md#measurements).
@@ -231,7 +231,7 @@ is the index, see below):
 | `Subagents` | 920 |
 | `Knowledge Base` | 962 |
 | `Project Instructions` | 36 |
-| `Deferred Tools` | 253 |
+| `Deferred Tools` (since moved into the `tools` tool's definition) | 253 |
 | `Project Context` | 62 |
 | request total | 9,082 |
 

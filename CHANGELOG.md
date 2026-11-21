@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **prompt**: the system prompt names no tool. Its Guidelines carry one generic `### Tools` block (use the available tools as appropriate, with the fewest steps and tool calls that give a correct result); the mode sentences, the Skills, Subagents and Knowledge Base sections and the Active Instructions announcement no longer name `shell`, `read_file`, `edit_file`, `write_file`, `grep`, `skill`, `task`, `search_knowledge`, `list_knowledge`, `ask_question` or `plan_tasks`. Each tool's own description carries its advice (`shell`: builds, tests, git, `timeout_secs` for long runs; `grep`: read only the relevant ranges). Under deferred disclosure, the index of tools not loaded is in the `tools` tool's description, not a `## Deferred Tools` section, and the token ledger counts it under `tool_schemas`. The `orchestration` and `tool_index` prompt sections are gone. `PromptContext` and `AgentRuntimeContext` lose `core_tools`, `tool_index` and `orchestration`; `sven_turn::prompts::CoreTools` is removed, and `tool_discovery::index_section` is now `index_listing`.
+- **profile**: `compact/3`: the compact system prompt says "write that file" instead of naming `write_file`.
+
 ## [5.9.2] - 2026-11-20
 
 ## [5.9.1] - 2026-11-19

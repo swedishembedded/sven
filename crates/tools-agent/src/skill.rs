@@ -61,7 +61,8 @@ fn build_description(skills: &[SkillInfo]) -> String {
     "Load, list, search or read agent skills. action: load | list | search | read\n\
      load: returns a skill's SKILL.md body and its bundled files. Use it \
      when the request matches an entry of <available_skills> in the system prompt; \
-     pass the entry's <command> as `name`.\n\
+     pass the entry's <command> as `name`. Load at most one skill per task, and only one \
+     that clearly applies.\n\
      list: skills whose command, name or description matches the `regex` (empty lists all).\n\
      search: the skills that best match a `query`, best first.\n\
      read: one of a skill's bundled files: `name` and the file's `path` as load lists it."

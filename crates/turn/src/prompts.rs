@@ -13,42 +13,6 @@ use crate::instructions::{self, ListingDisclosure};
 pub use crate::prompt_composer::ComposedPrompt;
 use crate::prompt_composer::Composer;
 
-/// Which of the built-in file, search and shell tools the session offers. The
-/// prompt names and promises only these: a session confined to an MCP tool
-/// must not be told to call `shell` or `read_file`, which answer "not
-/// enabled". [`Default`] offers all of them, the unconfined session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CoreTools {
-    pub grep: bool,
-    pub read_file: bool,
-    pub edit_file: bool,
-    pub write_file: bool,
-    pub shell: bool,
-}
-
-impl CoreTools {
-    /// A session offering none of them.
-    pub const NONE: Self = Self {
-        grep: false,
-        read_file: false,
-        edit_file: false,
-        write_file: false,
-        shell: false,
-    };
-}
-
-impl Default for CoreTools {
-    fn default() -> Self {
-        Self {
-            grep: true,
-            read_file: true,
-            edit_file: true,
-            write_file: true,
-            shell: true,
-        }
-    }
-}
-
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug)]
 pub struct PromptContext<'a> {
@@ -92,16 +56,6 @@ pub struct PromptContext<'a> {
     /// Injected verbatim into the stable system-prompt block.  `None` when all
     /// knowledge documents are current or no `updated:` fields are set.
     pub knowledge_drift_note: Option<&'a str>,
-    /// The `## Deferred Tools` section: how tools that are not in the tool
-    /// list are loaded, and which exist. `None` when every tool is in the
-    /// list. Fixed for the session, so part of the stable prefix.
-    pub tool_index: Option<&'a str>,
-    /// Whether the session offers `plan_tasks`: adds the short paragraph on
-    /// when to use it. Fixed for the session, so part of the stable prefix.
-    pub orchestration: bool,
-    /// The built-in tools the session offers; the Guidelines Tools section and
-    /// the mode's capability sentence are limited to them.
-    pub core_tools: CoreTools,
     /// How much of each catalog entry the Skills, Subagents and Knowledge Base
     /// sections carry.
     pub disclosure: instructions::InstructionDisclosure,
@@ -120,9 +74,6 @@ impl<'a> Default for PromptContext<'a> {
             agents: Arc::from(Vec::<AgentInfo>::new()),
             knowledge: Arc::from(Vec::<KnowledgeInfo>::new()),
             knowledge_drift_note: None,
-            tool_index: None,
-            orchestration: false,
-            core_tools: CoreTools::default(),
             disclosure: instructions::InstructionDisclosure::default(),
         }
     }
@@ -147,9 +98,6 @@ impl<'a> PromptContext<'a> {
             agents: self.agents.clone(),
             knowledge: self.knowledge.clone(),
             knowledge_drift_note: self.knowledge_drift_note,
-            tool_index: self.tool_index,
-            orchestration: self.orchestration,
-            core_tools: self.core_tools,
             disclosure: self.disclosure,
         }
     }
@@ -194,68 +142,14 @@ mod guidelines {
          - Finish with a short report: what changed, how it was verified, and anything left open."
     }
 
-    /// Only for a session that is offered `plan_tasks`.
-    pub fn orchestration() -> &'static str {
-        "\n\n## Parallel Work\n\
-         When a task splits into independent modules or files that can be built in parallel, \
-         describe the split with `plan_tasks`: each task gets a self-contained brief, the files \
-         only it writes and the tasks it depends on, and a verification command (such as the \
-         tests) checks the result, because a sub-agent's report is not proof. Do small tasks \
-         directly."
-    }
-
-    /// One line per group of offered built-in tools; empty when it offers none.
-    /// All five tools give the full text of the unconfined session.
-    pub fn core_tools(tools: super::CoreTools) -> String {
-        let mut lines: Vec<String> = Vec::new();
-        match (tools.grep, tools.read_file) {
-            (true, true) => lines.push(
-                "- Locate code with `grep`, then read the relevant ranges with `read_file`.".into(),
-            ),
-            (true, false) => lines.push("- Locate code with `grep`.".into()),
-            (false, true) => lines.push("- Read files with `read_file`.".into()),
-            (false, false) => {}
-        }
-        match (tools.edit_file, tools.write_file) {
-            (true, true) => lines.push(
-                "- Change existing files with `edit_file` and create new ones with `write_file`."
-                    .into(),
-            ),
-            (true, false) => lines.push("- Change existing files with `edit_file`.".into()),
-            (false, true) => lines.push("- Create files with `write_file`.".into()),
-            (false, false) => {}
-        }
-        if tools.shell {
-            lines.push(
-                "- Use `shell` for builds, tests, git and running programs; pass `timeout_secs` for builds and test suites."
-                    .into(),
-            );
-        }
-        lines.join("\n")
-    }
-
-    /// What the session can do with its built-in tools, as the phrases of a
-    /// capability sentence (`extra` is appended last).
-    pub fn capabilities(tools: super::CoreTools, extra: Option<&'static str>) -> String {
-        let mut parts: Vec<&str> = Vec::new();
-        match (tools.read_file, tools.edit_file || tools.write_file) {
-            (true, true) => parts.push("read and write files"),
-            (true, false) => parts.push("read files"),
-            (false, true) => parts.push("write files"),
-            (false, false) => {}
-        }
-        if tools.shell {
-            parts.push("run shell commands");
-        }
-        if tools.grep {
-            parts.push("search the codebase");
-        }
-        parts.extend(extra);
-        match parts.as_slice() {
-            [] => String::new(),
-            [one] => (*one).to_string(),
-            [init @ .., last] => format!("{}, and {last}", init.join(", ")),
-        }
+    /// The one instruction about tools. It names none: a tool reaches the
+    /// model only through the tool list, when the session offers it, and its
+    /// own description says what it does and how to use it.
+    pub fn tools() -> &'static str {
+        "- Use the tools available to you as appropriate to complete the task correctly, \
+         with the fewest steps and tool calls that achieve a correct result. Each tool's \
+         description says what it does and how to use it.\n\
+         - Pass a timeout for long-running commands when a tool supports one."
     }
 }
 
@@ -395,11 +289,9 @@ pub fn build_skills_section(skills: &[SkillInfo]) -> String {
 
     format!(
         "## Skills\n\n\
-         When you recognize that the current task matches one of the available skills listed \
-         below, call the `skill` tool with `action: \"load\"` and the skill's command as `name` \
-         to load the full skill instructions before proceeding. Use the skill `<description>` \
-         to decide which skill is absolutely needed for the task. Load at most one skill per \
-         task; do not load a skill unless it clearly applies.\
+         These skills are available. Use a skill's `<description>` to decide whether it \
+         applies to the task; load its full instructions before proceeding when it clearly \
+         does, and at most one skill per task.\
          {truncation_note}\n\n\
          <available_skills>\n{}\n</available_skills>",
         all_entries.join("\n")
@@ -524,10 +416,9 @@ pub fn build_knowledge_section(knowledge: &[KnowledgeInfo]) -> String {
 
     format!(
         "## Knowledge Base\n\n\
-         Project knowledge documents are available for these subsystems.  Use \
-         `search_knowledge \"<topic>\"` to find relevant specs before modifying a \
-         subsystem, or `list_knowledge` to see all documents with their covered \
-         file patterns.{truncation_note}\n\n\
+         Project knowledge documents are available for these subsystems, with the \
+         files each covers. Consult the relevant specs before modifying a \
+         subsystem.{truncation_note}\n\n\
          <knowledge_base>\n{}\n</knowledge_base>",
         fitted.join("\n")
     )
@@ -569,8 +460,7 @@ fn with_dormant_note(section: String, heading: &str, noun: &str, dormant: usize)
 
 /// The Guidelines block as its two named sections. The first carries the
 /// `## Guidelines` heading; each carries the blank line before it.
-fn guideline_sections(tools: CoreTools) -> [(&'static str, String); 2] {
-    let core = guidelines::core_tools(tools);
+fn guideline_sections() -> [(&'static str, String); 2] {
     [
         (
             "guidelines.working_method",
@@ -581,11 +471,7 @@ fn guideline_sections(tools: CoreTools) -> [(&'static str, String); 2] {
         ),
         (
             "guidelines.tools",
-            if core.is_empty() {
-                String::new()
-            } else {
-                format!("\n\n### Tools\n{core}")
-            },
+            format!("\n\n### Tools\n{}", guidelines::tools()),
         ),
     ]
 }
@@ -625,10 +511,13 @@ pub fn system_prompt(mode: AgentMode, custom: Option<&str>, ctx: PromptContext<'
 /// Build the system prompt for the given agent mode as named sections.
 ///
 /// The sections tile the text (see [`sven_model::manifest`]); their ids are
-/// `identity`, `mode`, `project`, `git`, `project_instructions`, `tool_index`,
-/// `skills`, `agents`, `knowledge`, `knowledge_drift`, `ci`, the two
-/// `guidelines.*`, `orchestration` and `append`, or `custom` and `append` for an override. A
-/// block with nothing to say has no section.
+/// `identity`, `mode`, `project`, `git`, `project_instructions`, `skills`,
+/// `agents`, `knowledge`, `knowledge_drift`, `ci`, the two `guidelines.*` and
+/// `append`, or `custom` and `append` for an override. A block with nothing to
+/// say has no section.
+///
+/// The prompt names no tool: which tools a session has and how to use each
+/// reach the model through the tool list alone.
 pub fn compose_system_prompt(
     mode: AgentMode,
     custom: Option<&str>,
@@ -649,57 +538,31 @@ pub fn compose_system_prompt(
          Operating Mode: `{mode}`"
     );
 
-    let mode_instructions: Cow<'static, str> = match mode {
+    let mode_instructions = match mode {
         AgentMode::Research => {
-            "You are a research assistant.  You may read files, search the codebase, and look up \
-             information.  You MUST NOT write, modify, or delete any files. Research mode \
-             is non-destructive. Focus on gathering all the information needed in order to \
-             satisfy user's request.".into()
+            "You are a research assistant.  Gather the information the user's request needs.  \
+             You MUST NOT write, modify, or delete any files. Research mode is non-destructive."
         }
         AgentMode::Plan => {
             "You are a planning assistant.  Analyse the request and produce a clear, structured \
-             plan with numbered steps.  You may read files to inform the plan, but MUST NOT \
-             modify them. If `sven/plan` skill exists then use it. If not then output the plan in Markdown. \
-             under `.sven/plans/[unique name].plan.md`. Create directory if it doesn't exist. \
-             When a task is ambiguous or you need information to proceed, use the `ask_question` \
-             tool to collect structured answers from the user rather than making assumptions or \
-             writing a prose question. The `ask_question` tool presents a modal dialog in the TUI; \
-             prefer it over free-form text questions whenever the user is interactive.  \
-             You can spawn subtasks to explore different parts of the codebase. "
-.into()
+             plan with numbered steps.  You may inspect the project to inform the plan, but MUST \
+             NOT modify it. If `sven/plan` skill exists then use it. If not then output the plan \
+             in Markdown under `.sven/plans/[unique name].plan.md`. Create directory if it \
+             doesn't exist. When a task is ambiguous or you need information to proceed, ask the \
+             user rather than making assumptions."
         }
         AgentMode::Agent => {
-            let can = guidelines::capabilities(ctx.core_tools, None);
-            let can = if can.is_empty() {
-                String::new()
-            } else {
-                format!("You can {can}.  ")
-            };
-            format!(
-                "You are a capable coding agent.  {can}Complete the task the user asked for, \
-                 including every todo you created, before ending your turn."
-            )
-            .into()
+            "You are a capable coding agent.  Complete the task the user asked for, including \
+             every todo you created, before ending your turn."
         }
         AgentMode::Chat => {
-            "You are a conversational assistant. You can read files and answer questions. \
-             Respond naturally to user messages; the ReactiveAgentMachine drives the chat loop.".into()
+            "You are a conversational assistant. Answer questions and respond naturally to user \
+             messages; the ReactiveAgentMachine drives the chat loop."
         }
         AgentMode::Sdlc => {
-            // The SDLC sentence has never mentioned searching.
-            let can = guidelines::capabilities(
-                CoreTools {
-                    grep: false,
-                    ..ctx.core_tools
-                },
-                Some("manage the full development workflow from planning to delivery"),
-            );
-            format!(
-                "You are a software development lifecycle agent. You can {can}. \
-                 The SdlcMachine drives the process through Intake → Discovery → Planning → Execution \
-                 → Verification → Delivery phases."
-            )
-            .into()
+            "You are a software development lifecycle agent. You manage the full development \
+             workflow from planning to delivery. The SdlcMachine drives the process through \
+             Intake → Discovery → Planning → Execution → Verification → Delivery phases."
         }
     };
 
@@ -747,9 +610,9 @@ pub fn compose_system_prompt(
     let project_section = match ctx.scratch_dir {
         Some(dir) => format!(
             "{project_section}{heading}\n\
-             - Scratch directory: `{dir}`, this session's own and the shell's \
-               `TMPDIR`. Put clones, downloads and intermediate files there \
-               instead of `/tmp`.",
+             - Scratch directory: `{dir}`, this session's own and the `TMPDIR` of \
+               the commands it runs. Put clones, downloads and intermediate files \
+               there instead of `/tmp`.",
             heading = if project_section.is_empty() {
                 "\n\n## Project Context"
             } else {
@@ -787,13 +650,6 @@ pub fn compose_system_prompt(
         format!("\n\n{ci}")
     } else {
         String::new()
-    };
-
-    // Deferred tools - stable for the session, ahead of the skills so the
-    // two lists a model chooses from sit together.
-    let tool_index_section = match ctx.tool_index {
-        Some(index) if !index.trim().is_empty() => format!("\n\n{}", index.trim_end()),
-        _ => String::new(),
     };
 
     // Skills - stable, injected after project instructions and before CI/git.
@@ -846,23 +702,14 @@ pub fn compose_system_prompt(
         .push("project", project_section)
         .push("git", git_section)
         .push("project_instructions", context_file_section)
-        .push("tool_index", tool_index_section)
         .push("skills", skills_section)
         .push("agents", agents_section)
         .push("knowledge", knowledge_section)
         .push("knowledge_drift", knowledge_drift_section)
         .push("ci", ci_section);
-    for (id, section) in guideline_sections(ctx.core_tools) {
+    for (id, section) in guideline_sections() {
         composer.push(id, section);
     }
-    composer.push(
-        "orchestration",
-        if ctx.orchestration {
-            guidelines::orchestration().to_string()
-        } else {
-            String::new()
-        },
-    );
     composer.push("append", append_section.unwrap_or_default());
     composer.finish()
 }
@@ -914,15 +761,6 @@ mod tests {
         assert!(
             pr.to_lowercase().contains("plan"),
             "Plan mode prompt should mention 'plan'"
-        );
-    }
-
-    #[test]
-    fn agent_mode_mentions_write_capability() {
-        let pr = system_prompt(AgentMode::Agent, None, empty());
-        assert!(
-            pr.contains("write files") || pr.contains("read and write"),
-            "Agent mode should mention write capability"
         );
     }
 
@@ -1074,26 +912,6 @@ mod tests {
     }
 
     #[test]
-    fn the_core_prompt_instructs_only_tools_every_session_has() {
-        // A tool that is deferred or not configured is absent from the tool
-        // list; instructing it costs tokens and invites calls that fail.
-        for mode in [AgentMode::Research, AgentMode::Plan, AgentMode::Agent] {
-            let pr = system_prompt(mode, None, empty());
-            for absent in [
-                "`gdb`",
-                "`memory`",
-                "`context`",
-                "`task`",
-                "memory(",
-                "context(",
-                "task(",
-            ] {
-                assert!(!pr.contains(absent), "mode {mode} names {absent}");
-            }
-        }
-    }
-
-    #[test]
     fn the_core_prompt_asks_for_evidence_and_verification() {
         let pr = system_prompt(AgentMode::Agent, None, empty());
         assert!(pr.contains("instead of guessing"));
@@ -1146,15 +964,9 @@ mod tests {
             pr.contains("available_skills"),
             "prompt should include available_skills block"
         );
-        // The tool the prompt sends the model to must be the one registered
-        // (`SkillTool`, named `skill`, loading with `action: "load"`).
+        // How a skill is loaded is the skill tool's own description.
         assert!(
-            pr.contains("`skill` tool with `action: \"load\"`"),
-            "prompt should name the skill tool and its load action: {pr}"
-        );
-        assert!(!pr.contains("load_skill"), "no such tool: {pr}");
-        assert!(
-            pr.contains("for the task. Load at most one skill"),
+            pr.contains("applies to the task; load its full instructions"),
             "one paragraph, no source indentation: {pr}"
         );
     }

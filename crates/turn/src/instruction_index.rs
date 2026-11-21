@@ -83,10 +83,7 @@ pub fn build_skills_index(skills: &[SkillInfo]) -> String {
                 .entry(skill.command.split('/').next().unwrap_or(&skill.command))
                 .or_default() += 1;
         }
-        lines.push(format!(
-            "{} more skills, by package (`search` finds one, `list` with a `regex` narrows by package):",
-            indexed.len()
-        ));
+        lines.push(format!("{} more skills, by package:", indexed.len()));
         lines.extend(packages.iter().map(|(name, n)| format!("- {name}: {n}")));
     } else {
         lines.extend(
@@ -98,12 +95,9 @@ pub fn build_skills_index(skills: &[SkillInfo]) -> String {
 
     format!(
         "## Skills\n\n\
-         When the current task matches a skill below, call the `skill` tool with \
-         `action: \"load\"` and the skill's command as `name` to load its instructions \
-         before proceeding. The index gives each skill's command and a short summary; to \
-         look for a skill that is not listed or whose summary is unclear, call `skill` \
-         with `action: \"search\"` and a `query`. Load at most one skill per task; do \
-         not load a skill unless it clearly applies.\n\n\
+         The index gives each skill's command and a short summary. When the current task \
+         clearly matches a skill, load its instructions before proceeding, and at most one \
+         skill per task.\n\n\
          <available_skills>\n{}\n</available_skills>",
         lines.join("\n")
     )
@@ -117,10 +111,7 @@ pub fn build_agents_index(agents: &[AgentInfo]) -> String {
         return String::new();
     }
     let body = if agents.len() > INDEX_LINE_LIMIT {
-        format!(
-            "{} subagents; `action: \"agents\"` lists them.",
-            agents.len()
-        )
+        format!("{} subagents.", agents.len())
     } else {
         agents
             .iter()
@@ -133,11 +124,9 @@ pub fn build_agents_index(agents: &[AgentInfo]) -> String {
     };
     format!(
         "## Subagents\n\n\
-         The following subagents are available for delegation. Delegate with the `task` \
-         tool, passing the subagent's name as `mode`; when the user's task clearly matches \
-         one, suggest it as a slash command (e.g. `/verifier confirm the auth flow`). \
-         The index gives a short summary of each; `task` with `action: \"agents\"` returns \
-         the full descriptions.\n\n\
+         The following subagents are available for delegation; when the user's task clearly \
+         matches one, suggest it as a slash command (e.g. `/verifier confirm the auth flow`). \
+         The index gives a short summary of each.\n\n\
          <available_agents>\n{body}\n</available_agents>"
     )
 }
@@ -151,11 +140,7 @@ pub fn build_knowledge_index(knowledge: &[KnowledgeInfo]) -> String {
         return String::new();
     }
     let body = if knowledge.len() > INDEX_LINE_LIMIT {
-        format!(
-            "{} documents; `search_knowledge \"<topic>\"` finds the ones for a topic and \
-             `list_knowledge` shows all.",
-            knowledge.len()
-        )
+        format!("{} documents.", knowledge.len())
     } else {
         knowledge
             .iter()
@@ -172,8 +157,7 @@ pub fn build_knowledge_index(knowledge: &[KnowledgeInfo]) -> String {
     format!(
         "## Knowledge Base\n\n\
          Project knowledge documents are available for these subsystems, with the files \
-         each covers. Use `search_knowledge \"<topic>\"` to find relevant specs before \
-         modifying a subsystem, or `list_knowledge` to see all documents.\n\n\
+         each covers. Consult the relevant specs before modifying a subsystem.\n\n\
          <knowledge_base>\n{body}\n</knowledge_base>"
     )
 }

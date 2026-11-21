@@ -453,6 +453,7 @@ pub(crate) fn session_rankers(
         .then(|| crate::registry::DeferredDisclosure {
             mode: Arc::clone(mode),
             ranker: for_session(decision, notices.clone()),
+            index: Default::default(),
         });
     (deferred, for_point(RoutingPoint::SKILLS, decision, notices))
 }

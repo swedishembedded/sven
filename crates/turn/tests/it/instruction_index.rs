@@ -79,16 +79,15 @@ fn the_index_lists_a_command_and_a_short_summary_not_the_whole_description() {
 }
 
 #[test]
-fn the_index_says_how_to_load_and_how_to_search() {
+fn the_index_asks_for_a_skill_to_be_loaded_without_naming_the_tool() {
+    // How to load and search is the skill tool's own description.
     let p = prompt(
         vec![skill("billing", LONG, None)],
         ListingDisclosure::Deferred,
     );
     let section = skills_section(&p);
-    assert!(
-        section.contains("\"load\"") && section.contains("\"search\""),
-        "{section}"
-    );
+    assert!(section.contains("load its instructions"), "{section}");
+    assert!(!section.contains("`skill`"), "{section}");
 }
 
 #[test]
@@ -248,8 +247,8 @@ fn the_subagent_index_is_a_name_and_a_short_summary() {
         "{s}"
     );
     assert!(
-        s.contains("\"agents\""),
-        "how to read the full descriptions: {s}"
+        !s.contains("`task`"),
+        "delegating is the tool's description: {s}"
     );
     assert!(line.chars().count() <= 120, "{line}");
 }
@@ -276,7 +275,7 @@ fn the_knowledge_index_names_each_subsystem_with_the_files_it_covers() {
     let s = section(&p, "## Knowledge Base");
     assert!(s.contains("- auth (src/auth/**, tests/auth/**)"), "{s}");
     assert!(!s.contains("<doc>") && !s.contains("updated"), "{s}");
-    assert!(s.contains("search_knowledge"), "{s}");
+    assert!(!s.contains("search_knowledge"), "{s}");
 }
 
 #[test]
@@ -286,7 +285,7 @@ fn above_the_limit_the_knowledge_index_gives_a_count() {
     let s = section(&p, "## Knowledge Base");
     assert!(s.contains("60 documents"), "{s}");
     assert!(!s.contains("area7"), "{s}");
-    assert!(s.contains("list_knowledge"), "{s}");
+    assert!(!s.contains("list_knowledge"), "{s}");
 }
 
 #[test]

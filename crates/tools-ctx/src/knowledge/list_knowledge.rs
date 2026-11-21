@@ -35,7 +35,7 @@ impl Tool for ListKnowledgeTool {
     fn description(&self) -> &str {
         "List all project knowledge documents in `.sven/knowledge/`.\n\
          Returns: subsystem name, covered file patterns, last-updated date, filename.\n\
-         Use `search_knowledge` to search content, or `read_file` to load a full doc.\n\
+         Search their content, or read a document's file in full, to learn more.\n\
          Knowledge docs contain subsystem architecture, invariants, and failure-mode tables."
     }
 

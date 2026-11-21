@@ -87,9 +87,6 @@ fn full<'a>(root: &'a std::path::Path, context_file: &'a std::path::Path) -> Pro
         agents: Arc::from(vec![agent("verifier")]),
         knowledge: Arc::from(vec![doc("overview")]),
         knowledge_drift_note: Some("## Knowledge Drift\noverview is stale"),
-        tool_index: Some("## Deferred Tools\n\nNot loaded:\n- grep\n\n"),
-        orchestration: false,
-        core_tools: Default::default(),
         disclosure: InstructionDisclosure::default(),
     }
 }
@@ -137,15 +134,6 @@ fn cases() -> Vec<(String, String)> {
     out.push((
         "deferred".into(),
         system_prompt(AgentMode::Agent, None, deferred),
-    ));
-    // `agent.orchestration: plan` adds one paragraph, and only that.
-    let planning = PromptContext {
-        orchestration: true,
-        ..full(&root, &file)
-    };
-    out.push((
-        "orchestration".into(),
-        system_prompt(AgentMode::Agent, None, planning),
     ));
     // A block that is present but empty still takes its separator.
     let blank = PromptContext {
@@ -199,13 +187,13 @@ fn rendered_prompts_are_byte_identical_to_the_captured_composer() {
 const GOLDEN: &[(&str, usize, &str)] = &[
     (
         "append-only",
-        1757,
-        "fd6c2f3169611bdde3424ecb8cef350d98f1a191ec5078786822c1cbb50dc20c",
+        1697,
+        "8cbfb87f0962126808d289296fdc51ebfa21946e5f7bd675f83aa1a47c28b713",
     ),
     (
         "blank-volatile",
-        3500,
-        "a9ed945640abcca5cd5bb43172904bb13d5d5529a11fa4f6b30c922db3ccae0a",
+        3132,
+        "6d673db7a68e2266c08afebbfd39082d3f301ad2945c77bc91b6c709b80d9432",
     ),
     (
         "custom+append",
@@ -219,62 +207,57 @@ const GOLDEN: &[(&str, usize, &str)] = &[
     ),
     (
         "deferred",
-        3382,
-        "7b930cf52dc48d79587210f59450f79a726a0c2c24b67b85a28e538433f94610",
+        2833,
+        "1c4c77f1a7a9dcd658763f6ab6d742c9f778d4329fe231de0a4b1238a42fe712",
     ),
     (
         "empty/agent",
-        1745,
-        "2b9a1039ae22160ff843e53d144f3b2727e2e7a0e74d05c21b8030c5f92f8778",
+        1685,
+        "67ad50a474097c062e4f9792aaf57997bf813b4902b2a55478ea0254bdb9a6ee",
     ),
     (
         "empty/chat",
-        1698,
-        "45db14a89a7c33cf7ac78607190ddb65da6f09eb1cdf205cd0d26d9369f20692",
+        1694,
+        "2c7f32dd97deb952a25ad07d0356e398cf80263d96ee2a2028ef88adad2c14ba",
     ),
     (
         "empty/plan",
-        2272,
-        "9f583abfbcae88a1d7797ea96a2c64f66a86e11e6659f5d0dbf5df41fe2a7913",
+        2004,
+        "8874d62934b4175ececaf74d5d5871985c86213a4d9050659300e8d020a36466",
     ),
     (
         "empty/research",
-        1805,
-        "8032616dedffe041dc057ea11bd2dc569982b0930cbe78ed1225f5a03ca80912",
+        1722,
+        "e2bdc91b50ff9f0781fd609a392d0bfedc63d1623006d5b5db3229da7f7d609a",
     ),
     (
         "empty/sdlc",
-        1833,
-        "a5e7fe4de2dfa5f158537732a04ec21e57448afb28270dea2f3618b674ad6cc3",
+        1799,
+        "3cdbb77a564799999f55d4f47f6f05328433f854487d1ec877be4b73d908308e",
     ),
     (
         "full/agent",
-        3537,
-        "efa57a0bf17d319bb02f9318583f310baab639ac181ce5c168e8ba8615303fd8",
+        3169,
+        "6a51063963e74972f060eec8274b9076df34f65b6964e35de6a5511c6c49c1a7",
     ),
     (
         "full/chat",
-        3490,
-        "a1b739190cf5fc046d6ac60fd508a4a1829fb8920b617ec9a10dcb57b3f214e2",
+        3178,
+        "2a97f021c20b33f013561f29ab8ad9c5ca3d33176ffdd43c7a1eae0d72d9b5a2",
     ),
     (
         "full/plan",
-        4064,
-        "34fdc2c5de3a1570284b21e3e70daac422103ca0c4ece8209a2fe728853e0582",
+        3488,
+        "4badc6a7d3c53b0cd4cc3c660d9c48a5596bb6169729a6ca77322e01cf45686d",
     ),
     (
         "full/research",
-        3597,
-        "8028edf39d8dd862969af7b5f8252d1b8f74e8429c5c4e2d5bd026bfa1f508ab",
+        3206,
+        "de8a484c4a1009345511d16b661fe1e0dd971f9a1999499cf4bb9392ec3b3590",
     ),
     (
         "full/sdlc",
-        3625,
-        "01b061e9ad9ddead2f1f3d88b9a4faf24fdb05281c12ea6be5832a65825be6d8",
-    ),
-    (
-        "orchestration",
-        3904,
-        "e2f6db268ddeaecab691141feaf7f0f3075b89e84ea419e76309df7913a20933",
+        3283,
+        "e031dff7ae9364813cd5e678bccb01466eb3fcaaa9d5e5f7ee02d43caa2b8bfe",
     ),
 ];

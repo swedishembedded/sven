@@ -91,7 +91,8 @@ impl Tool for AskQuestionTool {
          prompt and 2+ options; 'Other' is always appended, so do not add it.\n\
          When no user is available it says so at once; then decide yourself and state\n\
          the assumption you made.\n\
-         Use it for decisions needing an explicit choice; ask yes/no questions in text."
+         Use it for decisions needing an explicit choice, and when a request is ambiguous,\n\
+         rather than assuming; ask yes/no questions in text."
     }
 
     fn parameters_schema(&self) -> Value {

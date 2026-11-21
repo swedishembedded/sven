@@ -49,16 +49,20 @@ indexed.
 `sven_tool_registry::CORE_TOOLS` is the list. An MCP tool is never core,
 whatever its name.
 
-**The index**, a `## Deferred Tools` section of the system prompt, written once
-when the session starts, for the session's starting mode:
+**The index**, part of the `tools` tool's own description, fixed once when the
+session's registry is complete (after the name policy and the preloads), for
+the session's starting mode. The system prompt names no tool: a tool, and what
+there is to load, reach the model only through the tool list.
 
 ```
-## Deferred Tools
+Find and load tools missing from your tool list. search: ranked by a query.
+load: callable from your next step. list: all of them, paged. help: a
+definition, without loading.
 
-These tools exist but are not in your tool list. Load a tool before you call it:
-call `tools` with action=load and names; from your next step it is in your tool
-list and you call it directly. action=search (query) finds tools, action=list
-pages through all of them, action=help shows a definition without loading it.
+Load a tool (action=load with names) before you call it; from your next step it
+is in your tool list and you call it directly. A built-in tool does its job with
+nothing to install: when one fits the task, prefer it over a skill or a script
+that installs packages.
 
 Not loaded:
 - ask_question: Ask the user multiple-choice questions and wait for the answers.
@@ -68,7 +72,7 @@ Not loaded:
 ```
 
 A line is `name: summary`, the summary at most 100 characters. Above 40 unloaded
-tools the section gives counts by category instead (`read 3; network 2; ...`),
+tools the index gives counts by category instead (`read 3; network 2; ...`),
 so a session with hundreds of MCP tools does not pay for hundreds of lines on
 every request; `tools` `list` is the live view either way.
 
@@ -158,8 +162,8 @@ loads later, so the cache-order rule above holds. They are not listed under
 registered (misspelt, or removed by `tools.disabled`) is reported once as a
 warning and skipped. The preloaded set is configuration, not kernel session
 state: it is applied on top of `active_tools` when the list is built.
-`agent.orchestration: plan` preloads `plan_tasks` the same way, so the system
-prompt's "Parallel Work" paragraph never names a tool the model does not have.
+`agent.orchestration: plan` preloads `plan_tasks` the same way; when to use
+it is in its own description, which the model reads only while it has it.
 `task` is not implied by it: the controller spawns the children itself.
 
 ## Sub-agents
@@ -276,8 +280,8 @@ and reads what `search` shows.
 
 `make benchmark/ledger DISCLOSURE=full|deferred` replays fixed scenarios against
 the mock provider and writes the token ledger of each: in `deferred` the
-`schema:` lines of the non-core tools disappear, the `tools` tool appears and
-the system prompt gains the `Deferred Tools` section. A load costs one extra
+`schema:` lines of the non-core tools disappear, the `tools` tool appears,
+its description carrying the index. A load costs one extra
 request that carries the whole prefix again, and the loaded definition rides
 along on every later request, so a session that needs one rarely-used tool pays
 more than `full` for a short run, and a long one that uses core tools only pays

@@ -25,8 +25,6 @@
 use sven_tool_registry::{ToolSchema, CORE_TOOLS};
 use sven_vocab::{ContextBudget, ReportedUsage, RequestBreakdown};
 
-/// System-prompt sections that hold the index of tools not offered in full.
-const DEFERRED_TOOLS_SECTION: &str = "Deferred Tools";
 const SKILLS_SECTION: &str = "Skills";
 /// Sections that index subagents and the knowledge base.
 const INDEX_SECTIONS: [&str; 2] = ["Subagents", "Knowledge Base"];
@@ -192,14 +190,13 @@ impl ContextUsage {
         let section = |name: &str| b.system_runtime.get(name).copied().unwrap_or(0);
         // Tools the registry holds but the request left out are deferred; when
         // none is, every definition went out in full and none counts as loaded.
-        let withheld = registered
+        let deferred_mode = registered
             .iter()
             .any(|t| !b.tool_schemas.contains_key(&t.name));
-        let deferred_mode = withheld || b.system_runtime.contains_key(DEFERRED_TOOLS_SECTION);
 
         let mut core = 0;
         let mut loaded = 0;
-        let mut mcp = section(DEFERRED_TOOLS_SECTION);
+        let mut mcp = 0;
         for (name, tokens) in &b.tool_schemas {
             if is_mcp(name) {
                 mcp += tokens;
@@ -212,8 +209,7 @@ impl ContextUsage {
         }
         let indexed = |sections: &[&str]| sections.iter().map(|s| section(s)).sum::<u32>();
         let runtime_total: u32 = b.system_runtime.values().sum();
-        let known =
-            section(DEFERRED_TOOLS_SECTION) + section(SKILLS_SECTION) + indexed(&INDEX_SECTIONS);
+        let known = section(SKILLS_SECTION) + indexed(&INDEX_SECTIONS);
 
         self.set(ContextCategory::SystemPrompt, b.system_stable);
         self.set(ContextCategory::CoreTools, core);
@@ -354,7 +350,6 @@ mod tests {
         b.system_runtime.insert("Skills".into(), 400);
         b.system_runtime.insert("Subagents".into(), 50);
         b.system_runtime.insert("Knowledge Base".into(), 25);
-        b.system_runtime.insert("Deferred Tools".into(), 600);
         b.system_runtime.insert("Project Context".into(), 70);
         b.system_runtime.insert("dynamic_suffix".into(), 30);
         b.tool_schemas.insert("shell".into(), 800);
@@ -396,7 +391,7 @@ mod tests {
         assert_eq!(u.of(ContextCategory::SystemPrompt), 3_000);
         assert_eq!(u.of(ContextCategory::CoreTools), 1_000);
         assert_eq!(u.of(ContextCategory::LoadedTools), 300);
-        assert_eq!(u.of(ContextCategory::McpTools), 750);
+        assert_eq!(u.of(ContextCategory::McpTools), 150);
         assert_eq!(u.of(ContextCategory::Skills), 400);
         assert_eq!(u.of(ContextCategory::Indexes), 75);
         assert_eq!(u.of(ContextCategory::Memory), 100);
@@ -435,7 +430,6 @@ mod tests {
     #[test]
     fn without_deferral_every_non_mcp_tool_is_core() {
         let mut b = breakdown();
-        b.system_runtime.remove("Deferred Tools");
         for t in ["web", "github_issue", "github_pr"] {
             b.tool_schemas.insert(t.into(), 10);
         }

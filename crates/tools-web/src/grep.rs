@@ -67,7 +67,7 @@ impl Tool for GrepTool {
         "Search file contents by regex (ripgrep). Escape literal braces as \\{\\}.\n\
          include is a file-name glob such as '*.rs' or '**/*.{ts,tsx}'.\n\
          To locate something start with output_mode=files_with_matches: one line per\n\
-         file instead of one per match."
+         file instead of one per match; then read only the relevant ranges of those files."
     }
 
     fn parameters_schema(&self) -> Value {

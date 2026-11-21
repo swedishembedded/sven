@@ -43,8 +43,7 @@ impl Tool for SearchKnowledgeTool {
         "Search project knowledge documents with a keyword query.\n\
          Returns: matching excerpts (with context lines) sorted by relevance.\n\
          Use before modifying a subsystem to retrieve architecture notes,\n\
-         correctness invariants, and known failure-mode tables.\n\
-         Use `list_knowledge` to see all available documents."
+         correctness invariants, and known failure-mode tables."
     }
 
     fn parameters_schema(&self) -> Value {

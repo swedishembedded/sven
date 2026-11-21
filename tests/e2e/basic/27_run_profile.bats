@@ -29,7 +29,7 @@ load helpers
 @test "27.03 the trajectory records the profile version" {
     trace="$(tmp_file).json"
     run_split_output bash -c 'echo "ping" | "$BIN" --headless --model mock --profile compact --output-trace "$0"' "${trace}"
-    run grep -c '"profile": "compact/2"' "${trace}"
+    run grep -c '"profile": "compact/3"' "${trace}"
     [[ "${output}" == "1" ]]
     rm -f "${trace}"
 }

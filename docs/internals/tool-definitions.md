@@ -49,8 +49,8 @@ there is changed on purpose.
 - A description says what the tool does and what the schema cannot: behaviour,
   limits, pitfalls. It does not repeat parameter defaults the schema states,
   and it never names another tool (`a_tool_description_never_names_another_tool`
-  enforces this; a compound tool may name its own actions, and cross-tool policy
-  belongs to the system prompt).
+  enforces this; a compound tool may name its own actions). A tool says when it
+  is the right one in its own description, without naming the alternatives.
 - `required` lists exactly the parameters a call cannot do without. A parameter
   with a default is optional.
 - A default stated in text is the default the implementation uses.
@@ -58,8 +58,10 @@ there is changed on purpose.
   the model reads about a tool whose definition it has not loaded.
 - Tool and parameter names are fixed: they are part of recorded trajectories
   and of what models have been trained on.
-- Everything the system prompt names in backticks as a tool exists
-  (`the_system_prompt_only_names_tools_that_exist`).
+- The system prompt names no tool: tools reach the model only through the tool
+  list, when the session offers them (`crates/bootstrap/tests/it/prompt_tool_agnostic.rs`
+  checks the names of real registries, from a full session to one with a single
+  MCP tool or none).
 
 ## What each built-in tool can reach
 

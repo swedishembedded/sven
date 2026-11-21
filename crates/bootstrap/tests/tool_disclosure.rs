@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use sven_bootstrap::tool_discovery::index_section;
+use sven_bootstrap::tool_discovery::index_listing;
 use sven_bootstrap::{BuiltinTools, Config, Disclosure, RuntimeBuilder, RuntimeContext};
 use sven_tool_registry::{ToolCall, ToolRegistry, DISCOVERY_TOOL};
 use sven_vocab::AgentMode;
@@ -120,7 +120,7 @@ async fn the_deferred_core_is_a_fraction_of_the_full_listing() {
 #[tokio::test]
 async fn the_index_tells_the_model_to_prefer_a_built_in_tool_over_installing_one() {
     let registry = registry(Disclosure::Deferred).await;
-    let index = index_section(&registry, AgentMode::Agent).expect("an index");
+    let index = index_listing(&registry, AgentMode::Agent).expect("an index");
     assert!(
         index.contains("prefer it over a skill or a script that installs packages"),
         "{index}"
@@ -128,9 +128,9 @@ async fn the_index_tells_the_model_to_prefer_a_built_in_tool_over_installing_one
 }
 
 #[tokio::test]
-async fn the_system_prompt_index_names_every_deferred_tool_once() {
+async fn the_discovery_index_names_every_deferred_tool_once() {
     let registry = registry(Disclosure::Deferred).await;
-    let index = index_section(&registry, AgentMode::Agent).expect("an index");
+    let index = index_listing(&registry, AgentMode::Agent).expect("an index");
     for name in [
         "task",
         "web_fetch",
@@ -154,7 +154,7 @@ async fn the_system_prompt_index_names_every_deferred_tool_once() {
 #[tokio::test]
 async fn full_disclosure_has_no_index() {
     let registry = registry(Disclosure::Full).await;
-    assert!(index_section(&registry, AgentMode::Agent).is_none());
+    assert!(index_listing(&registry, AgentMode::Agent).is_none());
 }
 
 #[tokio::test]

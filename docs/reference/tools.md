@@ -604,7 +604,7 @@ device control, which no other mode grants.
 `tools.disclosure.mode` is `deferred` for a program that reads the configuration
 file and does not set it. A request then carries the full definitions of the
 core tools and of the tools the model has loaded, and one summary line per other
-tool in the system prompt. The core tools are `edit_file`, `find_file`, `grep`,
+tool in the description of the `tools` tool. The core tools are `edit_file`, `find_file`, `grep`,
 `read_file`, `shell`, `todo`, `write_file` and `tools`. The model loads the rest
 with `tools` (`action: load`). `--tool-disclosure full` (or `mode: full`) sends
 every definition with every request. Loading changes only what the model is

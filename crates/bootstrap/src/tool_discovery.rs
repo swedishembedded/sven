@@ -11,8 +11,8 @@
 //!
 //! Under deferred disclosure (see [`sven_tool_registry::Disclosure`]) a
 //! request carries full definitions only for the core tools and the tools the
-//! session has loaded. The rest are known by a one-line summary, in
-//! [`index_section`] of the system prompt and through this tool:
+//! session has loaded. The rest are known by a one-line summary, in this
+//! tool's own description ([`fix_index`]) and through its actions:
 //!
 //! | action | does |
 //! |--------|------|
@@ -26,7 +26,7 @@
 //! the kernel records them in the session's context. The model then calls the
 //! loaded tool directly, as a typed effect under that tool's own capability.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -50,10 +50,21 @@ const LIST_PAGE: usize = 25;
 const MAX_NAMES: usize = 16;
 /// The most definitions one `help` prints, in full.
 const MAX_HELP: usize = 3;
-/// Above this many unloaded tools the system prompt carries counts by
-/// category instead of one line each, so a session with hundreds of MCP tools
-/// does not pay for hundreds of lines on every request.
+/// Above this many unloaded tools the description carries counts by category
+/// instead of one line each, so a session with hundreds of MCP tools does not
+/// pay for hundreds of lines on every request.
 pub const INLINE_INDEX_LIMIT: usize = 40;
+
+/// What the discovery tool says about itself before its index is fixed.
+const DESCRIPTION: &str = "Find and load tools missing from your tool list. search: ranked by a \
+     query. load: callable from your next step. list: all of them, paged. help: a definition, \
+     without loading.";
+
+/// The discovery tool's description once the session's registry is complete:
+/// what is not loaded yet. Shared between the tool and the builder that fixes
+/// it, set once, so every request of the session carries the same text.
+#[derive(Clone, Default)]
+pub struct DiscoveryIndex(Arc<OnceLock<String>>);
 
 /// The discovery tool. Registered, with deferred disclosure, in every
 /// profile that can reach more tools than its core.
@@ -61,6 +72,7 @@ pub struct ToolDiscoveryTool {
     catalog: ToolCatalog,
     mode: Arc<Mutex<AgentMode>>,
     ranker: Arc<dyn ToolRanker>,
+    index: DiscoveryIndex,
 }
 
 impl ToolDiscoveryTool {
@@ -72,7 +84,15 @@ impl ToolDiscoveryTool {
             catalog: registry.catalog(),
             mode,
             ranker: Arc::new(Bm25Ranker),
+            index: DiscoveryIndex::default(),
         }
+    }
+
+    /// Describes itself with `index` once [`fix_index`] has set it.
+    #[must_use]
+    pub fn with_index(mut self, index: DiscoveryIndex) -> Self {
+        self.index = index;
+        self
     }
 
     /// Ranks with `ranker` instead of [`Bm25Ranker`].
@@ -232,9 +252,7 @@ impl Tool for ToolDiscoveryTool {
     }
 
     fn description(&self) -> &str {
-        "Find and load tools missing from your tool list. search: ranked by a query. load: \
-         callable from your next step. list: all of them, paged. help: a definition, without \
-         loading."
+        self.index.0.get().map_or(DESCRIPTION, String::as_str)
     }
 
     fn summary(&self) -> &str {
@@ -375,13 +393,15 @@ fn problems(unknown: &[String], not_loadable: &[String]) -> Option<String> {
 /// reads the registry live, so later changes (MCP servers connecting) show up
 /// in `search` and `list`.
 ///
-/// `ranker` replaces [`Bm25Ranker`] for `search` when given.
+/// `ranker` replaces [`Bm25Ranker`] for `search` when given; `index` is the
+/// description [`fix_index`] sets once the registry is complete.
 pub fn enable(
     registry: &mut ToolRegistry,
     mode: Arc<Mutex<AgentMode>>,
     ranker: Option<Arc<dyn ToolRanker>>,
+    index: DiscoveryIndex,
 ) {
-    let mut tool = ToolDiscoveryTool::new(registry, mode);
+    let mut tool = ToolDiscoveryTool::new(registry, mode).with_index(index);
     if let Some(ranker) = ranker {
         tool = tool.with_ranker(ranker);
     }
@@ -435,13 +455,11 @@ pub(crate) fn preload(
     warnings
 }
 
-/// The system-prompt section that tells the model how deferred tools work
-/// and, while there are few enough, which ones exist.
-///
-/// Rendered once when the session starts; the discovery tool's `list` is the
-/// live view when tools come and go (MCP servers connecting).
+/// What the discovery tool's description adds to [`DESCRIPTION`]: how loading
+/// works and, while there are few enough, which tools are not loaded. `None`
+/// when `registry` defers nothing in `mode`.
 #[must_use]
-pub fn index_section(registry: &ToolRegistry, mode: AgentMode) -> Option<String> {
+pub fn index_listing(registry: &ToolRegistry, mode: AgentMode) -> Option<String> {
     if registry.disclosure() != Disclosure::Deferred || registry.get(DISCOVERY_TOOL).is_none() {
         return None;
     }
@@ -450,20 +468,11 @@ pub fn index_section(registry: &ToolRegistry, mode: AgentMode) -> Option<String>
         return None;
     }
     let mut out = String::from(
-        "## Deferred Tools\n\n\
-         These tools exist but are not in your tool list. Load a tool before you call it: call \
-         `tools` with action=load and names; from your next step it is in your tool list and you \
-         call it directly. action=search (query) finds tools, action=list pages through all of \
-         them, action=help shows a definition without loading it. A built-in tool does its job \
-         with nothing to install: when one fits the task, prefer it over a skill or a script \
-         that installs packages.",
+        "Load a tool (action=load with names) before you call it; from your next step it is \
+         in your tool list and you call it directly. A built-in tool does its job with nothing \
+         to install: when one fits the task, prefer it over a skill or a script that installs \
+         packages.\n\n",
     );
-    if tools.iter().any(|t| t.name == "document_locate") {
-        out.push_str(
-            " For PDF files that is document_locate (search: which pages) and document_convert.",
-        );
-    }
-    out.push_str("\n\n");
     if tools.len() <= INLINE_INDEX_LIMIT {
         out.push_str("Not loaded:\n");
         for tool in &tools {
@@ -484,6 +493,19 @@ pub fn index_section(registry: &ToolRegistry, mode: AgentMode) -> Option<String>
         out.push('\n');
     }
     Some(out)
+}
+
+/// Fixes the discovery tool's description from the complete `registry`: its
+/// own text followed by [`index_listing`]. Call once, after the name policy
+/// and the preloads are applied, so the listing names what is really left to
+/// load. A later call changes nothing: the description stays the same for the
+/// whole session, as the prompt cache needs.
+pub fn fix_index(index: &DiscoveryIndex, registry: &ToolRegistry, mode: AgentMode) {
+    if let Some(listing) = index_listing(registry, mode) {
+        let _ = index
+            .0
+            .set(format!("{DESCRIPTION}\n\n{}", listing.trim_end()));
+    }
 }
 
 #[cfg(test)]

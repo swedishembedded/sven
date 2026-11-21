@@ -86,8 +86,9 @@ load helpers
     for tool in find_file task system web_fetch web_search skill memory; do
         [[ ! "${ledger}" =~ \"tool_schemas\":\{[^\}]*\"${tool}\": ]]
     done
-    # What is not loaded is described once, in the system prompt.
-    [[ "${ledger}" == *'"Deferred Tools":'* ]]
+    # What is not loaded is described once, in the tools tool's own definition,
+    # never in the system prompt.
+    [[ "${ledger}" != *'"Deferred Tools":'* ]]
 }
 
 @test "20.09 --tool-disclosure full is the legacy listing: no tools tool, no index" {
