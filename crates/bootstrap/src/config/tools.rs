@@ -132,7 +132,9 @@ impl ToolsConfig {
             "deny_patterns",
             "disabled",
             "preload",
+            "only",
             "timeout_secs",
+            "max_timeout_secs",
         ])
         .with("web", WebConfig::schema())
         .with("memory", MemoryConfig::schema())
@@ -238,6 +240,20 @@ mod tests {
         assert_eq!(p.decide("make check"), ApprovalPolicy::Auto);
         assert_eq!(p.decide("make clean"), ApprovalPolicy::Deny);
         assert_eq!(p.decide("cat x"), ApprovalPolicy::Ask);
+    }
+
+    #[test]
+    fn every_key_the_section_reads_is_known_to_its_schema() {
+        // A key the section decodes but its schema omits is applied and yet
+        // warned about as unrecognised, as `tools.only` was.
+        let section = serde_yaml::Mapping::from_iter([(
+            "tools".into(),
+            serde_yaml::to_value(ToolsConfig::default()).unwrap(),
+        )]);
+        let doc = sven_config::ConfigDocument::from_yaml(&serde_yaml::to_string(&section).unwrap())
+            .unwrap();
+        let unknown = doc.unknown_keys(&super::super::Config::schema());
+        assert!(unknown.is_empty(), "{unknown:?}");
     }
 
     #[test]
