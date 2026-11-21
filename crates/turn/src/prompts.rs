@@ -13,6 +13,42 @@ use crate::instructions::{self, ListingDisclosure};
 pub use crate::prompt_composer::ComposedPrompt;
 use crate::prompt_composer::Composer;
 
+/// Which of the built-in file, search and shell tools the session offers. The
+/// prompt names and promises only these: a session confined to an MCP tool
+/// must not be told to call `shell` or `read_file`, which answer "not
+/// enabled". [`Default`] offers all of them, the unconfined session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoreTools {
+    pub grep: bool,
+    pub read_file: bool,
+    pub edit_file: bool,
+    pub write_file: bool,
+    pub shell: bool,
+}
+
+impl CoreTools {
+    /// A session offering none of them.
+    pub const NONE: Self = Self {
+        grep: false,
+        read_file: false,
+        edit_file: false,
+        write_file: false,
+        shell: false,
+    };
+}
+
+impl Default for CoreTools {
+    fn default() -> Self {
+        Self {
+            grep: true,
+            read_file: true,
+            edit_file: true,
+            write_file: true,
+            shell: true,
+        }
+    }
+}
+
 /// All optional contextual blocks that can be injected into the system prompt.
 #[derive(Debug)]
 pub struct PromptContext<'a> {
@@ -63,6 +99,9 @@ pub struct PromptContext<'a> {
     /// Whether the session offers `plan_tasks`: adds the short paragraph on
     /// when to use it. Fixed for the session, so part of the stable prefix.
     pub orchestration: bool,
+    /// The built-in tools the session offers; the Guidelines Tools section and
+    /// the mode's capability sentence are limited to them.
+    pub core_tools: CoreTools,
     /// How much of each catalog entry the Skills, Subagents and Knowledge Base
     /// sections carry.
     pub disclosure: instructions::InstructionDisclosure,
@@ -83,6 +122,7 @@ impl<'a> Default for PromptContext<'a> {
             knowledge_drift_note: None,
             tool_index: None,
             orchestration: false,
+            core_tools: CoreTools::default(),
             disclosure: instructions::InstructionDisclosure::default(),
         }
     }
@@ -109,6 +149,7 @@ impl<'a> PromptContext<'a> {
             knowledge_drift_note: self.knowledge_drift_note,
             tool_index: self.tool_index,
             orchestration: self.orchestration,
+            core_tools: self.core_tools,
             disclosure: self.disclosure,
         }
     }
@@ -163,10 +204,58 @@ mod guidelines {
          directly."
     }
 
-    pub fn core_tools() -> &'static str {
-        "- Locate code with `grep`, then read the relevant ranges with `read_file`.\n\
-         - Change existing files with `edit_file` and create new ones with `write_file`.\n\
-         - Use `shell` for builds, tests, git and running programs; pass `timeout_secs` for builds and test suites."
+    /// One line per group of offered built-in tools; empty when it offers none.
+    /// All five tools give the full text of the unconfined session.
+    pub fn core_tools(tools: super::CoreTools) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        match (tools.grep, tools.read_file) {
+            (true, true) => lines.push(
+                "- Locate code with `grep`, then read the relevant ranges with `read_file`.".into(),
+            ),
+            (true, false) => lines.push("- Locate code with `grep`.".into()),
+            (false, true) => lines.push("- Read files with `read_file`.".into()),
+            (false, false) => {}
+        }
+        match (tools.edit_file, tools.write_file) {
+            (true, true) => lines.push(
+                "- Change existing files with `edit_file` and create new ones with `write_file`."
+                    .into(),
+            ),
+            (true, false) => lines.push("- Change existing files with `edit_file`.".into()),
+            (false, true) => lines.push("- Create files with `write_file`.".into()),
+            (false, false) => {}
+        }
+        if tools.shell {
+            lines.push(
+                "- Use `shell` for builds, tests, git and running programs; pass `timeout_secs` for builds and test suites."
+                    .into(),
+            );
+        }
+        lines.join("\n")
+    }
+
+    /// What the session can do with its built-in tools, as the phrases of a
+    /// capability sentence (`extra` is appended last).
+    pub fn capabilities(tools: super::CoreTools, extra: Option<&'static str>) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        match (tools.read_file, tools.edit_file || tools.write_file) {
+            (true, true) => parts.push("read and write files"),
+            (true, false) => parts.push("read files"),
+            (false, true) => parts.push("write files"),
+            (false, false) => {}
+        }
+        if tools.shell {
+            parts.push("run shell commands");
+        }
+        if tools.grep {
+            parts.push("search the codebase");
+        }
+        parts.extend(extra);
+        match parts.as_slice() {
+            [] => String::new(),
+            [one] => (*one).to_string(),
+            [init @ .., last] => format!("{}, and {last}", init.join(", ")),
+        }
     }
 }
 
@@ -480,7 +569,8 @@ fn with_dormant_note(section: String, heading: &str, noun: &str, dormant: usize)
 
 /// The Guidelines block as its two named sections. The first carries the
 /// `## Guidelines` heading; each carries the blank line before it.
-fn guideline_sections() -> [(&'static str, String); 2] {
+fn guideline_sections(tools: CoreTools) -> [(&'static str, String); 2] {
+    let core = guidelines::core_tools(tools);
     [
         (
             "guidelines.working_method",
@@ -491,7 +581,11 @@ fn guideline_sections() -> [(&'static str, String); 2] {
         ),
         (
             "guidelines.tools",
-            format!("\n\n### Tools\n{}", guidelines::core_tools()),
+            if core.is_empty() {
+                String::new()
+            } else {
+                format!("\n\n### Tools\n{core}")
+            },
         ),
     ]
 }
@@ -555,12 +649,12 @@ pub fn compose_system_prompt(
          Operating Mode: `{mode}`"
     );
 
-    let mode_instructions = match mode {
+    let mode_instructions: Cow<'static, str> = match mode {
         AgentMode::Research => {
             "You are a research assistant.  You may read files, search the codebase, and look up \
              information.  You MUST NOT write, modify, or delete any files. Research mode \
              is non-destructive. Focus on gathering all the information needed in order to \
-             satisfy user's request."
+             satisfy user's request.".into()
         }
         AgentMode::Plan => {
             "You are a planning assistant.  Analyse the request and produce a clear, structured \
@@ -572,22 +666,40 @@ pub fn compose_system_prompt(
              writing a prose question. The `ask_question` tool presents a modal dialog in the TUI; \
              prefer it over free-form text questions whenever the user is interactive.  \
              You can spawn subtasks to explore different parts of the codebase. "
-
+.into()
         }
         AgentMode::Agent => {
-            "You are a capable coding agent.  You can read and write files, run shell commands, \
-             and search the codebase.  Complete the task the user asked for, including every \
-             todo you created, before ending your turn."
+            let can = guidelines::capabilities(ctx.core_tools, None);
+            let can = if can.is_empty() {
+                String::new()
+            } else {
+                format!("You can {can}.  ")
+            };
+            format!(
+                "You are a capable coding agent.  {can}Complete the task the user asked for, \
+                 including every todo you created, before ending your turn."
+            )
+            .into()
         }
         AgentMode::Chat => {
             "You are a conversational assistant. You can read files and answer questions. \
-             Respond naturally to user messages; the ReactiveAgentMachine drives the chat loop."
+             Respond naturally to user messages; the ReactiveAgentMachine drives the chat loop.".into()
         }
         AgentMode::Sdlc => {
-            "You are a software development lifecycle agent. You can read and write files, \
-             run shell commands, and manage the full development workflow from planning to delivery. \
-             The SdlcMachine drives the process through Intake → Discovery → Planning → Execution \
-             → Verification → Delivery phases."
+            // The SDLC sentence has never mentioned searching.
+            let can = guidelines::capabilities(
+                CoreTools {
+                    grep: false,
+                    ..ctx.core_tools
+                },
+                Some("manage the full development workflow from planning to delivery"),
+            );
+            format!(
+                "You are a software development lifecycle agent. You can {can}. \
+                 The SdlcMachine drives the process through Intake → Discovery → Planning → Execution \
+                 → Verification → Delivery phases."
+            )
+            .into()
         }
     };
 
@@ -740,7 +852,7 @@ pub fn compose_system_prompt(
         .push("knowledge", knowledge_section)
         .push("knowledge_drift", knowledge_drift_section)
         .push("ci", ci_section);
-    for (id, section) in guideline_sections() {
+    for (id, section) in guideline_sections(ctx.core_tools) {
         composer.push(id, section);
     }
     composer.push(

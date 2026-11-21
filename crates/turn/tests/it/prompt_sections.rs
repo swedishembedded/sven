@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use sven_model::manifest::sha256_hex;
-use sven_turn::prompts::{compose_system_prompt, system_prompt, PromptContext};
+use sven_turn::prompts::{compose_system_prompt, system_prompt, CoreTools, PromptContext};
 use sven_turn::AgentRuntimeContext;
 use sven_vocab::AgentMode;
 use sven_workspace::SkillInfo;
@@ -148,4 +148,47 @@ fn the_runtime_context_returns_the_sections_of_the_message_it_builds() {
     let composed = bare.build_system_prompt(AgentMode::Agent).unwrap();
     assert_eq!(composed.text, "Just this.");
     assert_eq!(ids(&composed), ["append"]);
+}
+
+const BUILTIN_TOOL_NAMES: [&str; 5] = ["shell", "read_file", "edit_file", "write_file", "grep"];
+
+#[test]
+fn a_session_without_built_in_tools_is_not_told_to_use_them() {
+    for mode in [AgentMode::Agent, AgentMode::Sdlc] {
+        let ctx = PromptContext {
+            core_tools: CoreTools::NONE,
+            ..PromptContext::default()
+        };
+        let text = system_prompt(mode, None, ctx);
+        for name in BUILTIN_TOOL_NAMES {
+            assert!(!text.contains(name), "{mode}: prompt names `{name}`");
+        }
+        for promise in [
+            "read and write files",
+            "run shell commands",
+            "search the codebase",
+        ] {
+            assert!(
+                !text.contains(promise),
+                "{mode}: prompt promises `{promise}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_session_names_only_the_built_in_tools_it_offers() {
+    let ctx = PromptContext {
+        core_tools: CoreTools {
+            shell: true,
+            ..CoreTools::NONE
+        },
+        ..PromptContext::default()
+    };
+    let text = system_prompt(AgentMode::Agent, None, ctx);
+    assert!(text.contains("`shell`"));
+    assert!(text.contains("You can run shell commands."));
+    for name in ["read_file", "edit_file", "write_file", "grep"] {
+        assert!(!text.contains(name), "prompt names `{name}`");
+    }
 }

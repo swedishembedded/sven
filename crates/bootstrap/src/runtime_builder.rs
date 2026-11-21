@@ -760,6 +760,14 @@ impl RuntimeBuilder {
             self.agent_mode.unwrap_or(AgentMode::Agent),
         );
         runtime.orchestration = tool_registry.get("plan_tasks").is_some();
+        let offers = |name: &str| tool_registry.get(name).is_some();
+        runtime.core_tools = sven_turn::prompts::CoreTools {
+            grep: offers("grep"),
+            read_file: offers("read_file"),
+            edit_file: offers("edit_file"),
+            write_file: offers("write_file"),
+            shell: offers("shell"),
+        };
         let seed_thread = sven_machines::mode::primary_thread(&self.mode);
         if let Ok(mut store) = conv_store.lock() {
             let mode = self.agent_mode.unwrap_or(AgentMode::Agent);

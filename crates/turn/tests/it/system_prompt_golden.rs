@@ -89,6 +89,7 @@ fn full<'a>(root: &'a std::path::Path, context_file: &'a std::path::Path) -> Pro
         knowledge_drift_note: Some("## Knowledge Drift\noverview is stale"),
         tool_index: Some("## Deferred Tools\n\nNot loaded:\n- grep\n\n"),
         orchestration: false,
+        core_tools: Default::default(),
         disclosure: InstructionDisclosure::default(),
     }
 }
