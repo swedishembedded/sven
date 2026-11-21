@@ -59,10 +59,51 @@ pub fn client_builder_resolving(_inner: Option<()>) -> reqwest::ClientBuilder {
 
 /// A client builder that ignores the egress policy: only for the model
 /// provider's endpoint, which is configured separately (`providers`,
-/// `model`). Everything else uses [`client_builder`].
+/// `model`). Everything else uses [`client_builder`]. It trusts, besides the
+/// usual roots, the authorities [`trust_model_authorities`] added.
 pub fn model_client_builder() -> reqwest::ClientBuilder {
     ensure_crypto_provider();
-    reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder();
+    #[cfg(not(target_arch = "wasm32"))]
+    for authority in model_authorities()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+    {
+        builder = builder.add_root_certificate(authority.clone());
+    }
+    builder
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn model_authorities() -> &'static std::sync::Mutex<Vec<reqwest::Certificate>> {
+    static AUTHORITIES: std::sync::OnceLock<std::sync::Mutex<Vec<reqwest::Certificate>>> =
+        std::sync::OnceLock::new();
+    AUTHORITIES.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// Trusts the certificate authorities in `pem` for every model endpoint
+/// client built from now on ([`model_client_builder`]): for model servers an
+/// embedding application started itself, behind a certificate authority of
+/// its own (one it made for them and holds no other key under). Certificates
+/// are still verified; this only adds roots, for the rest of the process.
+/// Returns how many certificates were added.
+///
+/// # Errors
+/// `pem` holds no certificate, or one that does not parse.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn trust_model_authorities(pem: &[u8]) -> Result<usize, String> {
+    let certificates = reqwest::Certificate::from_pem_bundle(pem)
+        .map_err(|e| format!("model authorities: {e}"))?;
+    if certificates.is_empty() {
+        return Err("model authorities: the PEM holds no certificate".into());
+    }
+    let added = certificates.len();
+    model_authorities()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .extend(certificates);
+    Ok(added)
 }
 
 /// An error and its causes as one line (`a: b: c`): reqwest's own text for a

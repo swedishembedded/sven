@@ -181,6 +181,19 @@ pub mod workspace {
     };
 }
 
+/// How model endpoints are reached over HTTP.
+///
+/// Re-exported so an application that starts its own model servers behind a
+/// certificate authority of its own makes every model client trust it
+/// ([`http::trust_model_authorities`]), and builds its own requests to those
+/// servers with the same TLS stack ([`http::model_client_builder`]), instead
+/// of turning verification off or serving plaintext.
+pub mod http {
+    pub use sven_http::model_client_builder;
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use sven_http::trust_model_authorities;
+}
+
 /// The event stream an agent emits while it works.
 ///
 /// Re-exported so a consumer never needs to name a kernel crate to render
