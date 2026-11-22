@@ -436,3 +436,41 @@ async fn a_fork_replays_shell_calls_through_the_engines_launcher() {
     let seen = std::fs::read_to_string(outside.path().join("seen")).expect("the launcher ran");
     assert!(seen.contains("bash -c echo recorded"), "{seen}");
 }
+
+/// An engine whose tree its commands' sandbox shows at `/workspace/repo`.
+fn engine_seen_as(root: &Path, provider: Arc<ScriptedMockProvider>) -> Engine {
+    Engine::builder()
+        .model_provider(provider as Arc<_>)
+        .toolset(Toolset::coding())
+        .project_root(root)
+        .project_root_seen_as("/workspace/repo")
+        .build()
+        .expect("an engine builds")
+}
+
+/// A recording whose calls name the tree at the path the sandbox showed it at
+/// replays on a host tree the engine is told the sandbox shows there.
+#[tokio::test]
+async fn a_fork_replays_calls_that_name_the_tree_at_the_sandboxs_path() {
+    let student_tree = tempfile::tempdir().expect("a student tree");
+    base(student_tree.path(), "alpha");
+    let provider = Arc::new(ScriptedMockProvider::new(vec![
+        calls("c1", "read_file", r#"{"path":"/workspace/repo/input.txt"}"#),
+        says("read it"),
+    ]));
+    let mut agent = engine_seen_as(student_tree.path(), provider).agent("agent");
+    agent
+        .send("read the note")
+        .await
+        .expect("the student's turn");
+    let transcript = agent.state().transcript();
+    let recorded = RecordedState::of(&transcript, student_tree.path()).expect("the recording");
+
+    let fork_tree = tempfile::tempdir().expect("a fork tree");
+    base(fork_tree.path(), "alpha");
+    let teacher = Arc::new(ScriptedMockProvider::new(vec![says("unused")]));
+    engine_seen_as(fork_tree.path(), teacher)
+        .fork(&Fork::new(transcript, fork_tree.path(), recorded))
+        .await
+        .expect("the replayed read reaches the same file");
+}

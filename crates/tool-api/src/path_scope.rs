@@ -386,6 +386,12 @@ impl PathScope {
         self
     }
 
+    /// The root's other name ([`Self::seen_as`]), when it has one.
+    #[must_use]
+    pub fn seen_as_path(&self) -> Option<&Path> {
+        self.alias.as_deref().map(PathBuf::as_path)
+    }
+
     /// `requested` with the root's other name ([`Self::seen_as`]) replaced
     /// by the root.
     fn unaliased<'p>(&self, requested: &'p Path) -> std::borrow::Cow<'p, Path> {

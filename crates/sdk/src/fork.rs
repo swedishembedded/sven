@@ -673,12 +673,17 @@ impl Engine {
 
     /// The tools a replayed session would run: the built-in set this engine's
     /// toolset names, then the engine's own tools over them, all confined to
-    /// `root`.
+    /// `root`, which the commands' sandbox shows where the engine's root is
+    /// shown ([`crate::EngineBuilder::project_root_seen_as`]).
     fn replay_tools(&self, root: &Path) -> Result<ToolRegistry, ForkError> {
         let confined = PathScope::confined(root).map_err(|e| ForkError::Workspace {
             path: root.to_path_buf(),
             source: io::Error::new(io::ErrorKind::InvalidInput, e.to_string()),
         })?;
+        let confined = match self.paths().seen_as_path() {
+            Some(alias) => confined.seen_as(alias),
+            None => confined,
+        };
         let runtime = AgentRuntimeContext {
             project_root: Some(root.to_path_buf()),
             path_scope: confined,
