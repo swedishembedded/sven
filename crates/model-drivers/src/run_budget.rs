@@ -18,8 +18,12 @@
 //!   concludes the run from that flag, never from an error's text;
 //! - counts every request it lets through as one turn, and lowers the
 //!   request's output limit to the tokens still left;
-//! - charges each completion the output tokens its stream reports, or, when
-//!   the stream reports none, all it was allowed, with a warning.
+//! - charges each completion the output tokens its stream reports; a stream
+//!   that ended without reporting any is charged all it was allowed, with a
+//!   warning; a stream its consumer cut off before its end (a watchdog that
+//!   stopped looping reasoning, a cancel) is charged what it streamed: its
+//!   sampled token ids when the provider returned them, else its text at
+//!   about four characters a token.
 //!
 //! What a completion may produce is reserved while it streams, so two
 //! requests in flight together cannot both be given the same remaining
@@ -144,6 +148,8 @@ struct State {
     /// Completions that reported no usage and were charged all they were
     /// allowed.
     unmetered: u32,
+    /// Completions cut off before their end, charged what they streamed.
+    cut_off: u32,
 }
 
 /// A run's budget and what it has spent. See the module documentation.
@@ -190,6 +196,13 @@ impl RunBudget {
     #[must_use]
     pub fn unmetered(&self) -> u32 {
         self.state().unmetered
+    }
+
+    /// Completions their consumer cut off before their end, each charged what
+    /// it streamed (an estimate when the provider returned no token ids).
+    #[must_use]
+    pub fn cut_off(&self) -> u32 {
+        self.state().cut_off
     }
 
     /// The bound a request was refused at, if one was: the run is over.
@@ -293,12 +306,11 @@ impl RunBudget {
         state.reserved = state.reserved.saturating_sub(admission.reserved);
     }
 
-    /// Settles a finished completion: its reservation is released and the
-    /// tokens it reported are charged, or, when it reported none, all it was
-    /// allowed.
-    fn settle(&self, admission: Admission, reported: Option<u64>) {
-        let charged = match reported {
-            Some(tokens) => {
+    /// Settles a completion: its reservation is released and it is charged
+    /// what [`Charge`] says.
+    fn settle(&self, admission: Admission, charge: Charge) {
+        let charged = match charge {
+            Charge::Reported(tokens) => {
                 if self.limits.max_completion_tokens.is_some() && tokens > admission.reserved {
                     tracing::warn!(
                         allowed = admission.reserved,
@@ -309,7 +321,7 @@ impl RunBudget {
                 }
                 tokens
             }
-            None => {
+            Charge::Unmetered => {
                 if self.limits.max_completion_tokens.is_some() {
                     tracing::warn!(
                         charged = admission.reserved,
@@ -320,11 +332,26 @@ impl RunBudget {
                 }
                 admission.reserved
             }
+            Charge::CutOff(streamed) => {
+                self.state().cut_off += 1;
+                streamed.min(admission.reserved)
+            }
         };
         let mut state = self.state();
         state.reserved = state.reserved.saturating_sub(admission.reserved);
         state.spent.completion_tokens = state.spent.completion_tokens.saturating_add(charged);
     }
+}
+
+/// What a completion is charged when its stream is dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Charge {
+    /// The output tokens the stream reported.
+    Reported(u64),
+    /// The stream ended without reporting usage: all it was allowed.
+    Unmetered,
+    /// The consumer dropped the stream before its end: what it streamed.
+    CutOff(u64),
 }
 
 /// The budget every provider of this process is held to, once [`install`]
@@ -425,6 +452,9 @@ impl ModelProvider for BudgetedProvider {
             budget: Arc::clone(&self.budget),
             admission,
             reported: None,
+            ended: false,
+            sampled: 0,
+            streamed_chars: 0,
         };
         // The closure owns the whole meter (a method call on it, not a copy
         // of one field), so it settles when the stream is dropped.
@@ -509,20 +539,58 @@ struct Meter {
     budget: Arc<RunBudget>,
     admission: Admission,
     reported: Option<u64>,
+    /// The stream reached its end (done, or a provider error) before the
+    /// consumer dropped it.
+    ended: bool,
+    /// Sampled token ids the provider returned.
+    sampled: u64,
+    /// Characters streamed as reasoning, text and tool calls.
+    streamed_chars: u64,
 }
+
+/// Characters a token stands for when a cut-off completion returned no ids:
+/// the same rough estimate the live streaming counters use.
+const CHARS_PER_TOKEN: u64 = 4;
 
 impl Meter {
     fn observe(&mut self, item: &Result<ResponseEvent>) {
-        if let Ok(ResponseEvent::Usage { output_tokens, .. }) = item {
-            let reported = self.reported.get_or_insert(0);
-            *reported = reported.saturating_add(u64::from(*output_tokens));
+        let chars = |text: &str| u64::try_from(text.chars().count()).unwrap_or(u64::MAX);
+        match item {
+            Ok(ResponseEvent::Usage { output_tokens, .. }) => {
+                let reported = self.reported.get_or_insert(0);
+                *reported = reported.saturating_add(u64::from(*output_tokens));
+            }
+            Ok(ResponseEvent::Done | ResponseEvent::Error(_)) | Err(_) => self.ended = true,
+            Ok(ResponseEvent::Tokens { ids, .. }) => {
+                self.sampled = self.sampled.saturating_add(ids.len() as u64);
+            }
+            Ok(ResponseEvent::ThinkingDelta(text) | ResponseEvent::TextDelta(text)) => {
+                self.streamed_chars = self.streamed_chars.saturating_add(chars(text));
+            }
+            Ok(ResponseEvent::ToolCall {
+                name, arguments, ..
+            }) => {
+                self.streamed_chars = self
+                    .streamed_chars
+                    .saturating_add(chars(name).saturating_add(chars(arguments)));
+            }
+            Ok(_) => {}
+        }
+    }
+
+    fn charge(&self) -> Charge {
+        match (self.reported, self.ended) {
+            (Some(tokens), _) => Charge::Reported(tokens),
+            (None, true) => Charge::Unmetered,
+            (None, false) if self.sampled > 0 => Charge::CutOff(self.sampled),
+            (None, false) => Charge::CutOff(self.streamed_chars / CHARS_PER_TOKEN),
         }
     }
 }
 
 impl Drop for Meter {
     fn drop(&mut self) {
-        self.budget.settle(self.admission, self.reported);
+        self.budget.settle(self.admission, self.charge());
     }
 }
 

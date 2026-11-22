@@ -243,6 +243,12 @@ impl ThinkingBudget {
     }
 }
 
+/// How the reason of a reasoning-loop abort begins. A headless run that one
+/// ends prints it as `[sven:error] reasoning loop: ...`: a stable marker an
+/// examiner reads to record the loop as its own outcome, apart from a budget
+/// exhaustion or a time limit.
+pub const REASONING_LOOP_PREFIX: &str = "reasoning loop:";
+
 /// Rough token estimate matching the TUI's live streaming counter
 /// (`crates/tui/src/app/agent_events.rs`) - chars/4, not a real tokenizer.
 /// Good enough for a loop-prevention ceiling; not used for billing.
@@ -579,7 +585,7 @@ pub async fn stream_turn_attributed(
                 let _ = tx.send(AgentEvent::ThinkingDelta(delta)).await;
                 if let Some(times) = looped {
                     return Err(anyhow::Error::new(AbortedError::reasoning_loop(format!(
-                        "the model is looping in its reasoning (the same stretch occurs {times} \
+                        "{REASONING_LOOP_PREFIX} the model is looping in its reasoning (the same stretch occurs {times} \
                          times in the last few thousand characters; ~{thinking_token_estimate} thinking \
                          tokens so far)"
                     ))));

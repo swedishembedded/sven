@@ -165,6 +165,116 @@ async fn a_completion_without_usage_is_charged_all_it_was_allowed() {
     assert_eq!(budget.unmetered(), 1);
 }
 
+/// Streams `deltas` (reasoning, then text, then a tool call's arguments) and,
+/// unless `finish`, never ends: the stream a consumer cuts off, as the
+/// reasoning-loop watchdog does, without the server ever reporting usage.
+struct Streaming {
+    sampled_ids: Vec<i64>,
+    finish: bool,
+}
+
+#[async_trait]
+impl ModelProvider for Streaming {
+    fn name(&self) -> &str {
+        "streaming"
+    }
+    fn model_name(&self) -> &str {
+        "m"
+    }
+    async fn complete(&self, _req: CompletionRequest) -> anyhow::Result<ResponseStream> {
+        let mut events = vec![
+            Ok(ResponseEvent::ThinkingDelta("a".repeat(400))),
+            Ok(ResponseEvent::TextDelta("b".repeat(40))),
+            Ok(ResponseEvent::ToolCall {
+                index: 0,
+                id: "c".into(),
+                name: "vim".into(),
+                arguments: "d".repeat(40),
+            }),
+        ];
+        if !self.sampled_ids.is_empty() {
+            events.push(Ok(ResponseEvent::Tokens {
+                ids: self.sampled_ids.clone(),
+                logprobs: Vec::new(),
+            }));
+        }
+        if self.finish {
+            events.push(Ok(ResponseEvent::Done));
+        }
+        Ok(Box::pin(
+            futures::stream::iter(events).chain(futures::stream::pending()),
+        ))
+    }
+}
+
+async fn read_then_cut(provider: &BudgetedProvider, events: usize) {
+    let mut stream = provider
+        .complete(CompletionRequest::default())
+        .await
+        .unwrap();
+    for _ in 0..events {
+        stream.next().await;
+    }
+}
+
+#[tokio::test]
+async fn a_completion_cut_off_before_its_end_is_charged_what_it_streamed() {
+    // A watchdog that cuts a looping completion off must not spend the rest of
+    // the run on it: the tokens it streamed are charged (here estimated at four
+    // characters a token, 480 characters), and the run keeps the remainder for
+    // the retry it was promised.
+    let budget = RunBudget::new(RunBudgetLimits {
+        max_completion_tokens: Some(15_000),
+        ..RunBudgetLimits::default()
+    });
+    let inner: Arc<dyn ModelProvider> = Arc::new(Streaming {
+        sampled_ids: Vec::new(),
+        finish: false,
+    });
+    let provider = BudgetedProvider::new(inner, Arc::clone(&budget));
+    read_then_cut(&provider, 3).await;
+    assert_eq!(budget.spent().completion_tokens, 120);
+    assert_eq!(
+        budget.unmetered(),
+        0,
+        "a cut-off is not an unmetered completion"
+    );
+    assert_eq!(budget.cut_off(), 1);
+    assert!(budget.exhausted().is_none());
+}
+
+#[tokio::test]
+async fn a_cut_off_completion_with_its_sampled_tokens_is_charged_their_count() {
+    let budget = RunBudget::new(RunBudgetLimits {
+        max_completion_tokens: Some(15_000),
+        ..RunBudgetLimits::default()
+    });
+    let inner: Arc<dyn ModelProvider> = Arc::new(Streaming {
+        sampled_ids: (0..77).collect(),
+        finish: false,
+    });
+    let provider = BudgetedProvider::new(inner, Arc::clone(&budget));
+    read_then_cut(&provider, 4).await;
+    assert_eq!(budget.spent().completion_tokens, 77);
+}
+
+#[tokio::test]
+async fn a_completion_that_ended_without_usage_is_still_charged_all_it_was_allowed() {
+    let budget = RunBudget::new(RunBudgetLimits {
+        max_completion_tokens: Some(500),
+        ..RunBudgetLimits::default()
+    });
+    let inner: Arc<dyn ModelProvider> = Arc::new(Streaming {
+        sampled_ids: Vec::new(),
+        finish: true,
+    });
+    let provider = BudgetedProvider::new(inner, Arc::clone(&budget));
+    read_then_cut(&provider, 4).await;
+    assert_eq!(budget.spent().completion_tokens, 500);
+    assert_eq!(budget.unmetered(), 1);
+    assert_eq!(budget.cut_off(), 0);
+}
+
 #[tokio::test]
 async fn a_completion_streaming_holds_its_allowance_from_the_next() {
     let inner = Counting::new(Some(10));
@@ -182,8 +292,9 @@ async fn a_completion_streaming_holds_its_allowance_from_the_next() {
     assert_eq!(budget.remaining().max_completion_tokens, Some(0));
     assert!(complete(&provider, None).await.is_err(), "nothing is left");
     drop(open);
-    // The open stream never reported its usage: charged its whole allowance.
-    assert_eq!(budget.spent().completion_tokens, 100);
+    // Dropped before it streamed anything: nothing was produced to charge.
+    assert_eq!(budget.spent().completion_tokens, 0);
+    assert_eq!(budget.cut_off(), 1);
 }
 
 #[test]

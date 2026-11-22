@@ -414,4 +414,10 @@ async fn a_reasoning_loop_on_the_retry_too_is_an_error() {
             .any(|e| matches!(e, UiEvent::Error(m) if m.contains("looping in its reasoning"))),
         "{events:?}"
     );
+    // The headless line an examiner records the loop by: `[sven:error] reasoning loop: ...`.
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::Error(m)
+            if m.starts_with(sven_turn::stream_turn::REASONING_LOOP_PREFIX))),
+        "{events:?}"
+    );
 }

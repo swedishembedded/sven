@@ -826,8 +826,17 @@ notes and any other request alike. A turn is one completion.
   that only stands for the room left in the context window is kept while it
   is the tighter bound; the server then ends the reply at its context.
 - Each completion is charged the output tokens its response reports. A
-  response that reports none is charged everything it was allowed, and the
-  run says how many such completions it had (`[sven:warn] run budget: ...`).
+  response that ends without reporting any is charged everything it was
+  allowed, and the run says how many such completions it had
+  (`[sven:warn] run budget: ...`). A completion sven cuts off itself before
+  its end (the repetition detector stopping a reasoning loop, a cancel) is
+  charged what it streamed: its sampled token ids when the provider returned
+  them, else its text at about four characters a token. A cut-off therefore
+  never spends the rest of the run.
+- A reasoning loop is asked again once. When the retry loops too, the run
+  ends with exit code `1` and stderr carries one line that starts
+  `[sven:error] reasoning loop:`, so an examiner can count loops apart from
+  budget exhaustion.
 - When the run would need one more completion than the budget allows, the
   request is not sent: the run ends with exit code `4`, the trajectory's
   outcome is `budget_exhausted`, and stderr carries one line such as

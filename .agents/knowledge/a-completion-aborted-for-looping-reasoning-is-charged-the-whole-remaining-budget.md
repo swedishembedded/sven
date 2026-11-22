@@ -20,3 +20,10 @@ the spending. It is 42-50% for a second curation, and 8% for the base model, whi
 `completion(s) reported no usage` line). Charge an aborted completion the tokens it streamed, and let the promised
 retry run, so a reasoning loop is a distinct, countable outcome rather than budget exhaustion. Evidence: lane EXP's
 `logs/autopsy.json` and the packed E1 jobs (`jobs/f?-e1s?-*`).
+
+**Fixed (2026-11-22):** `RunBudget` charges a completion its consumer cut off before its end what it streamed (its
+sampled token ids when the provider returned them, else its text at four characters a token), counted apart as
+`cut_off()`, not `unmetered()`. A completion that ended without reporting usage is still charged all it was allowed.
+The promised retry now runs on the remaining budget. A loop that ends the run prints `[sven:error] reasoning loop:
+...` (`stream_turn::REASONING_LOOP_PREFIX`), so an examiner can record it as its own outcome
+(`crates/model-drivers/src/run_budget_tests.rs`, `crates/executors/tests/it/watchdog_abort.rs`).
