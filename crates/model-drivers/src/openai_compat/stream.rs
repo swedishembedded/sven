@@ -327,7 +327,12 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("(no message)");
-        match err.get("code").and_then(|c| c.as_str()) {
+        let message = crate::server_text::printable(message);
+        match err
+            .get("code")
+            .and_then(|c| c.as_str())
+            .map(crate::server_text::printable)
+        {
             Some(code) => bail!("server error ({code}): {message}"),
             None => bail!("server error: {message}"),
         }

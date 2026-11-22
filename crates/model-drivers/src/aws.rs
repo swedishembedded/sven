@@ -317,7 +317,10 @@ impl sven_model::ModelProvider for BedrockProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            bail!("AWS Bedrock error {status}: {text}");
+            bail!(
+                "AWS Bedrock error {status}: {}",
+                crate::server_text::printable(&text)
+            );
         }
 
         let response_body: Value = resp

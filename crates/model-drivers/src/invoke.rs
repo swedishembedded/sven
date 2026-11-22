@@ -217,7 +217,8 @@ pub(crate) fn refused(what: &str, status: u16, json: Option<&Value>, body: &str)
                 .as_str()
                 .or_else(|| j["error"].as_str())
         })
-        .map_or_else(|| body.chars().take(200).collect(), str::to_owned);
+        .map_or_else(|| body.chars().take(200).collect::<String>(), str::to_owned);
+    let message = crate::server_text::printable(&message);
     let code = json.and_then(|j| j["error"]["code"].as_str()).filter(|c| {
         !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
     });

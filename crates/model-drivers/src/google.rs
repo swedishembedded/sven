@@ -194,7 +194,10 @@ impl sven_model::ModelProvider for GoogleProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            bail!("Google Gemini error {status}: {text}");
+            bail!(
+                "Google Gemini error {status}: {}",
+                crate::server_text::printable(&text)
+            );
         }
 
         let byte_stream = resp.bytes_stream();

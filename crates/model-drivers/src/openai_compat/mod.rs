@@ -767,7 +767,11 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
                 && text.contains("response_format")
                 && body.get("response_format").is_some();
             if !refused_format {
-                bail!("{} error {status}: {text}", self.driver_name);
+                bail!(
+                    "{} error {status}: {}",
+                    self.driver_name,
+                    crate::server_text::printable(&text)
+                );
             }
             self.response_format_refused
                 .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -781,7 +785,11 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             if !resp.status().is_success() {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                bail!("{} error {status}: {text}", self.driver_name);
+                bail!(
+                    "{} error {status}: {}",
+                    self.driver_name,
+                    crate::server_text::printable(&text)
+                );
             }
         }
 

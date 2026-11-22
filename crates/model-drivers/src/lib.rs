@@ -47,6 +47,7 @@ pub mod reachable;
 pub mod request_log;
 mod resolve;
 pub mod run_budget;
+pub mod server_text;
 pub mod sven_service;
 mod thinking;
 #[cfg(not(target_arch = "wasm32"))]

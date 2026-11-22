@@ -399,7 +399,10 @@ impl sven_model::ModelProvider for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            bail!("Anthropic error {status}: {text}");
+            bail!(
+                "Anthropic error {status}: {}",
+                crate::server_text::printable(&text)
+            );
         }
 
         let byte_stream = resp.bytes_stream();
