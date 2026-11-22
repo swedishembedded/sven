@@ -71,6 +71,16 @@ fn workspace() -> Workspace {
 /// model makes each of `calls` in turn, and returns each call's result text
 /// and whether it was an error, in order.
 async fn run_calls(root: &Path, calls: &[(&str, serde_json::Value)]) -> Vec<String> {
+    run_calls_seen_as(root, None, calls).await
+}
+
+/// [`run_calls`] on an engine whose root its commands' sandbox shows at
+/// `seen_as`.
+async fn run_calls_seen_as(
+    root: &Path,
+    seen_as: Option<&str>,
+    calls: &[(&str, serde_json::Value)],
+) -> Vec<String> {
     let mut scripts: Vec<Vec<ResponseEvent>> = calls
         .iter()
         .enumerate()
@@ -90,10 +100,14 @@ async fn run_calls(root: &Path, calls: &[(&str, serde_json::Value)]) -> Vec<Stri
         ResponseEvent::TextDelta("done".into()),
         ResponseEvent::Done,
     ]);
-    let engine = Engine::builder()
+    let mut builder = Engine::builder()
         .model_provider(Arc::new(ScriptedMockProvider::new(scripts)))
         .toolset(Toolset::coding())
-        .project_root(root)
+        .project_root(root);
+    if let Some(alias) = seen_as {
+        builder = builder.project_root_seen_as(alias);
+    }
+    let engine = builder
         .build()
         .expect("an engine with an existing root builds");
     let mut agent = engine.agent("agent");
@@ -300,4 +314,42 @@ fn a_root_that_is_not_a_directory_is_refused_when_the_engine_is_built() {
             "{err}"
         );
     }
+}
+
+/// A tree the commands' sandbox shows at another path: a call naming a file
+/// under that path (as a recorded call from inside the sandbox does) reaches
+/// the same file of the root, and a path outside both is still refused.
+#[tokio::test]
+async fn a_path_under_the_roots_name_in_the_sandbox_is_the_same_file() {
+    let _serial = exclusive().await;
+    let ws = workspace();
+    let outside_abs = ws.outside.join("secret.txt");
+    let results = run_calls_seen_as(
+        &ws.root,
+        Some("/workspace/repo"),
+        &[
+            (
+                "write_file",
+                serde_json::json!({"path": "/workspace/repo/notes/a.txt", "text": "hi", "append": false}),
+            ),
+            (
+                "read_file",
+                serde_json::json!({"path": "/workspace/repo/notes/a.txt"}),
+            ),
+            (
+                "read_file",
+                serde_json::json!({"path": outside_abs.to_string_lossy()}),
+            ),
+        ],
+    )
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(ws.root.join("notes/a.txt")).unwrap(),
+        "hi"
+    );
+    assert!(results[1].contains("hi"), "{results:?}");
+    assert!(
+        results[2].contains("outside the project root"),
+        "{results:?}"
+    );
 }

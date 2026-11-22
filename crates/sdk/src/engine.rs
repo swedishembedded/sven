@@ -358,6 +358,7 @@ pub struct EngineBuilder {
     toolset: Toolset,
     machines: Option<sven_machines::ModeRegistry>,
     project_root: Option<std::path::PathBuf>,
+    project_root_seen_as: Option<std::path::PathBuf>,
     audit_log: Option<std::path::PathBuf>,
     /// Whether sessions read skills and sub-agents from the host user's home
     /// ([`EngineBuilder::host_instructions`]).
@@ -468,6 +469,18 @@ impl EngineBuilder {
     #[must_use]
     pub fn project_root(mut self, root: impl Into<std::path::PathBuf>) -> Self {
         self.project_root = Some(root.into());
+        self
+    }
+
+    /// The absolute path at which the commands' sandbox shows the
+    /// [project root](Self::project_root) (`/workspace/repo`), when it is not
+    /// the root's own path: a tool call naming a path under it reaches the
+    /// same file of the root, held to the root as any other path. For an
+    /// application that continues, on the host, a recording made inside the
+    /// sandbox, whose calls name the sandbox's path. Ignored without a root.
+    #[must_use]
+    pub fn project_root_seen_as(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.project_root_seen_as = Some(path.into());
         self
     }
 
@@ -645,8 +658,14 @@ impl EngineBuilder {
             .apply_network()
             .map_err(|e| CallError::Precondition(format!("the `network` section: {e}")))?;
         let paths = match &self.project_root {
-            Some(root) => sven_tool_api::PathScope::confined(root)
-                .map_err(|e| CallError::Precondition(e.to_string()))?,
+            Some(root) => {
+                let scope = sven_tool_api::PathScope::confined(root)
+                    .map_err(|e| CallError::Precondition(e.to_string()))?;
+                match &self.project_root_seen_as {
+                    Some(alias) => scope.seen_as(alias),
+                    None => scope,
+                }
+            }
             None => sven_tool_api::PathScope::unconfined(),
         };
         Ok(Engine {

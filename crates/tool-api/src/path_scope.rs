@@ -75,6 +75,9 @@ pub struct PathScope {
     allowed: Arc<Vec<PathBuf>>,
     /// The root held open for race-free lookups (see [`PathScope::race_free`]).
     anchor: Anchor,
+    /// Another absolute name of the root: where a sandbox shows the tree to
+    /// the commands run in it (see [`PathScope::seen_as`]).
+    alias: Option<Arc<PathBuf>>,
 }
 
 /// The open root directory of a race-free scope; absent otherwise.
@@ -249,6 +252,7 @@ impl PathScope {
             denied_names: Arc::default(),
             allowed: Arc::default(),
             anchor: Anchor::default(),
+            alias: None,
         })
     }
 
@@ -367,6 +371,32 @@ impl PathScope {
         self
     }
 
+    /// This scope, also taking `alias` (an absolute path) as a name of the
+    /// root: a path at or under it means the same file under the root, judged
+    /// by the same rules. For a tree that the commands' sandbox shows at
+    /// another path than the host's (`/workspace/repo`), so a path a command
+    /// or a recorded call names in the sandbox reaches the same file through
+    /// the file tools. Ignored when unconfined or `alias` is relative.
+    #[must_use]
+    pub fn seen_as(mut self, alias: impl AsRef<Path>) -> Self {
+        let alias = alias.as_ref();
+        if self.root.is_some() && alias.is_absolute() {
+            self.alias = Some(Arc::new(normalise(alias)));
+        }
+        self
+    }
+
+    /// `requested` with the root's other name ([`Self::seen_as`]) replaced
+    /// by the root.
+    fn unaliased<'p>(&self, requested: &'p Path) -> std::borrow::Cow<'p, Path> {
+        if let (Some(alias), Some(root)) = (self.alias.as_deref(), self.root.as_deref()) {
+            if let Ok(rest) = requested.strip_prefix(alias) {
+                return std::borrow::Cow::Owned(root.join(rest));
+            }
+        }
+        std::borrow::Cow::Borrowed(requested)
+    }
+
     /// The canonical root, or `None` when unconfined.
     #[must_use]
     pub fn root(&self) -> Option<&Path> {
@@ -387,6 +417,7 @@ impl PathScope {
         let Some(root) = self.root.as_deref() else {
             return Ok(requested.to_path_buf());
         };
+        let requested = &*self.unaliased(requested);
         if !self.contained {
             return Ok(normalise(&root.join(requested)));
         }
@@ -453,7 +484,7 @@ impl PathScope {
     /// what was opened (a directory opens for reading); the caller reads
     /// the descriptor's own metadata.
     pub fn open(&self, requested: impl AsRef<Path>, mode: OpenMode) -> Result<File, OpenError> {
-        let requested = requested.as_ref();
+        let requested = &*self.unaliased(requested.as_ref());
         let resolved = self.resolve(requested)?;
         #[cfg(target_os = "linux")]
         if let (Some(anchor), Some(root)) = (self.anchor.0.as_deref(), self.root.as_deref()) {
@@ -609,6 +640,42 @@ mod tests {
 
     fn scope(dir: &Path) -> PathScope {
         PathScope::confined(dir).expect("a temp dir is a valid root")
+    }
+
+    /// A tree a sandbox shows its commands at another path (`/workspace/repo`):
+    /// a path under that path means the same file of the root, and stays
+    /// held to the root.
+    #[test]
+    fn a_path_under_the_roots_other_name_is_the_same_file_of_the_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "x").unwrap();
+        let s = scope(tmp.path()).seen_as("/workspace/repo");
+        let root = s.root().unwrap().to_path_buf();
+        assert_eq!(
+            s.resolve("/workspace/repo/a.txt").unwrap(),
+            root.join("a.txt")
+        );
+        assert_eq!(s.resolve("/workspace/repo").unwrap(), root);
+        assert_eq!(s.resolve("a.txt").unwrap(), root.join("a.txt"));
+        assert!(
+            s.resolve("/workspace/repo/../x").is_err(),
+            "still held to the root"
+        );
+        assert!(
+            s.resolve("/workspace/repository/a.txt").is_err(),
+            "a prefix is not the name"
+        );
+        let mut text = String::new();
+        std::io::Read::read_to_string(
+            &mut s.open("/workspace/repo/a.txt", OpenMode::Read).unwrap(),
+            &mut text,
+        )
+        .unwrap();
+        assert_eq!(text, "x");
+        let race_free = s.race_free().unwrap();
+        assert!(race_free
+            .open("/workspace/repo/a.txt", OpenMode::Read)
+            .is_ok());
     }
 
     #[test]
