@@ -634,6 +634,14 @@ pub async fn stream_turn_attributed(
             } => {
                 thinking_stall_started = None; // forward progress resets the stall clock
                 repetition.reset();
+                // The reasoning before a call is complete when the call
+                // begins, as it is when text begins: observers file it with
+                // the reply that calls, not after it.
+                if !thinking_buf.is_empty() {
+                    let content = strip_think_wrappers(std::mem::take(&mut thinking_buf));
+                    keep_reasoning(&mut reasoning, &content);
+                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                }
                 let slot = slots.entry(index).or_insert_with(|| AccumSlot {
                     id: String::new(),
                     name: String::new(),
@@ -909,6 +917,75 @@ mod thinking_watchdog_tests {
         let err = result.expect_err("a silent stream is stale");
         assert!(err.to_string().contains("idle for >7 s"), "{err}");
         assert_eq!(started.elapsed(), Duration::from_secs(7));
+    }
+
+    /// Answers every request with the same events.
+    struct ScriptProvider(Vec<ResponseEvent>);
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl ModelProvider for ScriptProvider {
+        fn name(&self) -> &str {
+            "script"
+        }
+        fn model_name(&self) -> &str {
+            "script"
+        }
+        async fn complete(
+            &self,
+            _req: CompletionRequest,
+        ) -> anyhow::Result<
+            std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>>,
+        > {
+            Ok(Box::pin(futures::stream::iter(
+                self.0.clone().into_iter().map(Ok),
+            )))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_reasoning_before_a_call_completes_before_the_call_is_announced() {
+        let provider = ScriptProvider(vec![
+            ResponseEvent::ThinkingDelta("ask the tool".into()),
+            ResponseEvent::ToolCall {
+                index: 0,
+                id: "c1".into(),
+                name: "weather".into(),
+                arguments: "{}".into(),
+            },
+            ResponseEvent::Done,
+        ]);
+        let (tx, mut rx) = mpsc::channel::<AgentEvent>(256);
+        let turn = stream_turn(
+            &provider,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            TurnLimits::default(),
+            &tx,
+        )
+        .await
+        .expect("the turn completes");
+        drop(tx);
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        let thought = events
+            .iter()
+            .position(|e| matches!(e, AgentEvent::ThinkingComplete(_)));
+        let called = events
+            .iter()
+            .position(|e| matches!(e, AgentEvent::ToolCallStarted(_)));
+        assert!(thought.is_some() && called.is_some(), "{events:?}");
+        assert!(
+            thought < called,
+            "the reasoning is filed with the reply that calls: {events:?}"
+        );
+        assert_eq!(turn.reasoning, "ask the tool");
     }
 
     fn drained_channel() -> (mpsc::Sender<AgentEvent>, tokio::task::JoinHandle<()>) {
