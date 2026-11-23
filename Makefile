@@ -121,7 +121,8 @@ build/wasm:
 ##   As a user: builds the release package unless a current one exists and
 ##   unpacks it under PREFIX (default ~/.local), no sudo. Under `sudo make install`:
 ##   dpkg -i of the package already built, with nothing rebuilt (run it once as
-##   yourself first). A different, remote install is scripts/install.sh.
+##   yourself first). As root with no sudo (a container): builds it, then dpkg -i.
+##   A different, remote install is scripts/install.sh.
 install:
 	@bash scripts/install-deb.sh --deb-dir $(DEB_OUT) --version $(VERSION) \
 		--binary target/release/sven --make "$(MAKE)" $(if $(PREFIX),--prefix "$(PREFIX)")

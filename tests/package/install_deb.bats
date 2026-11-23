@@ -99,10 +99,11 @@ builds() { grep -c "^$1\$" "$BUILDS" || true; }
   [[ "$output" == *"not on your PATH"* ]]
 }
 
-@test "as root it installs the existing package with dpkg and builds nothing" {
+@test "under sudo it installs the existing package with dpkg and builds nothing" {
   run_install
   : >"$BUILDS"
   fake_id 0
+  export SUDO_USER=someone
   printf '#!/bin/sh\necho "dpkg $*" >"%s/dpkg.log"\n' "$WORK" >"$FAKEBIN/dpkg"
   chmod +x "$FAKEBIN/dpkg"
   rm -rf "$PREFIX"
@@ -113,10 +114,23 @@ builds() { grep -c "^$1\$" "$BUILDS" || true; }
   [ ! -e "$PREFIX" ]
 }
 
-@test "as root with no package it fails and says to build it as a user" {
+@test "under sudo with no package it fails and says to build it as a user" {
   fake_id 0
+  export SUDO_USER=someone
   run_install
   [ "$status" -ne 0 ]
   [[ "$output" == *"make install"* ]]
   [ ! -s "$BUILDS" ]
+}
+
+@test "as the only user, root builds the package when needed and installs it with dpkg" {
+  fake_id 0
+  unset SUDO_USER
+  printf '#!/bin/sh\necho "dpkg $*" >"%s/dpkg.log"\n' "$WORK" >"$FAKEBIN/dpkg"
+  chmod +x "$FAKEBIN/dpkg"
+  run_install
+  [ "$status" -eq 0 ]
+  [ "$(builds package/deb/release)" -eq 1 ]
+  [[ "$(cat "$WORK/dpkg.log")" == "dpkg -i $DEBS/sven_1.2.3_all.deb" ]]
+  [ ! -e "$PREFIX" ]
 }

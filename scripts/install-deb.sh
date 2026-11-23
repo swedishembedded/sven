@@ -13,10 +13,13 @@
 #   as a user   builds the release binary and the package when the package is
 #               missing or older than the binary, then unpacks it under
 #               --prefix (default ~/.local): no dpkg, no sudo.
-#   as root     installs the package that is already built with `dpkg -i` and
+#   under sudo  installs the package that is already built with `dpkg -i` and
 #               builds nothing, so `sudo make install` never leaves root-owned
-#               files in target/. With no package it stops and says to run
-#               `make install` once as the user first.
+#               files in a user's target/. With no package it stops and says
+#               to run `make install` once as the user first.
+#   as root     when root is the only user (a container, no sudo): builds the
+#               package when needed, as a user would, then installs it
+#               system-wide with `dpkg -i`.
 #
 # Running it again changes nothing once the package is current.
 #
@@ -53,6 +56,24 @@ find_deb() {
 
 deb="$(find_deb)"
 
+# The package, built from this checkout when it is missing or older than the
+# release binary (cargo is incremental, so the build is a no-op when current).
+ensure_package() {
+    "$make_cmd" build/release
+    if [[ -z "$deb" || "$deb" -ot "$binary" ]]; then
+        "$make_cmd" package/deb/release
+        deb="$(find_deb)"
+        [[ -n "$deb" ]] || { echo "error: package build produced no sven $version package in $deb_dir" >&2; exit 1; }
+    fi
+}
+
+if [[ "$(id -u)" -eq 0 && -z "${SUDO_USER:-}" ]]; then
+    ensure_package
+    echo "Installing $deb system-wide"
+    dpkg -i "$deb"
+    exit 0
+fi
+
 if [[ "$(id -u)" -eq 0 ]]; then
     if [[ -z "$deb" ]]; then
         echo "error: no sven $version package in $deb_dir to install." >&2
@@ -65,13 +86,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
     exit 0
 fi
 
-# cargo is incremental, so this is a no-op when the binary is current.
-"$make_cmd" build/release
-if [[ -z "$deb" || "$deb" -ot "$binary" ]]; then
-    "$make_cmd" package/deb/release
-    deb="$(find_deb)"
-    [[ -n "$deb" ]] || { echo "error: package build produced no sven $version package in $deb_dir" >&2; exit 1; }
-fi
+ensure_package
 
 command -v dpkg-deb >/dev/null || { echo "error: dpkg-deb not found (install the 'dpkg' package)" >&2; exit 1; }
 
