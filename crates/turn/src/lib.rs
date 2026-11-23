@@ -50,7 +50,7 @@ pub use runtime_context::AgentRuntimeContext;
 pub use stall::{StallLimits, NOTICE_INTERVAL};
 pub use stream_turn::{
     set_thinking_budget_override, stream_turn, stream_turn_attributed, thinking_budget_override,
-    to_model_schemas, AbortedError, Decoding, ModelResolver, StreamedTurn, ThinkingBudget,
-    TurnLimits,
+    to_model_schemas, AbortedError, Decoding, ModelResolver, Repetition, StreamedTurn,
+    ThinkingBudget, TurnLimits,
 };
 pub use time_budget::{NoticeReplay, TimeBudget};

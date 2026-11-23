@@ -24,10 +24,19 @@ pub struct AbortedError {
     /// Whether a person asked for it. A watchdog abort is not: it is a
     /// failure of the turn that a consumer must be told about.
     pub by_user: bool,
-    /// The watchdog stopped reasoning that repeated itself. Unlike a cap or a
+    /// The watchdog stopped text that repeated itself. Unlike a cap or a
     /// deadline, a fresh attempt can take another path, so the turn may be
     /// asked again.
-    pub reasoning_loop: bool,
+    pub repetition: Option<Repetition>,
+}
+
+/// Where the repeating text was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Repetition {
+    /// In the model's reasoning.
+    Reasoning,
+    /// In the arguments of a tool call.
+    ToolCall,
 }
 
 impl AbortedError {
@@ -37,7 +46,7 @@ impl AbortedError {
         Self {
             reason: reason.into(),
             by_user: true,
-            reasoning_loop: false,
+            repetition: None,
         }
     }
 
@@ -47,7 +56,7 @@ impl AbortedError {
         Self {
             reason: reason.into(),
             by_user: false,
-            reasoning_loop: false,
+            repetition: None,
         }
     }
 
@@ -55,7 +64,16 @@ impl AbortedError {
     #[must_use]
     pub fn reasoning_loop(reason: impl Into<String>) -> Self {
         Self {
-            reasoning_loop: true,
+            repetition: Some(Repetition::Reasoning),
+            ..Self::by_watchdog(reason)
+        }
+    }
+
+    /// The watchdog's cut-off of a tool call whose arguments repeated themselves.
+    #[must_use]
+    pub fn tool_call_loop(reason: impl Into<String>) -> Self {
+        Self {
+            repetition: Some(Repetition::ToolCall),
             ..Self::by_watchdog(reason)
         }
     }

@@ -49,12 +49,12 @@ use crate::inline_markup::{
     strip_think_wrappers,
 };
 use crate::ledger_recorder::LedgerRecorder;
-use crate::repetition::RepetitionWatch;
+use crate::repetition::{RepetitionWatch, TOOL_CALL_REPEATS};
 use crate::stall::{StallLimits, StallWatch};
 use crate::tool_slots::attempt_json_repair;
 use sven_vocab::{ReportedUsage, Sampled, SessionEvent as AgentEvent};
 
-pub use crate::aborted::AbortedError;
+pub use crate::aborted::{AbortedError, Repetition};
 
 /// Callback that resolves a model string (e.g. `"anthropic/claude-opus"`) to a
 /// live [`ModelProvider`].  Provided by the bootstrap layer so that the turn
@@ -248,6 +248,11 @@ impl ThinkingBudget {
 /// examiner reads to record the loop as its own outcome, apart from a budget
 /// exhaustion or a time limit.
 pub const REASONING_LOOP_PREFIX: &str = "reasoning loop:";
+
+/// How the reason of a tool-call-loop abort begins: the arguments of one call
+/// repeated the same block until the reply would have run to its limit. Read
+/// like [`REASONING_LOOP_PREFIX`], as its own outcome.
+pub const TOOL_CALL_LOOP_PREFIX: &str = "tool-call loop:";
 
 /// Rough token estimate matching the TUI's live streaming counter
 /// (`crates/tui/src/app/agent_events.rs`) - chars/4, not a real tokenizer.
@@ -523,6 +528,11 @@ pub async fn stream_turn_attributed(
     let mut thinking_buf = String::new();
     let mut reasoning = String::new();
     let mut repetition = RepetitionWatch::default();
+    // The arguments of the call being streamed, watched for the same block
+    // written over and over (a model that loops there never closes the call).
+    let mut args_repetition = RepetitionWatch::with_repeats(TOOL_CALL_REPEATS);
+    let mut args_slot: Option<u32> = None;
+    let mut args_token_estimate: u32 = 0;
     let mut thinking_token_estimate: u32 = 0;
     // Set on the first ThinkingDelta of an uninterrupted reasoning stretch;
     // cleared on any TextDelta or tool-call delta (forward progress).
@@ -634,6 +644,20 @@ pub async fn stream_turn_attributed(
             } => {
                 thinking_stall_started = None; // forward progress resets the stall clock
                 repetition.reset();
+                if args_slot != Some(index) {
+                    args_slot = Some(index);
+                    args_repetition.reset();
+                    args_token_estimate = 0;
+                }
+                args_token_estimate =
+                    args_token_estimate.saturating_add(estimate_tokens(&arguments));
+                if let Some(times) = args_repetition.feed(&arguments) {
+                    return Err(anyhow::Error::new(AbortedError::tool_call_loop(format!(
+                        "{TOOL_CALL_LOOP_PREFIX} the model is repeating itself inside a tool call's arguments (the \
+                         same block occurs {times} times in a row; ~{args_token_estimate} argument tokens \
+                         so far)"
+                    ))));
+                }
                 // The reasoning before a call is complete when the call
                 // begins, as it is when text begins: observers file it with
                 // the reply that calls, not after it.
@@ -874,6 +898,47 @@ mod thinking_watchdog_tests {
         }
     }
 
+    /// A provider whose single tool call never ends: its arguments are the
+    /// same pair of Ex commands written forever.
+    struct EndlessToolCallProvider;
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl ModelProvider for EndlessToolCallProvider {
+        fn name(&self) -> &str {
+            "endless-tool-call"
+        }
+        fn model_name(&self) -> &str {
+            "endless-tool-call"
+        }
+        async fn complete(
+            &self,
+            _req: CompletionRequest,
+        ) -> anyhow::Result<
+            std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<ResponseEvent>> + Send>>,
+        > {
+            let mut first = true;
+            let stream = futures::stream::repeat_with(move || {
+                let (id, name, arguments) = if std::mem::take(&mut first) {
+                    ("call_1", "vim-vim", "{\"commands\": [\"args uart.c\"")
+                } else {
+                    (
+                        "",
+                        "",
+                        ", \"1\", \"normal! A void uart_writeputs(const char *s);\"",
+                    )
+                };
+                Ok(ResponseEvent::ToolCall {
+                    index: 0,
+                    id: id.into(),
+                    name: name.into(),
+                    arguments: arguments.into(),
+                })
+            });
+            Ok(Box::pin(stream))
+        }
+    }
+
     /// A provider that connects and then never sends a chunk.
     struct SilentProvider;
 
@@ -1103,6 +1168,41 @@ mod thinking_watchdog_tests {
             .downcast_ref::<AbortedError>()
             .expect("must be AbortedError");
         assert!(aborted.reason.contains("looping"), "{}", aborted.reason);
+    }
+
+    #[tokio::test]
+    async fn an_endless_tool_call_is_stopped_as_a_tool_call_loop() {
+        let _guard = locked_no_override();
+        let (tx, drain) = drained_channel();
+
+        let result = stream_turn(
+            &EndlessToolCallProvider,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            ThinkingBudget::default(),
+            &tx,
+        )
+        .await;
+        drop(tx);
+        let _ = drain.await;
+
+        let err = result.expect_err("a tool call that never ends must be stopped");
+        let aborted = err
+            .downcast_ref::<AbortedError>()
+            .expect("must be AbortedError");
+        assert!(
+            aborted.reason.starts_with(TOOL_CALL_LOOP_PREFIX),
+            "{}",
+            aborted.reason
+        );
+        assert_eq!(
+            aborted.repetition,
+            Some(crate::aborted::Repetition::ToolCall)
+        );
     }
 
     #[tokio::test]

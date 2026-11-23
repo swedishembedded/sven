@@ -23,19 +23,41 @@ const WINDOW_CHARS: usize = 16_384;
 /// that natural text does not repeat it by chance.
 const PROBE_CHARS: usize = 400;
 /// Back-to-back copies of the repeating block, the last one included, that
-/// make a loop.
+/// make a loop in reasoning.
 const REPEATS: usize = 3;
+/// The same for the arguments of a tool call. Structured text repeats on
+/// purpose far more often than reasoning does (a table of equal rows, a
+/// separator line written out in full), so it takes more copies to be a loop;
+/// a model that has fallen into one writes dozens.
+pub const TOOL_CALL_REPEATS: usize = 6;
 /// New characters between two looks, so the check costs little per delta.
 const CHECK_EVERY: usize = 512;
 
 /// Watches a stream of reasoning text for repetition.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RepetitionWatch {
     recent: String,
     unchecked: usize,
+    repeats: usize,
+}
+
+impl Default for RepetitionWatch {
+    fn default() -> Self {
+        Self::with_repeats(REPEATS)
+    }
 }
 
 impl RepetitionWatch {
+    /// A watch that calls `repeats` back-to-back copies of a block a loop.
+    #[must_use]
+    pub fn with_repeats(repeats: usize) -> Self {
+        Self {
+            recent: String::new(),
+            unchecked: 0,
+            repeats: repeats.max(2),
+        }
+    }
+
     /// Feeds the next piece of reasoning. Returns how many times the latest
     /// stretch now occurs when that is a loop.
     pub fn feed(&mut self, delta: &str) -> Option<usize> {
@@ -47,7 +69,7 @@ impl RepetitionWatch {
                 .ceil_char_boundary(self.recent.len() - WINDOW_CHARS);
             self.recent.drain(..cut);
         }
-        if self.unchecked < CHECK_EVERY || self.recent.len() < PROBE_CHARS * REPEATS {
+        if self.unchecked < CHECK_EVERY || self.recent.len() < PROBE_CHARS * self.repeats {
             return None;
         }
         self.unchecked = 0;
@@ -64,7 +86,7 @@ impl RepetitionWatch {
         let (previous, _) = self.recent.rmatch_indices(probe).nth(1)?;
         let period = from - previous;
         let text = self.recent.as_bytes();
-        let span = period * REPEATS;
+        let span = period * self.repeats;
         if span > text.len() {
             return None;
         }
@@ -172,6 +194,37 @@ mod tests {
     #[test]
     fn whitespace_alone_is_not_a_loop() {
         assert_eq!(first_detection(&"\n".repeat(20_000)), None);
+    }
+
+    #[test]
+    fn a_command_list_repeated_inside_a_tool_call_is_stopped() {
+        // Recorded: a model's call arguments fell into `"1", "normal! A ...",`
+        // pairs written until the wall clock ended the run.
+        let mut args = String::from("{\"commands\": [\"args uart.c\"");
+        for _ in 0..200 {
+            args.push_str(", \"1\", \"normal! A void uart_writeputs(const char *s);\"");
+        }
+        let mut watch = RepetitionWatch::with_repeats(TOOL_CALL_REPEATS);
+        let mut at = 0;
+        let mut found = None;
+        while at < args.len() && found.is_none() {
+            let end = args.ceil_char_boundary((at + 25).min(args.len()));
+            found = watch.feed(&args[at..end]).map(|_| end);
+            at = end;
+        }
+        let at = found.expect("the loop is detected");
+        assert!(at < 4_000, "detected only at {at} of {}", args.len());
+    }
+
+    #[test]
+    fn a_table_of_equal_rows_in_a_tool_call_is_not_a_loop() {
+        // Eight identical 70-character rows are content, not a loop: the
+        // stricter threshold for tool calls lets them through.
+        let row = format!("{}\n", "-".repeat(69));
+        let args = format!("{{\"text\": \"{}\"}}", row.repeat(8).replace('\n', "\\n"));
+        let mut watch = RepetitionWatch::with_repeats(TOOL_CALL_REPEATS);
+        assert!(args.len() > PROBE_CHARS);
+        assert!(watch.feed(&args).is_none());
     }
 
     #[test]

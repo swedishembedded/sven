@@ -85,6 +85,11 @@ const TRUNCATED_TURN_FAILURE_THRESHOLD: u32 = 4;
 const LOOP_NOTE: &str = "Your previous reply was stopped because its reasoning repeated the same \
      passage. Continue from the facts gathered so far and take a different approach.";
 
+/// The note for a tool call whose arguments repeated the same block.
+const TOOL_CALL_LOOP_NOTE: &str = "Your previous tool call was stopped because its arguments repeated \
+     the same block over and over. Nothing it contained was run. Make a shorter, different call: one \
+     step at a time, then check what it did before the next.";
+
 use async_trait::async_trait;
 use sven_decision::telemetry::DecisionTelemetry;
 use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, UiEvent};
@@ -716,15 +721,21 @@ impl EffectExecutor for TurnExecutor {
                 // Reasoning that repeated itself is dropped and the turn asked
                 // again once, with a note why: a fresh attempt can take
                 // another path, where ending the run loses all its work.
-                if aborted.reasoning_loop && self.recovery.loop_retried.insert(thread_id.clone()) {
-                    obs.emit(UiEvent::Warning(format!("{aborted}; asking again once")));
-                    append_messages(&self.store, &thread_id, vec![Message::user(LOOP_NOTE)]);
-                    req.instruction.clear();
-                    req.delay_ms = None;
-                    let retry = Effect::CallLlm {
-                        request: req.to_value(),
-                    };
-                    return self.execute(retry, sink, obs).await;
+                if let Some(kind) = aborted.repetition {
+                    if self.recovery.loop_retried.insert(thread_id.clone()) {
+                        let note = match kind {
+                            sven_turn::Repetition::Reasoning => LOOP_NOTE,
+                            sven_turn::Repetition::ToolCall => TOOL_CALL_LOOP_NOTE,
+                        };
+                        obs.emit(UiEvent::Warning(format!("{aborted}; asking again once")));
+                        append_messages(&self.store, &thread_id, vec![Message::user(note)]);
+                        req.instruction.clear();
+                        req.delay_ms = None;
+                        let retry = Effect::CallLlm {
+                            request: req.to_value(),
+                        };
+                        return self.execute(retry, sink, obs).await;
+                    }
                 }
                 let partial = partial_text.lock().map(|g| g.clone()).unwrap_or_default();
                 let marker = format!("[aborted: {aborted}]");

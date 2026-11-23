@@ -352,6 +352,110 @@ impl sven_model::ModelProvider for Looper {
     }
 }
 
+/// Writes one tool call whose arguments repeat the same pair of commands on the
+/// first `loops` calls, then answers.
+struct ToolCallLooper {
+    loops: usize,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl sven_model::ModelProvider for ToolCallLooper {
+    fn name(&self) -> &str {
+        "tool-call-looper"
+    }
+    fn model_name(&self) -> &str {
+        "tool-call-looper"
+    }
+    fn catalog_context_window(&self) -> Option<u32> {
+        Some(8192)
+    }
+    fn catalog_max_output_tokens(&self) -> Option<u32> {
+        Some(512)
+    }
+    async fn complete(&self, _req: sven_model::CompletionRequest) -> anyhow::Result<Stream> {
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let events: Vec<anyhow::Result<ResponseEvent>> = if call < self.loops {
+            let block = ", \"1\", \"normal! A void uart_writeputs(const char *s);\"";
+            vec![Ok(ResponseEvent::ToolCall {
+                index: 0,
+                id: "call_1".into(),
+                name: "vim-vim".into(),
+                arguments: format!("{{\"commands\": [\"args uart.c\"{}", block.repeat(120)),
+            })]
+        } else {
+            vec![
+                Ok(ResponseEvent::TextDelta("ok".into())),
+                Ok(ResponseEvent::Done),
+            ]
+        };
+        Ok(Box::pin(futures::stream::iter(events)))
+    }
+}
+
+fn tool_call_looper(loops: usize, store: Arc<Mutex<ThreadStore>>) -> Harness {
+    let limits = sven_turn::TurnLimits::from(sven_turn::ThinkingBudget {
+        max_thinking_tokens: None,
+        thinking_timeout_secs: None,
+    });
+    let model = ToolCallLooper {
+        loops,
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    };
+    harness_with_limits(model, store, None, limits)
+}
+
+#[tokio::test]
+async fn a_tool_call_loop_is_asked_again_once_with_its_own_note() {
+    use sven_machines::machines::reactive_agent::CHAT_THREAD;
+    let store = Arc::new(Mutex::new(ThreadStore::new()));
+    let h = tool_call_looper(1, Arc::clone(&store));
+    let mut rx = h.rt.subscribe_observations();
+    h.rt.post(Event::user_message("go")).await;
+    let events = until_ended(&mut rx).await;
+    h.rt.abort();
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::TurnComplete)),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Error(_) | UiEvent::Aborted { .. })),
+        "{events:?}"
+    );
+    let thread = store.lock().unwrap().snapshot(CHAT_THREAD);
+    let texts: Vec<String> = thread
+        .iter()
+        .filter_map(|m| match &m.content {
+            sven_model::MessageContent::Text(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("arguments repeated")),
+        "the model is told why it is asked again: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("uart_writeputs")),
+        "the looping call is not kept: {texts:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_tool_call_loop_on_the_retry_too_is_an_error_an_examiner_can_read() {
+    let h = tool_call_looper(2, Arc::new(Mutex::new(ThreadStore::new())));
+    let mut rx = h.rt.subscribe_observations();
+    h.rt.post(Event::user_message("go")).await;
+    let events = until_ended(&mut rx).await;
+    h.rt.abort();
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::Error(m)
+            if m.starts_with(sven_turn::stream_turn::TOOL_CALL_LOOP_PREFIX))),
+        "{events:?}"
+    );
+}
+
 fn looper(loops: usize, store: Arc<Mutex<ThreadStore>>) -> Harness {
     let limits = sven_turn::TurnLimits::from(sven_turn::ThinkingBudget {
         max_thinking_tokens: None,
