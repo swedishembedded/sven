@@ -33,12 +33,15 @@ use sven_turn::ledger::schema_tokens;
 /// worktree writers and per-action handles (~616 now), and from 4 170 when
 /// it gained an API request tool (`http_request`, ~165), and from 4 340
 /// when every tool took the optional intent a call is labelled by
-/// (`sven_vocab::intent`, ~16 a tool).
-const CODING_CEILING: u32 = 4_705;
+/// (`sven_vocab::intent`, ~16 a tool), and from 4 705 when the system
+/// prompt's advice about tools moved into the descriptions of the tools it
+/// is about (shell, grep, skill, ask_question; the prompt no longer holds it).
+const CODING_CEILING: u32 = 4_760;
 /// Estimated tokens of every definition `Toolset::research()` offers. Raised
 /// from 2 390 for the same two goal tools, from 2 680 for the same growth of
-/// `task`, and from 2 850 for the same intent.
-const RESEARCH_CEILING: u32 = 3_070;
+/// `task`, from 2 850 for the same intent, and from 3 070 for the same
+/// advice moved out of the system prompt.
+const RESEARCH_CEILING: u32 = 3_095;
 
 /// The definitions the model was offered on its first request.
 async fn offered(toolset: Toolset, home: &std::path::Path) -> Vec<ToolSchema> {
