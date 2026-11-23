@@ -82,6 +82,13 @@ impl Agent {
             .chain(running_requests)
             .filter_map(|m| Some((m.after?, m.request.clone())))
             .collect();
+        // Each assistant turn's reasoning travels on its first message; it is
+        // filed with that message's step.
+        let reasonings: Vec<(usize, String)> = record
+            .iter()
+            .enumerate()
+            .filter_map(|(position, message)| message.reasoning.clone().map(|r| (position, r)))
+            .collect();
         trajectory.steps = sven_session_store::record_steps::conversation_steps(
             &sven_session_store::record_steps::ConversationFacts {
                 messages: record,
@@ -91,7 +98,7 @@ impl Agent {
                 memory_retrievals: &self.state.memory_retrievals,
                 call_timings: &self.state.call_timings,
                 origins: &[],
-                reasonings: &[],
+                reasonings: &reasonings,
                 system_steps: false,
             },
             &|message| self.state.as_sent(message),

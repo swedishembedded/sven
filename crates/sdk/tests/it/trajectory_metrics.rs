@@ -277,3 +277,60 @@ async fn each_response_step_keeps_its_own_requests_prompt_and_tokens() {
     assert_eq!(second.completion_token_ids, Some(vec![13]));
     assert_eq!(second.logprobs, Some(vec![-0.125]));
 }
+
+/// Spec: an agent's trajectory carries each reply's reasoning on the step of
+/// that reply, whether the reply speaks or calls a tool, and has one agent
+/// step per model reply.
+#[tokio::test]
+async fn each_reply_s_reasoning_is_on_its_own_step() {
+    let scripts = vec![
+        vec![
+            ResponseEvent::ThinkingDelta("The city is Lund; ask the tool.".into()),
+            ResponseEvent::ToolCall {
+                index: 0,
+                id: "w1".into(),
+                name: "weather".into(),
+                arguments: r#"{"city":"Lund"}"#.into(),
+            },
+            usage(100, 10, 40, 0.5),
+            ResponseEvent::Done,
+        ],
+        vec![
+            ResponseEvent::ThinkingDelta("It said sunny.".into()),
+            ResponseEvent::TextDelta("Sunny.".into()),
+            usage(150, 5, 60, 0.25),
+            ResponseEvent::Done,
+        ],
+    ];
+    let engine = Engine::builder()
+        .model_provider(Arc::new(Strict(ScriptedMockProvider::new(scripts))))
+        .tool(Arc::new(Weather))
+        .build()
+        .expect("an engine builds");
+    let mut agent = engine.agent("agent");
+    agent.send("weather in Lund?").await.expect("an outcome");
+    let trajectory = agent.trajectory();
+    let steps: Vec<_> = trajectory
+        .steps
+        .iter()
+        .filter(|s| s.source == sven_sdk::atif::StepOrigin::Agent)
+        .map(|s| {
+            (
+                s.reasoning_content.clone(),
+                s.tool_calls.is_some(),
+                s.metrics.is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            (
+                Some("The city is Lund; ask the tool.".to_string()),
+                true,
+                true
+            ),
+            (Some("It said sunny.".to_string()), false, true),
+        ]
+    );
+}

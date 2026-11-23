@@ -85,6 +85,8 @@ impl Agent {
         };
         let placeable_until = if events_intact {
             self.state
+                .carry_reasoning(record_base, held.get(seeded..).unwrap_or_default());
+            self.state
                 .compaction_marks
                 .extend(marks.into_iter().filter(|_| !compactions.is_empty()));
             usize::MAX

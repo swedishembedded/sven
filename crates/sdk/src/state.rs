@@ -209,6 +209,23 @@ impl AgentState {
         record_base + agree
     }
 
+    /// Gives each message of the record from `record_base` on the reasoning
+    /// its counterpart in `run` (the kernel's messages of the run) carries,
+    /// where both take the same place: a record folded from observations
+    /// has the turns but not the reasoning the turn's first message carries.
+    pub(crate) fn carry_reasoning(&mut self, record_base: usize, run: &[Message]) {
+        let folded = self.record.get_mut(record_base..).unwrap_or_default();
+        for (record, kernel) in folded
+            .iter_mut()
+            .zip(run)
+            .take_while(|(a, b)| same_place(a, b))
+        {
+            if record.reasoning.is_none() {
+                record.reasoning.clone_from(&kernel.reasoning);
+            }
+        }
+    }
+
     /// Answers every tool call the history holds without a result, in both
     /// the history and the record, saying the call was not run because of
     /// `reason`. A stopped run leaves such calls; the next run's thread must
