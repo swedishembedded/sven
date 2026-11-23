@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **sdk**: `Method::<serde_json::Value>::with_schema(schema)` gives a method a JSON Schema known only at run time: it is the request's response format (the provider constrains decoding to it) and the shape the prompt describes, in place of `Value`'s, which allows anything. A typed method keeps its return type's schema; the answer is parsed, not validated against the schema (a postcondition can).
 - **cli**: `--interactive` runs the TUI with `PROMPT` as its first message, for a person who watches the agent and types corrections. The TUI's sessions now send what a headless run of the same prompt sends: `--append-system-prompt`, the sampling flags (`--temperature`, `--top-p`, `--top-k`, `--seed`, `--logprobs`, refused in the TUI before) and `--run-timeout`'s time line (`sven_frontend::agent::SessionLaunch`, a new argument of `kernel_session_task`). A session started with a prompt is named after it, so no model request is made for its title.
 - **tui**: the saved trajectory marks each user turn a person typed with `extra.sven.origin` `human` (`sven_vocab::turn::HUMAN_ORIGIN`); the turns the command line gave carry none, a loaded trajectory's turns keep theirs, and a subagent's turns (its parent agent's) carry none.
 

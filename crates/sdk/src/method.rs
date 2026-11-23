@@ -44,6 +44,9 @@ pub struct Method<T> {
     pub(crate) max_repairs: u32,
     #[allow(clippy::type_complexity)]
     pub(crate) postcondition: Option<Box<dyn Fn(&T) -> Result<(), String> + Send + Sync>>,
+    /// A schema given at run time, for a method returning any JSON value
+    /// ([`Method::with_schema`]); `None`: the return type's own.
+    pub(crate) runtime_schema: Option<serde_json::Value>,
     pub(crate) marker: PhantomData<fn() -> T>,
 }
 
@@ -62,6 +65,7 @@ where
             strategy: Strategy::default(),
             max_repairs: 1,
             postcondition: None,
+            runtime_schema: None,
             marker: PhantomData,
         }
     }
@@ -127,8 +131,14 @@ where
     /// Deriving rather than accepting a hand-written schema is what stops the
     /// description the model is given from drifting away from the type the
     /// caller actually gets.
+    ///
+    /// A method returning any JSON value may be given a schema at run time
+    /// instead ([`Method::with_schema`]); its schema is then that one.
     #[must_use]
     pub fn schema(&self) -> serde_json::Value {
+        if let Some(schema) = &self.runtime_schema {
+            return schema.clone();
+        }
         serde_json::to_value(schemars::schema_for!(T))
             .unwrap_or_else(|_| serde_json::json!({"type": "object"}))
     }
@@ -150,5 +160,23 @@ where
         );
         out.push_str(&self.schema().to_string());
         out
+    }
+}
+
+impl Method<serde_json::Value> {
+    /// The schema the answer must match, known only at run time: a caller's
+    /// own document of what it wants (a JSON Schema a user wrote, say). It is
+    /// the response format the provider is asked to constrain decoding to and
+    /// the shape the prompt describes, in place of [`serde_json::Value`]'s,
+    /// which allows anything.
+    ///
+    /// Only a method returning any JSON value takes one: a typed return type
+    /// is its own schema, and a second one could contradict it. The answer is
+    /// parsed as JSON, not validated against `schema`; a caller that needs it
+    /// held to the schema checks it in a [`Self::postcondition`].
+    #[must_use]
+    pub fn with_schema(mut self, schema: serde_json::Value) -> Self {
+        self.runtime_schema = Some(schema);
+        self
     }
 }

@@ -102,6 +102,48 @@ async fn the_request_carries_a_schema_derived_from_the_return_type() {
     }
 }
 
+/// A schema known only at run time (a caller's own document of what it
+/// wants) is the one the provider is asked to constrain decoding to, and the
+/// one the prompt describes, for a method returning any JSON value.
+#[tokio::test]
+async fn a_runtime_schema_is_the_response_format_of_a_json_method() {
+    let wanted = serde_json::json!({
+        "type": "object",
+        "required": ["verdict"],
+        "properties": { "verdict": { "enum": ["pass", "fail"] } },
+    });
+    let method = Method::<serde_json::Value>::new("judge")
+        .task("Judge the change.")
+        .with_schema(wanted.clone());
+    let (engine, provider) = engine_with(vec![says(r#"{"verdict":"pass"}"#)]);
+    let mut agent = engine.agent_for(&method);
+
+    let got = agent.call(&method, &a_change()).await.expect("a result");
+
+    assert_eq!(got, serde_json::json!({"verdict": "pass"}));
+    let seen = provider
+        .last_request
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the provider saw a request");
+    match seen.response_format {
+        Some(ResponseFormat::JsonSchema { name, schema }) => {
+            assert_eq!(name, "judge");
+            assert_eq!(
+                schema, wanted,
+                "the caller's schema, not one derived from Value"
+            );
+        }
+        other => panic!("expected a JSON-schema constraint, got {other:?}"),
+    }
+    let prompt = serde_json::to_string(&seen.messages).unwrap();
+    assert!(
+        prompt.contains("verdict"),
+        "the prompt describes it too: {prompt}"
+    );
+}
+
 /// A provider that cannot constrain decoding ignores the response format,
 /// so the prompt itself must tell the model the shape it answers in.
 #[tokio::test]
