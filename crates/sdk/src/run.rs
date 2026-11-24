@@ -198,6 +198,19 @@ impl RunOptions {
         self
     }
 
+    /// Asks the provider, besides the sampled tokens' log-probabilities
+    /// ([`Self::want_logprobs`], implied), for the `k` most probable token ids
+    /// and their log-probabilities at every generated position, recorded per
+    /// request as `generation_top_ids` / `generation_top_log_probs`. A provider
+    /// that cannot return them refuses the request; a response without them
+    /// fails the turn.
+    #[must_use]
+    pub fn top_logprobs(mut self, k: u32) -> Self {
+        self.decoding.want_logprobs = true;
+        self.decoding.top_logprobs = Some(k);
+        self
+    }
+
     /// Stops the run once the model has generated `tokens` output tokens
     /// ([`RunConclusion::BudgetExhausted`]). Counted from the usage the
     /// provider reports; a provider that reports none is never stopped by it.

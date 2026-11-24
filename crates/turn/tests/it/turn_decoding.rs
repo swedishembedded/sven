@@ -91,6 +91,7 @@ async fn a_turns_settings_replace_the_runs_field_by_field_and_reach_the_provider
             ..SamplingParams::default()
         },
         want_logprobs: false,
+        top_logprobs: None,
     });
     let (seen, _) = run(run_wide.with_turn_decoding(&step_settings())).await;
     let (sampling, thinking) = seen[0];

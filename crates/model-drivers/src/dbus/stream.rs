@@ -195,7 +195,7 @@ impl Translator {
                 Vec::new()
             }
             Frame::Error { message } => bail!("brain: {message}"),
-            Frame::Done { result } => self.finish(&result, want_logprobs),
+            Frame::Done { result } => self.finish(&result, want_logprobs)?,
         })
     }
 
@@ -242,7 +242,7 @@ impl Translator {
 
     /// The end of the stream: whatever of the result was not streamed, then
     /// the token facts, usage and `Done`.
-    fn finish(&mut self, result: &Value, want_logprobs: bool) -> Vec<ResponseEvent> {
+    fn finish(&mut self, result: &Value, want_logprobs: bool) -> Result<Vec<ResponseEvent>> {
         let json = result.to_string();
         let text = self
             .text_blob
@@ -263,11 +263,13 @@ impl Translator {
                 _ => true,
             })
             .collect();
-        events.extend(
-            reply_extras(&json)
-                .into_iter()
-                .filter(|e| want_logprobs || !matches!(e, ResponseEvent::Tokens { .. })),
-        );
+        events.extend(reply_extras(&json)?.into_iter().filter(|e| {
+            want_logprobs
+                || !matches!(
+                    e,
+                    ResponseEvent::Tokens { .. } | ResponseEvent::TopTokens { .. }
+                )
+        }));
         // The output budget cut the reply (possibly mid-reasoning or
         // mid-call): the agent handles a truncated turn, not a finished one.
         if result.get("finish_reason").and_then(Value::as_str) == Some("length") {
@@ -289,7 +291,7 @@ impl Translator {
             cost_usd: None,
         });
         events.push(ResponseEvent::Done);
-        events
+        Ok(events)
     }
 }
 

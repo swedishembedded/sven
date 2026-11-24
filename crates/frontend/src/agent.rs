@@ -560,6 +560,7 @@ mod tests {
             decoding: sven_turn::Decoding {
                 sampling,
                 want_logprobs: true,
+                top_logprobs: None,
             },
             run_timeout: Some(Duration::from_secs(600)),
         };

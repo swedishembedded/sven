@@ -364,7 +364,9 @@ match outcome.conclusion {
 `RunOptions::sampling` fixes the decoding of every model request of the run,
 children's included: a `sven_sdk::model::SamplingParams` with temperature,
 top-p, top-k and seed, each optional; `want_logprobs(true)` additionally asks
-for the sampled token ids and log-probabilities. A provider declares which
+for the sampled token ids and log-probabilities, and `top_logprobs(k)` (which implies it) for the `k` most probable ids
+and log-probabilities at every generated position. A provider that cannot return them refuses the request, and a
+response without them fails the turn. A provider declares which
 controls it honours (`ModelProvider::sampling_controls`): the driver registry
 says what each API applies (every OpenAI-protocol server temperature and top-p;
 brain, Google, Cohere and brain over D-Bus all four; Anthropic all but the

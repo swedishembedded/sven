@@ -31,6 +31,7 @@ in `extra.sven.requests` (below), which is authoritative.
 | `metrics.extra.sven.logprob_kind`, `logprob_temperature` | `policy` (whole-vocabulary distribution) or `sampler` (after temperature, top-k, top-p), and the temperature the log-probabilities were scored at | the `policy_trace` object, or `logprob_kind` of the `brain` object |
 | `metrics.extra.sven.truncated` | `true` when the response ended at the output-token ceiling | the response's `finish_reason: length` |
 | `metrics.extra.sven.requests` | one entry per request, when the step covers more than one: `model`, `prompt_tokens`, `completion_tokens`, `prompt_token_ids`, `completion_token_ids`, `logprobs`, and every identity and decoding row above that the request's own response reported (`seed`, `decoding`, `sampling_honoured`, `sampling_unhonoured`, `adapter`, `base_digest`, `backend`, `engine`, `policy_version`, `tokenizer_digest`, `chat_template_digest`, `logprob_kind`, `logprob_temperature`, `truncated`), each in the form of its step row | the same |
+| `metrics.extra.sven.generation_top_ids`, `generation_top_log_probs` | with `RunOptions::top_logprobs(K)` / `--top-logprobs K`: for each generated token, the K most probable ids at its position (most probable first) and their log-probabilities under the same distribution as `logprobs`; parallel to `completion_token_ids`, concatenated over a step's requests like `logprobs`; present on a `requests[]` entry beside its `logprobs` | brain's `policy_trace` `generation_top_ids`, `generation_top_log_probs` |
 | `final_metrics.extra.sven.policy_version_span` | `[oldest, newest]` policy version over every request of the run (a trainer reads staleness from it); absent when no request reported a version or a version is not a whole number | `policy_version` of every request |
 
 Two non-standard members of the response frames come from a
@@ -40,7 +41,11 @@ Two non-standard members of the response frames come from a
 server carries `policy_trace: true` and nothing else of the capture, and the terminal chunk answers
 with a `policy_trace` object: `prompt_token_ids`, `generation_token_ids` (the stop token included),
 `generation_log_probs` (`log softmax(logits / log_prob_temperature)` over the whole vocabulary,
-scored by the serving model) and `log_prob_temperature`. Those are recorded as the policy's own
+scored by the serving model) and `log_prob_temperature`. With a top list wanted the request carries
+`policy_trace: {"top_log_probs": K}` (over D-Bus `policy_trace` and `policy_trace_top_log_probs`) and the
+trace adds `generation_top_ids` and `generation_top_log_probs`, one row of K per generated token; a reply
+that lacks them, or whose rows do not cover every generated token, fails the turn, and a provider other than
+brain refuses the request. Those are recorded as the policy's own
 log-probabilities (`logprob_kind` `policy`, with the temperature they were scored at). Any other
 OpenAI-compatible server is asked for `logprobs` and `return_token_ids`, and the sampled ids and
 `logprobs.content[]` are read as the sampler's.

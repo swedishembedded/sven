@@ -676,6 +676,10 @@ pub struct CompletionRequest {
     /// Providers that cannot supply them ignore the flag and emit no
     /// [`ResponseEvent::Tokens`]; consumers must treat absence as "unknown".
     pub want_logprobs: bool,
+    /// With `want_logprobs`: also ask for the `K` most probable token ids and their log-probabilities at every
+    /// generated position ([`ResponseEvent::TopTokens`]). A provider that cannot supply them refuses the
+    /// request; a response that lacks them is an error of the turn, never an empty field.
+    pub top_logprobs: Option<u32>,
     /// What this request is made of, with hashes (see [`crate::manifest`]).
     ///
     /// For the record only: it is serialized into a recorded request and
@@ -713,6 +717,13 @@ pub enum ResponseEvent {
     /// `logprobs` are parallel when both are non-empty; a provider that
     /// reports only one of them leaves the other empty.
     Tokens { ids: Vec<i64>, logprobs: Vec<f64> },
+    /// The most probable tokens at each generated position, most probable first, for a request that asked for
+    /// `top_logprobs`: `ids[i]` and `logprobs[i]` are the parallel candidates of the `i`-th generated token, under
+    /// the same distribution as the [`Self::Tokens`] log-probabilities. May arrive several times; consumers append.
+    TopTokens {
+        ids: Vec<Vec<i64>>,
+        logprobs: Vec<Vec<f64>>,
+    },
     /// What actually served the request: the model identity the provider
     /// reports (which may differ from the one requested, e.g. behind a router)
     /// and the sampling seed in effect, when known. Sent at most once.

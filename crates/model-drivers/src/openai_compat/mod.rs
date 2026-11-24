@@ -493,7 +493,18 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
                 // The training capture: the prompt and generated ids and the
                 // policy's own log-probabilities, scored by the serving model
                 // over the whole vocabulary.
-                body["policy_trace"] = json!(true);
+                body["policy_trace"] = match req.top_logprobs {
+                    Some(k) => json!({ "top_log_probs": k }),
+                    None => json!(true),
+                };
+            } else if req.top_logprobs.is_some() {
+                // The sampler's top list is brain's policy trace; no other
+                // wire carries the same quantity, and a trajectory must not
+                // hold an empty field in its place.
+                bail!(
+                    "{} cannot return the top log-probabilities of each generated token (--top-logprobs); only a brain server's policy trace does",
+                    self.driver_name
+                );
             } else {
                 // The OpenAI shape, with the ids the way vLLM-style servers
                 // name them.

@@ -65,6 +65,23 @@ pub fn record_response(
             .get_or_insert_with(Vec::new)
             .extend(&sampled.logprobs);
     }
+    // The sampler's top list runs parallel to the step's `logprobs`, so it is concatenated the same way.
+    for (key, rows) in top_lists(sampled) {
+        let extra = metrics.extra.get_or_insert_with(|| json!({}));
+        let Some(object) = extra.as_object_mut() else {
+            continue;
+        };
+        let sven = object.entry(EXTRA_KEY).or_insert_with(|| json!({}));
+        let Some(sven) = sven.as_object_mut() else {
+            continue;
+        };
+        match sven.get_mut(key).and_then(Value::as_array_mut) {
+            Some(held) => held.extend(rows.as_array().cloned().unwrap_or_default()),
+            None => {
+                sven.insert(key.into(), rows);
+            }
+        }
+    }
     if metrics.prompt_token_ids.is_none() && !sampled.prompt_token_ids.is_empty() {
         metrics.prompt_token_ids = Some(sampled.prompt_token_ids.clone());
     }
@@ -83,6 +100,18 @@ pub fn record_response(
             }
         }
     }
+}
+
+/// The sampler's top list of one request as `(key, rows)`: `generation_top_ids` and `generation_top_log_probs`, one
+/// row per generated token, absent when the request did not ask for it.
+fn top_lists(sampled: &sven_vocab::Sampled) -> Vec<(&'static str, Value)> {
+    if sampled.top_token_ids.is_empty() {
+        return Vec::new();
+    }
+    vec![
+        ("generation_top_ids", json!(sampled.top_token_ids)),
+        ("generation_top_log_probs", json!(sampled.top_logprobs)),
+    ]
 }
 
 /// The keys [`decode_facts`] can produce.
@@ -190,6 +219,7 @@ fn keep_each_request(metrics: &mut StepMetrics, model: Option<&str>, request: &R
     // The step holds one request so far, so what `extra.sven` says is that request's.
     let held: Vec<(&'static str, Value)> = DECODE_FACT_KEYS
         .iter()
+        .chain(&["generation_top_ids", "generation_top_log_probs"])
         .filter_map(|&key| {
             let value = metrics.extra.as_ref()?.get(EXTRA_KEY)?.get(key)?;
             Some((key, value.clone()))
@@ -218,7 +248,10 @@ fn keep_each_request(metrics: &mut StepMetrics, model: Option<&str>, request: &R
             .map(Vec::as_slice),
         Some(u64::from(request.reported.logical_prompt())),
         Some(u64::from(request.reported.output)),
-        decode_facts(sampled),
+        decode_facts(sampled)
+            .into_iter()
+            .chain(top_lists(sampled))
+            .collect(),
     );
     let extra = metrics.extra.get_or_insert_with(|| json!({}));
     let Some(object) = extra.as_object_mut() else {

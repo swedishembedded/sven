@@ -105,6 +105,7 @@ fn sampled_request() -> CompletionRequest {
             seed: Some(7),
         },
         want_logprobs: true,
+        top_logprobs: None,
         ..Default::default()
     }
 }
@@ -535,4 +536,64 @@ fn best_effort_is_off_unless_configured() {
     assert!(!from_config(&cfg).unwrap().sampling_best_effort());
     cfg.sampling_best_effort = true;
     assert!(from_config(&cfg).unwrap().sampling_best_effort());
+}
+
+/// With a top list wanted, a brain server is asked for the policy trace as
+/// `{"top_log_probs": K}` and its `generation_top_ids` / `generation_top_log_probs`
+/// are read as one `TopTokens` event; any other server is refused before
+/// anything is sent, because only brain's trace carries the quantity.
+#[tokio::test]
+async fn the_top_list_is_asked_of_a_brain_server_and_refused_of_any_other() {
+    let sse = sse_body(&[
+        r#"{"model":"m","policy_trace":{"prompt_token_ids":[1],"generation_token_ids":[21,22],"generation_log_probs":[-0.5,-0.75],"log_prob_temperature":1.0,"top_log_probs":2,"generation_top_ids":[[21,5],[22,6]],"generation_top_log_probs":[[-0.5,-1.5],[-0.75,-2.5]]},"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+    ]);
+    let (port, req_rx) = mock_server_once(200, "text/event-stream", sse).await;
+    let brain = ModelConfig {
+        provider: "brain".into(),
+        name: "m".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let request = CompletionRequest {
+        top_logprobs: Some(2),
+        ..sampled_request()
+    };
+    let mut stream = from_config(&brain)
+        .unwrap()
+        .complete(request.clone())
+        .await
+        .unwrap();
+    let mut top = None;
+    while let Some(ev) = stream.next().await {
+        if let ResponseEvent::TopTokens { ids, logprobs } = ev.unwrap() {
+            top = Some((ids, logprobs));
+        }
+    }
+    assert_eq!(
+        req_rx.await.unwrap().body["policy_trace"],
+        serde_json::json!({"top_log_probs": 2})
+    );
+    assert_eq!(
+        top,
+        Some((
+            vec![vec![21, 5], vec![22, 6]],
+            vec![vec![-0.5, -1.5], vec![-0.75, -2.5]]
+        ))
+    );
+
+    let openai = ModelConfig {
+        provider: "openai".into(),
+        name: "gpt-4o-mini".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some("http://127.0.0.1:9/v1".into()),
+        ..ModelConfig::default()
+    };
+    let Err(refused) = from_config(&openai).unwrap().complete(request).await else {
+        panic!("a server without the policy trace cannot return a top list");
+    };
+    assert!(
+        refused.to_string().contains("top log-probabilities"),
+        "{refused}"
+    );
 }

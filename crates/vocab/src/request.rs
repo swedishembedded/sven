@@ -46,6 +46,13 @@ pub struct Sampled {
     /// The log-probability of each sampled token, in the same order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub logprobs: Vec<f64>,
+    /// With a top-K request: for each sampled token, the ids of the most probable tokens at its position, most
+    /// probable first (parallel to `token_ids`); empty unless asked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_token_ids: Vec<Vec<i64>>,
+    /// Their log-probabilities under the same distribution as `logprobs` (parallel to `top_token_ids`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_logprobs: Vec<Vec<f64>>,
     /// The sampling and thinking settings the request was sent with, when
     /// any were made (a harness step can set them per turn).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -74,6 +81,8 @@ impl Sampled {
             && self.seed.is_none()
             && self.token_ids.is_empty()
             && self.logprobs.is_empty()
+            && self.top_token_ids.is_empty()
+            && self.top_logprobs.is_empty()
             && self.prompt_token_ids.is_empty()
             && self.identity.is_empty()
             && self.decoding.is_none()

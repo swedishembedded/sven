@@ -59,9 +59,10 @@ does not honour refused or, on explicit best effort, recorded as `sampling_unhon
     them with 400); fork comparison ignores owner, group and duration fields; a shell launcher and trimmed observations in replay.
 12. (Done 2026-11-24.) Per-request identity: every entry of `extra.sven.requests` carries the identity its own response
     reported, and `final_metrics.extra.sven.policy_version_span` is `[oldest, newest]` over all requests. See the doc.
-13. The sampler's top-K per generated position (S): `RunOptions` asks a brain server's policy trace for the K most
-    probable ids and log-probabilities per position (`top_log_probs`), recorded per request beside the sampled token's
-    log-probability; a server that cannot return them is a refusal, not an empty field.
+13. (Done 2026-11-24.) The sampler's top-K per generated position: `RunOptions::top_logprobs(K)` and `--top-logprobs K`
+    ask a brain server's policy trace for it (`policy_trace: {"top_log_probs": K}` over HTTP; `policy_trace` plus
+    `policy_trace_top_log_probs` over D-Bus) and record `generation_top_ids` / `generation_top_log_probs` per request;
+    a reply without them fails the turn and another provider refuses. See the doc.
 14. The HTTP and D-Bus providers record the same request metadata (S): a contract test runs one scripted response
     through each and compares the per-request records field by field (ids, log-probabilities and their kind and
     temperature, top-K, identity, truncation).

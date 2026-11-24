@@ -76,6 +76,26 @@ pub type ModelResolver =
 pub struct Decoding {
     pub sampling: SamplingParams,
     pub want_logprobs: bool,
+    /// With `want_logprobs`: the number of most probable tokens per position to ask for (see
+    /// `CompletionRequest::top_logprobs`).
+    pub top_logprobs: Option<u32>,
+}
+
+/// Fails a response that was asked for the `k` most probable tokens per position and did not return them: every
+/// generated token must have a non-empty list of at most `k` candidates. An empty or short field would be read by a
+/// trainer as "no alternatives", so the turn fails instead.
+fn check_top_logprobs(sampled: &Sampled, k: u32) -> anyhow::Result<()> {
+    let positions = sampled.token_ids.len();
+    let rows_ok = |rows: &[usize]| rows.iter().all(|&n| n > 0 && n <= k as usize);
+    let ids: Vec<usize> = sampled.top_token_ids.iter().map(Vec::len).collect();
+    let logprobs: Vec<usize> = sampled.top_logprobs.iter().map(Vec::len).collect();
+    if positions == 0 || ids.len() != positions || ids != logprobs || !rows_ok(&ids) {
+        anyhow::bail!(
+            "the model was asked for the top {k} log-probabilities of each generated token and returned {} position(s) of candidates for {positions} generated token(s); a server that cannot return them must be refused, not recorded empty",
+            ids.len()
+        );
+    }
+    Ok(())
 }
 
 /// Limits on one streamed model turn.
@@ -107,6 +127,9 @@ pub struct TurnLimits {
     /// Ask the provider for the sampled token ids and log-probabilities;
     /// they come back in [`AgentEvent::ResponseSampled`].
     pub want_logprobs: bool,
+    /// With `want_logprobs`: how many most probable tokens per generated position to ask for and record
+    /// ([`AgentEvent::ResponseSampled`]); a response without them fails the turn.
+    pub top_logprobs: Option<u32>,
 }
 
 impl Default for TurnLimits {
@@ -127,6 +150,7 @@ impl From<ThinkingBudget> for TurnLimits {
             tool_choice: sven_model::ToolChoice::Auto,
             deadline: None,
             want_logprobs: false,
+            top_logprobs: None,
         }
     }
 }
@@ -161,6 +185,7 @@ impl TurnLimits {
     pub fn with_decoding(mut self, decoding: Decoding) -> Self {
         self.sampling = decoding.sampling;
         self.want_logprobs = decoding.want_logprobs;
+        self.top_logprobs = decoding.top_logprobs;
         self
     }
 
@@ -431,6 +456,7 @@ pub async fn stream_turn_attributed(
         thinking_budget: thinking_token_cap,
         tool_choice: limits.tool_choice,
         want_logprobs: limits.want_logprobs,
+        top_logprobs: limits.top_logprobs,
         manifest,
     };
 
@@ -634,6 +660,10 @@ pub async fn stream_turn_attributed(
                 sampled.token_ids.extend(ids);
                 sampled.logprobs.extend(logprobs);
             }
+            ResponseEvent::TopTokens { ids, logprobs } => {
+                sampled.top_token_ids.extend(ids);
+                sampled.top_logprobs.extend(logprobs);
+            }
             ResponseEvent::Served { model, seed } => {
                 sampled.model = Some(model);
                 sampled.seed = sampling.seed_in_effect(seed);
@@ -660,6 +690,10 @@ pub async fn stream_turn_attributed(
             }
             _ => {}
         }
+    }
+
+    if let Some(k) = limits.top_logprobs {
+        check_top_logprobs(&sampled, k)?;
     }
 
     // Reclassify inline <think> blocks emitted by models that don't use

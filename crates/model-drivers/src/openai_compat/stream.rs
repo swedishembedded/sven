@@ -5,7 +5,7 @@
 
 use std::collections::VecDeque;
 
-use anyhow::bail;
+use anyhow::{bail, Context};
 use futures::{Stream, StreamExt};
 use serde_json::Value;
 
@@ -256,7 +256,7 @@ pub(crate) fn policy_trace_events(
     trace: &Value,
     events: &mut Vec<ResponseEvent>,
     identity: &mut ServedIdentity,
-) {
+) -> anyhow::Result<()> {
     let numbers = |key: &str| trace.get(key).and_then(Value::as_array);
     if let Some(ids) = numbers("prompt_token_ids") {
         events.push(ResponseEvent::PromptTokens {
@@ -271,8 +271,69 @@ pub(crate) fn policy_trace_events(
             .map(|a| a.iter().filter_map(Value::as_f64).collect())
             .unwrap_or_default(),
     });
+    if let Some(top) = top_tokens(trace)? {
+        events.push(top);
+    }
     identity.logprob_kind = Some(LogprobKind::Policy);
     identity.logprob_temperature = trace.get("log_prob_temperature").and_then(Value::as_f64);
+    Ok(())
+}
+
+/// The sampler's top list of a `policy_trace` (`generation_top_ids` and
+/// `generation_top_log_probs`: one list of candidates per generated token),
+/// when the server returned one. The two lists must be parallel to each other
+/// and to `generation_token_ids`: a malformed one is a failure of the reply, not
+/// a shorter record. `None` when the trace has neither (the request did not
+/// ask, or the server cannot; the turn that asked fails on the absence).
+fn top_tokens(trace: &Value) -> anyhow::Result<Option<ResponseEvent>> {
+    fn grid<T>(
+        trace: &Value,
+        key: &str,
+        read: fn(&Value) -> Option<T>,
+    ) -> anyhow::Result<Option<Vec<Vec<T>>>> {
+        let Some(list) = trace.get(key).filter(|v| !v.is_null()) else {
+            return Ok(None);
+        };
+        let rows = list
+            .as_array()
+            .with_context(|| format!("policy_trace.{key} is not a list"))?;
+        rows.iter()
+            .map(|row| {
+                row.as_array()
+                    .with_context(|| format!("policy_trace.{key} holds a row that is not a list"))?
+                    .iter()
+                    .map(|v| {
+                        read(v).with_context(|| format!("policy_trace.{key} holds a bad entry"))
+                    })
+                    .collect()
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map(Some)
+    }
+    let ids = grid(trace, "generation_top_ids", |v| v.as_i64())?;
+    let logprobs = grid(trace, "generation_top_log_probs", |v| v.as_f64())?;
+    let (ids, logprobs) = match (ids, logprobs) {
+        (None, None) => return Ok(None),
+        (Some(ids), Some(logprobs)) => (ids, logprobs),
+        _ => bail!(
+            "policy_trace carries only one of generation_top_ids and generation_top_log_probs"
+        ),
+    };
+    let generated = trace
+        .get("generation_token_ids")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    if ids.len() != generated || logprobs.len() != generated {
+        bail!(
+            "policy_trace top lists cover {} and {} positions for {generated} generated tokens",
+            ids.len(),
+            logprobs.len()
+        );
+    }
+    if ids.iter().zip(&logprobs).any(|(i, l)| i.len() != l.len()) {
+        bail!("policy_trace top ids and log-probabilities differ in length at a position");
+    }
+    Ok(Some(ResponseEvent::TopTokens { ids, logprobs }))
 }
 
 /// The server's account of a decode, from a frame's non-standard `brain`
@@ -359,7 +420,7 @@ fn parse_sse_chunk(v: &Value) -> anyhow::Result<Frame> {
     }
     let mut identity = v.get("brain").and_then(served_identity);
     if let Some(trace) = v.get("policy_trace").filter(|t| !t.is_null()) {
-        policy_trace_events(trace, &mut events, identity.get_or_insert_default());
+        policy_trace_events(trace, &mut events, identity.get_or_insert_default())?;
     }
     if let Some(identity) = identity {
         events.push(ResponseEvent::Identity(identity));

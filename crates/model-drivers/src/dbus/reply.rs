@@ -71,19 +71,19 @@ pub(super) fn reply_events(result_json: &str, text: String) -> Vec<ResponseEvent
 /// when the request asked for it, brain's `policy_trace` object, read exactly
 /// as the HTTP surface's is: the prompt and generated ids, the policy's own
 /// log-probabilities and the temperature they were scored at.
-pub(super) fn reply_extras(result_json: &str) -> Vec<ResponseEvent> {
+pub(super) fn reply_extras(result_json: &str) -> anyhow::Result<Vec<ResponseEvent>> {
     let Ok(result) = serde_json::from_str::<Value>(result_json) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut events = Vec::new();
     let mut identity = served_identity(&result);
     if let Some(trace) = result.get("policy_trace").filter(|t| !t.is_null()) {
-        policy_trace_events(trace, &mut events, identity.get_or_insert_default());
+        policy_trace_events(trace, &mut events, identity.get_or_insert_default())?;
     }
     if let Some(identity) = identity {
         events.push(ResponseEvent::Identity(identity));
     }
-    events
+    Ok(events)
 }
 
 /// Token counts of a reply, in sven's terms: `input` excludes what the
@@ -165,7 +165,7 @@ mod tests {
         let result = r#"{"text":"hi","seed":7,"base_digest":"sha256:ab","backend":"cuda","engine":"brain 3.0.0",
                          "policy_trace":{"prompt_token_ids":[1,2],"generation_token_ids":[3,4],
                                          "generation_log_probs":[-0.5,-0.25],"log_prob_temperature":1.0}}"#;
-        let events = reply_extras(result);
+        let events = reply_extras(result).unwrap();
         assert!(matches!(&events[0], ResponseEvent::PromptTokens { ids } if ids == &[1, 2]));
         assert!(
             matches!(&events[1], ResponseEvent::Tokens { ids, logprobs } if ids == &[3, 4] && logprobs == &[-0.5, -0.25])
@@ -180,10 +180,39 @@ mod tests {
     }
 
     #[test]
+    fn the_samplers_top_list_comes_from_the_policy_trace_and_a_malformed_one_fails() {
+        let trace = |top: &str| {
+            format!(
+                r#"{{"policy_trace":{{"prompt_token_ids":[1],"generation_token_ids":[3,4],
+                    "generation_log_probs":[-0.5,-0.25],"log_prob_temperature":1.0,{top}}}}}"#
+            )
+        };
+        let events = reply_extras(&trace(
+            r#""top_log_probs":2,"generation_top_ids":[[3,9],[4,8]],"generation_top_log_probs":[[-0.5,-1.0],[-0.25,-2.0]]"#,
+        ))
+        .unwrap();
+        assert!(events.iter().any(|e| matches!(e, ResponseEvent::TopTokens { ids, logprobs }
+            if ids == &[vec![3, 9], vec![4, 8]] && logprobs == &[vec![-0.5, -1.0], vec![-0.25, -2.0]])));
+        // A trace that was not asked for a top list has none, and that is not an error here.
+        let plain = reply_extras(&trace(r#""x":0"#)).unwrap();
+        assert!(!plain
+            .iter()
+            .any(|e| matches!(e, ResponseEvent::TopTokens { .. })));
+        // A list that does not cover every generated token, or only half of the pair, fails the reply.
+        for bad in [
+            r#""generation_top_ids":[[3]],"generation_top_log_probs":[[-0.5]]"#,
+            r#""generation_top_ids":[[3],[4]]"#,
+            r#""generation_top_ids":[[3,1],[4]],"generation_top_log_probs":[[-0.5],[-0.25]]"#,
+        ] {
+            assert!(reply_extras(&trace(bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn a_reply_without_token_facts_has_only_its_identity() {
-        let events = reply_extras(r#"{"text":"hi","seed":7}"#);
+        let events = reply_extras(r#"{"text":"hi","seed":7}"#).unwrap();
         assert!(matches!(events.as_slice(), [ResponseEvent::Identity(_)]));
-        assert!(reply_extras("not json").is_empty());
+        assert!(reply_extras("not json").unwrap().is_empty());
     }
 
     #[test]

@@ -385,6 +385,13 @@ pub struct Cli {
     #[arg(long)]
     pub logprobs: bool,
 
+    /// With `--logprobs` (implied): also record the K most probable token
+    /// ids and their log-probabilities at every generated position (a brain
+    /// server's `policy_trace` `top_log_probs`). A server that cannot return
+    /// them fails the run, naming the field; K is at least 1.
+    #[arg(long, value_name = "K")]
+    pub top_logprobs: Option<u32>,
+
     /// Append every model request this process sends, exactly as sent, and
     /// what came back to FILE (JSONL). `sven replay FILE` sends one again.
     #[arg(long, value_name = "FILE")]
@@ -518,7 +525,8 @@ impl Cli {
         };
         let decoding = sven_frontend::Decoding {
             sampling,
-            want_logprobs: self.logprobs,
+            want_logprobs: self.logprobs || self.top_logprobs.is_some(),
+            top_logprobs: self.top_logprobs,
         };
         if decoding == sven_frontend::Decoding::default() {
             return Ok(decoding);
@@ -528,7 +536,7 @@ impl Cli {
             || !(self.is_headless() || self.interactive)
         {
             return Err(
-                "--temperature, --top-p, --top-k, --seed and --logprobs set how a \
+                "--temperature, --top-p, --top-k, --seed, --logprobs and --top-logprobs set how a \
                  headless or --interactive run samples: give a PROMPT or pipe one in"
                     .to_string(),
             );
@@ -541,6 +549,9 @@ impl Cli {
         }
         if self.top_k == Some(0) {
             return Err("--top-k 0: must be at least 1".to_string());
+        }
+        if self.top_logprobs == Some(0) {
+            return Err("--top-logprobs 0: must be at least 1".to_string());
         }
         Ok(decoding)
     }
@@ -760,11 +771,13 @@ mod tests {
             "20",
             "--seed",
             "41",
-            "--logprobs",
+            "--top-logprobs",
+            "5",
             "fix it",
         ])
         .decoding()
         .unwrap();
+        assert_eq!(set.top_logprobs, Some(5));
         assert_eq!(set.sampling.temperature, Some(0.7));
         assert_eq!(set.sampling.top_p, Some(0.9));
         assert_eq!(set.sampling.top_k, Some(20));
@@ -777,6 +790,7 @@ mod tests {
             &["--top-p", "1.5", "fix it"],
             &["--top-k", "0", "fix it"],
             &["--seed", "-1", "fix it"],
+            &["--top-logprobs", "0", "fix it"],
         ] {
             let parsed = Cli::try_parse_from(std::iter::once("sven").chain(args.iter().copied()));
             assert!(parsed.map_or(true, |c| c.decoding().is_err()), "{args:?}");

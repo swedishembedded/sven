@@ -74,3 +74,93 @@ async fn a_run_without_decoding_options_asks_for_no_sampled_tokens() {
         .expect("step metrics");
     assert!(metrics.completion_token_ids.is_none());
 }
+
+/// A provider that returns, per generated token, the candidates asked for.
+fn scripted(top: bool) -> Engine {
+    use sven_model::ResponseEvent;
+    let mut events = vec![
+        ResponseEvent::PromptTokens { ids: vec![1, 2] },
+        ResponseEvent::Tokens {
+            ids: vec![11, 12],
+            logprobs: vec![-0.5, -0.25],
+        },
+    ];
+    if top {
+        events.push(ResponseEvent::TopTokens {
+            ids: vec![vec![11, 5, 6], vec![12, 7, 8]],
+            logprobs: vec![vec![-0.5, -1.0, -2.0], vec![-0.25, -1.5, -3.0]],
+        });
+    }
+    events.extend([
+        ResponseEvent::TextDelta("ok".into()),
+        ResponseEvent::Usage {
+            input_tokens: 10,
+            output_tokens: 2,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            cost_usd: None,
+        },
+        ResponseEvent::Done,
+    ]);
+    Engine::builder()
+        .model_provider(Arc::new(sven_model_mock::ScriptedMockProvider::new(vec![
+            events,
+        ])))
+        .build()
+        .expect("an engine builds")
+}
+
+/// Spec: a run that asks for the sampler's top K records each generated
+/// position's candidates beside its log-probabilities, on the step.
+#[tokio::test]
+async fn a_run_that_asks_for_the_top_list_records_it_beside_the_logprobs() {
+    let mut agent = scripted(true).agent("agent");
+    agent
+        .send_with("hello", RunOptions::new().top_logprobs(3))
+        .await
+        .expect("an outcome");
+    let trajectory = agent.trajectory();
+    let metrics = trajectory
+        .steps
+        .iter()
+        .find_map(|s| s.metrics.as_ref())
+        .expect("step metrics");
+    assert_eq!(metrics.logprobs, Some(vec![-0.5, -0.25]));
+    let sven = &metrics.extra.as_ref().unwrap()["sven"];
+    assert_eq!(
+        sven["generation_top_ids"],
+        serde_json::json!([[11, 5, 6], [12, 7, 8]])
+    );
+    assert_eq!(
+        sven["generation_top_log_probs"],
+        serde_json::json!([[-0.5, -1.0, -2.0], [-0.25, -1.5, -3.0]])
+    );
+}
+
+/// Spec: a server whose reply lacks the top list it was asked for fails the
+/// run by name; the trajectory never holds an empty field in its place.
+#[tokio::test]
+async fn a_reply_without_the_top_list_it_was_asked_for_is_an_error() {
+    let mut agent = scripted(false).agent("agent");
+    let outcome = agent
+        .send_with("hello", RunOptions::new().top_logprobs(3))
+        .await;
+    let why = format!("{outcome:?}");
+    assert!(
+        why.contains("top 3 log-probabilities"),
+        "the failure names what is missing: {why}"
+    );
+    assert!(agent
+        .trajectory()
+        .steps
+        .iter()
+        .filter_map(|s| s
+            .metrics
+            .as_ref()?
+            .extra
+            .as_ref()?
+            .get("sven")?
+            .get("generation_top_ids"))
+        .next()
+        .is_none());
+}

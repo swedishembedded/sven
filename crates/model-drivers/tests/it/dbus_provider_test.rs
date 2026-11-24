@@ -622,6 +622,7 @@ async fn sampling_fields_travel_in_params_and_generation_meta_is_read_back() {
             seed: Some(7),
         },
         want_logprobs: true,
+        top_logprobs: None,
         ..Default::default()
     };
     let events = drain(provider.complete(req).await.unwrap()).await;

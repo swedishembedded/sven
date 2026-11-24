@@ -201,6 +201,9 @@ impl DbusProvider {
             // The exact capture: brain's policy trace (the prompt and
             // generated ids and the policy's own log-probabilities).
             params.insert("policy_trace".to_string(), json!(true));
+            if let Some(k) = req.top_logprobs {
+                params.insert("policy_trace_top_log_probs".to_string(), json!(k));
+            }
         }
         // Like `messages`, brain declares `tools` and `tool_choice` as strings
         // holding JSON text.
@@ -786,11 +789,23 @@ mod tests {
         let req = CompletionRequest {
             messages: vec![Message::user("hi")],
             want_logprobs: true,
+            top_logprobs: None,
             ..Default::default()
         };
         let params: Value = serde_json::from_str(&p.build_params(&req).unwrap()).unwrap();
         assert_eq!(params["policy_trace"], true);
         assert!(params.get("logprobs").is_none() && params.get("return_token_ids").is_none());
+        assert!(
+            params.get("policy_trace_top_log_probs").is_none(),
+            "no top list unless asked"
+        );
+        let asked = CompletionRequest {
+            top_logprobs: Some(5),
+            ..req
+        };
+        let params: Value = serde_json::from_str(&p.build_params(&asked).unwrap()).unwrap();
+        assert_eq!(params["policy_trace"], true);
+        assert_eq!(params["policy_trace_top_log_probs"], 5);
     }
 
     #[test]

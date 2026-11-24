@@ -122,3 +122,35 @@ fn a_run_with_a_version_that_cannot_be_ordered_records_no_span() {
     let none = totals([RequestRecord::default()].iter()).expect("totals");
     assert_eq!(none.extra.as_ref().map(Value::is_null), None);
 }
+
+#[test]
+fn the_samplers_top_list_is_on_the_step_and_on_each_request_beside_its_logprobs() {
+    let with_top = |version: &str, token: i64, other: i64| {
+        let mut record = served_by(version, token);
+        record.sampled.top_token_ids = vec![vec![token, other]];
+        record.sampled.top_logprobs = vec![vec![-0.5, -1.5]];
+        record
+    };
+    let single = step_of(&[with_top("3", 7, 9)]);
+    let sven = &single.extra.as_ref().expect("extra")["sven"];
+    assert_eq!(sven["generation_top_ids"], json!([[7, 9]]));
+    assert_eq!(sven["generation_top_log_probs"], json!([[-0.5, -1.5]]));
+
+    let step = step_of(&[with_top("3", 7, 9), with_top("4", 8, 6)]);
+    let sven = &step.extra.as_ref().expect("extra")["sven"];
+    // The step's lists run parallel to its concatenated logprobs; requests[] is per request.
+    assert_eq!(sven["generation_top_ids"], json!([[7, 9], [8, 6]]));
+    let requests = sven["requests"].as_array().expect("requests");
+    assert_eq!(requests[0]["generation_top_ids"], json!([[7, 9]]));
+    assert_eq!(requests[1]["generation_top_ids"], json!([[8, 6]]));
+    assert_eq!(
+        requests[1]["generation_top_log_probs"],
+        json!([[-0.5, -1.5]])
+    );
+    assert_eq!(requests[1]["logprobs"], json!([-0.5]));
+    // A request that was not asked records none, instead of an empty list.
+    let plain = step_of(&[served_by("3", 7)]);
+    assert!(plain.extra.as_ref().unwrap()["sven"]
+        .get("generation_top_ids")
+        .is_none());
+}
