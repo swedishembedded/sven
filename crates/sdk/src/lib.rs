@@ -226,6 +226,11 @@ pub mod model {
         ResponseEvent, ResponseFormat, ResponseStream, Role, SamplingControl, SamplingControls,
         SamplingParams, SamplingRefused, ToolContentPart, ToolResultContent, ToolSchema,
     };
+    /// Who decoded a response and how (the policy version, the tokenizer,
+    /// the kind and temperature of its log-probabilities), as a provider
+    /// reports it in [`ResponseEvent::Identity`]: a provider of the
+    /// application's own reports it with these types.
+    pub use sven_vocab::{AdapterRef, LogprobKind, ServedIdentity};
 }
 
 /// The built-in model providers, selected from [`config::Config`].

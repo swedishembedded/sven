@@ -164,3 +164,50 @@ async fn a_reply_without_the_top_list_it_was_asked_for_is_an_error() {
         .next()
         .is_none());
 }
+
+/// Spec: a provider of the application's own reports who decoded a reply
+/// with the SDK's types alone, and the step records it.
+#[tokio::test]
+async fn a_providers_reported_identity_reaches_the_step() {
+    use sven_sdk::model::{LogprobKind, ResponseEvent, ServedIdentity};
+    let identity = ServedIdentity {
+        policy_version: Some("3".into()),
+        tokenizer_digest: Some("sha256:ab".into()),
+        logprob_kind: Some(LogprobKind::Policy),
+        logprob_temperature: Some(0.8),
+        ..ServedIdentity::default()
+    };
+    let events = vec![
+        ResponseEvent::PromptTokens { ids: vec![1, 2] },
+        ResponseEvent::Tokens {
+            ids: vec![11],
+            logprobs: vec![-0.5],
+        },
+        ResponseEvent::Identity(identity),
+        ResponseEvent::TextDelta("ok".into()),
+        ResponseEvent::Done,
+    ];
+    let engine = Engine::builder()
+        .model_provider(Arc::new(sven_model_mock::ScriptedMockProvider::new(vec![
+            events,
+        ])))
+        .build()
+        .expect("an engine builds");
+    let mut agent = engine.agent("agent");
+    agent
+        .send_with("hello", RunOptions::new().want_logprobs(true))
+        .await
+        .expect("an outcome");
+    let trajectory = agent.trajectory();
+    let sven = trajectory
+        .steps
+        .iter()
+        .find_map(|s| s.metrics.as_ref())
+        .and_then(|m| m.extra.as_ref())
+        .map(|e| e["sven"].clone())
+        .expect("the step's sven figures");
+    assert_eq!(sven["policy_version"], "3");
+    assert_eq!(sven["logprob_kind"], "policy");
+    assert_eq!(sven["logprob_temperature"], 0.8);
+    assert_eq!(sven["tokenizer_digest"], "sha256:ab");
+}
