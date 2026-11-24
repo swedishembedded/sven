@@ -38,6 +38,7 @@ pub mod reconstruct;
 mod runtime_context;
 mod stall;
 pub mod stream_turn;
+mod thinking_budget;
 mod turn_decoding;
 
 pub use compact::{emergency_compact, smart_truncate, todo_block};

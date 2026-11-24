@@ -71,25 +71,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Consecutive empty turns on one thread before the turn is failed outright
-/// instead of nudged again. See the module docs.
-const EMPTY_TURN_FAILURE_THRESHOLD: u32 = 2;
-
-/// Consecutive replies the output budget cut before any text or tool call
-/// that fail the thread. Such a reply is not empty, since the model was
-/// working, so the agent loop continues it (with an instruction to act and
-/// reason briefly) before this bound ends a model that cannot finish within
-/// the budget.
-const TRUNCATED_TURN_FAILURE_THRESHOLD: u32 = 4;
-/// What a model is told when its reasoning looped and the turn is asked again.
-const LOOP_NOTE: &str = "Your previous reply was stopped because its reasoning repeated the same \
-     passage. Continue from the facts gathered so far and take a different approach.";
-
-/// The note for a tool call whose arguments repeated the same block.
-const TOOL_CALL_LOOP_NOTE: &str = "Your previous tool call was stopped because its arguments repeated \
-     the same block over and over. Nothing it contained was run. Make a shorter, different call: one \
-     step at a time, then check what it did before the next.";
-
 use async_trait::async_trait;
 use sven_decision::telemetry::DecisionTelemetry;
 use sven_hsm::{Effect, Event, ObservationSink, ToolCallId, UiEvent};
@@ -110,12 +91,17 @@ mod builder;
 mod instructions;
 mod interrupted;
 mod limits;
+mod outcomes;
 mod overflow;
 mod replies;
 
 pub use limits::CompactionConfig;
 
 use conclude::ConcludedTurn;
+use outcomes::{
+    turn_deadline, EMPTY_TURN_FAILURE_THRESHOLD, LOOP_NOTE, TOOL_CALL_LOOP_NOTE,
+    TRUNCATED_TURN_FAILURE_THRESHOLD,
+};
 
 use crate::chunks::ContextAssembler;
 use crate::notices;
@@ -797,13 +783,5 @@ impl EffectExecutor for TurnExecutor {
             obs,
         )
         .await;
-    }
-}
-
-/// Resolves when a turn's wall-clock bound passes; never when it has none.
-async fn turn_deadline(deadline: Option<std::time::Duration>) {
-    match deadline {
-        Some(limit) => sven_rt::sleep(limit).await,
-        None => std::future::pending().await,
     }
 }
