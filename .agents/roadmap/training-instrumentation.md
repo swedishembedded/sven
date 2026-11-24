@@ -63,6 +63,6 @@ does not honour refused or, on explicit best effort, recorded as `sampling_unhon
     ask a brain server's policy trace for it (`policy_trace: {"top_log_probs": K}` over HTTP; `policy_trace` plus
     `policy_trace_top_log_probs` over D-Bus) and record `generation_top_ids` / `generation_top_log_probs` per request;
     a reply without them fails the turn and another provider refuses. See the doc.
-14. The HTTP and D-Bus providers record the same request metadata (S): a contract test runs one scripted response
-    through each and compares the per-request records field by field (ids, log-probabilities and their kind and
-    temperature, top-K, identity, truncation).
+14. (Done 2026-11-24.) The HTTP and D-Bus providers record the same request metadata: one brain reply (ids, sampled and
+    top log-probabilities, kind and temperature, identity, truncation) served over each is folded to the per-request
+    record and compared field by field (`model-drivers/tests/it/provider_contract.rs`, with the `dbus` feature).

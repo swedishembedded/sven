@@ -46,7 +46,8 @@ scored by the serving model) and `log_prob_temperature`. With a top list wanted 
 trace adds `generation_top_ids` and `generation_top_log_probs`, one row of K per generated token; a reply
 that lacks them, or whose rows do not cover every generated token, fails the turn, and a provider other than
 brain refuses the request. Those are recorded as the policy's own
-log-probabilities (`logprob_kind` `policy`, with the temperature they were scored at). Any other
+log-probabilities (`logprob_kind` `policy`, with the temperature they were scored at). The D-Bus provider asks for and reads the same capture, and a contract test serves one reply over each
+transport and compares the per-request record field by field. Any other
 OpenAI-compatible server is asked for `logprobs` and `return_token_ids`, and the sampled ids and
 `logprobs.content[]` are read as the sampler's.
 

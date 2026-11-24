@@ -132,10 +132,10 @@ fn test_wav(rate: u32, n: usize) -> Vec<u8> {
 
 /// Everything the fake server observed during one `Subscribe` call.
 #[derive(Debug, Clone, Default)]
-struct Seen {
+pub(crate) struct Seen {
     model: String,
     action: String,
-    params: String,
+    pub(crate) params: String,
     in_meta: String,
     /// Blob name → byte length actually readable through the fd.
     blob_lens: HashMap<String, usize>,
@@ -148,6 +148,8 @@ const FAKE_REPLY: &str = "box: [12, 34, 56, 78]";
 
 struct FakeManager {
     seen: Arc<Mutex<Option<Seen>>>,
+    /// The `done` result to answer with instead of the canned one, whatever was asked.
+    reply: Option<Value>,
 }
 
 /// Read an fd exactly the way brain does: `fstat` for the size, then `mmap`.
@@ -254,6 +256,7 @@ impl FakeManager {
                 "log_prob_temperature": 0.25,
             });
         }
+        let result = self.reply.clone().unwrap_or(result);
         send_frame(
             &server,
             &serde_json::json!({"type": "done", "result": result}),
@@ -284,6 +287,13 @@ impl FakeManager {
 /// Serve `FakeManager` on one end of a socket pair and return a provider
 /// wired to the other end.
 async fn fake_server() -> (DbusProvider, Arc<Mutex<Option<Seen>>>, zbus::Connection) {
+    fake_server_replying(None).await
+}
+
+/// [`fake_server`] answering every call with `reply` as its `done` result.
+pub(crate) async fn fake_server_replying(
+    reply: Option<Value>,
+) -> (DbusProvider, Arc<Mutex<Option<Seen>>>, zbus::Connection) {
     let (client_sock, server_sock) = tokio::net::UnixStream::pair().expect("socket pair");
     let seen = Arc::new(Mutex::new(None));
 
@@ -300,6 +310,7 @@ async fn fake_server() -> (DbusProvider, Arc<Mutex<Option<Seen>>>, zbus::Connect
                 "/com/swedishembedded/Brain1",
                 FakeManager {
                     seen: seen_for_server,
+                    reply,
                 },
             )
             .expect("serve_at")

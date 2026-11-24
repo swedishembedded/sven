@@ -20,6 +20,7 @@ mod embedding_wire;
 mod manifest_wire;
 mod openai_stream_contract;
 mod provider_check;
+mod provider_contract;
 mod response_format_wire;
 mod sampling_wire;
 mod tool_choice_wire;

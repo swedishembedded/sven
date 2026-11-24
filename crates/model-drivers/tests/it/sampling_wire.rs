@@ -21,15 +21,15 @@ use tokio::net::TcpListener;
 
 // ── Minimal HTTP/1.1 mock server ──────────────────────────────────────────────
 
-struct CapturedRequest {
-    body: Value,
+pub(crate) struct CapturedRequest {
+    pub(crate) body: Value,
 }
 
 /// Bind a one-shot HTTP/1.1 mock server on a random loopback port.
 /// It accepts exactly one request, captures it, and replies with the given
 /// status + body.  Returns the port number and a receiver for the captured
 /// request (fulfilled once the request has been fully read).
-async fn mock_server_once(
+pub(crate) async fn mock_server_once(
     status: u16,
     content_type: &'static str,
     resp_body: impl Into<String> + Send + 'static,
@@ -83,7 +83,7 @@ async fn mock_server_once(
 
 /// Build a minimal SSE response body from a list of `data:` payloads.
 /// Appends `data: [DONE]\n\n` automatically.
-fn sse_body(events: &[&str]) -> String {
+pub(crate) fn sse_body(events: &[&str]) -> String {
     let mut s = events
         .iter()
         .map(|e| format!("data: {e}\n\n"))
