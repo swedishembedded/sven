@@ -65,3 +65,6 @@ does not honour refused or, on explicit best effort, recorded as `sampling_unhon
 13. The sampler's top-K per generated position (S): `RunOptions` asks a brain server's policy trace for the K most
     probable ids and log-probabilities per position (`top_log_probs`), recorded per request beside the sampled token's
     log-probability; a server that cannot return them is a refusal, not an empty field.
+14. The HTTP and D-Bus providers record the same request metadata (S): a contract test runs one scripted response
+    through each and compares the per-request records field by field (ids, log-probabilities and their kind and
+    temperature, top-K, identity, truncation).
