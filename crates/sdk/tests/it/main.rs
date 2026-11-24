@@ -67,6 +67,7 @@ mod questions;
 mod read_conversations;
 mod refused_calls;
 mod reproduce;
+mod request_log;
 mod round_budget;
 mod run_bounds;
 mod run_decoding;

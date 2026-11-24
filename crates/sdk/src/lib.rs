@@ -243,6 +243,20 @@ pub mod model {
 /// content with the built-ins never has to reach past the facade.
 pub mod drivers {
     pub use sven_model_drivers::{from_config, from_config_probed};
+
+    /// Every model request of a run recorded exactly as sent, with what came
+    /// back, one JSON line each (`sven.request-log/1`, what `sven replay`
+    /// reads). An application that runs several sessions at once records
+    /// each to a log of its own: wrap the provider it hands
+    /// [`EngineBuilder::model_provider`](crate::EngineBuilder::model_provider)
+    /// in a [`RecordingProvider`](request_log::RecordingProvider) over a
+    /// [`RequestLog`](request_log::RequestLog) opened for that session,
+    /// where the process-wide log of the CLI would mix them.
+    pub mod request_log {
+        pub use sven_model_drivers::request_log::{
+            read_log, Record, RecordedCall, RecordingProvider, RequestLog, Response,
+        };
+    }
 }
 
 /// Agent memory: the store contract an embedding application implements or
