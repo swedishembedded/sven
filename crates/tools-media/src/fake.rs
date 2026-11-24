@@ -174,6 +174,8 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                 }
                 let mut body = vec![0u8; length];
                 reader.read_exact(&mut body).await.unwrap();
+                // Raw speech names its rate, as brain does; every other answer adds no header.
+                let mut sample_rate = None;
                 let (status, kind, reply): (u16, &str, Vec<u8>) = if method == "POST"
                     && path == "/v1/videos"
                 {
@@ -224,16 +226,22 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                     )
                 } else if method == "POST" && path == "/v1/audio/speech" {
                     let body: Value = serde_json::from_slice(&body).unwrap();
-                    let pcm = body["response_format"] == "pcm";
+                    let format = body["response_format"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
                     ran.lock().unwrap().push(Invocation {
                         key: "direct".into(),
                         session: None,
                         body,
                     });
-                    if pcm {
-                        (200, "audio/pcm", vec![0u8; 960])
-                    } else {
-                        (200, "audio/mpeg", b"ID3\x04\x00\x00mock".to_vec())
+                    match format.as_str() {
+                        "pcm" => {
+                            sample_rate = Some(16_000);
+                            (200, "audio/pcm", vec![0u8; 960])
+                        }
+                        "wav" => (200, "audio/wav", crate::direct::wav_of(&[0u8; 64], 22_050)),
+                        _ => (200, "audio/mpeg", b"ID3\x04\x00\x00mock".to_vec()),
                     }
                 } else if method == "POST" && path == "/v1/chat/completions" {
                     let body: Value = serde_json::from_slice(&body).unwrap();
@@ -316,8 +324,11 @@ pub async fn serve_clips(fail_first: usize, clip: fn(&Value) -> Vec<u8>) -> Fake
                 } else {
                     (404, "application/json", b"{}".to_vec())
                 };
+                let rate = sample_rate
+                    .map(|r: u32| format!("X-Sample-Rate: {r}\r\n"))
+                    .unwrap_or_default();
                 let head = format!(
-                    "HTTP/1.1 {status} X\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 {status} X\r\nContent-Type: {kind}\r\n{rate}Content-Length: {}\r\nConnection: close\r\n\r\n",
                     reply.len()
                 );
                 let _ = write.write_all(head.as_bytes()).await;

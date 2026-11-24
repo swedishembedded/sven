@@ -31,8 +31,12 @@ const TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MAX_ANSWER_BYTES: usize = 128 * 1024 * 1024;
 /// The largest image put in front of the session's model.
 const MAX_SHOWN_IMAGE_BYTES: usize = 3 * 1024 * 1024;
-/// OpenRouter's raw speech: 16-bit little-endian mono at 24 kHz.
+/// The rate of raw speech whose provider does not name one: OpenRouter's
+/// 16-bit little-endian mono at 24 kHz.
 const PCM_RATE: u32 = 24_000;
+/// The container speech is asked for when the call names none: raw PCM,
+/// which OpenRouter answers by default and every speech provider writes.
+const DEFAULT_SPEECH_FORMAT: &str = "pcm";
 
 fn raster(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
@@ -48,9 +52,9 @@ fn raster(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// A WAV container around 16-bit mono PCM.
+/// A WAV container around 16-bit mono PCM at `rate`.
 #[must_use]
-pub fn wav_of(pcm: &[u8]) -> Vec<u8> {
+pub fn wav_of(pcm: &[u8], rate: u32) -> Vec<u8> {
     let data = &pcm[..pcm.len() - pcm.len() % 2];
     let size = u32::try_from(data.len()).unwrap_or(u32::MAX);
     let mut wav = Vec::with_capacity(44 + data.len());
@@ -60,8 +64,8 @@ pub fn wav_of(pcm: &[u8]) -> Vec<u8> {
     wav.extend_from_slice(&16u32.to_le_bytes());
     wav.extend_from_slice(&1u16.to_le_bytes());
     wav.extend_from_slice(&1u16.to_le_bytes());
-    wav.extend_from_slice(&PCM_RATE.to_le_bytes());
-    wav.extend_from_slice(&(PCM_RATE * 2).to_le_bytes());
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&rate.saturating_mul(2).to_le_bytes());
     wav.extend_from_slice(&2u16.to_le_bytes());
     wav.extend_from_slice(&16u16.to_le_bytes());
     wav.extend_from_slice(b"data");
@@ -70,11 +74,14 @@ pub fn wav_of(pcm: &[u8]) -> Vec<u8> {
     wav
 }
 
-async fn post(
-    endpoint: &MediaEndpoint,
-    path: &str,
-    body: &Value,
-) -> Result<(Vec<u8>, String), String> {
+/// A provider's answer: its bytes, their media type, and the sample rate it
+/// names for raw audio (`x-sample-rate`), when it names one.
+struct Answer {
+    bytes: Vec<u8>,
+    sample_rate: Option<u32>,
+}
+
+async fn post(endpoint: &MediaEndpoint, path: &str, body: &Value) -> Result<Answer, String> {
     let response = sven_model_drivers::invoke::http_client()
         .post(format!("{}{path}", endpoint.base_url.trim_end_matches('/')))
         .bearer_auth(&endpoint.api_key)
@@ -84,12 +91,12 @@ async fn post(
         .await
         .map_err(|e| format!("the provider could not be reached: {e}"))?;
     let status = response.status();
-    let mime = response
+    let sample_rate = response
         .headers()
-        .get("content-type")
+        .get("x-sample-rate")
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.split(';').next().unwrap_or(v).trim().to_owned())
-        .unwrap_or_default();
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|r| (8_000..=192_000).contains(r));
     let bytes = response
         .bytes()
         .await
@@ -107,7 +114,10 @@ async fn post(
             .unwrap_or_else(|| text.chars().take(200).collect());
         return Err(format!("HTTP {}: {message}", status.as_u16()));
     }
-    Ok((bytes.to_vec(), mime))
+    Ok(Answer {
+        bytes: bytes.to_vec(),
+        sample_rate,
+    })
 }
 
 fn json_of(bytes: &[u8]) -> Result<Value, String> {
@@ -170,7 +180,7 @@ fn speech_request(
     let format = request
         .remove("format")
         .and_then(|f| f.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "mp3".into());
+        .unwrap_or_else(|| DEFAULT_SPEECH_FORMAT.into());
     let said = request
         .remove("turns")
         .unwrap_or_else(|| body["prompt"].clone());
@@ -312,7 +322,7 @@ async fn call(endpoint: &MediaEndpoint, body: &Value) -> Result<Made, String> {
                     Value::Array(references.into_iter().map(|url| json!({"type": "image_url", "image_url": {"url": url}})).collect()),
                 );
             }
-            let (bytes, _) = post(endpoint, "/images", &Value::Object(request)).await?;
+            let bytes = post(endpoint, "/images", &Value::Object(request)).await?.bytes;
             let answer = json_of(&bytes)?;
             let files = answer["data"]
                 .as_array()
@@ -331,21 +341,24 @@ async fn call(endpoint: &MediaEndpoint, body: &Value) -> Result<Made, String> {
             Ok(Made { text: None, files, finish_reason: None })
         }
         "speech" => {
-            let format = params.get("format").and_then(Value::as_str).unwrap_or("mp3").to_owned();
             let request = speech_request(body, &params, &inputs)?;
-            let (bytes, _) = post(endpoint, "/audio/speech", &request).await?;
+            let format = request["response_format"].as_str().unwrap_or(DEFAULT_SPEECH_FORMAT).to_owned();
+            let answer = post(endpoint, "/audio/speech", &request).await?;
+            let bytes = answer.bytes;
             let file = if format == "pcm" {
-                (wav_of(&bytes), "audio/wav", "wav")
+                (wav_of(&bytes, answer.sample_rate.unwrap_or(PCM_RATE)), "audio/wav", "wav")
+            } else if bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+                (bytes, "audio/wav", "wav")
             } else if bytes.starts_with(b"ID3") || (bytes.len() > 1 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0) {
                 (bytes, "audio/mpeg", "mp3")
             } else {
-                return Err("the provider sent audio that is not MP3".into());
+                return Err(format!("the provider sent audio that is not the {format} it was asked for"));
             };
             Ok(Made { text: None, files: vec![file], finish_reason: None })
         }
         "chat" => {
             let request = chat_request(body, &params, &inputs)?;
-            let (bytes, _) = post(endpoint, "/chat/completions", &request).await?;
+            let bytes = post(endpoint, "/chat/completions", &request).await?.bytes;
             let answer = json_of(&bytes)?;
             Ok(Made {
                 text: answer["choices"][0]["message"]["content"].as_str().map(str::to_owned),
@@ -536,7 +549,7 @@ mod tests {
 
     #[test]
     fn raw_speech_becomes_a_wav_that_plays() {
-        let wav = wav_of(&[0u8; 481]);
+        let wav = wav_of(&[0u8; 481], PCM_RATE);
         assert_eq!(&wav[..4], b"RIFF");
         assert_eq!(&wav[8..12], b"WAVE");
         assert_eq!(
@@ -544,5 +557,12 @@ mod tests {
             PCM_RATE
         );
         assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 480);
+        let wav = wav_of(&[0u8; 4], 16_000);
+        assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 16_000);
+        assert_eq!(
+            u32::from_le_bytes(wav[28..32].try_into().unwrap()),
+            32_000,
+            "bytes a second"
+        );
     }
 }

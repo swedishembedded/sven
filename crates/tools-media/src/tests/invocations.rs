@@ -297,6 +297,11 @@ async fn a_provider_of_its_own_is_called_directly_and_its_outputs_saved_here() {
     assert_eq!(speech.artifacts[0].mime_type, "audio/wav");
     let wav = std::fs::read(dir.path().join(&speech.artifacts[0].uri)).unwrap();
     assert_eq!(&wav[..4], b"RIFF");
+    assert_eq!(
+        u32::from_le_bytes(wav[24..28].try_into().unwrap()),
+        16_000,
+        "raw speech is wrapped at the rate its provider names"
+    );
     let label = call(&tool, "c3", json!({"model": "vision/a", "operation": "chat", "prompt": "label it", "inputs": ["car.png"]})).await;
     assert!(
         label.content.starts_with("vision/a sees a red car"),
@@ -533,4 +538,46 @@ async fn a_model_that_may_keep_data_is_asked_about_then_run_or_refused() {
     let tool = invoking(&fake, dir.path(), None).with_consent(Some(asked.clone()));
     assert!(!call(&tool, "n1", json!({"model": "google/gemini-nano-banana-2.1", "operation": "image", "prompt": "a fox"})).await.is_error);
     assert_eq!(asked.1.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+/// Speech with no format named asks for raw PCM, which every speech provider
+/// writes (brain among them, which writes no MP3); a WAV answer is kept as it
+/// came, at its own rate.
+#[tokio::test]
+async fn speech_asks_for_raw_pcm_unless_told_and_keeps_a_wav_answer_whole() {
+    let fake = serve(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let tool = RunModelTool::new(
+        endpoint(&fake),
+        MediaConfig {
+            provider: Some("brain".into()),
+            ..MediaConfig::default()
+        },
+        dir.path().to_path_buf(),
+    );
+    let plain = call(
+        &tool,
+        "s1",
+        json!({"model": "openai/tts", "operation": "speech", "prompt": "hello there"}),
+    )
+    .await;
+    assert!(!plain.is_error, "{}", plain.content);
+    assert_eq!(plain.artifacts[0].mime_type, "audio/wav");
+    let wav = call(&tool, "s2", json!({"model": "openai/tts", "operation": "speech", "prompt": "hello there", "params": {"format": "wav", "seed": 7}})).await;
+    assert!(!wav.is_error, "{}", wav.content);
+    let bytes = std::fs::read(dir.path().join(&wav.artifacts[0].uri)).unwrap();
+    assert_eq!(
+        u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+        22_050,
+        "the provider's own WAV, unchanged"
+    );
+    let ran = fake.invoked.lock().unwrap().clone();
+    assert_eq!(ran[0].body["response_format"], json!("pcm"));
+    assert_eq!(
+        (
+            ran[1].body["response_format"].as_str(),
+            ran[1].body["seed"].as_u64()
+        ),
+        (Some("wav"), Some(7))
+    );
 }

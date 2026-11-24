@@ -387,7 +387,14 @@ outputs are files by handle ([media artifacts](../internals/media-artifacts.md))
 - With a provider of its own (`tools.media.provider` naming a
   `providers.<name>` entry, e.g. a bring-your-own OpenRouter key) chat, image
   and speech are asked of its own `/chat/completions`, `/images` and
-  `/audio/speech`, and inputs are paths; raw speech is saved as WAV.
+  `/audio/speech`, and inputs are paths. Speech is asked for as raw PCM
+  unless `params.format` names another container (every speech provider,
+  a local brain among them, writes PCM) and saved as a WAV at the rate the
+  provider names in `X-Sample-Rate` (24 kHz when it names none); a WAV or
+  MP3 answer is saved as it came. A sound in `inputs`, with
+  `reference_transcript` when the model reads one, is the voice to speak
+  in; `voice`, `instructions` and `seed` in `params` go to the provider as
+  they are.
 
 A generated raster image is also put in front of the session's own model when
 that model takes images; speech, music and video are not. Each call is its
