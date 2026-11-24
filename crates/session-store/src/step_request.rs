@@ -72,10 +72,45 @@ pub fn record_response(
         model_name.clone_from(&sampled.model);
     }
     // What identifies the decode goes under `extra.sven`; the first request of
-    // the step that reported a field fixes it.
+    // the step that reported a field fixes it. `requests` is authoritative
+    // for a step that holds several requests.
+    for (key, value) in decode_facts(sampled) {
+        let extra = metrics.extra.get_or_insert_with(|| json!({}));
+        if let Some(object) = extra.as_object_mut() {
+            let sven = object.entry(EXTRA_KEY).or_insert_with(|| json!({}));
+            if let Some(sven) = sven.as_object_mut() {
+                sven.entry(key).or_insert(value);
+            }
+        }
+    }
+}
+
+/// The keys [`decode_facts`] can produce.
+const DECODE_FACT_KEYS: [&str; 14] = [
+    "seed",
+    "decoding",
+    "sampling_honoured",
+    "sampling_unhonoured",
+    "adapter",
+    "base_digest",
+    "backend",
+    "engine",
+    "policy_version",
+    "tokenizer_digest",
+    "chat_template_digest",
+    "logprob_kind",
+    "logprob_temperature",
+    "truncated",
+];
+
+/// The facts that say who decoded one request and under which settings, each
+/// present only when the provider reported it. Both the step's own
+/// `extra.sven` and a [`request_entry`] take exactly these, so a request's
+/// record and a single-request step's cannot differ.
+fn decode_facts(sampled: &sven_vocab::Sampled) -> Vec<(&'static str, Value)> {
     let identity = &sampled.identity;
     let controls = |set: sven_vocab::SamplingControls| (!set.is_empty()).then(|| json!(set));
-    let facts: [(&str, Option<Value>); 14] = [
+    let facts: [(&'static str, Option<Value>); 14] = [
         ("seed", sampled.seed.map(Value::from)),
         ("decoding", sampled.decoding.as_ref().map(|d| json!(d))),
         // Which of the controls the request set took effect, and which were
@@ -112,27 +147,21 @@ pub fn record_response(
         // Only a cut-off is worth saying; a finished response is the rule.
         ("truncated", sampled.truncated.then(|| Value::from(true))),
     ];
-    for (key, value) in facts {
-        let Some(value) = value else { continue };
-        let extra = metrics.extra.get_or_insert_with(|| json!({}));
-        if let Some(object) = extra.as_object_mut() {
-            let sven = object.entry(EXTRA_KEY).or_insert_with(|| json!({}));
-            if let Some(sven) = sven.as_object_mut() {
-                sven.entry(key).or_insert(value);
-            }
-        }
-    }
+    facts
+        .into_iter()
+        .filter_map(|(key, value)| Some((key, value?)))
+        .collect()
 }
 
 /// One request's own record, as kept under `extra.sven.requests`.
 fn request_entry(
     model: Option<&str>,
-    seed: Option<u64>,
     prompt_token_ids: Option<&[i64]>,
     completion_token_ids: Option<&[i64]>,
     logprobs: Option<&[f64]>,
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
+    facts: Vec<(&'static str, Value)>,
 ) -> Value {
     let mut entry = serde_json::Map::new();
     let mut put = |key: &str, value: Option<Value>| {
@@ -141,7 +170,6 @@ fn request_entry(
         }
     };
     put("model", model.map(Value::from));
-    put("seed", seed.map(Value::from));
     put("prompt_tokens", prompt_tokens.map(Value::from));
     put("completion_tokens", completion_tokens.map(Value::from));
     put("prompt_token_ids", prompt_token_ids.map(|v| json!(v)));
@@ -150,31 +178,35 @@ fn request_entry(
         completion_token_ids.map(|v| json!(v)),
     );
     put("logprobs", logprobs.map(|v| json!(v)));
+    for (key, value) in facts {
+        put(key, Some(value));
+    }
     Value::Object(entry)
 }
 
 /// Adds `request` to `extra.sven.requests`, first creating the list from the
 /// request the step already holds.
 fn keep_each_request(metrics: &mut StepMetrics, model: Option<&str>, request: &RequestRecord) {
-    let sven_seed = metrics
-        .extra
-        .as_ref()
-        .and_then(|e| e.get(EXTRA_KEY))
-        .and_then(|s| s.get("seed"))
-        .and_then(Value::as_u64);
+    // The step holds one request so far, so what `extra.sven` says is that request's.
+    let held: Vec<(&'static str, Value)> = DECODE_FACT_KEYS
+        .iter()
+        .filter_map(|&key| {
+            let value = metrics.extra.as_ref()?.get(EXTRA_KEY)?.get(key)?;
+            Some((key, value.clone()))
+        })
+        .collect();
     let first = request_entry(
         model,
-        sven_seed,
         metrics.prompt_token_ids.as_deref(),
         metrics.completion_token_ids.as_deref(),
         metrics.logprobs.as_deref(),
         metrics.prompt_tokens,
         metrics.completion_tokens,
+        held,
     );
     let sampled = &request.sampled;
     let this = request_entry(
         sampled.model.as_deref(),
-        sampled.seed,
         Some(&sampled.prompt_token_ids)
             .filter(|v| !v.is_empty())
             .map(Vec::as_slice),
@@ -186,6 +218,7 @@ fn keep_each_request(metrics: &mut StepMetrics, model: Option<&str>, request: &R
             .map(Vec::as_slice),
         Some(u64::from(request.reported.logical_prompt())),
         Some(u64::from(request.reported.output)),
+        decode_facts(sampled),
     );
     let extra = metrics.extra.get_or_insert_with(|| json!({}));
     let Some(object) = extra.as_object_mut() else {
@@ -203,11 +236,49 @@ fn keep_each_request(metrics: &mut StepMetrics, model: Option<&str>, request: &R
     }
 }
 
+/// The oldest and newest policy version among `versions`, when every one is a
+/// whole number: versions that cannot be ordered give no span, and none is
+/// guessed.
+#[must_use]
+pub fn policy_version_span<'a>(versions: impl IntoIterator<Item = &'a str>) -> Option<(u64, u64)> {
+    let mut span: Option<(u64, u64)> = None;
+    for version in versions {
+        let version = version.parse::<u64>().ok()?;
+        span = Some(span.map_or((version, version), |(old, new)| {
+            (old.min(version), new.max(version))
+        }));
+    }
+    span
+}
+
+/// `final_metrics.extra` carrying `span` as `sven.policy_version_span`
+/// (`[oldest, newest]`), or `None` when there is none.
+#[must_use]
+pub fn span_extra(span: Option<(u64, u64)>) -> Option<Value> {
+    span.map(|(old, new)| json!({ EXTRA_KEY: { "policy_version_span": [old, new] } }))
+}
+
+/// The policy versions the requests behind `metrics` report: each entry of
+/// `extra.sven.requests` when the step holds several, else the step's own.
+pub fn step_policy_versions(metrics: &StepMetrics) -> Vec<&str> {
+    let Some(sven) = metrics.extra.as_ref().and_then(|e| e.get(EXTRA_KEY)) else {
+        return Vec::new();
+    };
+    fn version(entry: &Value) -> Option<&str> {
+        entry.get("policy_version").and_then(Value::as_str)
+    }
+    match sven.get("requests").and_then(Value::as_array) {
+        Some(list) => list.iter().filter_map(version).collect(),
+        None => version(sven).into_iter().collect(),
+    }
+}
+
 /// The totals over `requests`, or `None` when there are none.
 #[must_use]
 pub fn totals<'a>(requests: impl IntoIterator<Item = &'a RequestRecord>) -> Option<FinalMetrics> {
     let mut totals = FinalMetrics::default();
     let mut any = false;
+    let mut versions: Vec<String> = Vec::new();
     for request in requests {
         any = true;
         let add = |slot: &mut Option<u64>, n: u32| *slot = Some(slot.unwrap_or(0) + u64::from(n));
@@ -220,6 +291,10 @@ pub fn totals<'a>(requests: impl IntoIterator<Item = &'a RequestRecord>) -> Opti
         if let Some(cost) = request.cost_usd {
             totals.total_cost_usd = Some(totals.total_cost_usd.unwrap_or(0.0) + cost);
         }
+        if let Some(version) = &request.sampled.identity.policy_version {
+            versions.push(version.clone());
+        }
     }
+    totals.extra = span_extra(policy_version_span(versions.iter().map(String::as_str)));
     any.then_some(totals)
 }

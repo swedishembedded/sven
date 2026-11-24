@@ -334,3 +334,54 @@ async fn each_reply_s_reasoning_is_on_its_own_step() {
         ]
     );
 }
+
+/// Spec: a run whose two requests were answered by policy versions 3 and 4 (an
+/// adapter refit between them) records each step's own version and, in the final
+/// metrics, the span `[3, 4]` an online trainer reads staleness from.
+#[tokio::test]
+async fn a_run_over_two_policy_versions_records_each_and_the_span() {
+    let identity = |version: &str| {
+        ResponseEvent::Identity(sven_vocab::ServedIdentity {
+            policy_version: Some(version.into()),
+            ..sven_vocab::ServedIdentity::default()
+        })
+    };
+    let scripts = vec![
+        vec![
+            identity("3"),
+            ResponseEvent::ToolCall {
+                index: 0,
+                id: "w1".into(),
+                name: "weather".into(),
+                arguments: r#"{"city":"Lund"}"#.into(),
+            },
+            usage(100, 10, 0, 0.5),
+            ResponseEvent::Done,
+        ],
+        vec![
+            identity("4"),
+            ResponseEvent::TextDelta("Sunny.".into()),
+            usage(150, 5, 0, 0.25),
+            ResponseEvent::Done,
+        ],
+    ];
+    let engine = Engine::builder()
+        .model_provider(Arc::new(Strict(ScriptedMockProvider::new(scripts))))
+        .tool(Arc::new(Weather))
+        .build()
+        .expect("an engine builds");
+    let mut agent = engine.agent("agent");
+    agent.send("weather in Lund?").await.expect("an outcome");
+    let trajectory = agent.trajectory();
+    let versions: Vec<_> = trajectory
+        .steps
+        .iter()
+        .filter_map(|s| s.metrics.as_ref()?.extra.as_ref()?["sven"]["policy_version"].as_str())
+        .collect();
+    assert_eq!(versions, ["3", "4"]);
+    let finals = trajectory.final_metrics.as_ref().expect("final metrics");
+    assert_eq!(
+        finals.extra.as_ref().expect("extra")["sven"]["policy_version_span"],
+        serde_json::json!([3, 4])
+    );
+}

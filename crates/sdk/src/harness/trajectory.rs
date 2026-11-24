@@ -394,7 +394,13 @@ fn step_totals(trajectory: &atif::Trajectory, steps: u64) -> atif::FinalMetrics 
         total_cached_tokens: total(metrics.iter().map(|m| m.cached_tokens)),
         total_cost_usd: total(metrics.iter().map(|m| m.cost_usd)),
         total_steps: Some(steps),
-        ..atif::FinalMetrics::default()
+        extra: sven_session_store::step_request::span_extra(
+            sven_session_store::step_request::policy_version_span(
+                metrics
+                    .iter()
+                    .flat_map(|m| sven_session_store::step_request::step_policy_versions(m)),
+            ),
+        ),
     }
 }
 

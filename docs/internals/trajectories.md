@@ -8,8 +8,11 @@ makes an agent depend on any trainer.
 ## What a step carries
 
 An agent step is built from the conversation record, never from the compacted view
-the model reads (see [Compaction](#compaction-is-marked-never-hidden)). For each model
-request a step covers:
+the model reads (see [Compaction](#compaction-is-marked-never-hidden)). A step usually
+covers one model request, and then these are that request's facts. A step that covers
+several keeps the step's own figures as the sums of its requests (tokens, cost) and, for
+every other row, the first request that reported the fact; each request's own facts are
+in `extra.sven.requests` (below), which is authoritative.
 
 | Where | What | Source |
 |---|---|---|
@@ -27,7 +30,8 @@ request a step covers:
 | `metrics.extra.sven.tokenizer_digest`, `chat_template_digest` | `sha256:` of the tokenizer and the chat template that made the prompt ids | the same |
 | `metrics.extra.sven.logprob_kind`, `logprob_temperature` | `policy` (whole-vocabulary distribution) or `sampler` (after temperature, top-k, top-p), and the temperature the log-probabilities were scored at | the `policy_trace` object, or `logprob_kind` of the `brain` object |
 | `metrics.extra.sven.truncated` | `true` when the response ended at the output-token ceiling | the response's `finish_reason: length` |
-| `metrics.extra.sven.requests` | each request's own prompt ids, sampled ids, log-probabilities, seed and token counts, when the step covers more than one request | the same |
+| `metrics.extra.sven.requests` | one entry per request, when the step covers more than one: `model`, `prompt_tokens`, `completion_tokens`, `prompt_token_ids`, `completion_token_ids`, `logprobs`, and every identity and decoding row above that the request's own response reported (`seed`, `decoding`, `sampling_honoured`, `sampling_unhonoured`, `adapter`, `base_digest`, `backend`, `engine`, `policy_version`, `tokenizer_digest`, `chat_template_digest`, `logprob_kind`, `logprob_temperature`, `truncated`), each in the form of its step row | the same |
+| `final_metrics.extra.sven.policy_version_span` | `[oldest, newest]` policy version over every request of the run (a trainer reads staleness from it); absent when no request reported a version or a version is not a whole number | `policy_version` of every request |
 
 Two non-standard members of the response frames come from a
 [brain](https://swedishembedded.com/docs/brain) server. The `brain` object names what decoded
@@ -43,8 +47,9 @@ OpenAI-compatible server is asked for `logprobs` and `return_token_ids`, and the
 
 A step covers more than one request when a tool call and the answer after its result
 share a step: the step's own `prompt_token_ids` are then the first request's and the
-sampled ids of all of them run together, so `extra.sven.requests` is the authority for
-per-request training data. Every field is absent when the server does not report it;
+sampled ids of all of them run together, and a fact reported by the second request alone
+(the policy version of an adapter refit between them) would be hidden by the first's, so
+`extra.sven.requests` is the authority for per-request training data and identity. Every field is absent when the server does not report it;
 none is guessed. Sampling that was asked for goes on every request: `RunOptions::sampling`
 (temperature, top-p, top-k, seed) and `RunOptions::want_logprobs` for the SDK, and
 `--temperature`, `--top-p`, `--top-k`, `--seed` and `--logprobs` for a headless run, the
