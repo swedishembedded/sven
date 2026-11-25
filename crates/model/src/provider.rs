@@ -62,6 +62,11 @@ pub struct ServedModel {
     /// (`supported_parameters` or `capabilities` naming them); empty when it
     /// names none.
     pub sampling: crate::SamplingControls,
+    /// Whether the server listed the controls it applies at all (a
+    /// `supported_parameters` entry): an empty
+    /// [`Self::sampling`] then means a model that applies none, not one the
+    /// server said nothing about.
+    pub sampling_listed: bool,
 }
 
 /// What a server reports it is serving, in the order it reported it.
@@ -140,6 +145,15 @@ pub trait ModelProvider: sven_rt::MaybeSend + sven_rt::MaybeSync {
     /// known to apply, by its protocol or because it said so.
     fn sampling_controls(&self) -> crate::SamplingControls {
         crate::SamplingControls::ALL
+    }
+
+    /// The controls the server itself lists for this model, when it lists
+    /// any: authoritative over [`Self::sampling_controls`], which is the
+    /// driver's claim for models it knows nothing of. A request whose
+    /// controls are a convenience (greedy decoding) consults it to send none
+    /// to a model that decodes greedily by construction.
+    fn listed_sampling_controls(&self) -> Option<crate::SamplingControls> {
+        None
     }
 
     /// Whether the configuration allows sending sampling controls this

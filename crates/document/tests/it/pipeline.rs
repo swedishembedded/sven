@@ -708,3 +708,28 @@ async fn a_page_the_model_keeps_declining_fails_with_that_cause_and_keeps_no_tex
     assert!(!md.contains("sorry"), "{md}");
     assert!(md.contains(&page_of(120)));
 }
+
+#[tokio::test]
+async fn temperature_is_not_sent_to_a_model_the_server_lists_no_sampling_for() {
+    for (listed_none, expected) in [(false, Some(0.0)), (true, None)] {
+        let dir = tempfile::tempdir().unwrap();
+        let src = write_pdf(dir.path(), &mixed());
+        let out = dir.path().join("out.md");
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let model = ScriptedOcr::new(move |s, _| {
+            log.lock().unwrap().push(s.temperature);
+            Reply::text("x")
+        });
+        let model = if listed_none {
+            model.listing_no_sampling()
+        } else {
+            model
+        };
+        let (conv, _) = converter(model);
+        conv.convert(&src, &out, &options()).await.unwrap();
+        let seen = seen.lock().unwrap();
+        assert!(!seen.is_empty());
+        assert!(seen.iter().all(|t| *t == expected), "{seen:?}");
+    }
+}

@@ -328,6 +328,10 @@ impl ModelProvider for ConfigBoundedProvider {
         self.inner.sampling_controls().union(advertised)
     }
 
+    fn listed_sampling_controls(&self) -> Option<sven_model::SamplingControls> {
+        self.live.as_ref().and_then(|l| l.listed_sampling())
+    }
+
     fn sampling_best_effort(&self) -> bool {
         self.sampling_best_effort
     }

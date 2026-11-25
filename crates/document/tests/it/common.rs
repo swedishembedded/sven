@@ -13,6 +13,7 @@ use base64::Engine as _;
 use sven_model::catalog::InputModality;
 use sven_model::{
     CompletionRequest, ContentPart, MessageContent, ModelProvider, ResponseEvent, ResponseStream,
+    SamplingControls,
 };
 
 /// What the scripted model sees of a request.
@@ -24,6 +25,8 @@ pub struct Seen {
     pub width: u32,
     /// The instruction sent with the image.
     pub prompt: String,
+    /// The temperature the request names, if it names one.
+    pub temperature: Option<f64>,
 }
 
 pub struct Reply {
@@ -57,6 +60,7 @@ pub struct ScriptedOcr {
     script: Script,
     images: bool,
     max_output_tokens: Option<u32>,
+    listed_sampling: Option<SamplingControls>,
 }
 
 impl ScriptedOcr {
@@ -67,12 +71,19 @@ impl ScriptedOcr {
             script: Box::new(script),
             images: true,
             max_output_tokens: None,
+            listed_sampling: None,
         }
     }
 
     /// The output limit the model's listing states.
     pub fn listing_max_output(mut self, tokens: u32) -> Self {
         self.max_output_tokens = Some(tokens);
+        self
+    }
+
+    /// A server that lists the model's sampling controls as none.
+    pub fn listing_no_sampling(mut self) -> Self {
+        self.listed_sampling = Some(SamplingControls::NONE);
         self
     }
 
@@ -99,6 +110,9 @@ impl ModelProvider for ScriptedOcr {
     }
     fn catalog_max_output_tokens(&self) -> Option<u32> {
         self.max_output_tokens
+    }
+    fn listed_sampling_controls(&self) -> Option<SamplingControls> {
+        self.listed_sampling
     }
     async fn complete(&self, req: CompletionRequest) -> anyhow::Result<ResponseStream> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
@@ -146,6 +160,7 @@ impl ModelProvider for ScriptedOcr {
             gray: grays[0],
             grays,
             width: img.width(),
+            temperature: req.sampling.temperature,
         };
         let reply = (self.script)(&seen, call);
         if let Some(together) = &reply.hold {

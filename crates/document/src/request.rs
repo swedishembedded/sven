@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use futures::StreamExt;
-use sven_model::{CompletionRequest, ContentPart, Message, ResponseEvent, SamplingParams};
+use sven_model::{
+    CompletionRequest, ContentPart, Message, ModelProvider, ResponseEvent, SamplingControl,
+    SamplingParams,
+};
 
 use crate::backend::RenderedPage;
 use crate::limiter::is_pushback;
@@ -77,10 +80,7 @@ async fn ask(
         messages: vec![Message::user_with_parts(parts)],
         stream: true,
         max_output_tokens_override: Some(max_tokens),
-        sampling: SamplingParams {
-            temperature: Some(0.0),
-            ..Default::default()
-        },
+        sampling: greedy_where_applicable(ctx.providers[endpoint].as_ref()),
         ..Default::default()
     };
     let exchange = async {
@@ -115,4 +115,18 @@ async fn ask(
     tokio::time::timeout(ctx.options.request_timeout, exchange)
         .await
         .map_err(|_| "model request timed out".to_string())?
+}
+
+/// Temperature 0, unless the server lists the model's sampling controls and
+/// temperature is not among them: an OCR model that decodes greedily by
+/// construction (brain's) takes no sampling parameter and refuses a request
+/// that names one. A server that lists nothing is sent what it always was.
+fn greedy_where_applicable(provider: &dyn ModelProvider) -> SamplingParams {
+    let applies = provider
+        .listed_sampling_controls()
+        .is_none_or(|listed| listed.contains(SamplingControl::Temperature));
+    SamplingParams {
+        temperature: applies.then_some(0.0),
+        ..Default::default()
+    }
 }

@@ -634,3 +634,14 @@ async fn a_server_that_cannot_be_asked_leaves_the_input_modalities_unreported() 
         "a server that said text only has been heard"
     );
 }
+
+#[test]
+fn a_server_that_lists_parameters_is_marked_as_listing_even_when_none_are_samplers() {
+    let body = serde_json::json!({"data": [
+        {"id": "ocr", "supported_parameters": ["max_tokens"]},
+        {"id": "plain"},
+    ]});
+    let served = parse_served_models(&body).unwrap();
+    assert!(served[0].sampling_listed && served[0].sampling.is_empty());
+    assert!(!served[1].sampling_listed);
+}
