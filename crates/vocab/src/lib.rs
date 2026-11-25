@@ -62,7 +62,7 @@ pub use request::{RequestFold, RequestRecord, Sampled};
 pub use sampling::{SamplingControl, SamplingControls};
 pub use served::{
     context_budget_text, describe_adapter, served_model_changed_text, AdapterRef, ContextBudget,
-    LogprobKind, ServedIdentity,
+    LogprobKind, PolicyLineage, ServedIdentity,
 };
 pub use todo::{TodoItem, TodoStatus};
 pub use turn::{AnsweredCall, TurnDecoding, TurnRequest, TURN_KIND};

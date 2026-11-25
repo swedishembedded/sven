@@ -9,8 +9,9 @@ use anyhow::{bail, Context};
 use futures::{Stream, StreamExt};
 use serde_json::Value;
 
+use serde::Deserialize;
 use sven_model::ResponseEvent;
-use sven_vocab::{AdapterRef, LogprobKind, ServedIdentity};
+use sven_vocab::{AdapterRef, LogprobKind, PolicyLineage, ServedIdentity};
 
 /// The events one SSE `data:` frame carries.
 ///
@@ -337,10 +338,13 @@ fn top_tokens(trace: &Value) -> anyhow::Result<Option<ResponseEvent>> {
 }
 
 /// The server's account of a decode, from a frame's non-standard `brain`
-/// object: `seed`, `adapter {id, digest, version}`, `base_digest`, `backend`,
-/// `engine`, and the keys a server may add: `policy_version` (else the
-/// adapter's `version`), `tokenizer_digest`, `chat_template_digest` and
-/// `logprob_kind` (`policy` or `sampler`). `None` when it names none of them.
+/// object: `seed`, `adapter {id, digest, version, lineage?}`, `base_digest`,
+/// `backend`, `engine`, and the keys a server may add: `policy_version` (else
+/// the adapter's `version`), `tokenizer_digest`, `chat_template_digest` and
+/// `logprob_kind` (`policy` or `sampler`). The adapter's `lineage` (`run`,
+/// `epoch`, `update`, `base_digest`, `adapter_digest`) is kept only whole: a
+/// malformed one is reported in the log and recorded as unknown, never
+/// half-filled. `None` when it names none of them.
 pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
     let text = |key: &str| brain.get(key).and_then(Value::as_str).map(str::to_owned);
     let identity = ServedIdentity {
@@ -361,6 +365,18 @@ pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
                 Value::String(text) => Some(text.clone()),
                 Value::Number(number) => Some(number.to_string()),
                 _ => None,
+            }),
+        policy_lineage: brain
+            .get("adapter")
+            .and_then(|a| a.get("lineage"))
+            .filter(|l| !l.is_null())
+            .and_then(|l| {
+                PolicyLineage::deserialize(l)
+                    .inspect_err(|e| {
+                        tracing::warn!("the server's adapter lineage is not one: {e}");
+                    })
+                    .ok()
+                    .map(Box::new)
             }),
         tokenizer_digest: text("tokenizer_digest"),
         chat_template_digest: text("chat_template_digest"),

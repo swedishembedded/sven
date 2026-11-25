@@ -66,3 +66,8 @@ does not honour refused or, on explicit best effort, recorded as `sampling_unhon
 14. (Done 2026-11-24.) The HTTP and D-Bus providers record the same request metadata: one brain reply (ids, sampled and
     top log-probabilities, kind and temperature, identity, truncation) served over each is folded to the per-request
     record and compared field by field (`model-drivers/tests/it/provider_contract.rs`, with the `dbus` feature).
+15. (Done 2026-11-25.) The run-level policy identity a brain server reports beside the serving version
+    (`brain.adapter.lineage`: run, epoch, optimiser update, base and adapter digests) is recorded as `policy_lineage` per
+    request in `extra.sven.requests[]` and on a single-request step, through the one identity parser both providers use;
+    a malformed one is logged and left unknown, never half-filled. The provider contract test covers it over HTTP and
+    D-Bus; `session-store/tests/it/request_identity.rs` holds the per-request and single-step records.

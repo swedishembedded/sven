@@ -115,7 +115,7 @@ fn top_lists(sampled: &sven_vocab::Sampled) -> Vec<(&'static str, Value)> {
 }
 
 /// The keys [`decode_facts`] can produce.
-const DECODE_FACT_KEYS: [&str; 14] = [
+const DECODE_FACT_KEYS: [&str; 15] = [
     "seed",
     "decoding",
     "sampling_honoured",
@@ -125,6 +125,7 @@ const DECODE_FACT_KEYS: [&str; 14] = [
     "backend",
     "engine",
     "policy_version",
+    "policy_lineage",
     "tokenizer_digest",
     "chat_template_digest",
     "logprob_kind",
@@ -139,7 +140,7 @@ const DECODE_FACT_KEYS: [&str; 14] = [
 fn decode_facts(sampled: &sven_vocab::Sampled) -> Vec<(&'static str, Value)> {
     let identity = &sampled.identity;
     let controls = |set: sven_vocab::SamplingControls| (!set.is_empty()).then(|| json!(set));
-    let facts: [(&'static str, Option<Value>); 14] = [
+    let facts: [(&'static str, Option<Value>); 15] = [
         ("seed", sampled.seed.map(Value::from)),
         ("decoding", sampled.decoding.as_ref().map(|d| json!(d))),
         // Which of the controls the request set took effect, and which were
@@ -159,6 +160,10 @@ fn decode_facts(sampled: &sven_vocab::Sampled) -> Vec<(&'static str, Value)> {
         (
             "policy_version",
             identity.policy_version.clone().map(Value::from),
+        ),
+        (
+            "policy_lineage",
+            identity.policy_lineage.as_ref().map(|l| json!(l)),
         ),
         (
             "tokenizer_digest",

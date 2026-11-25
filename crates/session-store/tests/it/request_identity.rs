@@ -15,7 +15,7 @@ use atif::StepMetrics;
 use serde_json::{json, Value};
 use sven_session_store::step_request::{record_response, totals};
 use sven_vocab::{
-    AdapterRef, LogprobKind, ReportedUsage, RequestRecord, Sampled, SamplingControl,
+    AdapterRef, LogprobKind, PolicyLineage, ReportedUsage, RequestRecord, Sampled, SamplingControl,
     SamplingControls, ServedIdentity,
 };
 
@@ -43,6 +43,7 @@ fn served_by(version: &str, token: i64) -> RequestRecord {
             }),
             base_digest: Some("sha256:base".into()),
             policy_version: Some(version.into()),
+            policy_lineage: Some(Box::new(lineage(version))),
             logprob_kind: Some(LogprobKind::Policy),
             logprob_temperature: Some(0.8),
             ..ServedIdentity::default()
@@ -52,6 +53,17 @@ fn served_by(version: &str, token: i64) -> RequestRecord {
         ..Sampled::default()
     };
     record
+}
+
+/// The run-level identity the server reports for policy `version`: update `version` of run `k`'s first job.
+fn lineage(version: &str) -> PolicyLineage {
+    PolicyLineage {
+        run: "k".into(),
+        epoch: 1,
+        update: version.parse().unwrap_or_default(),
+        base_digest: "sha256:base".into(),
+        adapter_digest: format!("sha256:v{version}"),
+    }
 }
 
 fn step_of(requests: &[RequestRecord]) -> StepMetrics {
@@ -72,6 +84,11 @@ fn each_request_of_a_step_records_the_identity_its_own_response_reported() {
     assert_eq!(requests.len(), 2);
     for (entry, (version, token)) in requests.iter().zip([("3", 7), ("4", 8)]) {
         assert_eq!(entry["policy_version"], json!(version));
+        assert_eq!(
+            entry["policy_lineage"],
+            json!({"run": "k", "epoch": 1, "update": version.parse::<u64>().unwrap(), "base_digest": "sha256:base", "adapter_digest": format!("sha256:v{version}")}),
+            "each request names the weights that decoded it"
+        );
         assert_eq!(
             entry["adapter"],
             json!({"id": "lab", "digest": format!("sha256:v{version}")})
@@ -95,6 +112,12 @@ fn each_request_of_a_step_records_the_identity_its_own_response_reported() {
     // The step's own fields keep their meaning: the first request that reported a fact fixes it.
     assert_eq!(sven["policy_version"], "3");
     assert_eq!(step.completion_token_ids, Some(vec![7, 8]));
+    // A single-request step carries the lineage on the step itself.
+    let single = step_of(&[served_by("5", 9)]);
+    assert_eq!(
+        single.extra.as_ref().expect("extra")["sven"]["policy_lineage"]["update"],
+        5
+    );
 }
 
 #[test]

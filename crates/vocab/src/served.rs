@@ -52,6 +52,12 @@ pub struct ServedIdentity {
     /// weights do, so two calls of one episode can be told apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_version: Option<String>,
+    /// Which weights the policy version is, independently of the server that
+    /// serves it, for a version a training run published: the run, the job
+    /// of it, the optimiser update, the base and the adapter file. Boxed: an
+    /// identity rides in every response event, and most carry none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_lineage: Option<Box<PolicyLineage>>,
     /// `sha256:<hex>` of the tokenizer the server tokenized and detokenized
     /// with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,6 +74,21 @@ pub struct ServedIdentity {
     /// for a request only when this is the temperature the request sampled at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logprob_temperature: Option<f64>,
+}
+
+/// The run-level identity of a published policy version, as a server that
+/// trains while it serves reports it: `run` (the training run), `epoch` (the
+/// job of the run that took the update), `update` (the optimiser updates the
+/// weights hold), `base_digest` and `adapter_digest`. Unlike the serving
+/// version, it names the same weights on every server and after a restart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyLineage {
+    pub run: String,
+    pub epoch: u64,
+    pub update: u64,
+    pub base_digest: String,
+    pub adapter_digest: String,
 }
 
 /// The distribution a sampled token's reported log-probability is taken
@@ -99,6 +120,7 @@ impl ServedIdentity {
         take(&mut self.backend, other.backend);
         take(&mut self.engine, other.engine);
         take(&mut self.policy_version, other.policy_version);
+        take(&mut self.policy_lineage, other.policy_lineage);
         take(&mut self.tokenizer_digest, other.tokenizer_digest);
         take(&mut self.chat_template_digest, other.chat_template_digest);
         take(&mut self.logprob_kind, other.logprob_kind);

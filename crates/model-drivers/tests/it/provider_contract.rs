@@ -29,7 +29,7 @@ use crate::sampling_wire::{mock_server_once, sse_body};
 fn decode() -> Value {
     json!({
         "seed": 7,
-        "adapter": {"id": "lab", "digest": "sha256:aa", "version": 4},
+        "adapter": {"id": "lab", "digest": "sha256:aa", "version": 4, "lineage": {"run": "k", "epoch": 2, "update": 9, "base_digest": "sha256:bb", "adapter_digest": "sha256:aa"}},
         "base_digest": "sha256:bb",
         "backend": "cuda",
         "engine": "brain 6.0.0",
@@ -168,6 +168,7 @@ async fn http_and_dbus_record_one_reply_as_the_same_request() {
     assert_eq!(h.backend, d.backend, "backend");
     assert_eq!(h.engine, d.engine, "engine");
     assert_eq!(h.policy_version, d.policy_version, "policy version");
+    assert_eq!(h.policy_lineage, d.policy_lineage, "policy lineage");
     assert_eq!(h.tokenizer_digest, d.tokenizer_digest, "tokenizer digest");
     assert_eq!(
         h.chat_template_digest, d.chat_template_digest,
@@ -184,5 +185,11 @@ async fn http_and_dbus_record_one_reply_as_the_same_request() {
     assert_eq!(http.top_token_ids, vec![vec![21, 5, 6], vec![22, 7, 8]]);
     assert!(http_cut);
     assert_eq!(h.policy_version.as_deref(), Some("4"));
+    assert_eq!(
+        h.policy_lineage
+            .as_ref()
+            .map(|l| (l.run.as_str(), l.epoch, l.update)),
+        Some(("k", 2, 9))
+    );
     assert_eq!(h.logprob_temperature, Some(0.8));
 }

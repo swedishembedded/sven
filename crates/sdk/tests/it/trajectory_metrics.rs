@@ -81,6 +81,13 @@ async fn two_request_agent() -> (Engine, sven_sdk::Agent, sven_sdk::RunOutcome) 
                 backend: Some("cuda".into()),
                 engine: Some("brain 2.0.0".into()),
                 policy_version: Some("v12".into()),
+                policy_lineage: Some(Box::new(sven_vocab::PolicyLineage {
+                    run: "k".into(),
+                    epoch: 2,
+                    update: 12,
+                    base_digest: "sha256:bb".into(),
+                    adapter_digest: "sha256:aa".into(),
+                })),
                 tokenizer_digest: Some("sha256:tt".into()),
                 chat_template_digest: Some("sha256:cc".into()),
                 logprob_kind: Some(sven_vocab::LogprobKind::Policy),
@@ -194,6 +201,10 @@ async fn the_prompt_ids_and_the_serving_identity_are_on_the_step() {
     assert_eq!(sven["backend"], "cuda");
     assert_eq!(sven["engine"], "brain 2.0.0");
     assert_eq!(sven["policy_version"], "v12");
+    assert_eq!(
+        sven["policy_lineage"],
+        serde_json::json!({"run": "k", "epoch": 2, "update": 12, "base_digest": "sha256:bb", "adapter_digest": "sha256:aa"})
+    );
     assert_eq!(sven["tokenizer_digest"], "sha256:tt");
     assert_eq!(sven["chat_template_digest"], "sha256:cc");
     assert_eq!(sven["logprob_kind"], "policy");
