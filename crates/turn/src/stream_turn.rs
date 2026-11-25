@@ -56,6 +56,7 @@ use crate::inline_markup::{
 };
 use crate::ledger_recorder::LedgerRecorder;
 use crate::repetition::{RepetitionWatch, TOOL_CALL_REPEATS};
+use crate::sampled_checks::{check_sampler_support, check_top_logprobs};
 use crate::stall::{StallLimits, StallWatch};
 use crate::tool_slots::attempt_json_repair;
 use sven_vocab::{ReportedUsage, Sampled, SessionEvent as AgentEvent};
@@ -81,54 +82,6 @@ pub struct Decoding {
     pub top_logprobs: Option<u32>,
     /// With `want_logprobs`: the size of the sampler support to ask for (see `CompletionRequest::sampler_support`).
     pub sampler_support: Option<u32>,
-}
-
-/// Fails a response that was asked for the sampler's support (at most `n` ids per position) and did not return a
-/// consistent one: the support must be there, of the size asked, cover every generated token, and hold the token
-/// drawn at each position whose support is not the whole row. A trainer replaying the draw would otherwise read a
-/// short or wrong field as the behaviour policy.
-fn check_sampler_support(sampled: &Sampled, n: u32) -> anyhow::Result<()> {
-    let positions = sampled.token_ids.len();
-    let Some(support) = &sampled.sampler_support else {
-        anyhow::bail!(
-            "the model was asked for the sampler support (at most {n} ids per generated token) and returned none; a server that cannot return it must be refused, not recorded empty"
-        );
-    };
-    if support.cap != n {
-        anyhow::bail!(
-            "the model was asked for a sampler support of {n} and answered with a cap of {}",
-            support.cap
-        );
-    }
-    support.check(positions).map_err(|why| {
-        anyhow::anyhow!("the sampler support of the response is inconsistent: {why}")
-    })?;
-    for (position, token) in sampled.token_ids.iter().enumerate() {
-        let ids = support.at(position);
-        if !ids.is_empty() && !ids.contains(token) {
-            anyhow::bail!(
-                "the sampler support at position {position} does not hold the generated token {token}"
-            );
-        }
-    }
-    Ok(())
-}
-
-/// Fails a response that was asked for the `k` most probable tokens per position and did not return them: every
-/// generated token must have a non-empty list of at most `k` candidates. An empty or short field would be read by a
-/// trainer as "no alternatives", so the turn fails instead.
-fn check_top_logprobs(sampled: &Sampled, k: u32) -> anyhow::Result<()> {
-    let positions = sampled.token_ids.len();
-    let rows_ok = |rows: &[usize]| rows.iter().all(|&n| n > 0 && n <= k as usize);
-    let ids: Vec<usize> = sampled.top_token_ids.iter().map(Vec::len).collect();
-    let logprobs: Vec<usize> = sampled.top_logprobs.iter().map(Vec::len).collect();
-    if positions == 0 || ids.len() != positions || ids != logprobs || !rows_ok(&ids) {
-        anyhow::bail!(
-            "the model was asked for the top {k} log-probabilities of each generated token and returned {} position(s) of candidates for {positions} generated token(s); a server that cannot return them must be refused, not recorded empty",
-            ids.len()
-        );
-    }
-    Ok(())
 }
 
 /// Limits on one streamed model turn.

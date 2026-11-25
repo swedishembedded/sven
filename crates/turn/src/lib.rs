@@ -28,6 +28,7 @@ mod ledger_recorder;
 mod oneshot;
 mod repetition;
 mod request_images;
+mod sampled_checks;
 mod time_budget;
 mod tool_slots;
 
