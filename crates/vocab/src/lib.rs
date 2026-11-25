@@ -58,7 +58,7 @@ pub use tool_image::{ShownImages, ToolImage, MAX_IMAGES, MAX_IMAGE_BASE64_BYTES}
 pub use conclusion::announces_unfinished_work;
 pub use mode::AgentMode;
 pub use notice::{Notice, NoticeError};
-pub use request::{RequestFold, RequestRecord, Sampled};
+pub use request::{RequestFold, RequestRecord, Sampled, SamplerSupport, MAX_SAMPLER_SUPPORT};
 pub use sampling::{SamplingControl, SamplingControls};
 pub use served::{
     context_budget_text, describe_adapter, served_model_changed_text, AdapterRef, ContextBudget,

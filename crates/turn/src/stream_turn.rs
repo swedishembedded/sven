@@ -79,6 +79,39 @@ pub struct Decoding {
     /// With `want_logprobs`: the number of most probable tokens per position to ask for (see
     /// `CompletionRequest::top_logprobs`).
     pub top_logprobs: Option<u32>,
+    /// With `want_logprobs`: the size of the sampler support to ask for (see `CompletionRequest::sampler_support`).
+    pub sampler_support: Option<u32>,
+}
+
+/// Fails a response that was asked for the sampler's support (at most `n` ids per position) and did not return a
+/// consistent one: the support must be there, of the size asked, cover every generated token, and hold the token
+/// drawn at each position whose support is not the whole row. A trainer replaying the draw would otherwise read a
+/// short or wrong field as the behaviour policy.
+fn check_sampler_support(sampled: &Sampled, n: u32) -> anyhow::Result<()> {
+    let positions = sampled.token_ids.len();
+    let Some(support) = &sampled.sampler_support else {
+        anyhow::bail!(
+            "the model was asked for the sampler support (at most {n} ids per generated token) and returned none; a server that cannot return it must be refused, not recorded empty"
+        );
+    };
+    if support.cap != n {
+        anyhow::bail!(
+            "the model was asked for a sampler support of {n} and answered with a cap of {}",
+            support.cap
+        );
+    }
+    support.check(positions).map_err(|why| {
+        anyhow::anyhow!("the sampler support of the response is inconsistent: {why}")
+    })?;
+    for (position, token) in sampled.token_ids.iter().enumerate() {
+        let ids = support.at(position);
+        if !ids.is_empty() && !ids.contains(token) {
+            anyhow::bail!(
+                "the sampler support at position {position} does not hold the generated token {token}"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Fails a response that was asked for the `k` most probable tokens per position and did not return them: every
@@ -130,6 +163,8 @@ pub struct TurnLimits {
     /// With `want_logprobs`: how many most probable tokens per generated position to ask for and record
     /// ([`AgentEvent::ResponseSampled`]); a response without them fails the turn.
     pub top_logprobs: Option<u32>,
+    /// With `want_logprobs`: the sampler support size to ask for and record; a response without it fails the turn.
+    pub sampler_support: Option<u32>,
 }
 
 impl Default for TurnLimits {
@@ -151,6 +186,7 @@ impl From<ThinkingBudget> for TurnLimits {
             deadline: None,
             want_logprobs: false,
             top_logprobs: None,
+            sampler_support: None,
         }
     }
 }
@@ -186,6 +222,7 @@ impl TurnLimits {
         self.sampling = decoding.sampling;
         self.want_logprobs = decoding.want_logprobs;
         self.top_logprobs = decoding.top_logprobs;
+        self.sampler_support = decoding.sampler_support;
         self
     }
 
@@ -457,6 +494,7 @@ pub async fn stream_turn_attributed(
         tool_choice: limits.tool_choice,
         want_logprobs: limits.want_logprobs,
         top_logprobs: limits.top_logprobs,
+        sampler_support: limits.sampler_support,
         manifest,
     };
 
@@ -664,6 +702,10 @@ pub async fn stream_turn_attributed(
                 sampled.top_token_ids.extend(ids);
                 sampled.top_logprobs.extend(logprobs);
             }
+            ResponseEvent::SamplerSupport(support) => match &mut sampled.sampler_support {
+                Some(held) => held.append(&support),
+                None => sampled.sampler_support = Some(support),
+            },
             ResponseEvent::Served { model, seed } => {
                 sampled.model = Some(model);
                 sampled.seed = sampling.seed_in_effect(seed);
@@ -694,6 +736,9 @@ pub async fn stream_turn_attributed(
 
     if let Some(k) = limits.top_logprobs {
         check_top_logprobs(&sampled, k)?;
+    }
+    if let Some(n) = limits.sampler_support {
+        check_sampler_support(&sampled, n)?;
     }
 
     // Reclassify inline <think> blocks emitted by models that don't use

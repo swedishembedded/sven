@@ -71,3 +71,10 @@ does not honour refused or, on explicit best effort, recorded as `sampling_unhon
     request in `extra.sven.requests[]` and on a single-request step, through the one identity parser both providers use;
     a malformed one is logged and left unknown, never half-filled. The provider contract test covers it over HTTP and
     D-Bus; `session-store/tests/it/request_identity.rs` holds the per-request and single-step records.
+16. (Done 2026-11-25.) The sampler's support per generated position: `RunOptions::sampler_support(N)` and
+    `--sampler-support N` (1..=256) ask a brain server's policy trace for it (`policy_trace: {"support": N}` over
+    HTTP, beside `top_log_probs` when both are set; `policy_trace` plus `policy_trace_support` over D-Bus) and record
+    `support_cap`, `generation_sampler_log_probs`, `generation_support_offsets` and `generation_support_ids` per request
+    and per step (`sven_vocab::SamplerSupport`, one parser for both providers); a reply without them, or with a
+    malformed or inconsistent one, fails the turn, and another provider refuses. The provider contract test covers it
+    over HTTP and D-Bus. See the doc.

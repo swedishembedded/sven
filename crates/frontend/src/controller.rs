@@ -1021,6 +1021,7 @@ mod tests {
             sampling,
             want_logprobs: true,
             top_logprobs: None,
+            sampler_support: None,
         };
         let spec = SessionSpec::for_mode(AgentMode::Agent, model("a"));
         let (session, _mcp) = SessionController::open(options, spec, vec![])

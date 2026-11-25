@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use serde::Deserialize;
 use sven_model::ResponseEvent;
-use sven_vocab::{AdapterRef, LogprobKind, PolicyLineage, ServedIdentity};
+use sven_vocab::{AdapterRef, LogprobKind, PolicyLineage, SamplerSupport, ServedIdentity};
 
 /// The events one SSE `data:` frame carries.
 ///
@@ -275,6 +275,9 @@ pub(crate) fn policy_trace_events(
     if let Some(top) = top_tokens(trace)? {
         events.push(top);
     }
+    if let Some(support) = sampler_support(trace)? {
+        events.push(ResponseEvent::SamplerSupport(support));
+    }
     identity.logprob_kind = Some(LogprobKind::Policy);
     identity.logprob_temperature = trace.get("log_prob_temperature").and_then(Value::as_f64);
     Ok(())
@@ -335,6 +338,64 @@ fn top_tokens(trace: &Value) -> anyhow::Result<Option<ResponseEvent>> {
         bail!("policy_trace top ids and log-probabilities differ in length at a position");
     }
     Ok(Some(ResponseEvent::TopTokens { ids, logprobs }))
+}
+
+/// The sampler's support of a `policy_trace` (`support_cap`, `generation_sampler_log_probs`,
+/// `generation_support_offsets` and `generation_support_ids`), when the server returned one. It is the one reader
+/// of these fields for every transport: all four must be present together and consistent with each other and with
+/// `generation_token_ids`, because a trainer replays the draw from them and a short list would be read as a
+/// smaller support. `None` when the trace has none of them (the request did not ask, or the server cannot; the turn
+/// that asked fails on the absence).
+fn sampler_support(trace: &Value) -> anyhow::Result<Option<SamplerSupport>> {
+    const KEYS: [&str; 4] = [
+        "support_cap",
+        "generation_sampler_log_probs",
+        "generation_support_offsets",
+        "generation_support_ids",
+    ];
+    let present = KEYS
+        .iter()
+        .filter(|key| trace.get(**key).is_some_and(|v| !v.is_null()))
+        .count();
+    match present {
+        0 => return Ok(None),
+        4 => {}
+        _ => bail!("policy_trace carries only some of {}", KEYS.join(", ")),
+    }
+    fn list<T>(
+        trace: &Value,
+        key: &str,
+        read: impl Fn(&Value) -> Option<T>,
+    ) -> anyhow::Result<Vec<T>> {
+        trace
+            .get(key)
+            .and_then(Value::as_array)
+            .with_context(|| format!("policy_trace.{key} is not a list"))?
+            .iter()
+            .map(|v| read(v).with_context(|| format!("policy_trace.{key} holds a bad entry")))
+            .collect()
+    }
+    let cap = trace
+        .get("support_cap")
+        .and_then(Value::as_u64)
+        .and_then(|c| u32::try_from(c).ok())
+        .context("policy_trace.support_cap is not a number")?;
+    let support = SamplerSupport {
+        cap,
+        log_probs: list(trace, "generation_sampler_log_probs", |v| v.as_f64())?,
+        offsets: list(trace, "generation_support_offsets", |v| {
+            v.as_u64().and_then(|o| u32::try_from(o).ok())
+        })?,
+        ids: list(trace, "generation_support_ids", |v| v.as_i64())?,
+    };
+    let generated = trace
+        .get("generation_token_ids")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    support
+        .check(generated)
+        .map_err(|why| anyhow::anyhow!("policy_trace support: {why}"))?;
+    Ok(Some(support))
 }
 
 /// The server's account of a decode, from a frame's non-standard `brain`

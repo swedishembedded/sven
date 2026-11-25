@@ -230,7 +230,7 @@ pub mod model {
     /// the kind and temperature of its log-probabilities), as a provider
     /// reports it in [`ResponseEvent::Identity`]: a provider of the
     /// application's own reports it with these types.
-    pub use sven_vocab::{AdapterRef, LogprobKind, ServedIdentity};
+    pub use sven_vocab::{AdapterRef, LogprobKind, SamplerSupport, ServedIdentity};
 }
 
 /// The built-in model providers, selected from [`config::Config`].

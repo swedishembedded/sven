@@ -77,6 +77,11 @@ async fn a_run_without_decoding_options_asks_for_no_sampled_tokens() {
 
 /// A provider that returns, per generated token, the candidates asked for.
 fn scripted(top: bool) -> Engine {
+    scripted_with(top, None)
+}
+
+/// As [`scripted`], and with `support` the sampler's support the reply carries.
+fn scripted_with(top: bool, support: Option<sven_model::SamplerSupport>) -> Engine {
     use sven_model::ResponseEvent;
     let mut events = vec![
         ResponseEvent::PromptTokens { ids: vec![1, 2] },
@@ -90,6 +95,9 @@ fn scripted(top: bool) -> Engine {
             ids: vec![vec![11, 5, 6], vec![12, 7, 8]],
             logprobs: vec![vec![-0.5, -1.0, -2.0], vec![-0.25, -1.5, -3.0]],
         });
+    }
+    if let Some(support) = support {
+        events.push(ResponseEvent::SamplerSupport(support));
     }
     events.extend([
         ResponseEvent::TextDelta("ok".into()),
@@ -210,4 +218,81 @@ async fn a_providers_reported_identity_reaches_the_step() {
     assert_eq!(sven["logprob_kind"], "policy");
     assert_eq!(sven["logprob_temperature"], 0.8);
     assert_eq!(sven["tokenizer_digest"], "sha256:ab");
+}
+
+fn support(cap: u32, offsets: Vec<u32>, ids: Vec<i64>) -> sven_model::SamplerSupport {
+    sven_model::SamplerSupport {
+        cap,
+        log_probs: vec![-0.25, -0.125],
+        offsets,
+        ids,
+    }
+}
+
+/// Spec: a run that asks for the sampler's support records it per request beside the log-probabilities.
+#[tokio::test]
+async fn a_run_that_asks_for_the_support_records_it() {
+    let reply = support(4, vec![0, 2, 5], vec![11, 5, 12, 7, 8]);
+    let mut agent = scripted_with(false, Some(reply)).agent("agent");
+    agent
+        .send_with("hello", RunOptions::new().sampler_support(4))
+        .await
+        .expect("an outcome");
+    let trajectory = agent.trajectory();
+    let metrics = trajectory
+        .steps
+        .iter()
+        .find_map(|s| s.metrics.as_ref())
+        .expect("step metrics");
+    assert_eq!(
+        metrics.logprobs,
+        Some(vec![-0.5, -0.25]),
+        "implies logprobs"
+    );
+    let sven = &metrics.extra.as_ref().unwrap()["sven"];
+    assert_eq!(sven["support_cap"], 4);
+    assert_eq!(
+        sven["generation_sampler_log_probs"],
+        serde_json::json!([-0.25, -0.125])
+    );
+    assert_eq!(
+        sven["generation_support_offsets"],
+        serde_json::json!([0, 2, 5])
+    );
+    assert_eq!(
+        sven["generation_support_ids"],
+        serde_json::json!([11, 5, 12, 7, 8])
+    );
+}
+
+/// Spec: a reply that lacks the support it was asked for, or whose support does not hold the generated token, fails
+/// the run by name; the trajectory never holds a short field in its place.
+#[tokio::test]
+async fn a_reply_without_a_valid_support_it_was_asked_for_is_an_error() {
+    let wrong_token = support(4, vec![0, 2, 5], vec![11, 5, 99, 7, 8]);
+    let wrong_cap = support(8, vec![0, 2, 5], vec![11, 5, 12, 7, 8]);
+    for reply in [None, Some(wrong_token), Some(wrong_cap)] {
+        let mut agent = scripted_with(false, reply).agent("agent");
+        let outcome = agent
+            .send_with("hello", RunOptions::new().sampler_support(4))
+            .await;
+        let why = format!("{outcome:?}");
+        assert!(
+            why.contains("support"),
+            "the failure names the field: {why}"
+        );
+        assert!(agent
+            .trajectory()
+            .steps
+            .iter()
+            .filter_map(|s| s
+                .metrics
+                .as_ref()?
+                .extra
+                .as_ref()?
+                .get("sven")?
+                .get("generation_support_ids"))
+            .next()
+            .is_none());
+    }
 }

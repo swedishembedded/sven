@@ -204,6 +204,10 @@ impl DbusProvider {
             if let Some(k) = req.top_logprobs {
                 params.insert("policy_trace_top_log_probs".to_string(), json!(k));
             }
+            if let Some(n) = req.sampler_support {
+                let n = sven_vocab::SamplerSupport::check_size(n).map_err(anyhow::Error::msg)?;
+                params.insert("policy_trace_support".to_string(), json!(n));
+            }
         }
         // Like `messages`, brain declares `tools` and `tool_choice` as strings
         // holding JSON text.
@@ -806,6 +810,25 @@ mod tests {
         let params: Value = serde_json::from_str(&p.build_params(&asked).unwrap()).unwrap();
         assert_eq!(params["policy_trace"], true);
         assert_eq!(params["policy_trace_top_log_probs"], 5);
+        assert!(
+            params.get("policy_trace_support").is_none(),
+            "no support unless asked"
+        );
+        let supported = CompletionRequest {
+            sampler_support: Some(16),
+            ..asked
+        };
+        let params: Value = serde_json::from_str(&p.build_params(&supported).unwrap()).unwrap();
+        assert_eq!(params["policy_trace"], true);
+        assert_eq!(params["policy_trace_support"], 16);
+        for size in [0, 257] {
+            let wrong = CompletionRequest {
+                sampler_support: Some(size),
+                ..supported.clone()
+            };
+            let refused = p.build_params(&wrong).unwrap_err().to_string();
+            assert!(refused.contains("1..=256"), "{refused}");
+        }
     }
 
     #[test]

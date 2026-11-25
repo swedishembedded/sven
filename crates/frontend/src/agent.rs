@@ -561,6 +561,7 @@ mod tests {
                 sampling,
                 want_logprobs: true,
                 top_logprobs: None,
+                sampler_support: None,
             },
             run_timeout: Some(Duration::from_secs(600)),
         };

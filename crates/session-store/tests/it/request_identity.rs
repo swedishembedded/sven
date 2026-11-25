@@ -15,8 +15,8 @@ use atif::StepMetrics;
 use serde_json::{json, Value};
 use sven_session_store::step_request::{record_response, totals};
 use sven_vocab::{
-    AdapterRef, LogprobKind, PolicyLineage, ReportedUsage, RequestRecord, Sampled, SamplingControl,
-    SamplingControls, ServedIdentity,
+    AdapterRef, LogprobKind, PolicyLineage, ReportedUsage, RequestRecord, Sampled, SamplerSupport,
+    SamplingControl, SamplingControls, ServedIdentity,
 };
 
 /// A request answered by policy `version`, as a brain server reports it.
@@ -175,5 +175,44 @@ fn the_samplers_top_list_is_on_the_step_and_on_each_request_beside_its_logprobs(
     let plain = step_of(&[served_by("3", 7)]);
     assert!(plain.extra.as_ref().unwrap()["sven"]
         .get("generation_top_ids")
+        .is_none());
+}
+
+#[test]
+fn the_samplers_support_is_on_the_step_and_on_each_request() {
+    let with_support = |version: &str, token: i64, other: i64| {
+        let mut record = served_by(version, token);
+        record.sampled.sampler_support = Some(SamplerSupport {
+            cap: 4,
+            log_probs: vec![-0.25],
+            offsets: vec![0, 2],
+            ids: vec![token, other],
+        });
+        record
+    };
+    let single = step_of(&[with_support("3", 7, 9)]);
+    let sven = &single.extra.as_ref().expect("extra")["sven"];
+    assert_eq!(sven["support_cap"], 4);
+    assert_eq!(sven["generation_sampler_log_probs"], json!([-0.25]));
+    assert_eq!(sven["generation_support_offsets"], json!([0, 2]));
+    assert_eq!(sven["generation_support_ids"], json!([7, 9]));
+
+    let step = step_of(&[with_support("3", 7, 9), with_support("4", 8, 6)]);
+    let sven = &step.extra.as_ref().expect("extra")["sven"];
+    // The step's lists run parallel to its concatenated logprobs, so the second request's offsets continue the first's.
+    assert_eq!(sven["generation_sampler_log_probs"], json!([-0.25, -0.25]));
+    assert_eq!(sven["generation_support_offsets"], json!([0, 2, 4]));
+    assert_eq!(sven["generation_support_ids"], json!([7, 9, 8, 6]));
+    let requests = sven["requests"].as_array().expect("requests");
+    for (entry, ids) in requests.iter().zip([[7, 9], [8, 6]]) {
+        assert_eq!(entry["support_cap"], 4);
+        assert_eq!(entry["generation_support_offsets"], json!([0, 2]));
+        assert_eq!(entry["generation_support_ids"], json!(ids));
+        assert_eq!(entry["generation_sampler_log_probs"], json!([-0.25]));
+    }
+    // A request that was not asked records none, instead of an empty list.
+    let plain = step_of(&[served_by("3", 7)]);
+    assert!(plain.extra.as_ref().unwrap()["sven"]
+        .get("generation_support_ids")
         .is_none());
 }

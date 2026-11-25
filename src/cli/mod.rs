@@ -392,6 +392,14 @@ pub struct Cli {
     #[arg(long, value_name = "K")]
     pub top_logprobs: Option<u32>,
 
+    /// With `--logprobs` (implied): also record the set the sampler drew each
+    /// token from (the survivors of its top-k / top-p / min-p cut, at most N
+    /// ids per position, N in 1..=256) and the log-probability of each token
+    /// under it (a brain server's `policy_trace` `support`). A server that
+    /// cannot return them fails the run, naming the field.
+    #[arg(long, value_name = "N")]
+    pub sampler_support: Option<u32>,
+
     /// Append every model request this process sends, exactly as sent, and
     /// what came back to FILE (JSONL). `sven replay FILE` sends one again.
     #[arg(long, value_name = "FILE")]
@@ -525,8 +533,11 @@ impl Cli {
         };
         let decoding = sven_frontend::Decoding {
             sampling,
-            want_logprobs: self.logprobs || self.top_logprobs.is_some(),
+            want_logprobs: self.logprobs
+                || self.top_logprobs.is_some()
+                || self.sampler_support.is_some(),
             top_logprobs: self.top_logprobs,
+            sampler_support: self.sampler_support,
         };
         if decoding == sven_frontend::Decoding::default() {
             return Ok(decoding);
@@ -536,7 +547,7 @@ impl Cli {
             || !(self.is_headless() || self.interactive)
         {
             return Err(
-                "--temperature, --top-p, --top-k, --seed, --logprobs and --top-logprobs set how a \
+                "--temperature, --top-p, --top-k, --seed, --logprobs, --top-logprobs and --sampler-support set how a \
                  headless or --interactive run samples: give a PROMPT or pipe one in"
                     .to_string(),
             );
@@ -552,6 +563,10 @@ impl Cli {
         }
         if self.top_logprobs == Some(0) {
             return Err("--top-logprobs 0: must be at least 1".to_string());
+        }
+        if let Some(n) = self.sampler_support {
+            sven_vocab::SamplerSupport::check_size(n)
+                .map_err(|e| format!("--sampler-support: {e}"))?;
         }
         Ok(decoding)
     }
@@ -773,11 +788,14 @@ mod tests {
             "41",
             "--top-logprobs",
             "5",
+            "--sampler-support",
+            "64",
             "fix it",
         ])
         .decoding()
         .unwrap();
         assert_eq!(set.top_logprobs, Some(5));
+        assert_eq!(set.sampler_support, Some(64));
         assert_eq!(set.sampling.temperature, Some(0.7));
         assert_eq!(set.sampling.top_p, Some(0.9));
         assert_eq!(set.sampling.top_k, Some(20));
@@ -791,6 +809,8 @@ mod tests {
             &["--top-k", "0", "fix it"],
             &["--seed", "-1", "fix it"],
             &["--top-logprobs", "0", "fix it"],
+            &["--sampler-support", "0", "fix it"],
+            &["--sampler-support", "257", "fix it"],
         ] {
             let parsed = Cli::try_parse_from(std::iter::once("sven").chain(args.iter().copied()));
             assert!(parsed.map_or(true, |c| c.decoding().is_err()), "{args:?}");

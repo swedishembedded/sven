@@ -8,7 +8,7 @@
 
 //! Contract: a brain server's answer is recorded the same whichever transport
 //! carried it. One reply (the sampled and top log-probabilities, the identity of
-//! the decode, a cut-off) is served over the HTTP chat API and over the D-Bus
+//! the decode, the sampler's support, a cut-off) is served over the HTTP chat API and over the D-Bus
 //! `Run` result, and the per-request record folded from each provider's events
 //! is compared field by field, so a trainer reading a trajectory cannot tell the
 //! transports apart and a field one provider drops is a failing test.
@@ -49,6 +49,10 @@ fn trace() -> Value {
         "top_log_probs": 3,
         "generation_top_ids": [[21, 5, 6], [22, 7, 8]],
         "generation_top_log_probs": [[-0.5, -1.5, -2.5], [-0.75, -1.25, -3.0]],
+        "support_cap": 8,
+        "generation_sampler_log_probs": [-0.25, -0.5],
+        "generation_support_offsets": [0, 2, 5],
+        "generation_support_ids": [21, 9, 22, 7, 8],
     })
 }
 
@@ -58,6 +62,7 @@ fn request() -> CompletionRequest {
         stream: true,
         want_logprobs: true,
         top_logprobs: Some(3),
+        sampler_support: Some(8),
         ..Default::default()
     }
 }
@@ -77,6 +82,9 @@ fn folded(events: &[ResponseEvent]) -> (Sampled, bool) {
             ResponseEvent::TopTokens { ids, logprobs } => {
                 sampled.top_token_ids.extend(ids.clone());
                 sampled.top_logprobs.extend(logprobs.clone());
+            }
+            ResponseEvent::SamplerSupport(support) => {
+                sampled.sampler_support = Some(support.clone())
             }
             ResponseEvent::PromptTokens { ids } => sampled.prompt_token_ids.extend(ids),
             ResponseEvent::Identity(i) => identity.merge(i.clone()),
@@ -138,7 +146,11 @@ async fn over_dbus() -> (Sampled, bool, Value) {
     (
         sampled,
         cut_off,
-        json!([params["policy_trace"], params["policy_trace_top_log_probs"]]),
+        json!([
+            params["policy_trace"],
+            params["policy_trace_top_log_probs"],
+            params["policy_trace_support"]
+        ]),
     )
 }
 
@@ -148,8 +160,8 @@ async fn http_and_dbus_record_one_reply_as_the_same_request() {
     let (dbus, dbus_cut, dbus_asked) = over_dbus().await;
 
     // What each transport was asked for: the same quantity, in its own wire shape.
-    assert_eq!(http_asked, json!({"top_log_probs": 3}));
-    assert_eq!(dbus_asked, json!([true, 3]));
+    assert_eq!(http_asked, json!({"top_log_probs": 3, "support": 8}));
+    assert_eq!(dbus_asked, json!([true, 3, 8]));
 
     // Field by field, so a failure names the field.
     assert_eq!(http.prompt_token_ids, dbus.prompt_token_ids, "prompt ids");
@@ -159,6 +171,10 @@ async fn http_and_dbus_record_one_reply_as_the_same_request() {
     assert_eq!(
         http.top_logprobs, dbus.top_logprobs,
         "top log-probabilities"
+    );
+    assert_eq!(
+        http.sampler_support, dbus.sampler_support,
+        "sampler support"
     );
     assert_eq!(http_cut, dbus_cut, "cut off at the token ceiling");
     let (h, d) = (&http.identity, &dbus.identity);
@@ -183,6 +199,8 @@ async fn http_and_dbus_record_one_reply_as_the_same_request() {
     // And the record is the whole reply, not an empty agreement.
     assert_eq!(http.token_ids, vec![21, 22]);
     assert_eq!(http.top_token_ids, vec![vec![21, 5, 6], vec![22, 7, 8]]);
+    let support = http.sampler_support.as_ref().expect("the support");
+    assert_eq!((support.cap, support.ids.len()), (8, 5));
     assert!(http_cut);
     assert_eq!(h.policy_version.as_deref(), Some("4"));
     assert_eq!(

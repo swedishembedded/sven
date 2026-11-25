@@ -597,3 +597,136 @@ async fn the_top_list_is_asked_of_a_brain_server_and_refused_of_any_other() {
         "{refused}"
     );
 }
+
+/// A brain reply whose policy trace carries the sampler's support for two generated tokens.
+fn support_frame(support: &str) -> String {
+    format!(
+        r#"{{"model":"m","policy_trace":{{"prompt_token_ids":[1],"generation_token_ids":[21,22],"generation_log_probs":[-0.5,-0.75],"log_prob_temperature":1.0,{support}}},"choices":[{{"delta":{{}},"finish_reason":"stop"}}]}}"#
+    )
+}
+
+const SUPPORT_TRACE: &str = r#""support_cap":4,"generation_sampler_log_probs":[-0.25,-0.5],"generation_support_offsets":[0,2,5],"generation_support_ids":[21,9,22,7,8]"#;
+
+async fn brain_asked(
+    request: CompletionRequest,
+    frame: String,
+) -> (Value, anyhow::Result<Vec<ResponseEvent>>) {
+    let (port, req_rx) = mock_server_once(200, "text/event-stream", sse_body(&[&frame])).await;
+    let brain = ModelConfig {
+        provider: "brain".into(),
+        name: "m".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some(format!("http://127.0.0.1:{port}/v1")),
+        ..ModelConfig::default()
+    };
+    let mut stream = from_config(&brain)
+        .unwrap()
+        .complete(request)
+        .await
+        .unwrap();
+    let mut events = Ok(Vec::new());
+    while let Some(ev) = stream.next().await {
+        match (ev, &mut events) {
+            (Ok(ev), Ok(all)) => all.push(ev),
+            (Err(e), _) => events = Err(e),
+            _ => {}
+        }
+    }
+    (req_rx.await.unwrap().body["policy_trace"].clone(), events)
+}
+
+/// With a support wanted, a brain server is asked for it in the policy trace (beside the top list when that is
+/// wanted too) and its four support fields are read as one event; any other server is refused before anything is
+/// sent, and so is a size the wire cannot carry.
+#[tokio::test]
+async fn the_support_is_asked_of_a_brain_server_and_refused_of_any_other() {
+    let request = CompletionRequest {
+        sampler_support: Some(4),
+        ..sampled_request()
+    };
+    let (asked, events) = brain_asked(request.clone(), support_frame(SUPPORT_TRACE)).await;
+    assert_eq!(asked, serde_json::json!({"support": 4}));
+    let support = events
+        .unwrap()
+        .into_iter()
+        .find_map(|e| match e {
+            ResponseEvent::SamplerSupport(s) => Some(s),
+            _ => None,
+        })
+        .expect("the support event");
+    assert_eq!(support.cap, 4);
+    assert_eq!(support.log_probs, vec![-0.25, -0.5]);
+    assert_eq!(support.offsets, vec![0, 2, 5]);
+    assert_eq!(support.ids, vec![21, 9, 22, 7, 8]);
+
+    let both = CompletionRequest {
+        top_logprobs: Some(2),
+        ..request.clone()
+    };
+    let (asked, _) = brain_asked(both, support_frame(SUPPORT_TRACE)).await;
+    assert_eq!(asked, serde_json::json!({"top_log_probs": 2, "support": 4}));
+
+    let openai = ModelConfig {
+        provider: "openai".into(),
+        name: "gpt-4o-mini".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some("http://127.0.0.1:9/v1".into()),
+        ..ModelConfig::default()
+    };
+    let Err(refused) = from_config(&openai)
+        .unwrap()
+        .complete(request.clone())
+        .await
+    else {
+        panic!("a server without the policy trace cannot return a support");
+    };
+    assert!(refused.to_string().contains("support"), "{refused}");
+
+    let brain = ModelConfig {
+        provider: "brain".into(),
+        name: "m".into(),
+        api_key: Some("sk-test".into()),
+        base_url: Some("http://127.0.0.1:9/v1".into()),
+        ..ModelConfig::default()
+    };
+    for size in [0, 257] {
+        let wrong = CompletionRequest {
+            sampler_support: Some(size),
+            ..request.clone()
+        };
+        let Err(refused) = from_config(&brain).unwrap().complete(wrong).await else {
+            panic!("a support of {size} is outside 1..=256");
+        };
+        assert!(refused.to_string().contains("1..=256"), "{refused}");
+    }
+}
+
+/// A support that is partial or inconsistent fails the reply instead of being recorded short.
+#[tokio::test]
+async fn a_malformed_support_in_a_reply_fails_it() {
+    let request = CompletionRequest {
+        sampler_support: Some(4),
+        ..sampled_request()
+    };
+    for bad in [
+        // Only some of the four fields.
+        r#""support_cap":4,"generation_sampler_log_probs":[-0.25,-0.5]"#,
+        // Offsets that do not cover n + 1 positions.
+        r#""support_cap":4,"generation_sampler_log_probs":[-0.25,-0.5],"generation_support_offsets":[0,2],"generation_support_ids":[21,9]"#,
+        // Offsets that do not start at 0, decrease, or end short of the ids.
+        r#""support_cap":4,"generation_sampler_log_probs":[-0.25,-0.5],"generation_support_offsets":[1,2,5],"generation_support_ids":[21,9,22,7,8]"#,
+        r#""support_cap":4,"generation_sampler_log_probs":[-0.25,-0.5],"generation_support_offsets":[0,3,2],"generation_support_ids":[21,9]"#,
+        r#""support_cap":4,"generation_sampler_log_probs":[-0.25,-0.5],"generation_support_offsets":[0,2,4],"generation_support_ids":[21,9,22,7,8]"#,
+        // A range wider than the cap.
+        r#""support_cap":2,"generation_sampler_log_probs":[-0.25,-0.5],"generation_support_offsets":[0,3,5],"generation_support_ids":[21,9,3,22,7]"#,
+        // Sampler log-probabilities that are not one per generated token.
+        r#""support_cap":4,"generation_sampler_log_probs":[-0.25],"generation_support_offsets":[0,2,5],"generation_support_ids":[21,9,22,7,8]"#,
+    ] {
+        let (_, events) = brain_asked(request.clone(), support_frame(bad)).await;
+        assert!(events.is_err(), "{bad}");
+    }
+    // A whole-row draw reports empty ranges, which is a support too.
+    let whole = r#""support_cap":4,"generation_sampler_log_probs":[-0.5,-0.75],"generation_support_offsets":[0,0,0],"generation_support_ids":[]"#;
+    let (_, events) = brain_asked(request, support_frame(whole)).await;
+    assert!(events.is_ok());
+}

@@ -32,6 +32,7 @@ async fn logprobs_requested_yields_one_id_and_logprob_per_reply_byte() {
         },
         want_logprobs: true,
         top_logprobs: None,
+        sampler_support: None,
         ..Default::default()
     };
     let a = run(req.clone()).await;

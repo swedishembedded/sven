@@ -21,6 +21,99 @@ use crate::served::ServedIdentity;
 use crate::turn::TurnDecoding;
 use crate::SessionEvent;
 
+/// The largest sampler support a request can ask for: the bound of what a server returns per generated token.
+pub const MAX_SAMPLER_SUPPORT: u32 = 256;
+
+/// The set of tokens the sampler drew each generated token from (the survivors of its top-k / top-p / min-p cut),
+/// and the log-probability of each drawn token under that truncated distribution: what a trainer needs to replay
+/// the behaviour policy of a truncated sampler.
+///
+/// Position `i`'s support is `ids[offsets[i]..offsets[i + 1]]`, best first. A sampler that does not truncate draws
+/// from the whole row and reports an empty range.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SamplerSupport {
+    /// The size the request asked for: no position's support is longer.
+    pub cap: u32,
+    /// For each generated token, its log-probability under the distribution the sampler drew it from.
+    pub log_probs: Vec<f64>,
+    /// `n + 1` offsets into `ids` for `n` generated tokens: starting at 0, non-decreasing, ending at `ids.len()`.
+    pub offsets: Vec<u32>,
+    /// The concatenated supports.
+    pub ids: Vec<i64>,
+}
+
+impl SamplerSupport {
+    /// Checks the size a request asks for: 1..=[`MAX_SAMPLER_SUPPORT`], the bound of what a server returns.
+    pub fn check_size(n: u32) -> Result<u32, String> {
+        if (1..=MAX_SAMPLER_SUPPORT).contains(&n) {
+            Ok(n)
+        } else {
+            Err(format!(
+                "a sampler support of {n} ids is outside 1..={MAX_SAMPLER_SUPPORT}"
+            ))
+        }
+    }
+
+    /// The support of position `i`.
+    #[must_use]
+    pub fn at(&self, position: usize) -> &[i64] {
+        &self.ids[self.offsets[position] as usize..self.offsets[position + 1] as usize]
+    }
+
+    /// Checks the structure for `generated` generated tokens: one log-probability per token, `generated + 1`
+    /// offsets from 0 to the id count that never decrease, and no range longer than the cap.
+    pub fn check(&self, generated: usize) -> Result<(), String> {
+        if self.log_probs.len() != generated {
+            return Err(format!(
+                "{} sampler log-probabilities for {generated} generated tokens",
+                self.log_probs.len()
+            ));
+        }
+        if self.offsets.len() != generated + 1 {
+            return Err(format!(
+                "{} support offsets for {generated} generated tokens (expected {})",
+                self.offsets.len(),
+                generated + 1
+            ));
+        }
+        if self.offsets[0] != 0 || self.offsets[generated] as usize != self.ids.len() {
+            return Err(format!(
+                "support offsets run from {} to {}, but there are {} ids (expected 0 to the id count)",
+                self.offsets[0],
+                self.offsets[generated],
+                self.ids.len()
+            ));
+        }
+        for (position, pair) in self.offsets.windows(2).enumerate() {
+            if pair[1] < pair[0] {
+                return Err(format!("support offsets decrease at position {position}"));
+            }
+            if pair[1] - pair[0] > self.cap {
+                return Err(format!(
+                    "the support at position {position} holds {} ids, above the cap {}",
+                    pair[1] - pair[0],
+                    self.cap
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Appends the support of a later part of the same request (or the next request of a step), moving its offsets
+    /// behind the ids already held.
+    pub fn append(&mut self, later: &SamplerSupport) {
+        let base = self.offsets.last().copied().unwrap_or(0);
+        if self.offsets.is_empty() {
+            self.offsets.push(0);
+        }
+        self.offsets
+            .extend(later.offsets.iter().skip(1).map(|o| o + base));
+        self.log_probs.extend(&later.log_probs);
+        self.ids.extend(&later.ids);
+        self.cap = self.cap.max(later.cap);
+    }
+}
+
 /// What served one request and what it sampled, as the provider reported it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Sampled {
@@ -53,6 +146,9 @@ pub struct Sampled {
     /// Their log-probabilities under the same distribution as `logprobs` (parallel to `top_token_ids`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub top_logprobs: Vec<Vec<f64>>,
+    /// With a support request: the set the sampler drew each token from; absent unless asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampler_support: Option<SamplerSupport>,
     /// The sampling and thinking settings the request was sent with, when
     /// any were made (a harness step can set them per turn).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,6 +179,7 @@ impl Sampled {
             && self.logprobs.is_empty()
             && self.top_token_ids.is_empty()
             && self.top_logprobs.is_empty()
+            && self.sampler_support.is_none()
             && self.prompt_token_ids.is_empty()
             && self.identity.is_empty()
             && self.decoding.is_none()

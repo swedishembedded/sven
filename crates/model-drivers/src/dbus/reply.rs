@@ -209,6 +209,22 @@ mod tests {
     }
 
     #[test]
+    fn the_samplers_support_comes_from_the_policy_trace_and_a_malformed_one_fails() {
+        let trace = |support: &str| {
+            format!(
+                r#"{{"policy_trace":{{"prompt_token_ids":[1],"generation_token_ids":[3,4],
+                    "generation_log_probs":[-0.5,-0.25],"log_prob_temperature":1.0,{support}}}}}"#
+            )
+        };
+        let good = r#""support_cap":3,"generation_sampler_log_probs":[-0.1,-0.2],"generation_support_offsets":[0,1,3],"generation_support_ids":[3,4,5]"#;
+        let events = reply_extras(&trace(good)).unwrap();
+        assert!(events.iter().any(|e| matches!(e, ResponseEvent::SamplerSupport(s)
+            if s.cap == 3 && s.log_probs == [-0.1, -0.2] && s.offsets == [0, 1, 3] && s.ids == [3, 4, 5])));
+        let short = r#""support_cap":3,"generation_sampler_log_probs":[-0.1,-0.2],"generation_support_offsets":[0,1],"generation_support_ids":[3]"#;
+        assert!(reply_extras(&trace(short)).is_err());
+    }
+
+    #[test]
     fn a_reply_without_token_facts_has_only_its_identity() {
         let events = reply_extras(r#"{"text":"hi","seed":7}"#).unwrap();
         assert!(matches!(events.as_slice(), [ResponseEvent::Identity(_)]));

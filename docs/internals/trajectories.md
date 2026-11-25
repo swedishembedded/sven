@@ -32,6 +32,7 @@ in `extra.sven.requests` (below), which is authoritative.
 | `metrics.extra.sven.logprob_kind`, `logprob_temperature` | `policy` (whole-vocabulary distribution) or `sampler` (after temperature, top-k, top-p), and the temperature the log-probabilities were scored at | the `policy_trace` object, or `logprob_kind` of the `brain` object |
 | `metrics.extra.sven.truncated` | `true` when the response ended at the output-token ceiling | the response's `finish_reason: length` |
 | `metrics.extra.sven.requests` | one entry per request, when the step covers more than one: `model`, `prompt_tokens`, `completion_tokens`, `prompt_token_ids`, `completion_token_ids`, `logprobs`, and every identity and decoding row above that the request's own response reported (`seed`, `decoding`, `sampling_honoured`, `sampling_unhonoured`, `adapter`, `base_digest`, `backend`, `engine`, `policy_version`, `policy_lineage`, `tokenizer_digest`, `chat_template_digest`, `logprob_kind`, `logprob_temperature`, `truncated`), each in the form of its step row | the same |
+| `metrics.extra.sven.support_cap`, `generation_sampler_log_probs`, `generation_support_offsets`, `generation_support_ids` | with `RunOptions::sampler_support(N)` / `--sampler-support N`: the most ids asked per position, and for each generated token its log-probability under the distribution the sampler drew it from and that distribution's support (the survivors of the top-k / top-p / min-p cut, best first): position `i`'s support is `generation_support_ids[offsets[i]..offsets[i + 1]]`, an empty range where the sampler cut nothing (the whole row); concatenated over a step's requests like `logprobs` (the offsets continued); present on a `requests[]` entry beside its `logprobs` | brain's `policy_trace` with `support` |
 | `metrics.extra.sven.generation_top_ids`, `generation_top_log_probs` | with `RunOptions::top_logprobs(K)` / `--top-logprobs K`: for each generated token, the K most probable ids at its position (most probable first) and their log-probabilities under the same distribution as `logprobs`; parallel to `completion_token_ids`, concatenated over a step's requests like `logprobs`; present on a `requests[]` entry beside its `logprobs` | brain's `policy_trace` `generation_top_ids`, `generation_top_log_probs` |
 | `final_metrics.extra.sven.policy_version_span` | `[oldest, newest]` policy version over every request of the run (a trainer reads staleness from it); absent when no request reported a version or a version is not a whole number | `policy_version` of every request |
 
@@ -46,7 +47,11 @@ scored by the serving model) and `log_prob_temperature`. With a top list wanted 
 `policy_trace: {"top_log_probs": K}` (over D-Bus `policy_trace` and `policy_trace_top_log_probs`) and the
 trace adds `generation_top_ids` and `generation_top_log_probs`, one row of K per generated token; a reply
 that lacks them, or whose rows do not cover every generated token, fails the turn, and a provider other than
-brain refuses the request. Those are recorded as the policy's own
+brain refuses the request. With a support wanted the request carries `policy_trace: {"support": N}` (beside
+`top_log_probs` when both are asked; over D-Bus `policy_trace_support`) and the trace adds `support_cap`,
+`generation_sampler_log_probs`, `generation_support_offsets` and `generation_support_ids`; a reply with some of
+them, none of them, offsets that do not frame the ids, a support above the cap or one that does not hold its drawn
+token fails the turn, and a provider other than brain refuses the request. Those are recorded as the policy's own
 log-probabilities (`logprob_kind` `policy`, with the temperature they were scored at). The D-Bus provider asks for and reads the same capture, and a contract test serves one reply over each
 transport and compares the per-request record field by field. Any other
 OpenAI-compatible server is asked for `logprobs` and `return_token_ids`, and the sampled ids and

@@ -211,6 +211,21 @@ impl RunOptions {
         self
     }
 
+    /// Asks the provider, besides the sampled tokens' log-probabilities
+    /// ([`Self::want_logprobs`], implied), for the set the sampler drew each
+    /// generated token from (the survivors of its top-k / top-p / min-p cut,
+    /// at most `n` ids per position, `n` in 1..=256) and the log-probability
+    /// of each token under it, recorded per request as `support_cap`,
+    /// `generation_sampler_log_probs`, `generation_support_offsets` and
+    /// `generation_support_ids`. A provider that cannot return them refuses
+    /// the request; a response without them fails the turn.
+    #[must_use]
+    pub fn sampler_support(mut self, n: u32) -> Self {
+        self.decoding.want_logprobs = true;
+        self.decoding.sampler_support = Some(n);
+        self
+    }
+
     /// Stops the run once the model has generated `tokens` output tokens
     /// ([`RunConclusion::BudgetExhausted`]). Counted from the usage the
     /// provider reports; a provider that reports none is never stopped by it.

@@ -65,20 +65,25 @@ pub fn record_response(
             .get_or_insert_with(Vec::new)
             .extend(&sampled.logprobs);
     }
-    // The sampler's top list runs parallel to the step's `logprobs`, so it is concatenated the same way.
+    // The sampler's top list and support run parallel to the step's `logprobs`, so they are concatenated the same way.
     for (key, rows) in top_lists(sampled) {
-        let extra = metrics.extra.get_or_insert_with(|| json!({}));
-        let Some(object) = extra.as_object_mut() else {
-            continue;
-        };
-        let sven = object.entry(EXTRA_KEY).or_insert_with(|| json!({}));
-        let Some(sven) = sven.as_object_mut() else {
+        let Some(sven) = sven_object(metrics) else {
             continue;
         };
         match sven.get_mut(key).and_then(Value::as_array_mut) {
             Some(held) => held.extend(rows.as_array().cloned().unwrap_or_default()),
             None => {
                 sven.insert(key.into(), rows);
+            }
+        }
+    }
+    if let Some(support) = &sampled.sampler_support {
+        if let Some(sven) = sven_object(metrics) {
+            // The held support is read back from the step's own record, so the offsets of this request continue it.
+            let mut merged = held_support(sven).unwrap_or_default();
+            merged.append(support);
+            for (key, value) in support_facts(&merged) {
+                sven.insert(key.into(), value);
             }
         }
     }
@@ -100,6 +105,45 @@ pub fn record_response(
             }
         }
     }
+}
+
+/// The object `extra.sven` of a step's metrics, created when absent.
+fn sven_object(metrics: &mut StepMetrics) -> Option<&mut serde_json::Map<String, Value>> {
+    metrics
+        .extra
+        .get_or_insert_with(|| json!({}))
+        .as_object_mut()?
+        .entry(EXTRA_KEY)
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+}
+
+/// The keys of the sampler's support in a record: the same four on the step and on each request.
+const SUPPORT_KEYS: [&str; 4] = [
+    "support_cap",
+    "generation_sampler_log_probs",
+    "generation_support_offsets",
+    "generation_support_ids",
+];
+
+/// A request's sampler support as `(key, value)` pairs, absent when the request did not ask for it.
+fn support_facts(support: &sven_vocab::SamplerSupport) -> Vec<(&'static str, Value)> {
+    vec![
+        (SUPPORT_KEYS[0], json!(support.cap)),
+        (SUPPORT_KEYS[1], json!(support.log_probs)),
+        (SUPPORT_KEYS[2], json!(support.offsets)),
+        (SUPPORT_KEYS[3], json!(support.ids)),
+    ]
+}
+
+/// The support a step's `extra.sven` already holds, when it holds one.
+fn held_support(sven: &serde_json::Map<String, Value>) -> Option<sven_vocab::SamplerSupport> {
+    Some(sven_vocab::SamplerSupport {
+        cap: u32::try_from(sven.get(SUPPORT_KEYS[0])?.as_u64()?).ok()?,
+        log_probs: serde_json::from_value(sven.get(SUPPORT_KEYS[1])?.clone()).ok()?,
+        offsets: serde_json::from_value(sven.get(SUPPORT_KEYS[2])?.clone()).ok()?,
+        ids: serde_json::from_value(sven.get(SUPPORT_KEYS[3])?.clone()).ok()?,
+    })
 }
 
 /// The sampler's top list of one request as `(key, rows)`: `generation_top_ids` and `generation_top_log_probs`, one
@@ -225,6 +269,7 @@ fn keep_each_request(metrics: &mut StepMetrics, model: Option<&str>, request: &R
     let held: Vec<(&'static str, Value)> = DECODE_FACT_KEYS
         .iter()
         .chain(&["generation_top_ids", "generation_top_log_probs"])
+        .chain(&SUPPORT_KEYS)
         .filter_map(|&key| {
             let value = metrics.extra.as_ref()?.get(EXTRA_KEY)?.get(key)?;
             Some((key, value.clone()))
@@ -256,6 +301,7 @@ fn keep_each_request(metrics: &mut StepMetrics, model: Option<&str>, request: &R
         decode_facts(sampled)
             .into_iter()
             .chain(top_lists(sampled))
+            .chain(sampled.sampler_support.iter().flat_map(support_facts))
             .collect(),
     );
     let extra = metrics.extra.get_or_insert_with(|| json!({}));

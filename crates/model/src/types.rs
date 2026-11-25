@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 use serde::{Deserialize, Serialize};
-pub use sven_vocab::{SamplingControl, SamplingControls};
+pub use sven_vocab::{SamplerSupport, SamplingControl, SamplingControls};
 
 // ─── Content part types ───────────────────────────────────────────────────────
 
@@ -680,6 +680,10 @@ pub struct CompletionRequest {
     /// generated position ([`ResponseEvent::TopTokens`]). A provider that cannot supply them refuses the
     /// request; a response that lacks them is an error of the turn, never an empty field.
     pub top_logprobs: Option<u32>,
+    /// With `want_logprobs`: ask for the set the sampler drew each generated token from, at most this many ids per
+    /// position (1..=[`sven_vocab::MAX_SAMPLER_SUPPORT`]), as [`ResponseEvent::SamplerSupport`]. A provider that
+    /// cannot supply it refuses the request; a response that lacks it is an error of the turn.
+    pub sampler_support: Option<u32>,
     /// What this request is made of, with hashes (see [`crate::manifest`]).
     ///
     /// For the record only: it is serialized into a recorded request and
@@ -724,6 +728,9 @@ pub enum ResponseEvent {
         ids: Vec<Vec<i64>>,
         logprobs: Vec<Vec<f64>>,
     },
+    /// The set the sampler drew each generated token from, for a request that asked for `sampler_support`: parallel to
+    /// the [`Self::Tokens`] of the same response. Sent at most once.
+    SamplerSupport(SamplerSupport),
     /// What actually served the request: the model identity the provider
     /// reports (which may differ from the one requested, e.g. behind a router)
     /// and the sampling seed in effect, when known. Sent at most once.

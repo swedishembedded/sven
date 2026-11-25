@@ -493,10 +493,25 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
                 // The training capture: the prompt and generated ids and the
                 // policy's own log-probabilities, scored by the serving model
                 // over the whole vocabulary.
-                body["policy_trace"] = match req.top_logprobs {
-                    Some(k) => json!({ "top_log_probs": k }),
-                    None => json!(true),
+                let mut trace = serde_json::Map::new();
+                if let Some(k) = req.top_logprobs {
+                    trace.insert("top_log_probs".into(), json!(k));
+                }
+                if let Some(n) = req.sampler_support {
+                    let n =
+                        sven_vocab::SamplerSupport::check_size(n).map_err(anyhow::Error::msg)?;
+                    trace.insert("support".into(), json!(n));
+                }
+                body["policy_trace"] = if trace.is_empty() {
+                    json!(true)
+                } else {
+                    Value::Object(trace)
                 };
+            } else if req.sampler_support.is_some() {
+                bail!(
+                    "{} cannot return the sampler's support of each generated token (--sampler-support); only a brain server's policy trace does",
+                    self.driver_name
+                );
             } else if req.top_logprobs.is_some() {
                 // The sampler's top list is brain's policy trace; no other
                 // wire carries the same quantity, and a trajectory must not
