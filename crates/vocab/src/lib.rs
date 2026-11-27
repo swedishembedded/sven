@@ -600,6 +600,12 @@ pub enum SessionEvent {
     ThinkingComplete(String),
     /// The model has requested a tool call.
     ToolCallStarted(ToolCall),
+    /// The model's reply as it was filed in the conversation, exactly as it
+    /// arrived; the history every later request sends holds it unchanged.
+    ReplyFiled(SampledReply),
+    /// A note of the runtime filed in the conversation as a user-role message
+    /// (a reply stopped before it ended, a retry after a loop).
+    NoteFiled(String),
     /// A tool call finished.
     ToolCallFinished {
         call_id: String,

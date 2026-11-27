@@ -125,3 +125,16 @@ impl SampledReply {
         self.calls[index].arguments()
     }
 }
+
+/// Two replies are the same when every part is, the `sampled` record compared
+/// as the text it is.
+impl PartialEq for SampledReply {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+            && self.reasoning == other.reasoning
+            && self.calls == other.calls
+            && self.sampled.as_deref().map(RawValue::get)
+                == other.sampled.as_deref().map(RawValue::get)
+            && self.finish == other.finish
+    }
+}

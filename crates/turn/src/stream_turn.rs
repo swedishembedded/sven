@@ -647,6 +647,9 @@ pub async fn stream_turn_attributed(
     if !reply.text.is_empty() {
         let _ = tx.send(AgentEvent::TextComplete(reply.text.clone())).await;
     }
+    // The reply as the conversation files it, before the request's records:
+    // a consumer that folds events into turns has it when they arrive.
+    let _ = tx.send(AgentEvent::ReplyFiled(reply.clone())).await;
     if !sampled.is_empty() {
         let _ = tx
             .send(AgentEvent::ResponseSampled(Box::new(sampled)))

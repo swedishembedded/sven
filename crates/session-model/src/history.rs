@@ -7,7 +7,7 @@
 //! to be seeded with `Message`s. This is the one place that converts between
 //! them, shared by every surface that rebuilds a session per turn.
 
-use sven_model::{FunctionCall, Message, MessageContent, Role};
+use sven_model::{reply_messages, Message};
 use sven_vocab::SessionEvent;
 
 /// Appends the messages `ev` contributes to `history`.
@@ -17,47 +17,29 @@ use sven_vocab::SessionEvent;
 /// history forces a decision here instead of being silently dropped.
 pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
     match ev {
-        SessionEvent::TextComplete(text) if !text.is_empty() => {
-            history.push(Message::assistant(text));
-        }
-        SessionEvent::ToolCallStarted(tc) => {
-            history.push(Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: tc.id.clone(),
-                    function: FunctionCall {
-                        name: tc.name.clone(),
-                        arguments: tc.args.to_string(),
-                    },
-                },
-                reasoning: None,
-                sampled: None,
-            });
-        }
+        SessionEvent::ReplyFiled(reply) => history.extend(reply_messages(reply)),
+        SessionEvent::NoteFiled(note) => history.push(Message::user(note)),
+        SessionEvent::Notice(notice) => history.push(Message::user(notice.frame())),
         SessionEvent::ToolCallFinished {
             call_id, output, ..
         } => {
             history.push(Message::tool_result(call_id, output));
         }
-        SessionEvent::Aborted { partial_text } if !partial_text.is_empty() => {
-            history.push(Message::assistant(partial_text));
-        }
-        // Empty TextComplete/Aborted (already excluded above by the guards),
-        // plus every event with no message-history representation: streaming
-        // deltas (folded into the eventual TextComplete), progress/usage/
-        // compaction telemetry, mode/model/todo bookkeeping, questions,
-        // titles, team/subagent/peer observations, harness lifecycle, and
-        // the transition trace.
+        // Every event with no message-history representation: the reply's
+        // streamed parts (the reply is filed whole, as `ReplyFiled`), a cut
+        // reply (never filed), progress/usage/compaction telemetry,
+        // mode/model/todo bookkeeping, questions, titles, team/subagent/peer
+        // observations, harness lifecycle, and the transition trace.
         SessionEvent::TextComplete(_)
         | SessionEvent::Aborted { .. }
         | SessionEvent::TextDelta(_)
         | SessionEvent::ThinkingDelta(_)
         | SessionEvent::ThinkingComplete(_)
+        | SessionEvent::ToolCallStarted(_)
         | SessionEvent::ToolProgress { .. }
         | SessionEvent::ModelWaiting { .. }
         | SessionEvent::ServedModelChanged { .. }
         | SessionEvent::Warning(_)
-        | SessionEvent::Notice(_)
         | SessionEvent::ContextBudget(_)
         | SessionEvent::ContextCompacted { .. }
         | SessionEvent::TokenUsage { .. }
@@ -82,5 +64,58 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
         // `SessionEvent` is non-exhaustive: a variant added later has no
         // history representation until this fold says it does.
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sven_vocab::{ReplyFinish, SampledCall, SampledReply};
+
+    /// A rebuilt history holds each reply as it was filed (argument text,
+    /// reasoning and the server's record unchanged), each result, and each
+    /// runtime note; a reply's streamed parts add nothing beside it.
+    #[test]
+    fn the_history_holds_each_filed_reply_as_it_arrived() {
+        let reply = SampledReply {
+            text: " let me look ".into(),
+            reasoning: "\n hm \n".into(),
+            calls: vec![SampledCall {
+                id: "c1".into(),
+                name: "read".into(),
+                arguments: "{ \"z\": 1,\"a\" :2.50 }".into(),
+            }],
+            sampled: Some(
+                serde_json::value::RawValue::from_string("{\"token_ids\":\"AQ==\" }".into())
+                    .unwrap(),
+            ),
+            finish: ReplyFinish::Stop,
+        };
+        let mut history = Vec::new();
+        for ev in [
+            SessionEvent::TextComplete(" let me look ".into()),
+            SessionEvent::ReplyFiled(reply.clone()),
+            SessionEvent::ToolCallFinished {
+                call_id: "c1".into(),
+                tool_name: "read".into(),
+                output: "ok".into(),
+                is_error: false,
+                images: Vec::new(),
+                artifacts: Vec::new(),
+            },
+            SessionEvent::NoteFiled("[aborted: stop]".into()),
+        ] {
+            reduce_history(&ev, &mut history);
+        }
+        let mut want = reply_messages(&reply);
+        want.push(Message::tool_result("c1", "ok"));
+        want.push(Message::user("[aborted: stop]"));
+        assert_eq!(
+            serde_json::to_string(&history).unwrap(),
+            serde_json::to_string(&want).unwrap()
+        );
+        assert!(serde_json::to_string(&history)
+            .unwrap()
+            .contains("{ \\\"z\\\": 1,\\\"a\\\" :2.50 }"));
     }
 }

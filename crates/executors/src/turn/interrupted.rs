@@ -73,7 +73,7 @@ impl Drop for RecordOnDrop {
             .lock()
             .map(|text| text.clone())
             .unwrap_or_default();
-        record_cut(&self.store, &self.thread_id, &reason);
+        record_cut(&self.store, &self.thread_id, &reason, &self.obs);
         report_cut(&self.obs, partial, self.machine_ends_turn);
     }
 }
@@ -81,10 +81,17 @@ impl Drop for RecordOnDrop {
 /// Files the runtime's note that the reply of `thread` was stopped before it
 /// ended, and why. The cut reply itself is not filed: the history holds only
 /// what the model finished, and the note is a user-role turn of its own.
-pub(super) fn record_cut(store: &Arc<Mutex<ThreadStore>>, thread: &str, reason: &str) {
+pub(super) fn record_cut(
+    store: &Arc<Mutex<ThreadStore>>,
+    thread: &str,
+    reason: &str,
+    obs: &ObservationSink,
+) {
+    let note = format!("[aborted: {reason}]");
     if let Ok(mut store) = store.lock() {
-        store.append(thread, Message::user(format!("[aborted: {reason}]")));
+        store.append(thread, Message::user(&note));
     }
+    obs.emit(UiEvent::NoteFiled(note));
 }
 
 /// Tells observers what a cut-off reply had said. A turn its machine ends

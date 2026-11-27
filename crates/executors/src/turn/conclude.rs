@@ -58,6 +58,10 @@ impl TurnExecutor {
             store.record_unparsed_arguments(unparsed.clone());
         }
 
+        // The reply is filed exactly as it arrived, whatever follows; every
+        // later request sends it back unchanged.
+        append_messages(&self.store, &thread_id, sven_model::reply_messages(&reply));
+
         // Track consecutive empty turns (no tool calls, and no text beyond
         // whitespace) per thread. One is tolerated - the machine's
         // `GeneratingAction::EmptyTurn` nudges the model to try again - but a
@@ -107,10 +111,6 @@ impl TurnExecutor {
             self.end_turn(obs);
             return;
         }
-
-        // The reply is filed exactly as it arrived; every later request sends
-        // it back unchanged.
-        append_messages(&self.store, &thread_id, sven_model::reply_messages(&reply));
 
         // Annotate each tool call with its capability and register call_id → thread.
         // Uses the non-async helper to avoid holding any guard across an await.

@@ -715,6 +715,7 @@ impl EffectExecutor for TurnExecutor {
                         };
                         obs.emit(UiEvent::Warning(format!("{aborted}; asking again once")));
                         append_messages(&self.store, &thread_id, vec![Message::user(note)]);
+                        obs.emit(UiEvent::NoteFiled(note.to_string()));
                         req.instruction.clear();
                         req.delay_ms = None;
                         let retry = Effect::CallLlm {
@@ -734,7 +735,7 @@ impl EffectExecutor for TurnExecutor {
                     obs.emit(UiEvent::Error(aborted.to_string()));
                     replies::tell_watchdog(sink, &aborted.reason).await;
                 }
-                interrupted::record_cut(&self.store, &thread_id, &aborted.to_string());
+                interrupted::record_cut(&self.store, &thread_id, &aborted.to_string(), obs);
                 interrupted::report_cut(obs, partial, self.machine_ends_turn);
                 let _ = sink.emit(Event::UserCancelled).await;
                 return;
