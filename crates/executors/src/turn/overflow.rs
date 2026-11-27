@@ -40,7 +40,6 @@ pub(super) struct Request {
     pub(super) messages: Vec<Message>,
     pub(super) tools: Vec<ToolSchema>,
     pub(super) cache_key: Option<String>,
-    pub(super) dynamic_suffix: Option<String>,
     pub(super) response_format: Option<ResponseFormat>,
     pub(super) output_limit: sven_model::budget::OutputLimit,
     /// The sections the system message was composed of; see
@@ -60,7 +59,6 @@ impl Request {
             self.messages,
             self.tools,
             self.cache_key,
-            self.dynamic_suffix,
             self.response_format,
             self.output_limit,
             limits,
@@ -86,7 +84,6 @@ impl Request {
             messages: self.messages.clone(),
             tools: self.tools.clone(),
             cache_key: self.cache_key.clone(),
-            dynamic_suffix: self.dynamic_suffix.clone(),
             response_format: self.response_format.clone(),
             output_limit: self.output_limit,
             system_sections: self.system_sections.clone(),

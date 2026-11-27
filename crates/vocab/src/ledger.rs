@@ -245,7 +245,7 @@ pub struct RequestBreakdown {
     #[serde(default)]
     pub system_stable: u32,
     /// System-prompt sections assembled from the runtime context (skills,
-    /// subagents, knowledge, project/git/CI context, the dynamic suffix),
+    /// subagents, knowledge, project/git/CI context),
     /// by section name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub system_runtime: BTreeMap<String, u32>,
@@ -320,8 +320,7 @@ pub struct RequestBreakdown {
 /// Names say where a block came from, never what it says: `system/<section>`
 /// for a named section of the system prompt (`system/append`,
 /// `system/knowledge`, ...), `system` for a system prompt whose sections are
-/// not known, `system/dynamic_suffix` for the volatile block after it, and
-/// `tools` for the offered tool definitions. Two completions saw the same
+/// not known, and `tools` for the offered tool definitions. Two completions saw the same
 /// block exactly when name and digest agree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextBlock {

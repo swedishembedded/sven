@@ -258,8 +258,14 @@ fn user_texts(sent: &sven_model::CompletionRequest) -> Vec<String> {
 #[tokio::test]
 async fn a_task_that_names_a_covered_file_is_announced_in_its_own_request() {
     let sent = request_for("fix the bug in src/auth/login.rs").await;
+    let system = sent
+        .messages
+        .iter()
+        .filter(|m| m.role == sven_model::Role::System);
     assert!(
-        sent.system_dynamic_suffix.is_none(),
+        system
+            .clone()
+            .all(|m| !format!("{:?}", m.content).contains("Active Instructions")),
         "the system prompt is not rewritten"
     );
     let note = user_texts(&sent).pop().unwrap_or_default();
@@ -272,7 +278,6 @@ async fn a_task_that_names_a_covered_file_is_announced_in_its_own_request() {
 #[tokio::test]
 async fn a_task_that_names_nothing_covered_sends_no_announcement() {
     let sent = request_for("say hello").await;
-    assert!(sent.system_dynamic_suffix.is_none());
     assert!(!user_texts(&sent)
         .iter()
         .any(|t| t.contains("## Active Instructions")));

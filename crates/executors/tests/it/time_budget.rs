@@ -176,9 +176,6 @@ async fn a_run_without_a_deadline_carries_no_notice() {
     r.say("first", 1).await;
     r.rt.abort();
     assert_eq!(text(r.sent(0).last().unwrap()), "first");
-    assert!(r.requests.lock().unwrap()[0]
-        .system_dynamic_suffix
-        .is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -202,7 +199,7 @@ async fn the_notice_never_enters_the_stored_thread() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_system_message_and_dynamic_suffix_are_untouched() {
+async fn the_system_message_is_untouched() {
     let r = run(Some(TimeBudget::starting_now(58 * MIN)));
     r.say("first", 1).await;
     r.rt.abort();
@@ -212,8 +209,4 @@ async fn the_system_message_and_dynamic_suffix_are_untouched() {
         .iter()
         .filter(|m| m.role == sven_model::Role::System)
         .all(|m| !format!("{:?}", m.content).contains("Time: ")));
-    assert!(req
-        .system_dynamic_suffix
-        .as_deref()
-        .is_none_or(|s| !s.contains("Time: ")));
 }

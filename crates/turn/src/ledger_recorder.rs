@@ -87,7 +87,6 @@ mod tests {
             messages,
             tools: vec![],
             stream: true,
-            system_dynamic_suffix: None,
             cache_key: None,
             max_output_tokens_override: None,
             core_tool_count: 0,

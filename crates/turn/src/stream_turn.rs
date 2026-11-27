@@ -279,7 +279,6 @@ pub async fn stream_turn(
     messages: Vec<Message>,
     tools: Vec<ToolSchema>,
     cache_key: Option<String>,
-    dynamic_suffix: Option<String>,
     response_format: Option<ResponseFormat>,
     output_limit: impl Into<sven_model::budget::OutputLimit>,
     limits: impl Into<TurnLimits>,
@@ -290,7 +289,6 @@ pub async fn stream_turn(
         messages,
         tools,
         cache_key,
-        dynamic_suffix,
         response_format,
         output_limit,
         limits,
@@ -304,7 +302,7 @@ pub async fn stream_turn(
 /// `sections`: the request's manifest names them while `messages[0]` is still
 /// the text they describe, and drops them, flagged stale, when it is not
 /// (a compaction rewrote it). Without `sections` the manifest still carries
-/// the hashes of the system text, the tools and the dynamic suffix.
+/// the hashes of the system text and the tools.
 ///
 /// # Errors
 ///
@@ -315,7 +313,6 @@ pub async fn stream_turn_attributed(
     messages: Vec<Message>,
     tools: Vec<ToolSchema>,
     cache_key: Option<String>,
-    dynamic_suffix: Option<String>,
     response_format: Option<ResponseFormat>,
     output_limit: impl Into<sven_model::budget::OutputLimit>,
     limits: impl Into<TurnLimits>,
@@ -332,12 +329,11 @@ pub async fn stream_turn_attributed(
         .resolve();
 
     let sampling = limits.sampling_account(model)?;
-    let manifest = PromptManifest::describe(&messages, sections, &tools, dynamic_suffix.as_deref());
+    let manifest = PromptManifest::describe(&messages, sections, &tools);
     let req = CompletionRequest {
         messages,
         tools: tools.clone(),
         stream: true,
-        system_dynamic_suffix: dynamic_suffix,
         cache_key,
         max_output_tokens_override: output_limit.tokens,
         output_limit_is_room: output_limit.is_room,
@@ -808,7 +804,6 @@ mod thinking_watchdog_tests {
             None,
             None,
             None,
-            None,
             TurnLimits::default().with_stream_idle_secs(Some(7)),
             &tx,
         )
@@ -864,7 +859,6 @@ mod thinking_watchdog_tests {
             None,
             None,
             None,
-            None,
             TurnLimits::default(),
             &tx,
         )
@@ -911,7 +905,6 @@ mod thinking_watchdog_tests {
             None,
             None,
             None,
-            None,
             ThinkingBudget {
                 max_thinking_tokens: Some(1),
                 thinking_timeout_secs: Some(9999), // must not be the trigger
@@ -948,7 +941,6 @@ mod thinking_watchdog_tests {
             &provider,
             vec![],
             vec![],
-            None,
             None,
             None,
             None,
@@ -991,7 +983,6 @@ mod thinking_watchdog_tests {
             None,
             None,
             None,
-            None,
             ThinkingBudget::default(),
             &tx,
         )
@@ -1015,7 +1006,6 @@ mod thinking_watchdog_tests {
             &EndlessToolCallProvider,
             vec![],
             vec![],
-            None,
             None,
             None,
             None,
@@ -1059,7 +1049,6 @@ mod thinking_watchdog_tests {
             &provider,
             vec![],
             vec![],
-            None,
             None,
             None,
             None,
@@ -1158,7 +1147,6 @@ mod thinking_watchdog_tests {
             None,
             None,
             None,
-            None,
             ThinkingBudget {
                 // 3 tokens/round -> needs 4 rounds (3,6,9,12) to cross 10.
                 max_thinking_tokens: Some(10),
@@ -1225,7 +1213,6 @@ mod thinking_watchdog_tests {
             None,
             None,
             None,
-            None,
             ThinkingBudget {
                 max_thinking_tokens: Some(u32::MAX),
                 thinking_timeout_secs: Some(9999),
@@ -1267,7 +1254,6 @@ mod thinking_watchdog_tests {
             &provider,
             vec![],
             vec![],
-            None,
             None,
             None,
             None,
@@ -1346,7 +1332,6 @@ mod max_tokens_tests {
             &TruncatedProvider,
             vec![],
             vec![],
-            None,
             None,
             None,
             None,

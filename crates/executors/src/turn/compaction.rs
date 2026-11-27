@@ -412,7 +412,6 @@ impl TurnExecutor {
             .saturating_sub(sven_model::budget::estimate_request_tokens(
                 &[],
                 &self.recovery.fork_tools,
-                None,
             ));
 
         let mut history = messages;
@@ -606,7 +605,7 @@ impl TurnExecutor {
         calibration: f32,
     ) -> Notes {
         let tools_tokens =
-            sven_model::budget::estimate_request_tokens(&[], &self.recovery.fork_tools, None);
+            sven_model::budget::estimate_request_tokens(&[], &self.recovery.fork_tools);
         let request_estimate = estimate(&plan.request, calibration) + tools_tokens;
         let room = (window as usize).saturating_sub(request_estimate + 128);
         let output = u32::try_from(reply_cap.min(room)).unwrap_or(u32::MAX);
@@ -632,7 +631,6 @@ impl TurnExecutor {
                 model,
                 plan.request.clone(),
                 self.recovery.fork_tools.clone(),
-                None,
                 None,
                 None,
                 Some(output),

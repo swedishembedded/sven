@@ -50,7 +50,6 @@ async fn a_server_that_accepts_and_never_answers_fails_the_turn() {
         None,
         None,
         None,
-        None,
         limits,
         &tx,
     )

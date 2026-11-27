@@ -304,49 +304,18 @@ impl sven_model::ModelProvider for AnthropicProvider {
             body["cache_control"] = json!({ "type": "ephemeral" });
         }
 
-        if !system_text.is_empty() || req.system_dynamic_suffix.is_some() {
-            if self.cache_system_prompt {
-                // Build an array of system content blocks.
-                //
-                // Block 1 - stable prefix WITH cache_control (gets cached).
-                //   • Default (5-min TTL): {"type": "ephemeral"} - no ttl field.
-                //   • Extended (1-hour TTL): {"type": "ephemeral", "ttl": "1h"}.
-                // Block 2 - volatile context WITHOUT cache_control (not cached).
-                //   Git/CI info that changes between sessions lives here so the
-                //   stable prefix can be reused across different sessions.
-                let mut system_blocks: Vec<Value> = Vec::new();
-                if !system_text.is_empty() {
-                    system_blocks.push(json!({
-                        "type": "text",
-                        "text": system_text,
-                        "cache_control": cache_ctrl,
-                    }));
-                }
-                // Dynamic context (git branch/commit, CI env) in a second block
-                // without cache_control so it does not pollute the cached prefix.
-                if let Some(dynamic) = &req.system_dynamic_suffix {
-                    if !dynamic.trim().is_empty() {
-                        system_blocks.push(json!({
-                            "type": "text",
-                            "text": dynamic,
-                        }));
-                    }
-                }
-                if !system_blocks.is_empty() {
-                    body["system"] = json!(system_blocks);
-                }
+        if !system_text.is_empty() {
+            body["system"] = if self.cache_system_prompt {
+                // One system block with cache_control (default 5-min TTL:
+                // {"type": "ephemeral"}; extended 1-hour: {"ttl": "1h"}).
+                json!([{
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": cache_ctrl,
+                }])
             } else {
-                // Caching disabled: merge dynamic suffix into system text.
-                let combined = match &req.system_dynamic_suffix {
-                    Some(d) if !d.trim().is_empty() => {
-                        format!("{}\n\n{}", system_text, d)
-                    }
-                    _ => system_text,
-                };
-                if !combined.is_empty() {
-                    body["system"] = json!(combined);
-                }
-            }
+                json!(system_text)
+            };
         }
         if !tools.is_empty() {
             body["tools"] = json!(tools);

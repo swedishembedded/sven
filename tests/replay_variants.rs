@@ -49,7 +49,7 @@ fn write_log(dir: &Path) -> std::path::PathBuf {
         ..ToolSchema::default()
     }];
     let request = CompletionRequest {
-        manifest: PromptManifest::describe(&messages, Some(&sections), &tools, None),
+        manifest: PromptManifest::describe(&messages, Some(&sections), &tools),
         messages,
         tools,
         stream: true,

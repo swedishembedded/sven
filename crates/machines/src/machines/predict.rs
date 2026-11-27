@@ -108,7 +108,6 @@ impl PredictMachine {
             "",
             None,
             Some(text),
-            None,
             NO_TOOL_ROUNDS,
             schema,
             Some(&schema_name),

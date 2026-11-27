@@ -80,7 +80,7 @@ pub struct ForkPlan {
 /// count per estimated token, at least 1.0).
 #[must_use]
 pub fn estimate_tokens(messages: &[Message], calibration: f32) -> usize {
-    let raw = sven_model::budget::estimate_request_tokens(messages, &[], None);
+    let raw = sven_model::budget::estimate_request_tokens(messages, &[]);
     (raw as f32 * calibration.max(1.0)).ceil() as usize
 }
 

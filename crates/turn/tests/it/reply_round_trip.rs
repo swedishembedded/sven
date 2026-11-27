@@ -165,7 +165,6 @@ async fn turn(base: &str, messages: Vec<Message>) -> sven_turn::StreamedTurn {
         None,
         None,
         None,
-        None,
         TurnLimits::default(),
         &tx,
     )

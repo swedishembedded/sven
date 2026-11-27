@@ -20,11 +20,7 @@ use sven_vocab::AgentMode;
 use tokio::sync::mpsc;
 
 /// Sends one turn and returns the request the provider received.
-async fn sent(
-    messages: Vec<Message>,
-    sections: Option<&PromptSections>,
-    suffix: Option<&str>,
-) -> CompletionRequest {
+async fn sent(messages: Vec<Message>, sections: Option<&PromptSections>) -> CompletionRequest {
     let seen = Arc::new(Mutex::new(None));
     let sink = Arc::clone(&seen);
     let provider = CallbackProvider::new(move |req| {
@@ -43,7 +39,6 @@ async fn sent(
         messages,
         vec![tool],
         None,
-        suffix.map(str::to_string),
         None,
         None,
         TurnLimits::default(),
@@ -59,10 +54,10 @@ async fn sent(
 }
 
 #[tokio::test]
-async fn a_request_names_its_sections_tools_and_suffix() {
+async fn a_request_names_its_sections_and_tools() {
     let composed = compose_system_prompt(AgentMode::Agent, None, PromptContext::default());
     let messages = vec![Message::system(composed.text.clone()), Message::user("hi")];
-    let request = sent(messages, Some(&composed.sections), Some("branch: main")).await;
+    let request = sent(messages, Some(&composed.sections)).await;
 
     let manifest = request.manifest.expect("the request has a manifest");
     assert_eq!(
@@ -72,7 +67,6 @@ async fn a_request_names_its_sections_tools_and_suffix() {
     assert_eq!(manifest.sections, composed.sections.sections);
     assert_eq!(manifest.tools.len(), 1);
     assert_eq!(manifest.tools[0].name, "probe");
-    assert!(manifest.dynamic_suffix_sha256.is_some());
 }
 
 #[tokio::test]
@@ -83,6 +77,6 @@ async fn a_system_text_rewritten_after_composition_drops_the_manifest() {
         Message::system("Summary of the session."),
         Message::user("hi"),
     ];
-    let request = sent(messages, Some(&composed.sections), None).await;
+    let request = sent(messages, Some(&composed.sections)).await;
     assert!(request.manifest.is_none());
 }

@@ -68,12 +68,8 @@ fn request_with_manifest() -> CompletionRequest {
         system,
         &[("zz_marker_section".to_string(), 0..system.len())],
     );
-    let manifest = PromptManifest::describe(
-        &messages,
-        Some(&sections),
-        std::slice::from_ref(&tool),
-        None,
-    );
+    let manifest =
+        PromptManifest::describe(&messages, Some(&sections), std::slice::from_ref(&tool));
     CompletionRequest {
         messages,
         tools: vec![tool],

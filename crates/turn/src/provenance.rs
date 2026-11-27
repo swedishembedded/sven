@@ -11,8 +11,7 @@
 //!
 //! Read from the request's [`PromptManifest`]: the named sections of its
 //! system prompt when the composer's account of them still describes the
-//! text, else the system prompt as one block, then the dynamic suffix and
-//! the tool definitions. Names come from where a block came from, never from
+//! text, else the system prompt as one block, then the tool definitions. Names come from where a block came from, never from
 //! what it says (see [`ContextBlock`]).
 
 use sven_model::{CompletionRequest, PromptManifest};
@@ -26,8 +25,6 @@ pub fn section_block_name(section_id: &str) -> String {
 
 /// The block name of a system prompt whose sections are not known.
 pub const SYSTEM_BLOCK: &str = "system";
-/// The block name of the volatile text after the cached system prompt.
-pub const DYNAMIC_SUFFIX_BLOCK: &str = "system/dynamic_suffix";
 /// The block name of the offered tool definitions, taken together.
 pub const TOOLS_BLOCK: &str = "tools";
 
@@ -56,8 +53,7 @@ pub const SECTION_IDS: [&str; 14] = [
 /// # Errors
 ///
 /// A name that is not `system/<section>` for a section the composer makes,
-/// with the names that are: the dynamic suffix and the tool list are not
-/// sections, and the unsectioned `system` block is the whole prompt.
+/// with the names that are: the tool list is not a section, and the unsectioned `system` block is the whole prompt.
 pub fn droppable_section(block: &str) -> Result<&str, String> {
     block
         .strip_prefix("system/")
@@ -82,12 +78,7 @@ pub fn context_blocks(request: &CompletionRequest) -> Vec<ContextBlock> {
     let manifest = match &request.manifest {
         Some(manifest) => manifest,
         None => {
-            described = PromptManifest::describe(
-                &request.messages,
-                None,
-                &request.tools,
-                request.system_dynamic_suffix.as_deref(),
-            );
+            described = PromptManifest::describe(&request.messages, None, &request.tools);
             match &described {
                 Some(manifest) => manifest,
                 None => return Vec::new(),
@@ -111,9 +102,6 @@ pub fn context_blocks(request: &CompletionRequest) -> Vec<ContextBlock> {
             .map(|section| block(section_block_name(&section.id), &section.sha256))
             .collect()
     };
-    if let Some(sha) = &manifest.dynamic_suffix_sha256 {
-        blocks.push(block(DYNAMIC_SUFFIX_BLOCK.to_string(), sha));
-    }
     if !manifest.tools.is_empty() {
         blocks.push(block(TOOLS_BLOCK.to_string(), &manifest.tools_sha256));
     }
@@ -133,10 +121,9 @@ mod tests {
             ..ToolSchema::default()
         }];
         CompletionRequest {
-            manifest: PromptManifest::describe(&messages, sections, &tools, Some("now: 12:00")),
+            manifest: PromptManifest::describe(&messages, sections, &tools),
             messages,
             tools,
-            system_dynamic_suffix: Some("now: 12:00".into()),
             ..CompletionRequest::default()
         }
     }
@@ -148,30 +135,15 @@ mod tests {
             PromptSections::new(text, &[("identity".into(), 0..8), ("append".into(), 8..14)]);
         let blocks = context_blocks(&request(Some(&sections), text));
         let names: Vec<&str> = blocks.iter().map(|b| b.name.as_str()).collect();
-        assert_eq!(
-            names,
-            [
-                "system/identity",
-                "system/append",
-                "system/dynamic_suffix",
-                "tools"
-            ]
-        );
+        assert_eq!(names, ["system/identity", "system/append", "tools"]);
         assert_eq!(blocks[1].sha256, sha256_hex(b"\n\nhint"));
-        assert_eq!(blocks[2].sha256, sha256_hex(b"now: 12:00"));
     }
 
     #[test]
     fn only_a_named_system_section_can_be_dropped() {
         assert_eq!(droppable_section("system/append"), Ok("append"));
         assert_eq!(droppable_section("system/knowledge"), Ok("knowledge"));
-        for name in [
-            "append",
-            "system",
-            "tools",
-            "system/dynamic_suffix",
-            "system/nope",
-        ] {
+        for name in ["append", "system", "tools", "system/nope"] {
             let refused = droppable_section(name).unwrap_err();
             assert!(refused.contains("system/append"), "{refused}");
         }

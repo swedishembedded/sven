@@ -530,8 +530,6 @@ pub fn compose_system_prompt(
 
     // Agent identity - fully static so this block is stable across turns
     // and can be cached by Anthropic's prompt-caching layer.
-    // Volatile context (git branch, CI env, working directory) is injected
-    // separately via system_dynamic_suffix and never touches this block.
     let agent_identity = format!(
         "You are Sven, an autonomous software engineering agent working in a real development \
          environment.\n\n\

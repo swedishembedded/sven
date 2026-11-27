@@ -269,7 +269,7 @@ impl PromptCounts {
             return (plain_estimate, 1.0);
         };
         let appended =
-            sven_model::budget::estimate_request_tokens(&messages[anchor.messages..], &[], None);
+            sven_model::budget::estimate_request_tokens(&messages[anchor.messages..], &[]);
         let estimate = anchor.tokens as usize + (appended as f32 * anchor.bias) as usize;
         let calibration = if plain_estimate == 0 {
             1.0

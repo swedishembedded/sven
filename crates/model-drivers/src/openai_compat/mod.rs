@@ -399,32 +399,8 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             self.driver_name == "openrouter" && self.model.starts_with("google/");
         let use_block_cache = use_anthropic_cache || use_gemini_cache;
 
-        // Build the messages array.  For Anthropic/Gemini-via-OpenRouter we use
-        // content blocks so that the stable prefix can carry cache_control.
-        let merged;
-        let wire = if use_block_cache {
-            // Build messages without merging the dynamic suffix; it will be
-            // handled below as a separate uncached system content block.
-            build_openai_messages_with(&req.messages)
-        } else if let Some(suffix) = &req.system_dynamic_suffix {
-            // Standard path: merge dynamic suffix into the system message text.
-            // OpenAI has a single "system" message; there is no separate
-            // uncached block concept.
-            let mut msgs = req.messages.clone();
-            if let Some(sys) = msgs.first_mut() {
-                if sys.role == sven_model::Role::System {
-                    use sven_model::MessageContent;
-                    if let MessageContent::Text(t) = &sys.content {
-                        let combined = format!("{t}\n\n{suffix}");
-                        sys.content = MessageContent::Text(combined);
-                    }
-                }
-            }
-            merged = msgs;
-            build_openai_messages_with(&merged)
-        } else {
-            build_openai_messages_with(&req.messages)
-        };
+        // The messages, each turn as it was filed (see `build_openai_messages_with`).
+        let wire = build_openai_messages_with(&req.messages);
         let (messages, sampled) = (wire.values, wire.sampled);
 
         let mut tools: Vec<Value> = req.tools.iter().map(function_tool).collect();
@@ -579,17 +555,10 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             }
         }
 
-        // For Anthropic and Google Gemini models via OpenRouter, rewrite the
-        // system message as an array of content blocks so that:
-        //   • Block 1 - the stable system prompt gets `cache_control` and is
-        //     cached by the provider's prompt-caching layer across turns.
-        //   • Block 2 - the volatile git/CI context is a separate block WITHOUT
-        //     `cache_control` so it never pollutes the cached prefix.
-        //
-        // OpenRouter passes `cache_control` through to the underlying provider
-        // (Anthropic, Bedrock, or Gemini) transparently.  Without this split
-        // the whole system message changes on every turn (due to the dynamic
-        // suffix) and no tokens are cached.
+        // For Anthropic and Google Gemini models via OpenRouter, the system
+        // message becomes a content block with `cache_control`, which
+        // OpenRouter passes through to the underlying provider (Anthropic,
+        // Bedrock, or Gemini), so the system prompt is cached across turns.
         //
         // Gemini note: OpenRouter uses only the *last* `cache_control` marker
         // in the request body when routing to Gemini.  Placing markers on the
@@ -600,25 +569,13 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
             if let Some(msgs) = body["messages"].as_array_mut() {
                 if let Some(first) = msgs.first_mut() {
                     if first["role"].as_str() == Some("system") {
-                        let stable_text = first["content"].as_str().unwrap_or("").to_string();
-                        let mut system_blocks: Vec<Value> = Vec::new();
-                        if !stable_text.is_empty() {
-                            system_blocks.push(json!({
+                        let text = first["content"].as_str().unwrap_or("").to_string();
+                        if !text.is_empty() {
+                            first["content"] = json!([{
                                 "type": "text",
-                                "text": stable_text,
+                                "text": text,
                                 "cache_control": { "type": "ephemeral" },
-                            }));
-                        }
-                        if let Some(dynamic) = &req.system_dynamic_suffix {
-                            if !dynamic.trim().is_empty() {
-                                system_blocks.push(json!({
-                                    "type": "text",
-                                    "text": dynamic,
-                                }));
-                            }
-                        }
-                        if !system_blocks.is_empty() {
-                            first["content"] = json!(system_blocks);
+                            }]);
                         }
                     }
                 }

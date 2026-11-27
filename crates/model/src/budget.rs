@@ -47,16 +47,12 @@ pub fn is_context_overflow(error_text: &str) -> bool {
 const HEADROOM_NUM: usize = 11;
 const HEADROOM_DEN: usize = 10;
 
-/// Rough token count for a full request: message history + tool schemas +
-/// an optional dynamic system-prompt suffix, all under the same chars/4
+/// Rough token count for a full request: message history + tool schemas,
+/// both under the same chars/4
 /// heuristic [`Message::approx_tokens`] uses, so the estimate is internally
 /// consistent (mixing heuristics would make the headroom multiplier
 /// meaningless), plus `HEADROOM_NUM`/`HEADROOM_DEN` headroom.
-pub fn estimate_request_tokens(
-    messages: &[Message],
-    tools: &[ToolSchema],
-    dynamic_suffix: Option<&str>,
-) -> usize {
+pub fn estimate_request_tokens(messages: &[Message], tools: &[ToolSchema]) -> usize {
     let messages_tokens: usize = messages.iter().map(Message::approx_tokens).sum();
     // Tool schemas are JSON sent verbatim in every request; approximate them
     // the same chars/4 way as message text.
@@ -67,22 +63,19 @@ pub fn estimate_request_tokens(
             chars.max(1).div_ceil(4)
         })
         .sum();
-    let suffix_tokens = dynamic_suffix
-        .map(|s| s.len().max(1).div_ceil(4))
-        .unwrap_or(0);
-    let raw = messages_tokens + tools_tokens + suffix_tokens;
+    let raw = messages_tokens + tools_tokens;
     raw * HEADROOM_NUM / HEADROOM_DEN
 }
 
 /// Minimum output tokens worth attempting a response with.
 ///
 /// This is a *floor* for the gate, not the amount actually requested from
-/// the provider — see [`dynamic_output_budget`] for that. Below this many
+/// the provider - see [`dynamic_output_budget`] for that. Below this many
 /// tokens of remaining room, a generation would likely be cut off before
 /// saying anything useful, so the request is rejected outright rather than
 /// sent and truncated. Deliberately small so a large-but-legitimate prompt
 /// isn't rejected just because it doesn't leave room for the *full*
-/// configured output cap — it only needs to leave room for *some* real
+/// configured output cap - it only needs to leave room for *some* real
 /// response, which [`dynamic_output_budget`] then sizes down to fit.
 const MIN_OUTPUT_RESERVE: usize = 256;
 
@@ -90,7 +83,7 @@ const MIN_OUTPUT_RESERVE: usize = 256;
 /// supplies one. Matches what every provider driver except Google's already
 /// falls back to internally (`anthropic.rs`/`cohere.rs`/`aws.rs`/
 /// `openai_compat/mod.rs` all `unwrap_or(4096)`; only `google.rs` differs at
-/// 8192) — see [`dynamic_output_budget`]'s doc comment for why this needs to
+/// 8192) - see [`dynamic_output_budget`]'s doc comment for why this needs to
 /// be a real number here rather than left to each driver.
 const DEFAULT_OUTPUT_FALLBACK: u32 = 4096;
 
@@ -121,12 +114,12 @@ const CHAT_TEMPLATE_OVERHEAD_RESERVE: usize = 128;
 /// fixed-subtraction formula, even though the prompt alone is nowhere near
 /// the window). The *actual* per-request output-token limit sent to the
 /// provider is computed separately by [`dynamic_output_budget`], scaled to
-/// whatever room the real prompt leaves — this function only asks "is there
+/// whatever room the real prompt leaves - this function only asks "is there
 /// enough room left for *some* useful response at all", not "is there enough
 /// room for the maximum possible one".
 ///
 /// `None` when the context window isn't known at all (a hosted provider with
-/// no catalog entry and no live probe result) — callers should skip the gate
+/// no catalog entry and no live probe result) - callers should skip the gate
 /// entirely in that case rather than guessing a number that could be wrong
 /// in either direction.
 pub fn effective_input_budget(
@@ -142,8 +135,8 @@ pub fn effective_input_budget(
 /// always requesting a fixed amount regardless of prompt size *or* of what
 /// the server can actually serve.
 ///
-/// Returns `None` — meaning "no override, let the provider apply its own
-/// built-in default" — only when the context window isn't known at all
+/// Returns `None` - meaning "no override, let the provider apply its own
+/// built-in default" - only when the context window isn't known at all
 /// (a hosted provider with no catalog entry and no live probe result).
 /// There is nothing to scale against in that case.
 ///
@@ -154,7 +147,7 @@ pub fn effective_input_budget(
 /// fix for a real bug: a config that (correctly) carries no output cap for a
 /// given provider previously meant the provider's own hardcoded ~4096-token
 /// default was sent completely unchecked against a *known*, possibly much
-/// smaller, live-probed or catalog context window — e.g. a 2048-token local
+/// smaller, live-probed or catalog context window - e.g. a 2048-token local
 /// model server rejecting every request with "needs 4105 tokens" (4096
 /// requested output + ~9 prompt tokens), regardless of how small the actual
 /// prompt was. For a hosted provider whose context window is huge (the
@@ -238,13 +231,13 @@ mod tests {
 
     #[test]
     fn estimate_empty_request_is_zero() {
-        assert_eq!(estimate_request_tokens(&[], &[], None), 0);
+        assert_eq!(estimate_request_tokens(&[], &[]), 0);
     }
 
     #[test]
     fn estimate_counts_message_text_with_headroom() {
         let messages = vec![Message::user("a".repeat(400))]; // 100 raw tokens
-        let est = estimate_request_tokens(&messages, &[], None);
+        let est = estimate_request_tokens(&messages, &[]);
         // 100 * 11 / 10 = 110
         assert_eq!(est, 110);
     }
@@ -256,15 +249,8 @@ mod tests {
             "run a command",
             serde_json::json!({"type": "object"}),
         )];
-        let est = estimate_request_tokens(&[], &tools, None);
+        let est = estimate_request_tokens(&[], &tools);
         assert!(est > 0, "tool schema JSON must contribute to the estimate");
-    }
-
-    #[test]
-    fn estimate_counts_dynamic_suffix() {
-        let with = estimate_request_tokens(&[], &[], Some(&"x".repeat(4000)));
-        let without = estimate_request_tokens(&[], &[], None);
-        assert!(with > without);
     }
 
     #[test]
@@ -274,7 +260,7 @@ mod tests {
         // tokens against a 2048-token server. A single oversized message
         // alone should already clear a 2048-token budget.
         let messages = vec![Message::user("a".repeat(60_000))]; // ~15000 raw tokens
-        let est = estimate_request_tokens(&messages, &[], None);
+        let est = estimate_request_tokens(&messages, &[]);
         let budget = effective_input_budget(Some(2048), Some(0)).unwrap();
         assert!(
             est > budget,

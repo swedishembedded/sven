@@ -100,7 +100,7 @@ factor is applied to the server's count, so an over-counting heuristic cannot
 make compaction fire early; a burst of tool results costs only its own
 estimation error. The count is used only while the messages it described still
 lead the thread; a rewritten or compacted thread starts from the plain
-estimate (`chars / 4` over messages, tool schemas and the dynamic suffix,
+estimate (`chars / 4` over messages and tool schemas,
 ×1.1) until the next request reports.
 
 ---

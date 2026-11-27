@@ -465,7 +465,6 @@ impl EffectExecutor for TurnExecutor {
         let mut estimate = sven_model::budget::estimate_request_tokens(
             view.as_ref().map_or(&messages, |v| &v.0),
             &tool_schemas,
-            req.dynamic_suffix.as_deref(),
         );
 
         // Proactive compaction, before the hard gate below and before every
@@ -487,7 +486,6 @@ impl EffectExecutor for TurnExecutor {
             estimate = sven_model::budget::estimate_request_tokens(
                 view.as_ref().map_or(&messages, |v| &v.0),
                 &tool_schemas,
-                req.dynamic_suffix.as_deref(),
             );
         }
         // Judged as compaction judges it: by the server's count of what it was
@@ -565,12 +563,8 @@ impl EffectExecutor for TurnExecutor {
 
         // Forward stream_turn's progress events onward while the stream runs.
         let (tx, mut rx) = mpsc::channel::<UiEvent>(256);
-        if let Some((segment, cause)) = self.segments.observe(
-            &thread_id,
-            &messages,
-            req.dynamic_suffix.as_deref(),
-            &tool_schemas,
-        ) {
+        if let Some((segment, cause)) = self.segments.observe(&thread_id, &messages, &tool_schemas)
+        {
             obs.emit(UiEvent::ContextRewritten { segment, cause });
         }
         let obs_fwd = obs.clone();
@@ -698,7 +692,6 @@ impl EffectExecutor for TurnExecutor {
                 messages,
                 tools: tool_schemas,
                 cache_key: Some(thread_id.clone()),
-                dynamic_suffix: req.dynamic_suffix.clone(),
                 response_format,
                 output_limit,
                 system_sections,

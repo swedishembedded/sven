@@ -21,7 +21,7 @@
 //!    [`handle_tool_event`].  It returns `None` for non-tool events so the phase
 //!    can handle decision-level approvals itself.
 //!
-//! # `LoopState` — one typed fact key
+//! # `LoopState` - one typed fact key
 //!
 //! All bookkeeping lives in a single [`LoopState`] value serialized under
 //! [`LOOP_STATE_KEY`], which keeps state access type-safe.
@@ -260,7 +260,6 @@ impl LoopState {
             schema,
             schema_name: schema_name.to_string(),
             model: None,
-            dynamic_suffix: None,
             max_tool_rounds: Some(self.max_rounds),
             answered_calls: std::mem::take(&mut self.refusals)
                 .into_iter()
@@ -386,7 +385,6 @@ pub fn build_turn_effect(
     all_tools_mode: &str,
     model: Option<&str>,
     instruction: Option<&str>,
-    dynamic_suffix: Option<String>,
     max_tool_rounds: u32,
     response_format_schema: Option<Value>,
     response_format_schema_name: Option<&str>,
@@ -402,7 +400,6 @@ pub fn build_turn_effect(
         schema: response_format_schema.unwrap_or(Value::Null),
         schema_name: response_format_schema_name.unwrap_or("").to_string(),
         model: model.map(str::to_string),
-        dynamic_suffix,
         max_tool_rounds: Some(max_tool_rounds),
         answered_calls: Vec::new(),
         origin: None,
@@ -465,7 +462,7 @@ pub fn init_loop(
 /// The action the machine should take after [`Event::LlmTurnComplete`].
 #[derive(Debug)]
 pub enum GeneratingAction {
-    /// The model produced no tool calls — `text` is the final answer.
+    /// The model produced no tool calls - `text` is the final answer.
     FinalAnswer { thread: String, text: String },
 
     /// The model proposed tool calls.  The machine should emit `tool_effects`
@@ -519,7 +516,6 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
             "",
             None,
             Some(MAX_ROUNDS_NUDGE),
-            None,
             0,
             None,
             None,
@@ -543,7 +539,6 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
                     "",
                     None,
                     Some(EMPTY_TURN_WRAPUP_NUDGE),
-                    None,
                     0,
                     None,
                     None,
@@ -562,7 +557,6 @@ pub fn on_llm_turn_complete(ctx: &mut Context, event: &Event) -> GeneratingActio
                 &ls.all_tools_mode,
                 None,
                 Some(nudge),
-                None,
                 max.saturating_sub(round),
                 None,
                 None,
@@ -662,7 +656,7 @@ pub fn handle_tool_event<S>(
             description,
         } => {
             let mut ls = LoopState::load(ctx);
-            // Remove from pending — it won't produce a ToolSucceeded.
+            // Remove from pending - it won't produce a ToolSucceeded.
             ls.pending.remove(call_id);
             // Derived from the call it gates, never minted fresh: transitions
             // must be pure for event-sourced replay to reproduce state. A
@@ -721,7 +715,7 @@ pub fn handle_tool_event<S>(
                     Some(Reaction::handled())
                 }
             } else {
-                // Decision-level approval (not tool-level) — let phase handle it.
+                // Decision-level approval (not tool-level) - let phase handle it.
                 None
             }
         }
@@ -752,7 +746,7 @@ pub fn handle_tool_event<S>(
                     Some(Reaction::handled())
                 }
             } else {
-                // Decision-level rejection — let phase handle it.
+                // Decision-level rejection - let phase handle it.
                 None
             }
         }
@@ -765,11 +759,11 @@ pub fn handle_tool_event<S>(
             options,
         } => {
             let mut ls = LoopState::load(ctx);
-            // Remove from pending — it won't produce a ToolSucceeded on its
+            // Remove from pending - it won't produce a ToolSucceeded on its
             // own; HumanAnswered (or a stale run simply never resuming) is
             // its only way out.
             ls.pending.remove(call_id);
-            // Derived from the call it parks, never minted fresh — see
+            // Derived from the call it parks, never minted fresh - see
             // `ToolApprovalRequired`'s identical reasoning: replay must
             // reproduce the same id the live run chose.
             let question_id = QuestionId::from_uuid(call_id.as_uuid());
@@ -806,7 +800,7 @@ pub fn handle_tool_event<S>(
                 }
             } else {
                 // Stale/duplicate answer (already resolved, or for a
-                // different loop entirely) — ignore.
+                // different loop entirely) - ignore.
                 None
             }
         }
@@ -1029,7 +1023,7 @@ mod tests {
     fn human_approved_without_tool_approval_returns_none() {
         let mut ctx = make_ctx();
         init_loop(&mut ctx, "chat", &[], "", 16);
-        // No awaiting_tool_approval set — this is a decision-level event
+        // No awaiting_tool_approval set - this is a decision-level event
         let event = Event::HumanApproved {
             approval_id: ApprovalId::new(),
         };

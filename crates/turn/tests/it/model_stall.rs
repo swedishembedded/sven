@@ -37,18 +37,7 @@ async fn run(
     limits: TurnLimits,
 ) -> (anyhow::Result<sven_turn::StreamedTurn>, Vec<SessionEvent>) {
     let (tx, mut rx) = mpsc::channel(256);
-    let result = stream_turn(
-        provider,
-        vec![],
-        vec![],
-        None,
-        None,
-        None,
-        None,
-        limits,
-        &tx,
-    )
-    .await;
+    let result = stream_turn(provider, vec![], vec![], None, None, None, limits, &tx).await;
     drop(tx);
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
@@ -187,7 +176,6 @@ async fn a_user_cancel_aborts_a_waiting_turn_promptly() {
         &provider,
         vec![],
         vec![],
-        None,
         None,
         None,
         None,

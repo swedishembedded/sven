@@ -31,7 +31,6 @@ pub(super) fn goal_turn(
         AGENT_MODE,
         None,
         Some(instruction),
-        None,
         ls.max_rounds,
         None,
         None,

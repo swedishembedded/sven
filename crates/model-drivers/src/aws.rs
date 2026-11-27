@@ -90,14 +90,6 @@ impl sven_model::ModelProvider for BedrockProvider {
         for m in &req.messages {
             if m.role == Role::System {
                 if let Some(t) = m.as_text() {
-                    // Bedrock Converse has a single system array; append dynamic
-                    // context to the first system text block.
-                    if let Some(suffix) = &req.system_dynamic_suffix {
-                        if !suffix.trim().is_empty() {
-                            system_parts.push(json!({ "text": format!("{t}\n\n{suffix}") }));
-                            continue;
-                        }
-                    }
                     system_parts.push(json!({ "text": t }));
                 }
                 continue;

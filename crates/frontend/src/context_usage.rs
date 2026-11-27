@@ -217,7 +217,7 @@ impl ContextUsage {
         self.set(ContextCategory::McpTools, mcp);
         self.set(ContextCategory::Skills, section(SKILLS_SECTION));
         self.set(ContextCategory::Indexes, indexed(&INDEX_SECTIONS));
-        // Project context, instructions, git, CI and the dynamic suffix.
+        // Project context, instructions, git and CI.
         self.set(ContextCategory::Memory, runtime_total - known);
         self.set(
             ContextCategory::Messages,
@@ -351,7 +351,6 @@ mod tests {
         b.system_runtime.insert("Subagents".into(), 50);
         b.system_runtime.insert("Knowledge Base".into(), 25);
         b.system_runtime.insert("Project Context".into(), 70);
-        b.system_runtime.insert("dynamic_suffix".into(), 30);
         b.tool_schemas.insert("shell".into(), 800);
         b.tool_schemas.insert("grep".into(), 200);
         b.tool_schemas.insert("gdb".into(), 300);
@@ -394,7 +393,7 @@ mod tests {
         assert_eq!(u.of(ContextCategory::McpTools), 150);
         assert_eq!(u.of(ContextCategory::Skills), 400);
         assert_eq!(u.of(ContextCategory::Indexes), 75);
-        assert_eq!(u.of(ContextCategory::Memory), 100);
+        assert_eq!(u.of(ContextCategory::Memory), 70);
         assert_eq!(u.of(ContextCategory::Messages), 5_620);
         assert_eq!(u.of(ContextCategory::Thinking), 0);
         assert_eq!(u.used(), b.attributed_total());

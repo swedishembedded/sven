@@ -50,19 +50,9 @@ impl ModelProvider for Capturing {
 async fn run(limits: TurnLimits) -> (Vec<Sent>, Vec<SessionEvent>) {
     let provider = Capturing::default();
     let (tx, mut rx) = mpsc::channel(64);
-    stream_turn(
-        &provider,
-        vec![],
-        vec![],
-        None,
-        None,
-        None,
-        None,
-        limits,
-        &tx,
-    )
-    .await
-    .expect("the turn completes");
+    stream_turn(&provider, vec![], vec![], None, None, None, limits, &tx)
+        .await
+        .expect("the turn completes");
     drop(tx);
     let mut events = Vec::new();
     while let Some(event) = rx.recv().await {

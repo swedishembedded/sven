@@ -194,7 +194,7 @@ impl SdlcMachine {
     ///
     /// Because each phase now owns its tool loop (no more shared `RunningTools`),
     /// `CallTool` effects are always gated against the *real* phase state,
-    /// so this policy works correctly — `WriteFile`/`ExecuteShell` in `Execution`
+    /// so this policy works correctly - `WriteFile`/`ExecuteShell` in `Execution`
     /// are `Allowed`, not `Forbidden`.
     #[must_use]
     pub fn permission_policy() -> PermissionPolicy {
@@ -361,7 +361,6 @@ fn phase_followup_turn(
         "",
         None,
         Some(instruction),
-        None,
         max_tool_rounds,
         Some(decision_schema()),
         Some("decision"),
@@ -455,7 +454,7 @@ fn dispatch_phase(
             )])
         }
 
-        // Decision-level approval (not tool-level — those were caught above).
+        // Decision-level approval (not tool-level - those were caught above).
         // The phase result was already stored when `NeedApproval` was returned.
         Event::HumanApproved { approval_id } => {
             ctx.approve(*approval_id);

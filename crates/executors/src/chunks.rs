@@ -405,12 +405,7 @@ fn restore(messages: &mut [Message], original: &[Message], tool_call_id: &str) {
 
 /// Estimated tokens of `messages` as a prompt.
 fn tokens_of(messages: &[Message]) -> u32 {
-    u32::try_from(sven_model::budget::estimate_request_tokens(
-        messages,
-        &[],
-        None,
-    ))
-    .unwrap_or(u32::MAX)
+    u32::try_from(sven_model::budget::estimate_request_tokens(messages, &[])).unwrap_or(u32::MAX)
 }
 
 /// Whether the tool results of `a` and `b` differ.

@@ -838,7 +838,7 @@ async fn anthropic_cache_system_prompt_sends_array_with_cache_control() {
     let system = req.body["system"]
         .as_array()
         .expect("system must be an array when caching");
-    assert_eq!(system.len(), 1, "one system block (no dynamic suffix)");
+    assert_eq!(system.len(), 1, "one system block");
     assert_eq!(system[0]["type"], "text");
     assert_eq!(system[0]["text"], "be helpful");
     assert_eq!(system[0]["cache_control"]["type"], "ephemeral");

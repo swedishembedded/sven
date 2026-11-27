@@ -30,7 +30,7 @@ Open:
 
 | Id | Gap | Acceptance |
 |---|---|---|
-| GL-S2b | A fork starts from a whole trajectory; choosing state `s_t` inside it means giving `--load-trace` a trajectory cut at that step. A block that is not a system-prompt section (the dynamic suffix, a message) cannot be dropped. | `--load-trace` takes a step index; a named non-section block can be dropped |
+| GL-S2b | A fork starts from a whole trajectory; choosing state `s_t` inside it means giving `--load-trace` a trajectory cut at that step. A block that is not a system-prompt section (a message) cannot be dropped. | `--load-trace` takes a step index; a named non-section block can be dropped |
 | GL-S4 | A person-guided session (`sven --interactive PROMPT`) recorded with the fidelity of a headless run; partial: since 06b2ecc5 the TUI sends what a headless run sends (append, sampling, time line) and marks typed turns `extra.sven.origin: human`; its `--record-requests` log is the headless format. Open: its ATIF trace is folded from the chat view, so steps lack per-request `metrics`, `extra.sven.timing`, `tool_definitions`, `final_metrics` and the outcome stamp the headless `StepAssembler` writes; and it offers `ask_question`, which a headless run does not | the trace of an interactive run of a scripted mock task equals the headless trace of the same turns step for step, apart from the `human` steps |
 | GL-S1b | Side-by-side sub-agents are each handed the whole remainder, so together they can take the parent past its bound (it stops at its next completion); a sub-agent whose turn fails reports no spending. | children share one reservation; a failed child's spending is still charged |
 

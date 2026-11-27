@@ -7,7 +7,7 @@
 //! The machine is a dispatcher, not a parser: at every step it matches the
 //! plan step's primitive, does the pure work inline (store, resolve,
 //! branch), emits the kernel's typed effects for the impure primitives, and
-//! points the walk at the successor step. There is no second engine here —
+//! points the walk at the successor step. There is no second engine here -
 //! every side effect is an existing kernel `Effect`, every completion an
 //! existing kernel `Event`, and the permission gate sees nothing it does
 //! not already see for the hardcoded machines.
@@ -18,7 +18,7 @@
 //!   the universal **tick** afterwards: whenever nothing is in flight, a
 //!   message executes the step the walk points at. A pure chain (assign,
 //!   branch) advances itself through the machine's
-//!   internal advance signal — the kernel's executor bounces each
+//!   internal advance signal - the kernel's executor bounces each
 //!   `EmitInternal` back as an internal event, the same round trip the
 //!   other machines use.
 //! * An impure primitive parks the run in its `Waiting*` state and emits
@@ -66,7 +66,7 @@ pub struct HarnessMachine {
     /// labels come from here; a restored machine takes its leaf from the
     /// snapshot instead.
     pub(super) leaf: HarnessState,
-    /// The effect of the step the walk most recently parked on — what
+    /// The effect of the step the walk most recently parked on - what
     /// [`HarnessMachine::step_effect`] answers.
     pub(super) step_effect_cache: Option<Effect>,
     /// The outcome, once a terminal step executed.
@@ -93,7 +93,7 @@ impl HarnessMachine {
     }
 
     /// The run data this machine was built with: the plan, the inputs, and
-    /// — for a bundle run — the pinned bundle digest.
+    /// - for a bundle run - the pinned bundle digest.
     #[must_use]
     pub fn run(&self) -> &HarnessRunData {
         &self.run
@@ -178,7 +178,7 @@ impl HarnessMachine {
     }
 
     /// Builds a single-turn `CallLlm` request for `prompt`: no tools, no
-    /// all-tools fallback, no tool rounds — a constrained turn. When the
+    /// all-tools fallback, no tool rounds - a constrained turn. When the
     /// step names a declared schema, the turn carries it as the response
     /// format.
     pub(super) fn turn_effect(
@@ -224,7 +224,6 @@ impl HarnessMachine {
             schema,
             schema_name: name,
             model: None,
-            dynamic_suffix: None,
             max_tool_rounds: Some(0),
             answered_calls: Vec::new(),
             origin: shape.origin.map(str::to_string),
@@ -367,7 +366,7 @@ impl HarnessMachine {
     /// signal (the kernel's executor bounces it back as an internal
     /// event); the bounced event executes the step the walk points at and
     /// keeps executing pure steps inline until the walk parks on a side
-    /// effect or rests terminal. A message is also an advance — a tick for
+    /// effect or rests terminal. A message is also an advance - a tick for
     /// a run that parked idle after its last side effect completed. A
     /// cancel moves to [`HarnessState::Cancelled`].
     fn on_advancing(&mut self, event: &Event, ctx: &mut Context) -> Reaction<HarnessState> {
@@ -647,7 +646,7 @@ pub(super) fn verdict_text(verdict: &VerifierVerdict) -> String {
     }
 }
 
-/// A primitive in words — the same word a `StepStarted` trace record and
+/// A primitive in words - the same word a `StepStarted` trace record and
 /// its event carry.
 pub(super) fn primitive_word(primitive: &PlanPrimitive) -> &'static str {
     match primitive {
@@ -665,7 +664,7 @@ pub(super) fn primitive_word(primitive: &PlanPrimitive) -> &'static str {
     }
 }
 
-/// A verifier's kind in words — the identity a `Verified` record carries.
+/// A verifier's kind in words - the identity a `Verified` record carries.
 pub(super) fn verifier_word(spec: &sven_vocab::verify::VerifierSpec) -> &'static str {
     use sven_vocab::verify::VerifierSpec;
     match spec {

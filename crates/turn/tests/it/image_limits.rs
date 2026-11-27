@@ -47,7 +47,6 @@ async fn sent(provider: &ScriptedMockProvider, messages: Vec<Message>) -> Vec<Me
         None,
         None,
         None,
-        None,
         TurnLimits::default(),
         &tx,
     )

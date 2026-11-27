@@ -145,13 +145,10 @@ pub struct PromptManifest {
     /// One digest over the ordered tool list: a reordering or an added or
     /// removed tool changes it as well as the tool's own digest.
     pub tools_sha256: String,
-    /// SHA-256 of the volatile suffix appended after the cached system block.
-    pub dynamic_suffix_sha256: Option<String>,
 }
 
 impl PromptManifest {
-    /// The manifest of a request made of `messages`, `tools` and
-    /// `dynamic_suffix`. `sections` is what the composer reported for the
+    /// The manifest of a request made of `messages` and `tools`. `sections` is what the composer reported for the
     /// system text it rendered, if the caller has it.
     ///
     /// `None` when `sections` is given but the first message no longer is
@@ -162,7 +159,6 @@ impl PromptManifest {
         messages: &[Message],
         sections: Option<&PromptSections>,
         tools: &[ToolSchema],
-        dynamic_suffix: Option<&str>,
     ) -> Option<Self> {
         let system = messages
             .first()
@@ -188,7 +184,6 @@ impl PromptManifest {
             sections,
             tools_sha256: sha256_hex(list.as_bytes()),
             tools,
-            dynamic_suffix_sha256: dynamic_suffix.map(|s| sha256_hex(s.as_bytes())),
         })
     }
 }
@@ -300,8 +295,8 @@ mod tests {
     #[test]
     fn tool_list_digest_follows_the_order() {
         let (a, b) = (tool("a", json!({})), tool("b", json!({})));
-        let ab = PromptManifest::describe(&[], None, &[a.clone(), b.clone()], None).unwrap();
-        let ba = PromptManifest::describe(&[], None, &[b, a], None).unwrap();
+        let ab = PromptManifest::describe(&[], None, &[a.clone(), b.clone()]).unwrap();
+        let ba = PromptManifest::describe(&[], None, &[b, a]).unwrap();
         assert_ne!(ab.tools_sha256, ba.tools_sha256);
         assert_eq!(ab.tools[0].name, "a");
     }
@@ -310,10 +305,9 @@ mod tests {
     fn sections_are_kept_while_the_system_text_is_what_was_composed() {
         let sections = parts("abcdef", &[("a", 2), ("b", 6)]);
         let messages = [Message::system("abcdef"), Message::user("hi")];
-        let m = PromptManifest::describe(&messages, Some(&sections), &[], Some("tail")).unwrap();
+        let m = PromptManifest::describe(&messages, Some(&sections), &[]).unwrap();
         assert_eq!(m.system_sha256.as_deref(), Some(sections.sha256.as_str()));
         assert_eq!(m.sections.len(), 2);
-        assert_eq!(m.dynamic_suffix_sha256, Some(sha256_hex(b"tail")));
     }
 
     #[test]
@@ -323,13 +317,13 @@ mod tests {
             vec![Message::system("summary of abcdef")],
             vec![Message::user("no system message any more")],
         ] {
-            assert!(PromptManifest::describe(&messages, Some(&sections), &[], None).is_none());
+            assert!(PromptManifest::describe(&messages, Some(&sections), &[]).is_none());
         }
     }
 
     #[test]
     fn a_system_text_of_unknown_origin_has_a_hash_and_no_sections() {
-        let m = PromptManifest::describe(&[Message::system("x")], None, &[], None).unwrap();
+        let m = PromptManifest::describe(&[Message::system("x")], None, &[]).unwrap();
         assert!(m.system_sha256.is_some() && m.sections.is_empty());
     }
 }

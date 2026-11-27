@@ -232,7 +232,6 @@ fn attempt_request(
         "",
         None,
         Some(&instruction),
-        None,
         MAX_ROUNDS_PER_ATTEMPT,
         None,
         None,

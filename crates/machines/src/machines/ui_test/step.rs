@@ -136,7 +136,6 @@ pub fn compile_step_effect(step_text: &str, known_vars: &[String]) -> Effect {
             schema: step_schema(),
             schema_name: "ui_test_step".to_string(),
             model: None,
-            dynamic_suffix: None,
             max_tool_rounds: Some(1),
             answered_calls: Vec::new(),
             origin: None,

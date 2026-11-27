@@ -276,7 +276,7 @@ mod tests {
         let messages = vec![Message::system(text), Message::user("go")];
         let tools = vec![tool("read"), tool("grep")];
         CompletionRequest {
-            manifest: PromptManifest::describe(&messages, Some(&sections), &tools, None),
+            manifest: PromptManifest::describe(&messages, Some(&sections), &tools),
             messages,
             tools,
             ..CompletionRequest::default()

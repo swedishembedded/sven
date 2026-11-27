@@ -124,15 +124,7 @@ impl sven_model::ModelProvider for CohereProvider {
                 match m.role {
                     Role::System => {
                         if let Some(t) = m.as_text() {
-                            system_text = if let Some(suffix) = &req.system_dynamic_suffix {
-                                if !suffix.trim().is_empty() {
-                                    format!("{t}\n\n{suffix}")
-                                } else {
-                                    t.to_string()
-                                }
-                            } else {
-                                t.to_string()
-                            };
+                            system_text = t.to_string();
                         }
                     }
                     _ => {

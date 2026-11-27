@@ -36,7 +36,6 @@ async fn run(script: Vec<ResponseEvent>) -> sven_turn::StreamedTurn {
         None,
         None,
         None,
-        None,
         TurnLimits::default(),
         &tx,
     )

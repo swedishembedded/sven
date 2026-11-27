@@ -119,7 +119,6 @@ A state asks for a model turn by emitting `Effect::CallLlm` whose opaque
 | `schema` | JSON Schema the final response must conform to (may be null) |
 | `schema_name` | Short schema name (used for OpenAI strict mode) |
 | `model` | Optional per-state model override (resolved via the model resolver) |
-| `dynamic_suffix` | Volatile context sent as an uncached system block where supported |
 | `max_tool_rounds` | Maximum model↔tool rounds before a forced wrap-up |
 | `refused_calls` | Tool calls refused before they ran; answered in the thread before the model is called |
 | `active_tools`, `active_instructions`, `state` | Stamped by the kernel on every turn request: the tools the model has loaded, the active instructions, and the label of the emitting state. Machines leave them empty |

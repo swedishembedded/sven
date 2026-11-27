@@ -53,7 +53,6 @@ impl Segments {
         &mut self,
         thread: &str,
         messages: &[Message],
-        dynamic_suffix: Option<&str>,
         tools: &[ToolSchema],
     ) -> Option<(u32, ContextRewrite)> {
         let (system_messages, history): (Vec<&Message>, Vec<&Message>) =
@@ -64,7 +63,7 @@ impl Segments {
             .collect();
         let now = Sent {
             segment: 0,
-            system: digest!(&(&system_messages, dynamic_suffix)),
+            system: digest!(&system_messages),
             tools: digest!(&tool_digests),
             history: history.iter().map(|m| digest!(m)).collect(),
         };
@@ -104,46 +103,37 @@ mod tests {
     #[test]
     fn a_request_that_does_not_extend_the_last_starts_a_segment_and_says_why() {
         let mut segments = Segments::default();
-        let system = Message::system("you are an agent");
-        let mut history = vec![system.clone(), Message::user("go")];
+        let mut history = vec![Message::system("you are an agent"), Message::user("go")];
         let tools = [tool("shell")];
-        assert_eq!(segments.observe("t", &history, None, &tools), None);
+        let more = [tool("shell"), tool("read")];
+        assert_eq!(segments.observe("t", &history, &tools), None);
         history.push(Message::assistant("ok"));
         history.push(Message::user("more"));
         assert_eq!(
-            segments.observe("t", &history, None, &tools),
+            segments.observe("t", &history, &tools),
             None,
             "an extension"
         );
+        history[0] = Message::system("you are an agent; it is 12:00");
         assert_eq!(
-            segments.observe("t", &history, Some("now 12:00"), &tools),
+            segments.observe("t", &history, &tools),
             Some((1, ContextRewrite::System))
         );
         assert_eq!(
-            segments.observe(
-                "t",
-                &history,
-                Some("now 12:00"),
-                &[tool("shell"), tool("read")]
-            ),
+            segments.observe("t", &history, &more),
             Some((2, ContextRewrite::Tools))
         );
         let compacted = vec![
-            system,
+            history[0].clone(),
             Message::user("notes: did things"),
             Message::user("more"),
         ];
         assert_eq!(
-            segments.observe(
-                "t",
-                &compacted,
-                Some("now 12:00"),
-                &[tool("shell"), tool("read")]
-            ),
+            segments.observe("t", &compacted, &more),
             Some((3, ContextRewrite::History))
         );
         assert_eq!(
-            segments.observe("other", &compacted, None, &tools),
+            segments.observe("other", &compacted, &tools),
             None,
             "threads are apart"
         );

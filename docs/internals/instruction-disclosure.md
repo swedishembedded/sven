@@ -78,10 +78,11 @@ refuses the file: it is not loaded, and the log names the file and the reason.
   a conditional activation block are left out, so the prompt, and with it the
   provider's cached prefix, does not depend on what a session touches. Where
   something was left out, the section says how many more will be announced.
-- Each request carries an `## Active Instructions` block in the dynamic suffix
-  of the system message (the part after the cached prefix), listing every
-  activated instruction by command or name and a summary of at most 80
-  characters.
+- An instruction is announced once, when it becomes active: an `## Active
+  Instructions` note appended to the conversation as a user-role message,
+  listing it by command or name and a summary of at most 80 characters. The
+  system prompt never changes for it, so every later request still extends the
+  one before.
 - A skill whose activation is conditional can be loaded at any time with
   `skill` `action: "load"`, and `action: "list"` shows every skill, activated or
   not.

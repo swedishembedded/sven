@@ -109,14 +109,6 @@ impl sven_model::ModelProvider for GoogleProvider {
             match m.role {
                 Role::System => {
                     if let Some(t) = m.as_text() {
-                        // Append dynamic context directly to the system text;
-                        // Gemini does not have a separate uncached-block concept.
-                        if let Some(suffix) = &req.system_dynamic_suffix {
-                            if !suffix.trim().is_empty() {
-                                system_parts.push(json!({ "text": format!("{t}\n\n{suffix}") }));
-                                continue;
-                            }
-                        }
                         system_parts.push(json!({ "text": t }));
                     }
                 }

@@ -98,10 +98,6 @@ pub struct TurnRequest {
     /// Optional per-state model override (resolved via the model resolver).
     #[serde(default)]
     pub model: Option<String>,
-    /// Volatile context suffix forwarded to providers that support uncached
-    /// system blocks (e.g. Anthropic).
-    #[serde(default)]
-    pub dynamic_suffix: Option<String>,
     /// Maximum tool-call rounds before a forced wrap-up turn.
     #[serde(default)]
     pub max_tool_rounds: Option<u32>,

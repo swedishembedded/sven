@@ -624,14 +624,6 @@ pub struct CompletionRequest {
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSchema>,
     pub stream: bool,
-    /// Dynamic context (e.g. git branch/commit, CI info) that should NOT be
-    /// included in the cached portion of the system prompt.
-    ///
-    /// When `None`, all context is already in `messages[0]` (system message)
-    /// as usual.  When `Some`, the Anthropic provider appends this as a second
-    /// system block *without* `cache_control`, so only the stable prefix is
-    /// cached.  Other providers append it to the system message text.
-    pub system_dynamic_suffix: Option<String>,
     /// Stable session identifier forwarded to providers that support an
     /// explicit cache key (e.g. OpenRouter's `prompt_cache_key`).  Using
     /// the same key across all requests in a session encourages the provider

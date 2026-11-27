@@ -57,9 +57,6 @@ const RUNTIME_SECTIONS: [&str; 7] = [
     "CI Environment",
 ];
 
-/// Section name under which the request's dynamic system suffix is counted.
-const DYNAMIC_SUFFIX_SECTION: &str = "dynamic_suffix";
-
 /// Tool name given to a tool result whose call is not in the history.
 const UNKNOWN_TOOL: &str = "unknown";
 
@@ -97,11 +94,6 @@ pub fn estimate_request(request: &CompletionRequest) -> RequestBreakdown {
 
     for schema in &request.tools {
         *b.tool_schemas.entry(schema.name.clone()).or_default() += schema_tokens(schema);
-    }
-    if let Some(suffix) = &request.system_dynamic_suffix {
-        *b.system_runtime
-            .entry(DYNAMIC_SUFFIX_SECTION.to_string())
-            .or_default() += text_tokens(suffix);
     }
 
     let tool_names = tool_names_by_call_id(&request.messages);
@@ -332,7 +324,6 @@ mod tests {
             messages,
             tools,
             stream: true,
-            system_dynamic_suffix: None,
             cache_key: None,
             max_output_tokens_override: None,
             core_tool_count: 0,
@@ -367,7 +358,7 @@ mod tests {
 
     #[test]
     fn every_source_is_attributed_and_the_parts_sum_to_the_estimate() {
-        let mut req = request(
+        let req = request(
             vec![
                 Message::system(
                     "You are Sven.\n\n## Skills\nskill list here\n\n## Guidelines\nbe brief",
@@ -380,7 +371,6 @@ mod tests {
             ],
             vec![schema("read_file", "reads a file"), schema("shell", "runs")],
         );
-        req.system_dynamic_suffix = Some("## Git Context\nbranch main".into());
 
         let b = estimate_request(&req);
 
@@ -391,7 +381,6 @@ mod tests {
         assert!(b.tool_call_arguments["read_file"] > 0);
         assert!(b.system_stable > 0);
         assert!(b.system_runtime["Skills"] > 0);
-        assert!(b.system_runtime["dynamic_suffix"] > 0);
         assert_eq!(b.tool_schemas.len(), 2);
         assert_eq!(b.estimated_total, b.attributed_total());
         assert!(b.estimated_total > 895, "{}", b.estimated_total);

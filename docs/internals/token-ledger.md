@@ -29,7 +29,7 @@ records read each other.
 |-------|---------|
 | `estimator` | name of the estimator that produced the figures (`bytes_div_4`) |
 | `system_stable` | system instructions that do not change within a session |
-| `system_runtime` | system-prompt sections built from the runtime context, by section: `Skills`, `Subagents`, `Knowledge Base`, `Project Context`, `Project Instructions`, `Git Context`, `CI Environment`, and `dynamic_suffix` (the uncached suffix) |
+| `system_runtime` | system-prompt sections built from the runtime context, by section: `Skills`, `Subagents`, `Knowledge Base`, `Project Context`, `Project Instructions`, `Git Context` and `CI Environment` |
 | `tool_schemas` | each tool's schema (name, description, parameters), by tool name |
 | `user` | user-authored text |
 | `assistant` | assistant text replayed from history |
@@ -46,7 +46,7 @@ records read each other.
 | `decision` | the decision-model inference the request's context was shaped by, since the previous request: `calls` (cache hits are not calls), `latency_ms` (wall time waited), `model_id`, `batch_size` (the most questions one call carried); `load_time_ms` stays empty because the provider does not report it. Absent when no decision ran. See [decisions](decisions.md) |
 | `wall_ms` | time from sending the request to the end of its response |
 | `first_token_ms` | time from sending the request to the first thinking, text or tool-call content of its response; absent when the response had none |
-| `context_blocks` | the context blocks the completion saw, in request order, each `{name, sha256}`: `system/<section>` for each named system-prompt section (`system/append`, `system/knowledge`, ...), `system` for a system prompt whose sections are not known (one a compaction rewrote), `system/dynamic_suffix`, and `tools` for the offered tool definitions together. Names say where a block came from, never what it says; two completions saw the same block exactly when name and digest agree |
+| `context_blocks` | the context blocks the completion saw, in request order, each `{name, sha256}`: `system/<section>` for each named system-prompt section (`system/append`, `system/knowledge`, ...), `system` for a system prompt whose sections are not known (one a compaction rewrote), and `tools` for the offered tool definitions together. Names say where a block came from, never what it says; two completions saw the same block exactly when name and digest agree |
 
 Three notions of prompt size are kept apart. The **logical prompt** is
 everything the model read: `input + cache_read + cache_write`, and it is what
