@@ -480,6 +480,20 @@ impl StepAssembler {
         }
     }
 
+    /// Marks where the conversation stopped extending what it sent before:
+    /// the steps after this one belong to segment `segment`, opened because
+    /// `cause` was rewritten (`system`, `tools`, `history`).
+    pub fn push_context_rewritten(&mut self, segment: u32, cause: &str) {
+        self.flush_pending();
+        let mut step = TraceStep::new(
+            self.take_step_id(),
+            StepOrigin::System,
+            format!("context_rewritten: segment {segment} ({cause})"),
+        );
+        step.extra = Some(serde_json::json!({"sven": {"segment": segment, "rewritten": cause}}));
+        self.steps.push(step);
+    }
+
     /// Feed a context-compaction marker into the assembler. Always closes
     /// any currently-open agent step and is pushed immediately as its own
     /// `System` step, with the Section VII `context_management` convention

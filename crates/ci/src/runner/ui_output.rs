@@ -292,6 +292,11 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             let pretty = serde_json::to_string_pretty(&envelope).unwrap_or_default();
             write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
         }
+        UiEvent::ContextRewritten { segment, cause } => {
+            state
+                .assembler
+                .push_context_rewritten(segment, cause.as_str());
+        }
         // The reply as it was filed: what the trajectory holds.
         UiEvent::ReplyFiled(reply) => {
             for msg in sven_model::reply_messages(&reply) {

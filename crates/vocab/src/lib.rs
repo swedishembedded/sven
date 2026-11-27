@@ -59,7 +59,7 @@ pub use tool_image::{ShownImages, ToolImage, MAX_IMAGES, MAX_IMAGE_BASE64_BYTES}
 pub use conclusion::announces_unfinished_work;
 pub use mode::AgentMode;
 pub use notice::{Notice, NoticeError};
-pub use reply::{ArgError, ReplyFinish, SampledCall, SampledReply};
+pub use reply::{ArgError, ContextRewrite, ReplyFinish, SampledCall, SampledReply};
 pub use request::{RequestFold, RequestRecord, Sampled, SamplerSupport, MAX_SAMPLER_SUPPORT};
 pub use sampling::{SamplingControl, SamplingControls};
 pub use served::{
@@ -606,6 +606,10 @@ pub enum SessionEvent {
     /// A note of the runtime filed in the conversation as a user-role message
     /// (a reply stopped before it ended, a retry after a loop).
     NoteFiled(String),
+    /// A request that does not extend the thread's previous one: its system
+    /// prompt, its tools or its history were rewritten. It opens `segment`;
+    /// within a segment every request extends the one before.
+    ContextRewritten { segment: u32, cause: ContextRewrite },
     /// A tool call finished.
     ToolCallFinished {
         call_id: String,

@@ -229,6 +229,9 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
             }
         }
+        AgentEvent::ContextRewritten { segment, cause } => {
+            assembler.push_context_rewritten(segment, cause.as_str());
+        }
         // The reply as it was filed: what the conversation and the trajectory hold.
         AgentEvent::ReplyFiled(reply) => {
             for msg in sven_model::reply_messages(&reply) {

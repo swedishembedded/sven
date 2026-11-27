@@ -94,6 +94,7 @@ mod limits;
 mod outcomes;
 mod overflow;
 mod replies;
+mod segments;
 
 pub use limits::CompactionConfig;
 
@@ -179,6 +180,8 @@ pub struct TurnExecutor {
     time_notices: std::collections::HashMap<String, sven_turn::NoticeReplay>,
     /// What a request's `attachments` are relative to: the project root.
     attachment_root: Option<std::path::PathBuf>,
+    /// What each thread sent last, to tell where a segment ends.
+    segments: segments::Segments,
 }
 
 impl TurnExecutor {
@@ -213,6 +216,7 @@ impl TurnExecutor {
             time_budget: None,
             time_notices: std::collections::HashMap::new(),
             attachment_root: None,
+            segments: segments::Segments::default(),
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
@@ -557,6 +561,14 @@ impl EffectExecutor for TurnExecutor {
 
         // Forward stream_turn's progress events onward while the stream runs.
         let (tx, mut rx) = mpsc::channel::<UiEvent>(256);
+        if let Some((segment, cause)) = self.segments.observe(
+            &thread_id,
+            &messages,
+            req.dynamic_suffix.as_deref(),
+            &tool_schemas,
+        ) {
+            obs.emit(UiEvent::ContextRewritten { segment, cause });
+        }
         let obs_fwd = obs.clone();
         // stream_turn only knows about the model call it just made - it has
         // no memory of prior turns, so it always reports cache_read_total/

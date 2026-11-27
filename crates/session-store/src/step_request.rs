@@ -159,7 +159,7 @@ fn top_lists(sampled: &sven_vocab::Sampled) -> Vec<(&'static str, Value)> {
 }
 
 /// The keys [`decode_facts`] can produce.
-const DECODE_FACT_KEYS: [&str; 15] = [
+const DECODE_FACT_KEYS: [&str; 16] = [
     "seed",
     "decoding",
     "sampling_honoured",
@@ -174,6 +174,7 @@ const DECODE_FACT_KEYS: [&str; 15] = [
     "chat_template_digest",
     "logprob_kind",
     "logprob_temperature",
+    "history",
     "truncated",
 ];
 
@@ -184,7 +185,7 @@ const DECODE_FACT_KEYS: [&str; 15] = [
 fn decode_facts(sampled: &sven_vocab::Sampled) -> Vec<(&'static str, Value)> {
     let identity = &sampled.identity;
     let controls = |set: sven_vocab::SamplingControls| (!set.is_empty()).then(|| json!(set));
-    let facts: [(&'static str, Option<Value>); 15] = [
+    let facts: [(&'static str, Option<Value>); 16] = [
         ("seed", sampled.seed.map(Value::from)),
         ("decoding", sampled.decoding.as_ref().map(|d| json!(d))),
         // Which of the controls the request set took effect, and which were
@@ -222,6 +223,8 @@ fn decode_facts(sampled: &sven_vocab::Sampled) -> Vec<(&'static str, Value)> {
             "logprob_temperature",
             identity.logprob_temperature.map(Value::from),
         ),
+        // Whether the server's prompt replayed every earlier reply as sampled.
+        ("history", identity.history.as_ref().map(|h| json!(h))),
         // Only a cut-off is worth saying; a finished response is the rule.
         ("truncated", sampled.truncated.then(|| Value::from(true))),
     ];

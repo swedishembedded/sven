@@ -21,6 +21,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use serde_json::Value;
 
+/// What a request rewrote of the conversation it extends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextRewrite {
+    /// The system prompt changed.
+    System,
+    /// The tools offered changed.
+    Tools,
+    /// The history is not the previous one extended (a compaction).
+    History,
+}
+
+impl ContextRewrite {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ContextRewrite::System => "system",
+            ContextRewrite::Tools => "tools",
+            ContextRewrite::History => "history",
+        }
+    }
+}
+
 /// How a reply ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
