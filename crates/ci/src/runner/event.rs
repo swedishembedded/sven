@@ -191,10 +191,6 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
         }
         AgentEvent::TextComplete(text) => {
             if !text.is_empty() {
-                let msg = Message::assistant(&text);
-                collected.push(msg.clone());
-                assembler.push_message(&msg);
-                stream_new_steps(assembler, s.emitted_steps, output_format);
                 // Ensure trailing newline after streamed text in conversation format
                 if output_format == OutputFormat::Conversation && *sven_header_emitted {
                     if !text.ends_with('\n') {
@@ -215,18 +211,6 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
             ));
             tools_used.push(tc.name.clone());
             let args_str = serde_json::to_string(&tc.args).unwrap_or_default();
-            let msg = Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: tc.id.clone(),
-                    function: FunctionCall {
-                        name: tc.name.clone(),
-                        arguments: args_str.clone(),
-                    },
-                },
-                reasoning: None,
-                sampled: None,
-            };
             // Stream tool call section to stdout in conversation format
             if output_format == OutputFormat::Conversation {
                 // Ensure any open Sven text section is closed first
@@ -244,8 +228,13 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 let pretty = serde_json::to_string_pretty(&envelope).unwrap_or_default();
                 write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
             }
-            collected.push(msg.clone());
-            assembler.push_message(&msg);
+        }
+        // The reply as it was filed: what the conversation and the trajectory hold.
+        AgentEvent::ReplyFiled(reply) => {
+            for msg in sven_model::reply_messages(&reply) {
+                collected.push(msg.clone());
+                assembler.push_message(&msg);
+            }
             stream_new_steps(assembler, s.emitted_steps, output_format);
         }
         AgentEvent::ToolCallFinished {

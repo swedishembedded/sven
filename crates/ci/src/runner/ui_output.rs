@@ -14,7 +14,7 @@
 use atif::{AgentProfile, Trajectory};
 use sven_bootstrap::Config;
 use sven_hsm::UiEvent;
-use sven_model::{FunctionCall, Message, MessageContent, Role};
+use sven_model::Message;
 use sven_session_store::trace_session::{self, StepAssembler, SvenSessionMeta};
 use sven_session_store::{apply_outcome_to_trajectory, make_title, OutcomeFold, Verdict};
 use sven_tool_api::ToolCall;
@@ -253,9 +253,6 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
         // Deltas were already streamed; only emit the complete text if nothing
         // streamed (some providers send a single TextComplete with no deltas).
         UiEvent::TextComplete(t) => {
-            if !t.is_empty() {
-                state.assembler.push_message(&Message::assistant(&t));
-            }
             if state.streamed_text.is_empty() && !t.is_empty() {
                 ensure_user_header(state);
                 write_stdout("## Sven\n");
@@ -294,18 +291,12 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             });
             let pretty = serde_json::to_string_pretty(&envelope).unwrap_or_default();
             write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
-            state.assembler.push_message(&Message {
-                role: Role::Assistant,
-                content: MessageContent::ToolCall {
-                    tool_call_id: call_id,
-                    function: FunctionCall {
-                        name,
-                        arguments: args_str,
-                    },
-                },
-                reasoning: None,
-                sampled: None,
-            });
+        }
+        // The reply as it was filed: what the trajectory holds.
+        UiEvent::ReplyFiled(reply) => {
+            for msg in sven_model::reply_messages(&reply) {
+                state.assembler.push_message(&msg);
+            }
         }
         UiEvent::ModelWaiting {
             elapsed_secs,
@@ -920,12 +911,24 @@ mod tests {
     fn the_conversation_is_recorded_into_the_trajectory() {
         let mut st = state(0);
         st.assembler.push_message(&Message::user("do a thing"));
+        let reply = |text: &str, calls: Vec<sven_vocab::SampledCall>| {
+            UiEvent::ReplyFiled(sven_vocab::SampledReply {
+                text: text.into(),
+                reasoning: String::new(),
+                calls,
+                sampled: None,
+                finish: sven_vocab::ReplyFinish::Stop,
+            })
+        };
         handle_ui_event(
-            UiEvent::ToolCallStarted(ToolCall {
-                id: "tc-1".into(),
-                name: "read_file".into(),
-                args: serde_json::json!({"path": "a.txt"}),
-            }),
+            reply(
+                "",
+                vec![sven_vocab::SampledCall {
+                    id: "tc-1".into(),
+                    name: "read_file".into(),
+                    arguments: r#"{"path": "a.txt"}"#.into(),
+                }],
+            ),
             &mut st,
         );
         handle_ui_event(
@@ -939,7 +942,7 @@ mod tests {
             },
             &mut st,
         );
-        handle_ui_event(UiEvent::TextComplete("all done".into()), &mut st);
+        handle_ui_event(reply("all done", Vec::new()), &mut st);
 
         let steps = st.assembler.finish();
         assert!(!steps.is_empty(), "the run must produce trace steps");
@@ -948,5 +951,9 @@ mod tests {
         assert!(rendered.contains("read_file"), "tool call missing");
         assert!(rendered.contains("contents"), "tool result missing");
         assert!(rendered.contains("all done"), "assistant reply missing");
+        assert!(
+            rendered.contains(r#"{\"path\": \"a.txt\"}"#),
+            "argument text kept: {rendered}"
+        );
     }
 }

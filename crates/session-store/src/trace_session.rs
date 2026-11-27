@@ -231,11 +231,26 @@ pub use crate::steps_view::{
 #[derive(Debug, Default)]
 struct PendingAgentStep {
     reasoning_content: Option<String>,
+    /// The server's record of what it sampled for the reply, as it sent it.
+    sampled: Option<String>,
     message_text: Option<String>,
     tool_calls: Vec<ToolInvocation>,
     observation_results: Vec<ObservationEntry>,
     metrics: Option<StepMetrics>,
     model_name: Option<String>,
+}
+
+impl PendingAgentStep {
+    /// The reasoning and the server's record a reply's first message carries.
+    /// Reasoning already filed for the step (a thinking block) stays.
+    fn take_reply_parts(&mut self, msg: &Message) {
+        if self.reasoning_content.is_none() {
+            self.reasoning_content.clone_from(&msg.reasoning);
+        }
+        if let Some(raw) = &msg.sampled {
+            self.sampled = Some(raw.get().to_string());
+        }
+    }
 }
 
 /// Streaming assembler that folds a flat stream of conversation events
@@ -398,6 +413,7 @@ impl StepAssembler {
             }
             (Role::Assistant, MessageContent::Text(text)) => {
                 let pending = self.pending_for_response();
+                pending.take_reply_parts(msg);
                 pending.message_text = Some(match pending.message_text.take() {
                     Some(prev) => format!("{prev}\n{text}"),
                     None => text.clone(),
@@ -415,7 +431,9 @@ impl StepAssembler {
                     &function.name,
                     &function.arguments,
                 );
-                self.pending_for_response().tool_calls.push(invocation);
+                let pending = self.pending_for_response();
+                pending.take_reply_parts(msg);
+                pending.tool_calls.push(invocation);
             }
             (
                 Role::Tool,
@@ -671,6 +689,13 @@ impl StepAssembler {
             })
         };
         records.annotate(&mut step);
+        if let Some(raw) = &pending.sampled {
+            let extra = step.extra.get_or_insert_with(|| serde_json::json!({}));
+            if !extra["sven"].is_object() {
+                extra["sven"] = serde_json::json!({});
+            }
+            extra["sven"][crate::steps_view::SAMPLED_KEY] = serde_json::json!(raw);
+        }
         step
     }
 

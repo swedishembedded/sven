@@ -10,4 +10,5 @@
 mod call_records;
 mod host_notice;
 mod request_identity;
+mod resume_exact;
 mod step_per_response;

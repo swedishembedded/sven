@@ -11,8 +11,7 @@
 
 use atif::ToolInvocation;
 
-/// `ToolInvocation::extra` key holding the model's argument text verbatim
-/// when it was not valid JSON.
+/// `ToolInvocation::extra` key holding the model's argument text verbatim.
 pub const RAW_ARGUMENTS_KEY: &str = "raw_arguments";
 
 /// `ToolInvocation::extra` key set to `true` on a call whose arguments could
@@ -20,23 +19,27 @@ pub const RAW_ARGUMENTS_KEY: &str = "raw_arguments";
 /// the empty `arguments` object that stands in for them.
 pub const UNPARSED_ARGUMENTS_KEY: &str = "unparsed_arguments";
 
-/// Builds the ATIF invocation for a tool-call message. Arguments that are
-/// not JSON keep their text under `extra` and are flagged; they are never
-/// silently replaced by `{}`. Blank arguments are a call with no arguments.
+/// Builds the ATIF invocation for a tool-call message: the arguments parsed
+/// where they are JSON, and always the model's argument text verbatim under
+/// `extra`, so a conversation rebuilt from the trajectory sends the call back
+/// as it was written. Arguments that are not JSON are flagged; they are never
+/// replaced by `{}`. Blank arguments are a call with no arguments.
 pub(crate) fn tool_invocation(tool_call_id: &str, name: &str, arguments: &str) -> ToolInvocation {
-    let invocation = ToolInvocation::new(tool_call_id, name);
+    let mut invocation = ToolInvocation::new(tool_call_id, name);
     if arguments.trim().is_empty() {
         return invocation;
     }
     match serde_json::from_str(arguments) {
-        Ok(parsed) => invocation.with_arguments(parsed),
+        Ok(parsed) => {
+            invocation = invocation.with_arguments(parsed);
+            invocation.extra = Some(serde_json::json!({ RAW_ARGUMENTS_KEY: arguments }));
+        }
         Err(_) => {
-            let mut invocation = invocation;
             invocation.extra = Some(serde_json::json!({
                 RAW_ARGUMENTS_KEY: arguments,
                 UNPARSED_ARGUMENTS_KEY: true,
             }));
-            invocation
         }
     }
+    invocation
 }

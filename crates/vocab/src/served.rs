@@ -74,6 +74,24 @@ pub struct ServedIdentity {
     /// for a request only when this is the temperature the request sampled at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logprob_temperature: Option<f64>,
+    /// Whether the server's prompt replayed every earlier reply as it was
+    /// sampled, and if not, where and why it rendered one instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<ServedHistory>,
+}
+
+/// A server's account of how it built a request's prompt from the history
+/// (a brain server's `brain.history`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServedHistory {
+    /// Every earlier reply was replayed as the server sampled it.
+    pub append_only: bool,
+    /// The first message the server rendered instead, by index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diverged_turn: Option<u64>,
+    /// Why (`missing`, `malformed`, `tokenizer`, `prefill`, `context`, `template`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// The run-level identity of a published policy version, as a server that
@@ -125,6 +143,7 @@ impl ServedIdentity {
         take(&mut self.chat_template_digest, other.chat_template_digest);
         take(&mut self.logprob_kind, other.logprob_kind);
         take(&mut self.logprob_temperature, other.logprob_temperature);
+        take(&mut self.history, other.history);
     }
 
     /// Whether the server reported nothing.

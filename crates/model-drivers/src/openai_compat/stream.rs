@@ -12,7 +12,9 @@ use serde_json::Value;
 
 use serde::Deserialize;
 use sven_model::ResponseEvent;
-use sven_vocab::{AdapterRef, LogprobKind, PolicyLineage, SamplerSupport, ServedIdentity};
+use sven_vocab::{
+    AdapterRef, LogprobKind, PolicyLineage, SamplerSupport, ServedHistory, ServedIdentity,
+};
 
 /// The events one SSE `data:` frame carries.
 ///
@@ -521,6 +523,10 @@ pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
             _ => None,
         },
         logprob_temperature: None,
+        history: brain
+            .get("history")
+            .filter(|h| !h.is_null())
+            .and_then(|h| ServedHistory::deserialize(h).ok()),
     };
     (!identity.is_empty()).then_some(identity)
 }

@@ -92,6 +92,7 @@ async fn two_request_agent() -> (Engine, sven_sdk::Agent, sven_sdk::RunOutcome) 
                 chat_template_digest: Some("sha256:cc".into()),
                 logprob_kind: Some(sven_vocab::LogprobKind::Policy),
                 logprob_temperature: Some(1.0),
+                history: None,
             }),
             ResponseEvent::ToolCall {
                 index: 0,

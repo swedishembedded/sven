@@ -626,6 +626,9 @@ pub async fn stream_turn_attributed(
             ReplyFinish::Stop
         },
     };
+    if !reply.text.is_empty() {
+        let _ = tx.send(AgentEvent::TextComplete(reply.text.clone())).await;
+    }
     // Each call as the tool runs it: its parsed arguments, or why it cannot run.
     let mut arg_errors = HashMap::new();
     let mut tool_calls = Vec::with_capacity(reply.calls.len());
@@ -644,9 +647,6 @@ pub async fn stream_turn_attributed(
         tool_calls.push(tc);
     }
 
-    if !reply.text.is_empty() {
-        let _ = tx.send(AgentEvent::TextComplete(reply.text.clone())).await;
-    }
     // The reply as the conversation files it, before the request's records:
     // a consumer that folds events into turns has it when they arrive.
     let _ = tx.send(AgentEvent::ReplyFiled(reply.clone())).await;

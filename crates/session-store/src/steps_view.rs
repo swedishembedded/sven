@@ -19,7 +19,7 @@ use crate::conversation::ConversationRecord;
 /// (equivalent to today's `chat_document::turns_to_messages`).
 ///
 /// - `System`-source steps are skipped entirely.
-/// - Steps with `is_copied_context == Some(true)` are skipped — per the
+/// - Steps with `is_copied_context == Some(true)` are skipped - per the
 ///   spec's SFT-filtering guidance ([`atif::Trajectory::sft_steps`]), repurposed
 ///   here for the same underlying reason: don't replay content the model
 ///   didn't originally produce fresh.
@@ -32,6 +32,10 @@ use crate::conversation::ConversationRecord;
 /// - `reasoning_content` is never message content: it is the
 ///   [`Message::reasoning`] of the turn's first message, which a provider
 ///   that takes reasoning sends back.
+/// `extra.sven` key of an agent step holding the server's record of what it
+/// sampled for the reply, as the exact text it sent.
+pub const SAMPLED_KEY: &str = "sampled";
+
 pub fn steps_to_messages(steps: &[TraceStep]) -> Vec<Message> {
     let mut out = Vec::new();
     for step in steps {
@@ -58,14 +62,28 @@ pub fn steps_to_messages(steps: &[TraceStep]) -> Vec<Message> {
                 }
                 let calls = step.tool_calls.as_deref().unwrap_or_default();
                 for call in calls {
+                    // The text the model wrote, where the trajectory kept it.
+                    let text = call
+                        .extra
+                        .as_ref()
+                        .and_then(|e| e.get(crate::tool_invocation::RAW_ARGUMENTS_KEY))
+                        .and_then(|t| t.as_str())
+                        .map_or_else(|| call.arguments.to_string(), str::to_string);
                     out.push(Message::tool_call(
                         call.tool_call_id.clone(),
                         call.function_name.clone(),
-                        call.arguments.to_string(),
+                        text,
                     ));
                 }
                 if let Some(first) = out.get_mut(first) {
                     first.reasoning.clone_from(&step.reasoning_content);
+                    first.sampled = step
+                        .extra
+                        .as_ref()
+                        .and_then(|e| e["sven"][SAMPLED_KEY].as_str())
+                        .and_then(|raw| {
+                            serde_json::value::RawValue::from_string(raw.to_string()).ok()
+                        });
                 }
                 if let Some(observation) = &step.observation {
                     for call in calls {
@@ -89,7 +107,7 @@ pub fn steps_to_messages(steps: &[TraceStep]) -> Vec<Message> {
 
 /// Extract plain text from a [`MessageBody`]: the text form as-is, or (for
 /// `Segments`) the concatenation of its text segments, dropping any image
-/// segments — a best-effort, documented-lossy fallback since
+/// segments - a best-effort, documented-lossy fallback since
 /// `sven_model::Message` has no way to reference an ATIF file-path image
 /// without reading it into a data URL first (out of scope here; see
 /// [`StepAssembler::push_message`]'s doc comment for the forward-direction
@@ -132,7 +150,7 @@ fn message_body_to_text(body: &MessageBody) -> Option<String> {
 ///   `TurnRecord::Thinking`.
 /// - `tool_calls` are emitted next (each its own `TurnRecord::ToolCall`, in
 ///   array order), matched by `tool_call_id` to their `observation.results`
-///   entry (each its own `TurnRecord::ToolResult`) — same ordering rule as
+///   entry (each its own `TurnRecord::ToolResult`) - same ordering rule as
 ///   [`steps_to_messages`]. Finally, non-empty step `message` text becomes a
 ///   trailing `TurnRecord::User`/`TurnRecord::Assistant` (by `source`).
 pub fn steps_to_turn_records(steps: &[TraceStep]) -> Vec<TurnRecord> {
@@ -211,7 +229,7 @@ pub fn steps_to_turn_records(steps: &[TraceStep]) -> Vec<TurnRecord> {
 /// `Message`-only view [`steps_to_messages`] provides.
 ///
 /// Built directly on [`steps_to_turn_records`] + [`crate::chat_document::turns_to_records`]
-/// — the same full-fidelity turn list, just re-expressed as `ConversationRecord`
+/// - the same full-fidelity turn list, just re-expressed as `ConversationRecord`
 /// instead of the legacy YAML-oriented `TurnRecord`. This keeps exactly one
 /// TraceStep-to-turn-shape algorithm in the crate rather than duplicating the
 /// step-walking logic for two output types.
