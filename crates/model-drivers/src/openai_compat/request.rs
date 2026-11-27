@@ -144,6 +144,7 @@ impl Serialize for MessageWithSampled<'_> {
 /// `values` as a JSON array with each `sampled` record written verbatim
 /// beside its message: the `messages` text a server that takes it as one
 /// string parameter is sent.
+#[cfg(feature = "dbus")]
 pub(crate) fn messages_text(
     values: &[Value],
     sampled: &[(usize, &RawValue)],

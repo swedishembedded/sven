@@ -27,6 +27,8 @@ pub(crate) use models::parse_models_response;
 use probe::derive_server_root;
 #[cfg(test)]
 use request::build_openai_messages;
+#[cfg(feature = "dbus")]
+pub(crate) use request::messages_text;
 pub(crate) use request::{build_openai_messages_with, function_tool};
 use stream::decode_events;
 /// Read by the D-Bus driver, which decodes the same reply fields.
