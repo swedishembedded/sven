@@ -217,6 +217,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message::tool_result("a", bulk),
             Message::assistant("done reading"),

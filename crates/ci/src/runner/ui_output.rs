@@ -304,6 +304,7 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
                     },
                 },
                 reasoning: None,
+                sampled: None,
             });
         }
         UiEvent::ModelWaiting {

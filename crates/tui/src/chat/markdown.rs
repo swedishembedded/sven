@@ -394,6 +394,7 @@ fn parse_message_at_line(lines: &[&str], i: &mut usize) -> Result<Option<Message
                 function: FunctionCall { name, arguments },
             },
             reasoning: None,
+            sampled: None,
         }));
     }
 
@@ -414,6 +415,7 @@ fn parse_message_at_line(lines: &[&str], i: &mut usize) -> Result<Option<Message
                 content: sven_model::ToolResultContent::Text(content),
             },
             reasoning: None,
+            sampled: None,
         }));
     }
 
@@ -553,6 +555,7 @@ mod tests {
             role: Role::User,
             content: MessageContent::Text(text.into()),
             reasoning: None,
+            sampled: None,
         })
     }
     fn agent_seg(text: &str) -> ChatSegment {
@@ -560,6 +563,7 @@ mod tests {
             role: Role::Assistant,
             content: MessageContent::Text(text.into()),
             reasoning: None,
+            sampled: None,
         })
     }
     fn tool_call_seg(call_id: &str, name: &str) -> ChatSegment {
@@ -573,6 +577,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         })
     }
     fn tool_result_seg(call_id: &str, output: &str) -> ChatSegment {
@@ -583,6 +588,7 @@ mod tests {
                 content: output.into(),
             },
             reasoning: None,
+            sampled: None,
         })
     }
 
@@ -594,6 +600,7 @@ mod tests {
             role: Role::User,
             content: MessageContent::Text("hello world".into()),
             reasoning: None,
+            sampled: None,
         };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
@@ -616,6 +623,7 @@ mod tests {
             role: Role::Assistant,
             content: MessageContent::Text("response text".into()),
             reasoning: None,
+            sampled: None,
         };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
@@ -635,6 +643,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         let cache = HashMap::new();
         let md = message_to_markdown(&msg, &cache);
@@ -657,6 +666,7 @@ mod tests {
                 content: "file contents here".into(),
             },
             reasoning: None,
+            sampled: None,
         };
         let md = message_to_markdown(&msg, &cache);
         assert!(
@@ -871,6 +881,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message {
                 role: Role::Tool,
@@ -879,6 +890,7 @@ mod tests {
                     content: "file contents\nline two\nline three".into(),
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message::assistant("The file contains three lines"),
         ];

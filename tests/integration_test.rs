@@ -195,6 +195,7 @@ fn conversation_round_trip_with_tool_call() {
                 },
             },
             reasoning: None,
+            sampled: None,
         },
         Message::tool_result("call_99", "file contents"),
         Message::assistant("Found it"),

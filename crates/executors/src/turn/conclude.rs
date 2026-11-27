@@ -124,6 +124,7 @@ impl TurnExecutor {
                         },
                     },
                     reasoning: None,
+                    sampled: None,
                 });
             }
             // The turn's first message carries the reasoning that preceded

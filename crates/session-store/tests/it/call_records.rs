@@ -28,6 +28,7 @@ fn call(id: &str, name: &str) -> Message {
             },
         },
         reasoning: None,
+        sampled: None,
     }
 }
 

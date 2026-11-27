@@ -174,6 +174,7 @@ impl App {
                         },
                     },
                     reasoning: None,
+                    sampled: None,
                 }));
                 self.save_history_async();
                 self.rerender_chat().await;
@@ -556,6 +557,7 @@ pub(super) fn apply_subagent_update(chat: &mut ChatState, update: &SubagentUpdat
                     },
                 },
                 reasoning: None,
+                sampled: None,
             }));
         }
         SubagentUpdate::ToolCallFinished {

@@ -196,6 +196,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         }];
         NoticeReplay::default().apply(&budget, &mut messages);
         assert_eq!(messages.len(), 2);

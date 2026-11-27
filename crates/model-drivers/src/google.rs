@@ -646,6 +646,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         let tr_msg = Message::tool_result("call_opaque_id_123", "contents");
 

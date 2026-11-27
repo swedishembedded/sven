@@ -552,6 +552,7 @@ responses:
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         let again = CompletionRequest {
             messages: vec![
@@ -684,6 +685,7 @@ responses:
                 },
             },
             reasoning: None,
+            sampled: None,
         });
         request
             .messages

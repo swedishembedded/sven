@@ -121,6 +121,7 @@ impl App {
                         role: Role::Assistant,
                         content: MessageContent::Text(content),
                         reasoning: None,
+                        sampled: None,
                     });
                     let mut chat = ChatState::new();
                     chat.set_segments(vec![seg]);

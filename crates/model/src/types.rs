@@ -273,6 +273,10 @@ pub struct Message {
     /// on every other message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// On the first message of an assistant turn: the server's record of what
+    /// it sampled ([`sven_vocab::SampledReply::sampled`]), echoed unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampled: Option<Box<serde_json::value::RawValue>>,
 }
 
 impl Message {
@@ -281,6 +285,7 @@ impl Message {
             role: Role::System,
             content: MessageContent::Text(text.into()),
             reasoning: None,
+            sampled: None,
         }
     }
 
@@ -289,6 +294,7 @@ impl Message {
             role: Role::User,
             content: MessageContent::Text(text.into()),
             reasoning: None,
+            sampled: None,
         }
     }
 
@@ -297,6 +303,7 @@ impl Message {
             role: Role::Assistant,
             content: MessageContent::Text(text.into()),
             reasoning: None,
+            sampled: None,
         }
     }
 
@@ -316,6 +323,7 @@ impl Message {
                 },
             },
             reasoning: None,
+            sampled: None,
         }
     }
 
@@ -327,6 +335,7 @@ impl Message {
                 content: ToolResultContent::Text(content.into()),
             },
             reasoning: None,
+            sampled: None,
         }
     }
 
@@ -354,6 +363,7 @@ impl Message {
                 content,
             },
             reasoning: None,
+            sampled: None,
         }
     }
 
@@ -377,6 +387,7 @@ impl Message {
             role: Role::User,
             content,
             reasoning: None,
+            sampled: None,
         }
     }
 
@@ -715,6 +726,10 @@ pub enum ResponseEvent {
     /// A thinking/reasoning delta from the model (extended thinking API).
     /// Accumulated into a Thinking segment and collapsed by default in the UI.
     ThinkingDelta(String),
+    /// The server's record of what it sampled for the reply (a brain server's
+    /// `sampled` object), the exact JSON it sent. Sent at most once; echoed
+    /// unchanged with the reply in every later request.
+    Sampled(Box<serde_json::value::RawValue>),
     /// Sampled tokens of the completion, in generation order.
     ///
     /// May arrive several times per completion; consumers append. `ids` and
@@ -869,6 +884,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         assert!(m.as_text().is_none());
     }
@@ -905,6 +921,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         // 12 chars / 4 = 3 tokens
         assert_eq!(m.approx_tokens(), 3);

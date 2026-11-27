@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 
 use anyhow::{bail, Context};
 use futures::{Stream, StreamExt};
+use serde_json::value::RawValue;
 use serde_json::Value;
 
 use serde::Deserialize;
@@ -45,9 +46,82 @@ pub(super) fn parse_sse_data_line(line: &str) -> Option<anyhow::Result<Frame>> {
         }));
     }
     Some(match serde_json::from_str::<Value>(data) {
-        Ok(v) => parse_sse_chunk(&v),
+        Ok(v) => parse_sse_chunk(&v).map(|mut frame| {
+            let sampled = verbatim_parts(data, &mut frame.events);
+            frame.events.extend(sampled);
+            frame
+        }),
         Err(e) => Err(anyhow::anyhow!("malformed stream frame ({e}): {data}")),
     })
+}
+
+/// The parts of a frame that must reach the runtime as the server wrote them,
+/// read from its text rather than from the parsed [`Value`] (whose objects
+/// lose their key order): a reply's `sampled` record (returned as an event),
+/// and a call's `arguments` sent as a JSON object instead of the text the
+/// schema asks for (which replaces the parsed form in its `ToolCall` event).
+fn verbatim_parts(data: &str, events: &mut [ResponseEvent]) -> Option<ResponseEvent> {
+    #[derive(serde::Deserialize)]
+    struct Frame<'a> {
+        #[serde(borrow, default)]
+        choices: Vec<Choice<'a>>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Choice<'a> {
+        #[serde(borrow, default)]
+        delta: Option<Parts<'a>>,
+        #[serde(borrow, default)]
+        message: Option<Parts<'a>>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Parts<'a> {
+        #[serde(borrow, default)]
+        sampled: Option<&'a RawValue>,
+        #[serde(borrow, default)]
+        tool_calls: Vec<Call<'a>>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Call<'a> {
+        #[serde(borrow, default)]
+        function: Option<Function<'a>>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Function<'a> {
+        #[serde(borrow, default)]
+        arguments: Option<&'a RawValue>,
+    }
+    if !data.contains("\"sampled\"")
+        && !data.contains("\"arguments\":{")
+        && !data.contains("\"arguments\": {")
+    {
+        return None;
+    }
+    let frame: Frame<'_> = serde_json::from_str(data).ok()?;
+    let parts = frame
+        .choices
+        .into_iter()
+        .next()
+        .and_then(|c| c.delta.or(c.message))?;
+    let objects = parts.tool_calls.iter().map(|c| {
+        c.function
+            .as_ref()
+            .and_then(|f| f.arguments)
+            .filter(|a| a.get().starts_with('{'))
+    });
+    let mut calls = events.iter_mut().filter_map(|e| match e {
+        ResponseEvent::ToolCall { arguments, .. } => Some(arguments),
+        _ => None,
+    });
+    for raw in objects {
+        let Some(arguments) = calls.next() else { break };
+        if let Some(raw) = raw {
+            *arguments = raw.get().to_string();
+        }
+    }
+    parts
+        .sampled
+        .filter(|raw| raw.get() != "null")
+        .map(|raw| ResponseEvent::Sampled(raw.to_owned()))
 }
 
 /// Drain all complete `\n`-terminated SSE lines from a raw-byte buffer,
@@ -684,13 +758,54 @@ fn field<'a>(places: &[&'a Value], key: &str) -> Option<&'a Value> {
         .find_map(|place| place.get(key).filter(|value| !value.is_null()))
 }
 
-/// A tool call's `arguments` as JSON text. The schema says string; a few
-/// servers send the parsed object instead, which is re-serialised so every
-/// downstream consumer sees one shape.
+/// A tool call's `arguments` as JSON text. The schema says string; a server
+/// that sends the object instead has its text put back by [`verbatim_parts`].
 fn tool_call_arguments(arguments: &Value) -> String {
     match arguments {
         Value::String(s) => s.clone(),
         Value::Null => String::new(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod verbatim_tests {
+    use super::*;
+
+    fn events(line: &str) -> Vec<ResponseEvent> {
+        parse_sse_data_line(line).unwrap().unwrap().events
+    }
+
+    /// A reply's `sampled` record arrives as the exact text the server sent,
+    /// key order and spacing included.
+    #[test]
+    fn a_sampled_record_is_kept_as_the_server_wrote_it() {
+        let raw = r#"{"token_ids":"AQID","finish":"stop","context_len":3,"context_hash":"sha256:ab", "prefill_token_ids":"BA=="}"#;
+        let line = format!(
+            r#"data: {{"choices":[{{"index":0,"delta":{{"sampled":{raw}}},"finish_reason":"stop"}}]}}"#
+        );
+        let got: Vec<String> = events(&line)
+            .into_iter()
+            .filter_map(|e| match e {
+                ResponseEvent::Sampled(r) => Some(r.get().to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(got, vec![raw.to_string()]);
+    }
+
+    /// A server that sends a call's arguments as an object has them taken as
+    /// the text it wrote, not re-serialised.
+    #[test]
+    fn arguments_sent_as_an_object_keep_their_text() {
+        let line = r#"data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"f","arguments":{"z": 1, "a": 2.50}}}]}}]}"#;
+        let args: Vec<String> = events(line)
+            .into_iter()
+            .filter_map(|e| match e {
+                ResponseEvent::ToolCall { arguments, .. } => Some(arguments),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(args, vec![r#"{"z": 1, "a": 2.50}"#.to_string()]);
     }
 }

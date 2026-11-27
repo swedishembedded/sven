@@ -361,6 +361,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         }
     }
 

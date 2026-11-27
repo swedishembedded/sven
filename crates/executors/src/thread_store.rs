@@ -858,6 +858,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
         );
         store.answer_open_calls("t", &HashMap::new());
@@ -906,6 +907,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         let mut store = ThreadStore::new();
         store.append("t", call("ran"));

@@ -225,6 +225,7 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             };
             // Stream tool call section to stdout in conversation format
             if output_format == OutputFormat::Conversation {
@@ -549,6 +550,7 @@ fn handle_subagent_update(
                     function: FunctionCall { name, arguments },
                 },
                 reasoning: None,
+                sampled: None,
             });
         }
         SubagentUpdate::RequestLedger(request) => {

@@ -299,6 +299,7 @@ fn turn_to_record(turn: &TurnRecord) -> Option<ConversationRecord> {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             }))
         }
         TurnRecord::ToolResult {

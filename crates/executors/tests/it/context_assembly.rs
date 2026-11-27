@@ -65,6 +65,7 @@ fn call(id: &str, name: &str, args: &str) -> Message {
             },
         },
         reasoning: None,
+        sampled: None,
     }
 }
 

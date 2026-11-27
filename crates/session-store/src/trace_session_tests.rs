@@ -33,6 +33,7 @@ fn a_message_with_an_image_keeps_its_words_without_an_image_sink() {
             sven_model::ContentPart::image("data:image/png;base64,iVBORw0KGgo="),
         ]),
         reasoning: None,
+        sampled: None,
     });
     let steps = a.finish();
     assert_eq!(steps.len(), 1);
@@ -69,17 +70,11 @@ fn thinking_call_and_result_are_one_step_and_the_final_text_is_the_next() {
     let mut a = StepAssembler::new();
     a.push_message(&Message::user("What is 2+2?"));
     a.push_thinking("The user wants 2+2. That is 4.");
-    a.push_message(&Message {
-        role: Role::Assistant,
-        content: MessageContent::ToolCall {
-            tool_call_id: "call_1".into(),
-            function: FunctionCall {
-                name: "calculator".into(),
-                arguments: r#"{"expr":"2+2"}"#.into(),
-            },
-        },
-        reasoning: None,
-    });
+    a.push_message(&Message::tool_call(
+        "call_1",
+        "calculator",
+        r#"{"expr":"2+2"}"#,
+    ));
     a.push_message(&Message::tool_result("call_1", "4"));
     a.push_message(&Message::assistant("The answer is 4."));
     let steps = a.finish();
@@ -131,17 +126,7 @@ fn multi_turn_conversation_step_ids_sequential() {
     let mut a = StepAssembler::new();
     a.push_message(&Message::user("Hi"));
     a.push_thinking("thinking");
-    a.push_message(&Message {
-        role: Role::Assistant,
-        content: MessageContent::ToolCall {
-            tool_call_id: "c1".into(),
-            function: FunctionCall {
-                name: "tool".into(),
-                arguments: "{}".into(),
-            },
-        },
-        reasoning: None,
-    });
+    a.push_message(&Message::tool_call("c1", "tool", "{}"));
     a.push_message(&Message::tool_result("c1", "result"));
     a.push_message(&Message::assistant("Turn one done."));
     a.push_message(&Message::user("Next task"));
@@ -193,17 +178,7 @@ fn closed_steps_reflects_pushes_without_consuming_assembler() {
 fn snapshot_including_pending_captures_in_flight_turn_without_consuming() {
     let mut a = StepAssembler::new();
     a.push_message(&Message::user("Hi"));
-    a.push_message(&Message {
-        role: Role::Assistant,
-        content: MessageContent::ToolCall {
-            tool_call_id: "c1".into(),
-            function: FunctionCall {
-                name: "tool".into(),
-                arguments: "{}".into(),
-            },
-        },
-        reasoning: None,
-    });
+    a.push_message(&Message::tool_call("c1", "tool", "{}"));
     // No tool result / closing event yet - the agent step is still open.
     assert_eq!(
         a.closed_steps().len(),
@@ -277,17 +252,7 @@ fn push_subagent_embedded_attaches_to_pending_tool_call_step_without_splitting_i
     // guard for that.
     let mut a = StepAssembler::new();
     a.push_message(&Message::user("delegate this"));
-    a.push_message(&Message {
-        role: Role::Assistant,
-        content: MessageContent::ToolCall {
-            tool_call_id: "tc-task".into(),
-            function: FunctionCall {
-                name: "task".into(),
-                arguments: "{}".into(),
-            },
-        },
-        reasoning: None,
-    });
+    a.push_message(&Message::tool_call("tc-task", "task", "{}"));
     assert_eq!(
         a.closed_steps().len(),
         1,
@@ -575,17 +540,7 @@ fn steps_to_conversation_records_preserves_thinking_and_tool_calls() {
         ConversationRecord::Thinking {
             content: "I should compute it.".to_string(),
         },
-        ConversationRecord::Message(Message {
-            role: Role::Assistant,
-            content: MessageContent::ToolCall {
-                tool_call_id: "call_1".into(),
-                function: FunctionCall {
-                    name: "calc".into(),
-                    arguments: r#"{"expr":"2+2"}"#.into(),
-                },
-            },
-            reasoning: None,
-        }),
+        ConversationRecord::Message(Message::tool_call("call_1", "calc", r#"{"expr":"2+2"}"#)),
         ConversationRecord::Message(Message::tool_result("call_1", "4")),
         ConversationRecord::Message(Message::assistant("The answer is 4.")),
     ];
@@ -675,6 +630,7 @@ fn full_round_trip_multi_turn_conversation() {
             },
             // The thinking before it comes back on the turn's first message.
             reasoning: Some("I should search first.".into()),
+            sampled: None,
         }),
         ConversationRecord::Message(Message::tool_result("call_1", "found: main.rs")),
         ConversationRecord::Message(Message::assistant(

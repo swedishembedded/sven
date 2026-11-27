@@ -107,10 +107,9 @@ pub struct OpenAICompatProvider {
     /// has said it takes gzip (`Accept-Encoding` on an answer, RFC 7694), so
     /// a service too old to read one is never sent one.
     compress_requests: std::sync::atomic::AtomicBool,
-    /// Whether the server is a local one (brain, vLLM, llama.cpp): past turns'
-    /// reasoning goes back as `reasoning_content`, which its chat template
-    /// renders, and it gets the thinking controls. Hosted APIs define reasoning
-    /// replay differently (DeepSeek refuses the field), so they get neither.
+    /// Whether the server is a local one (brain, vLLM, llama.cpp): it gets the
+    /// thinking controls even when the driver is `openai`, whose hosted API
+    /// refuses them.
     local_endpoint: bool,
 }
 
@@ -402,10 +401,11 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
 
         // Build the messages array.  For Anthropic/Gemini-via-OpenRouter we use
         // content blocks so that the stable prefix can carry cache_control.
-        let messages: Vec<Value> = if use_block_cache {
+        let merged;
+        let wire = if use_block_cache {
             // Build messages without merging the dynamic suffix; it will be
             // handled below as a separate uncached system content block.
-            build_openai_messages_with(&req.messages, self.local_endpoint)
+            build_openai_messages_with(&req.messages)
         } else if let Some(suffix) = &req.system_dynamic_suffix {
             // Standard path: merge dynamic suffix into the system message text.
             // OpenAI has a single "system" message; there is no separate
@@ -420,10 +420,12 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
                     }
                 }
             }
-            build_openai_messages_with(&msgs, self.local_endpoint)
+            merged = msgs;
+            build_openai_messages_with(&merged)
         } else {
-            build_openai_messages_with(&req.messages, self.local_endpoint)
+            build_openai_messages_with(&req.messages)
         };
+        let (messages, sampled) = (wire.values, wire.sampled);
 
         let mut tools: Vec<Value> = req.tools.iter().map(function_tool).collect();
         if use_block_cache {
@@ -676,6 +678,11 @@ impl sven_model::ModelProvider for OpenAICompatProvider {
         tracing::trace!(request_body = ?body, "full completion request");
 
         let request = |body: &Value| -> anyhow::Result<reqwest::RequestBuilder> {
+            // Each reply's `sampled` record goes back as the server sent it.
+            let body = &request::WithSampled {
+                body,
+                sampled: &sampled,
+            };
             let mut http_req = if self
                 .compress_requests
                 .load(std::sync::atomic::Ordering::Relaxed)
@@ -1319,6 +1326,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         let messages = [
             call("tc-1"),
@@ -1555,21 +1563,6 @@ mod tests {
 
     // ── Parallel tool call coalescing ────────────────────────────────────────
 
-    /// A turn's reasoning goes back as `reasoning_content` only where asked
-    /// (a local server's template renders it); never otherwise.
-    #[test]
-    fn a_turns_reasoning_is_sent_only_to_servers_that_take_it() {
-        use sven_model::Message;
-        let mut turn = Message::tool_call("call_1", "read_file", "{}");
-        turn.reasoning = Some("read it first".into());
-        let msgs = vec![turn, Message::tool_result("call_1", "x")];
-        let local = build_openai_messages_with(&msgs, true);
-        assert_eq!(local[0]["reasoning_content"], "read it first");
-        assert!(local[1].get("reasoning_content").is_none());
-        let hosted = build_openai_messages_with(&msgs, false);
-        assert!(hosted[0].get("reasoning_content").is_none());
-    }
-
     /// The API's assistant message holds the turn's `content` and its
     /// `tool_calls` together; sending the text as a message of its own makes
     /// a turn that ended before its calls.
@@ -1588,6 +1581,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message::tool_result("call_1", "x"),
         ];
@@ -1611,6 +1605,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message {
                 role: Role::Assistant,
@@ -1622,6 +1617,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message::tool_result("call_1", "found 3 files"),
             Message::tool_result("call_2", "int main() {}"),
@@ -1716,6 +1712,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message::tool_result("call_1", "file.txt"),
         ];

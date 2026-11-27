@@ -31,6 +31,7 @@ pub fn reduce_history(ev: &SessionEvent, history: &mut Vec<Message>) {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             });
         }
         SessionEvent::ToolCallFinished {

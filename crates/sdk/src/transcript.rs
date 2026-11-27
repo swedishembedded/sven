@@ -197,6 +197,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message {
                 role: Role::Tool,
@@ -205,6 +206,7 @@ mod tests {
                     content: ToolResultContent::Text("active deployment: staging".into()),
                 },
                 reasoning: None,
+                sampled: None,
             },
         ];
         let turns = from_history(&history);
@@ -235,6 +237,7 @@ mod tests {
             role: Role::User,
             content: MessageContent::ContentParts(Vec::new()),
             reasoning: None,
+            sampled: None,
         }];
         assert_eq!(
             from_history(&history),
@@ -258,6 +261,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         assert_eq!(from_history(&[call("a"), call("b")]).len(), 2);
     }

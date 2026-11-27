@@ -248,6 +248,7 @@ pub fn flatten_messages(messages: &[Message]) -> Vec<Value> {
                 reasoning,
                 content,
                 calls,
+                ..
             } => {
                 let mut message = json!({
                     "role": "assistant",
@@ -645,6 +646,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message::tool_result("c1", "no matches"),
         ];
@@ -672,6 +674,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         let mut opening = Message::assistant("Let me run grep:");
         opening.reasoning = Some("grep finds it".into());

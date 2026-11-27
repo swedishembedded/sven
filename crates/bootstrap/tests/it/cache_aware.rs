@@ -36,6 +36,7 @@ fn call(id: &str) -> Message {
             },
         },
         reasoning: None,
+        sampled: None,
     }
 }
 

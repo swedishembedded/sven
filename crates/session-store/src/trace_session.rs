@@ -848,6 +848,7 @@ fn push_turn_record(assembler: &mut StepAssembler, turn: &TurnRecord) {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             });
         }
         TurnRecord::ToolResult {

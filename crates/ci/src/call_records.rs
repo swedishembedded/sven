@@ -113,6 +113,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         });
         assembler.push_message(&Message::tool_result("call_a", "ok"));
         assembler.push_message(&Message::user("next"));

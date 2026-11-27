@@ -528,6 +528,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message::tool_result("c1", "src/main.rs"),
             Message::assistant("Found main.rs"),

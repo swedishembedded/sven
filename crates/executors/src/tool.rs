@@ -7,7 +7,7 @@
 //!
 //! ## Concurrency
 //!
-//! Each `CallTool` effect spawns an independent task — there is no sequential
+//! Each `CallTool` effect spawns an independent task - there is no sequential
 //! waiting.  The kernel's single consumer loop returns immediately after
 //! dispatching all effects, and tool results arrive back as events in whatever
 //! order the tasks finish, so a batch of tool calls runs in parallel.
@@ -386,7 +386,7 @@ impl EffectExecutor for ToolExecutor {
         sven_rt::spawn(async move {
             // Resolve the (thread, original_call_id) mapping before running the
             // tool.  The original_call_id is the raw string the LLM returned (e.g.
-            // "call_HyZJn1bTtqVbmzzS3W4VM4xb") — it must match the id recorded in
+            // "call_HyZJn1bTtqVbmzzS3W4VM4xb") - it must match the id recorded in
             // the preceding assistant message or the API will reject the continuation.
             let mapping = call_id_to_thread
                 .lock()
@@ -421,7 +421,7 @@ impl EffectExecutor for ToolExecutor {
             // machine. This task is spawn-and-forget and its `JoinHandle` is
             // dropped, so without this the `call_id` stays in `loop_core`'s
             // pending set forever and the session wedges holding its whole
-            // object graph — with no error surfaced anywhere.
+            // object graph - with no error surfaced anywhere.
             let recorder = CallRecorder::new();
             let started = sven_rt::Instant::now();
             // The call can be cancelled on its own, by its id, while it runs
@@ -588,7 +588,7 @@ impl EffectExecutor for ToolExecutor {
 
             // Emit the outward completion observation so headless / UI observers
             // can render the tool result. This mirrors `UiEvent::ToolStarted`
-            // (emitted by the turn stream) and carries no inward semantics — the
+            // (emitted by the turn stream) and carries no inward semantics - the
             // authoritative result still flows via `Event::ToolSucceeded` /
             // `Event::ToolFailed` below. Emitted after the result is in the
             // conversation, so an observer that keeps the conversation when a
@@ -1339,6 +1339,7 @@ mod tests {
                         },
                     },
                     reasoning: None,
+                    sampled: None,
                 },
             );
             let content = run_tool_effect_with_args(

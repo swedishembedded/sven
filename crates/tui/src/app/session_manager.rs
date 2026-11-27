@@ -688,6 +688,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             }),
             ChatSegment::Message(Message::tool_result("call_1", "4")),
             ChatSegment::Message(Message::assistant("The answer is 4.")),

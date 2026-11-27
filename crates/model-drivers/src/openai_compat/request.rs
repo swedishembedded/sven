@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! OpenAI-compatible request building: message serialisation and role mapping.
 
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::Serialize;
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 
 use sven_model::Role;
@@ -59,22 +62,96 @@ pub(crate) fn role_str(r: &Role) -> &'static str {
     }
 }
 
-/// Convert a slice of [`Message`]s into the OpenAI wire-format JSON array.
+/// The messages of a request in the OpenAI wire format, and the `sampled`
+/// records that go with some of them.
 ///
-/// Extracted as a free function so it can be unit-tested without making HTTP
-/// requests.
+/// A `sampled` record is the exact JSON a server sent with a reply; it is
+/// never parsed into a [`Value`] (which would rewrite it), but written into the
+/// request as it came by [`WithSampled`].
+pub(crate) struct WireMessages<'a> {
+    pub values: Vec<Value>,
+    /// `(index into values, record)`, in order.
+    pub sampled: Vec<(usize, &'a RawValue)>,
+}
+
+/// A request body whose messages carry their `sampled` records verbatim.
+pub(crate) struct WithSampled<'a> {
+    pub body: &'a Value,
+    pub sampled: &'a [(usize, &'a RawValue)],
+}
+
+impl Serialize for WithSampled<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Value::Object(fields) = self.body else {
+            return self.body.serialize(serializer);
+        };
+        let mut map = serializer.serialize_map(Some(fields.len()))?;
+        for (key, value) in fields {
+            match value.as_array().filter(|_| key == "messages") {
+                Some(list) => map.serialize_entry(
+                    key,
+                    &Messages {
+                        list,
+                        sampled: self.sampled,
+                    },
+                )?,
+                None => map.serialize_entry(key, value)?,
+            }
+        }
+        map.end()
+    }
+}
+
+struct Messages<'a> {
+    list: &'a [Value],
+    sampled: &'a [(usize, &'a RawValue)],
+}
+
+impl Serialize for Messages<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(Some(self.list.len()))?;
+        for (i, message) in self.list.iter().enumerate() {
+            match (
+                self.sampled.iter().find(|(at, _)| *at == i),
+                message.as_object(),
+            ) {
+                (Some((_, raw)), Some(fields)) => {
+                    seq.serialize_element(&MessageWithSampled { fields, raw })?
+                }
+                _ => seq.serialize_element(message)?,
+            }
+        }
+        seq.end()
+    }
+}
+
+struct MessageWithSampled<'a> {
+    fields: &'a serde_json::Map<String, Value>,
+    raw: &'a RawValue,
+}
+
+impl Serialize for MessageWithSampled<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(self.fields.len() + 1))?;
+        for (key, value) in self.fields {
+            map.serialize_entry(key, value)?;
+        }
+        map.serialize_entry("sampled", self.raw)?;
+        map.end()
+    }
+}
+
+/// Convert a slice of [`Message`]s into the OpenAI wire format.
 ///
 /// **One message per model turn**: the API's assistant message carries the
 /// turn's text (`content`) and all of its calls (`tool_calls`) together.
 /// Sven stores the text and each call as separate messages, so this sends
 /// [`sven_model::turns`] (see there for why it matters).
 ///
-/// With `reasoning` set, each assistant turn's reasoning goes along as
-/// `reasoning_content` (the field local servers' chat templates read).
-pub(crate) fn build_openai_messages_with(
-    messages: &[sven_model::Message],
-    reasoning: bool,
-) -> Vec<Value> {
+/// Each assistant turn goes back as it arrived: its text, its reasoning as
+/// `reasoning_content`, each call's argument text, and the server's `sampled`
+/// record, to every server alike.
+pub(crate) fn build_openai_messages_with(messages: &[sven_model::Message]) -> WireMessages<'_> {
     use sven_model::{ContentPart, MessageContent, ToolContentPart, ToolResultContent};
 
     fn tool_call_to_json(tool_call_id: &str, function: &sven_model::FunctionCall) -> Value {
@@ -146,6 +223,7 @@ pub(crate) fn build_openai_messages_with(
     }
 
     let mut result: Vec<Value> = Vec::with_capacity(messages.len());
+    let mut sampled = Vec::new();
     for turn in sven_model::turns(messages) {
         match turn {
             sven_model::Turn::Message(m) => {
@@ -153,12 +231,11 @@ pub(crate) fn build_openai_messages_with(
                     "role": role_str(&m.role),
                     "content": content_json(&m.content),
                 });
-                if let Some(r) = m
-                    .reasoning
-                    .as_deref()
-                    .filter(|r| reasoning && !r.is_empty())
-                {
+                if let Some(r) = m.reasoning.as_deref().filter(|r| !r.is_empty()) {
                     message["reasoning_content"] = json!(r);
+                }
+                if let Some(raw) = m.sampled.as_deref() {
+                    sampled.push((result.len(), raw));
                 }
                 result.push(message);
             }
@@ -166,6 +243,7 @@ pub(crate) fn build_openai_messages_with(
             // every call it made (the API's `content` + `tool_calls`).
             sven_model::Turn::Assistant {
                 reasoning: turn_reasoning,
+                sampled: turn_sampled,
                 content,
                 calls,
             } => {
@@ -179,8 +257,11 @@ pub(crate) fn build_openai_messages_with(
                 if let Some(content) = content {
                     message["content"] = content_json(content);
                 }
-                if let Some(r) = turn_reasoning.filter(|r| reasoning && !r.is_empty()) {
+                if let Some(r) = turn_reasoning.filter(|r| !r.is_empty()) {
                     message["reasoning_content"] = json!(r);
+                }
+                if let Some(raw) = turn_sampled {
+                    sampled.push((result.len(), raw));
                 }
                 result.push(message);
             }
@@ -212,11 +293,46 @@ pub(crate) fn build_openai_messages_with(
         }
     }
 
-    result
+    WireMessages {
+        values: result,
+        sampled,
+    }
 }
 
-/// [`build_openai_messages_with`] without reasoning, as most tests want it.
+/// The message values of [`build_openai_messages_with`], as most tests want them.
 #[cfg(test)]
 pub(crate) fn build_openai_messages(messages: &[sven_model::Message]) -> Vec<Value> {
-    build_openai_messages_with(messages, false)
+    build_openai_messages_with(messages).values
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::*;
+    use sven_model::Message;
+
+    /// An assistant turn goes back with its reasoning and its `sampled` record
+    /// to every server, the record byte for byte as it arrived.
+    #[test]
+    fn a_turn_goes_back_with_its_reasoning_and_its_sampled_record_verbatim() {
+        let raw = r#"{"token_ids":"AQID", "finish":"stop","context_len":3}"#;
+        let mut call = Message::tool_call("c1", "f", r#"{"z": 1, "a": 2.50}"#);
+        call.reasoning = Some("\n think \n".into());
+        call.sampled = Some(RawValue::from_string(raw.to_string()).unwrap());
+        let messages = vec![Message::user("go"), call, Message::tool_result("c1", "ok")];
+        let wire = build_openai_messages_with(&messages);
+        let body = json!({"model": "m", "messages": wire.values});
+        let text = serde_json::to_string(&WithSampled {
+            body: &body,
+            sampled: &wire.sampled,
+        })
+        .unwrap();
+        let sent: Value = serde_json::from_str(&text).unwrap();
+        assert!(text.contains(&format!(r#""sampled":{raw}"#)), "{text}");
+        assert_eq!(sent["messages"][1]["reasoning_content"], "\n think \n");
+        assert_eq!(
+            sent["messages"][1]["tool_calls"][0]["function"]["arguments"],
+            r#"{"z": 1, "a": 2.50}"#
+        );
+        assert!(sent["messages"][0].get("sampled").is_none());
+    }
 }

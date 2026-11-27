@@ -56,6 +56,7 @@ fn history(rounds: usize) -> Vec<Message> {
                 },
             },
             reasoning: None,
+            sampled: None,
         });
         let out = (1..=200)
             .map(|n| format!("r{r} line {n} of the output"))

@@ -44,6 +44,8 @@ pub enum Turn<'a> {
     /// its calls in order.
     Assistant {
         reasoning: Option<&'a str>,
+        /// The server's record of what it sampled for the turn, echoed as sent.
+        sampled: Option<&'a serde_json::value::RawValue>,
         content: Option<&'a MessageContent>,
         calls: Vec<TurnCall<'a>>,
     },
@@ -71,6 +73,7 @@ pub fn turns(messages: &[Message]) -> Vec<Turn<'_>> {
             && messages.get(i + 1).is_some_and(is_call);
         if opens_turn || is_call(m) {
             let reasoning = m.reasoning.as_deref();
+            let sampled = m.sampled.as_deref();
             let content = opens_turn.then_some(&m.content);
             if opens_turn {
                 i += 1;
@@ -89,6 +92,7 @@ pub fn turns(messages: &[Message]) -> Vec<Turn<'_>> {
             }
             out.push(Turn::Assistant {
                 reasoning,
+                sampled,
                 content,
                 calls,
             });
@@ -131,6 +135,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         }
     }
 

@@ -10,7 +10,7 @@
 //! binary (piped `sven '…' | sven --stdin '…'` input) need it;
 //! `sven-session-store` re-exports it. `sven-tui`'s `chat/markdown.rs` has a
 //! *different* format (`**You:**`/`**Agent:**` bold-prefix, for
-//! round-tripping the live Neovim edit buffer) — despite the superficial
+//! round-tripping the live Neovim edit buffer) - despite the superficial
 //! resemblance, it is not a copy of this codec.
 
 use serde::{Deserialize, Serialize};
@@ -296,6 +296,7 @@ fn convert_sections_to_conversation(
                         },
                     },
                     reasoning: None,
+                    sampled: None,
                 });
             }
 
@@ -677,6 +678,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         let out = message_to_section(&msg);
         assert!(out.starts_with("## Tool\n"));
@@ -727,6 +729,7 @@ mod tests {
                     },
                 },
                 reasoning: None,
+                sampled: None,
             },
             Message::tool_result("id_1", "src/main.rs"),
             sven_msg("Found main.rs"),
@@ -933,6 +936,7 @@ mod tests {
                 },
             },
             reasoning: None,
+            sampled: None,
         };
         let out = message_to_section(&msg);
         // Args are nested inside the "args" envelope key so indented 4 spaces

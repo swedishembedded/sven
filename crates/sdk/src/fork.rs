@@ -771,6 +771,7 @@ fn tool_call_message(record: &ToolCallRecord) -> Message {
             },
         },
         reasoning: None,
+        sampled: None,
     }
 }
 
