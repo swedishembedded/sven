@@ -15,21 +15,19 @@ use sven_model::{Message, Role};
 use sven_turn::instructions::Activator;
 use sven_vocab::TurnRequest;
 
-/// Records the instructions this turn newly activates and appends the
-/// announcement of every active one to the request's uncached suffix.
+/// Records the instructions this turn newly activates and returns their
+/// announcement, which the caller appends to the conversation as a note.
 ///
 /// The task is the latest user message of the thread: a file it names
 /// activates what covers that file. The kernel keeps the set, so an
-/// instruction announced once is announced on every later turn.
+/// instruction is announced once, when it becomes active.
 pub(super) async fn announce(
     activator: Option<&Activator>,
-    req: &mut TurnRequest,
+    req: &TurnRequest,
     messages: &[Message],
     sink: &EventSink,
-) {
-    let Some(activator) = activator else {
-        return;
-    };
+) -> Option<String> {
+    let activator = activator?;
     let task = messages
         .iter()
         .rev()
@@ -42,10 +40,19 @@ pub(super) async fn announce(
             .emit(Event::InstructionsActivated { ids: plan.activate })
             .await;
     }
-    if let Some(block) = plan.block {
-        req.dynamic_suffix = Some(match req.dynamic_suffix.take() {
-            Some(existing) if !existing.trim().is_empty() => format!("{existing}\n\n{block}"),
-            _ => block,
-        });
-    }
+    plan.block
+}
+
+/// Files `note` in `thread` as a user-role message of its own and announces
+/// it: the system prompt stays as the thread's earlier requests sent it.
+pub(super) fn file_note(
+    store: &std::sync::Arc<std::sync::Mutex<crate::thread_store::ThreadStore>>,
+    thread: &str,
+    note: String,
+    obs: &sven_hsm::ObservationSink,
+) -> Message {
+    let message = Message::user(&note);
+    crate::thread_store::append_messages(store, thread, vec![message.clone()]);
+    obs.emit(sven_hsm::UiEvent::NoteFiled(note));
+    message
 }

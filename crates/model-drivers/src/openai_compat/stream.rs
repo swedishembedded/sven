@@ -526,7 +526,8 @@ pub(crate) fn served_identity(brain: &Value) -> Option<ServedIdentity> {
         history: brain
             .get("history")
             .filter(|h| !h.is_null())
-            .and_then(|h| ServedHistory::deserialize(h).ok()),
+            .and_then(|h| ServedHistory::deserialize(h).ok())
+            .map(Box::new),
     };
     (!identity.is_empty()).then_some(identity)
 }

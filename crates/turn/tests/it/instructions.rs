@@ -154,20 +154,24 @@ fn a_state_and_a_mode_activate_what_waits_for_them() {
     assert!(a.plan_turn(&[], "Idle", "hello").activate.is_empty());
 }
 
+/// An instruction already active was announced when it became active: the
+/// note is in the conversation, so no turn announces it again.
 #[test]
-fn an_instruction_that_is_already_active_stays_announced_without_being_activated_again() {
+fn an_instruction_that_is_already_active_is_not_announced_again() {
     let a = activator("agent");
     let active = vec!["skill:auth".to_string()];
     let plan = a.plan_turn(&active, "Idle", "unrelated task");
     assert!(plan.activate.is_empty());
-    assert!(plan.block.expect("still announced").contains("auth"));
+    assert!(plan.block.is_none());
 }
 
 #[test]
 fn the_block_never_repeats_what_the_system_prompt_lists() {
     let a = activator("agent");
-    let active = vec!["skill:auth".to_string()];
-    let block = a.plan_turn(&active, "Idle", "x").block.unwrap();
+    let block = a
+        .plan_turn(&[], "Idle", "fix src/auth/login.rs")
+        .block
+        .expect("auth becomes active");
     assert!(!block.contains("always-on"), "{block}");
     assert!(a.plan_turn(&[], "Idle", "x").block.is_none());
 }

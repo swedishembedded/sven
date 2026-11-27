@@ -119,8 +119,9 @@ pub fn knowledge_is_unconditional(doc: &KnowledgeInfo) -> bool {
 pub struct TurnInstructions {
     /// Ids newly active this turn, to be recorded in the kernel.
     pub activate: Vec<String>,
-    /// The announcement of every active conditional instruction; `None` when
-    /// there is none.
+    /// The announcement of the instructions newly active this turn; `None`
+    /// when there is none. Each is announced once, as a note appended to the
+    /// conversation, so the system prompt is never rewritten.
     pub block: Option<String>,
 }
 
@@ -183,10 +184,9 @@ impl Activator {
             .into_iter()
             .filter(|id| !active.contains(id))
             .collect();
-        let mut all: Vec<&String> = active.iter().collect();
-        all.extend(activate.iter());
+        let new: Vec<&String> = activate.iter().collect();
         TurnInstructions {
-            block: self.announce(&all),
+            block: self.announce(&new),
             activate,
         }
     }

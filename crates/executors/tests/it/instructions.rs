@@ -243,13 +243,29 @@ async fn request_for(task: &str) -> sven_model::CompletionRequest {
     sent
 }
 
+/// The user-role messages a request carried, newest last.
+fn user_texts(sent: &sven_model::CompletionRequest) -> Vec<String> {
+    sent.messages
+        .iter()
+        .filter(|m| m.role == sven_model::Role::User)
+        .filter_map(|m| m.as_text().map(str::to_string))
+        .collect()
+}
+
+/// An instruction a task activates is announced once, as a note appended to
+/// the conversation: the system prompt stays as it was, so the request still
+/// extends the one before it.
 #[tokio::test]
 async fn a_task_that_names_a_covered_file_is_announced_in_its_own_request() {
     let sent = request_for("fix the bug in src/auth/login.rs").await;
-    let suffix = sent.system_dynamic_suffix.expect("an announcement");
     assert!(
-        suffix.contains("## Active Instructions") && suffix.contains("`auth`"),
-        "{suffix}"
+        sent.system_dynamic_suffix.is_none(),
+        "the system prompt is not rewritten"
+    );
+    let note = user_texts(&sent).pop().unwrap_or_default();
+    assert!(
+        note.contains("## Active Instructions") && note.contains("`auth`"),
+        "{note}"
     );
 }
 
@@ -257,4 +273,7 @@ async fn a_task_that_names_a_covered_file_is_announced_in_its_own_request() {
 async fn a_task_that_names_nothing_covered_sends_no_announcement() {
     let sent = request_for("say hello").await;
     assert!(sent.system_dynamic_suffix.is_none());
+    assert!(!user_texts(&sent)
+        .iter()
+        .any(|t| t.contains("## Active Instructions")));
 }

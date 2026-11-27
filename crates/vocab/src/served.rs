@@ -75,9 +75,10 @@ pub struct ServedIdentity {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logprob_temperature: Option<f64>,
     /// Whether the server's prompt replayed every earlier reply as it was
-    /// sampled, and if not, where and why it rendered one instead.
+    /// sampled, and if not, where and why it rendered one instead. Boxed: an
+    /// identity rides in every response event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub history: Option<ServedHistory>,
+    pub history: Option<Box<ServedHistory>>,
 }
 
 /// A server's account of how it built a request's prompt from the history

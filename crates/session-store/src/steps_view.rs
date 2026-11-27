@@ -14,6 +14,10 @@ use crate::conversation::ConversationRecord;
 
 // ── Reverse: TraceStep ⇄ Message ────────────────────────────────────────────
 
+/// `extra.sven` key of an agent step holding the server's record of what it
+/// sampled for the reply, as the exact text it sent.
+pub const SAMPLED_KEY: &str = "sampled";
+
 /// Reverse of the turn assembler: un-merge `Vec<TraceStep>` back into a
 /// `Vec<Message>` suitable for seeding an agent's history on resume
 /// (equivalent to today's `chat_document::turns_to_messages`).
@@ -32,10 +36,6 @@ use crate::conversation::ConversationRecord;
 /// - `reasoning_content` is never message content: it is the
 ///   [`Message::reasoning`] of the turn's first message, which a provider
 ///   that takes reasoning sends back.
-/// `extra.sven` key of an agent step holding the server's record of what it
-/// sampled for the reply, as the exact text it sent.
-pub const SAMPLED_KEY: &str = "sampled";
-
 pub fn steps_to_messages(steps: &[TraceStep]) -> Vec<Message> {
     let mut out = Vec::new();
     for step in steps {
@@ -228,8 +228,8 @@ pub fn steps_to_turn_records(steps: &[TraceStep]) -> Vec<TurnRecord> {
 /// display-oriented event stream from ATIF steps rather than the flat
 /// `Message`-only view [`steps_to_messages`] provides.
 ///
-/// Built directly on [`steps_to_turn_records`] + [`crate::chat_document::turns_to_records`]
-/// - the same full-fidelity turn list, just re-expressed as `ConversationRecord`
+/// Built directly on [`steps_to_turn_records`] + [`crate::chat_document::turns_to_records`]:
+/// the same full-fidelity turn list, just re-expressed as `ConversationRecord`
 /// instead of the legacy YAML-oriented `TurnRecord`. This keeps exactly one
 /// TraceStep-to-turn-shape algorithm in the crate rather than duplicating the
 /// step-walking logic for two output types.

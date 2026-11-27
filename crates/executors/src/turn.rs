@@ -404,7 +404,11 @@ impl EffectExecutor for TurnExecutor {
             .lock()
             .ok()
             .and_then(|s| s.system_sections(&thread_id));
-        instructions::announce(self.instructions.as_deref(), &mut req, &messages, sink).await;
+        if let Some(note) =
+            instructions::announce(self.instructions.as_deref(), &req, &messages, sink).await
+        {
+            messages.push(instructions::file_note(&self.store, &thread_id, note, obs));
+        }
 
         // Resolve tool schemas: named list takes priority; fall back to all-mode.
         // `--no-tools` overrides whatever the requesting machine asked for -
