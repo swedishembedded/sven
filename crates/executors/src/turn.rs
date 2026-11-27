@@ -179,6 +179,9 @@ pub struct TurnExecutor {
     time_notices: std::collections::HashMap<String, sven_turn::NoticeReplay>,
     /// What a request's `attachments` are relative to: the project root.
     attachment_root: Option<std::path::PathBuf>,
+    /// Earlier answers go back to the model as it wrote them; see
+    /// [`Self::with_history_as_generated`].
+    history_as_generated: bool,
 }
 
 impl TurnExecutor {
@@ -213,6 +216,7 @@ impl TurnExecutor {
             time_budget: None,
             time_notices: std::collections::HashMap::new(),
             attachment_root: None,
+            history_as_generated: false,
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),

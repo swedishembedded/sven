@@ -19,6 +19,19 @@ impl TurnExecutor {
         self
     }
 
+    /// File each answer in the thread as the model wrote it, so the history
+    /// sent back with every later request repeats it byte for byte: each
+    /// call's argument text as generated (key order, whitespace, escapes)
+    /// rather than its parsed value re-serialised, and the reasoning
+    /// untrimmed. A call whose text is not the JSON it was parsed from (a
+    /// repaired, cut-off or garbled one) is filed as before. Off by default:
+    /// it changes the prompt bytes of every later request.
+    #[must_use]
+    pub fn with_history_as_generated(mut self, on: bool) -> Self {
+        self.history_as_generated = on;
+        self
+    }
+
     /// Send zero tool schemas to the model regardless of what the requesting
     /// machine asks for (`--no-tools`).
     #[must_use]

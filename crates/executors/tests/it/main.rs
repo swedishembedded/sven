@@ -15,6 +15,7 @@ mod deferred_calls;
 mod empty_turn;
 mod estimate_calibration;
 mod fork_compaction;
+mod history_as_generated;
 mod instructions;
 mod kernel_policy_tests;
 mod notices;

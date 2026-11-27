@@ -9,6 +9,8 @@
 //! Spec: every tool call of a turn has an id of its own, whatever ids the
 //! server sent, and a call whose arguments are garbled is reported as
 //! unparsed under its own id and under no other call's.
+//! The argument text a call was streamed as is kept beside it only where
+//! that text is the JSON the call runs on.
 
 use sven_model::ResponseEvent;
 use sven_model_mock::ScriptedMockProvider;
@@ -103,4 +105,27 @@ async fn a_reply_cut_at_the_output_limit_says_so() {
     ])
     .await;
     assert!(!whole.truncated);
+}
+
+/// The text a call was streamed as is kept only where it is the JSON the call
+/// runs on: a repaired call, a garbled one and an inline one have none, so
+/// history never repeats text the tool did not get.
+#[tokio::test]
+async fn generated_argument_text_is_kept_only_for_calls_that_run_on_it() {
+    let turn = run(vec![
+        tool_call(0, "call_a", "grep", "{\"pattern\" :"),
+        tool_call(0, "", "", " \"a\",  \"path\": \"x\"}"),
+        tool_call(1, "call_b", "read_file", r#"{"path":"\c"}"#),
+        tool_call(2, "call_c", "edit_file", "<<not json>>"),
+        ResponseEvent::Done,
+    ])
+    .await;
+
+    assert_eq!(turn.tool_calls.len(), 3);
+    assert_eq!(
+        turn.generated_arguments.get("call_a").map(String::as_str),
+        Some("{\"pattern\" : \"a\",  \"path\": \"x\"}")
+    );
+    assert!(!turn.generated_arguments.contains_key("call_b"), "repaired");
+    assert!(!turn.generated_arguments.contains_key("call_c"), "garbled");
 }

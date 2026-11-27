@@ -45,8 +45,14 @@ impl TurnExecutor {
         if let Ok(mut store) = self.store.lock() {
             store.record_unparsed_arguments(turn.unparsed_arguments);
         }
-        let (text, reasoning, tool_calls, truncated) =
-            (turn.text, turn.reasoning, turn.tool_calls, turn.truncated);
+        let (text, tool_calls, truncated) = (turn.text, turn.tool_calls, turn.truncated);
+        // As generated, the thread files what the model wrote; otherwise the
+        // reasoning trimmed and each call's parsed arguments re-serialised.
+        let (reasoning, mut generated_arguments) = if self.history_as_generated {
+            (turn.generated_reasoning, turn.generated_arguments)
+        } else {
+            (turn.reasoning, Default::default())
+        };
 
         // Track consecutive empty turns (no tool calls, and no text beyond
         // whitespace) per thread. One is tolerated - the machine's
@@ -112,7 +118,9 @@ impl TurnExecutor {
                         tool_call_id: tc.id.clone(),
                         function: FunctionCall {
                             name: tc.name.clone(),
-                            arguments: tc.args.to_string(),
+                            arguments: generated_arguments
+                                .remove(&tc.id)
+                                .unwrap_or_else(|| tc.args.to_string()),
                         },
                     },
                     reasoning: None,

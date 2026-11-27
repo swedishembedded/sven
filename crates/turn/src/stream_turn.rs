@@ -336,8 +336,19 @@ pub struct StreamedTurn {
     pub thinking_tokens: u32,
     /// What the model reasoned before and while answering, with the
     /// `<think>` wrappers some servers leave in removed; empty when it did
-    /// not reason. For the record only: it is never sent back to a model.
+    /// not reason. It goes back with the turn only to a server whose chat
+    /// template reads it (a local one).
     pub reasoning: String,
+    /// The argument text of each call in `tool_calls`, by call id, exactly as
+    /// the model streamed it (key order, whitespace and escapes kept), for
+    /// every call whose text is the JSON its arguments were parsed from. A
+    /// call parsed only after repair, cut off, garbled or written inline in
+    /// the text has no entry.
+    pub generated_arguments: HashMap<String, String>,
+    /// The reasoning as the model streamed it: each stretch untrimmed and
+    /// with any `<think>` wrapper left in, stretches joined as in
+    /// `reasoning`. Empty when it did not reason.
+    pub generated_reasoning: String,
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -466,6 +477,7 @@ pub async fn stream_turn_attributed(
     let mut full_text = String::new();
     let mut thinking_buf = String::new();
     let mut reasoning = String::new();
+    let mut generated_reasoning = String::new();
     let mut repetition = RepetitionWatch::default();
     // The arguments of the call being streamed, watched for the same block
     // written over and over (a model that loops there never closes the call).
@@ -480,6 +492,9 @@ pub async fn stream_turn_attributed(
     let mut completed: Vec<ToolCall> = Vec::new();
     let mut completed_indices: Vec<u32> = Vec::new();
     let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
+    // The call id each slot's call was issued under, for the slots that
+    // completed while streaming: their text may still grow after that.
+    let mut streamed_ids: Vec<(u32, String)> = Vec::new();
     let mut cut_off_calls: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut truncated = false;
     let mut issued_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -568,7 +583,9 @@ pub async fn stream_turn_attributed(
                 thinking_stall_started = None; // forward progress resets the stall clock
                 repetition.reset();
                 if !thinking_buf.is_empty() {
-                    let content = strip_think_wrappers(std::mem::take(&mut thinking_buf));
+                    let raw = std::mem::take(&mut thinking_buf);
+                    keep_reasoning(&mut generated_reasoning, &raw);
+                    let content = strip_think_wrappers(raw);
                     keep_reasoning(&mut reasoning, &content);
                     let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
                 }
@@ -601,7 +618,9 @@ pub async fn stream_turn_attributed(
                 // begins, as it is when text begins: observers file it with
                 // the reply that calls, not after it.
                 if !thinking_buf.is_empty() {
-                    let content = strip_think_wrappers(std::mem::take(&mut thinking_buf));
+                    let raw = std::mem::take(&mut thinking_buf);
+                    keep_reasoning(&mut generated_reasoning, &raw);
+                    let content = strip_think_wrappers(raw);
                     keep_reasoning(&mut reasoning, &content);
                     let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
                 }
@@ -614,6 +633,7 @@ pub async fn stream_turn_attributed(
                     if !tc.name.is_empty() {
                         tc.id = unique_call_id(&mut issued_ids, &tc.id);
                         let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
+                        streamed_ids.push((index, tc.id.clone()));
                         completed_indices.push(index);
                         completed.push(tc);
                     }
@@ -674,7 +694,9 @@ pub async fn stream_turn_attributed(
             }
             ResponseEvent::Done => {
                 if !thinking_buf.is_empty() {
-                    let content = strip_think_wrappers(std::mem::take(&mut thinking_buf));
+                    let raw = std::mem::take(&mut thinking_buf);
+                    keep_reasoning(&mut generated_reasoning, &raw);
+                    let content = strip_think_wrappers(raw);
                     keep_reasoning(&mut reasoning, &content);
                     let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
                 }
@@ -704,6 +726,13 @@ pub async fn stream_turn_attributed(
         }
     }
 
+    let mut generated_arguments: HashMap<String, String> = HashMap::new();
+    for (index, id) in streamed_ids {
+        if let Some(slot) = slots.get(&index) {
+            generated_arguments.insert(id, slot.args_buf.clone());
+        }
+    }
+
     // Finalise any slots whose JSON args were still incomplete when Done arrived.
     let slot_count = slots.len();
     for (idx, slot) in slots {
@@ -719,6 +748,7 @@ pub async fn stream_turn_attributed(
         }
         let raw_arguments = slot.args_buf.clone();
         let (mut tc, mut unparsed) = slot.finalize();
+        let mut generated = None;
         let cut_off =
             truncated && serde_json::from_str::<serde_json::Value>(&raw_arguments).is_err();
         if cut_off {
@@ -726,6 +756,8 @@ pub async fn stream_turn_attributed(
             // never finished.
             tc.args = serde_json::Value::Object(serde_json::Map::new());
             unparsed = Some(raw_arguments);
+        } else if unparsed.is_none() {
+            generated = Some(raw_arguments);
         }
         if tc.id.is_empty() {
             tc.id = format!("tc_synthetic_{slot_count}");
@@ -741,6 +773,9 @@ pub async fn stream_turn_attributed(
         }
         if let Some(raw) = unparsed {
             unparsed_arguments.insert(tc.id.clone(), raw);
+        }
+        if let Some(text) = generated {
+            generated_arguments.insert(tc.id.clone(), text);
         }
         let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
         completed.push(tc);
@@ -771,6 +806,17 @@ pub async fn stream_turn_attributed(
             .send(AgentEvent::ResponseSampled(Box::new(sampled)))
             .await;
     }
+    // Only text that parses to the very arguments its call carries: a
+    // repaired call's text is not the JSON it runs on.
+    let generated_arguments: HashMap<String, String> = completed
+        .iter()
+        .filter_map(|call| {
+            let text = generated_arguments.remove(&call.id)?;
+            serde_json::from_str::<serde_json::Value>(&text)
+                .is_ok_and(|value| value == call.args)
+                .then(|| (call.id.clone(), text))
+        })
+        .collect();
     // Last, so a consumer that folds events into turn-shaped steps has the
     // response's content in hand when the request's ledger record arrives.
     let _ = tx.send(ledger.into_event()).await;
@@ -783,6 +829,8 @@ pub async fn stream_turn_attributed(
         truncated,
         thinking_tokens: thinking_token_estimate,
         reasoning,
+        generated_arguments,
+        generated_reasoning,
     })
 }
 

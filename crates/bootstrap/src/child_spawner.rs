@@ -242,6 +242,7 @@ impl SdlcChildSpawner {
             Arc::clone(&call_id_to_thread),
             turn_abort_slot,
         )
+        .with_history_as_generated(self.config.agent.history_as_generated)
         .with_turn_limits(
             self.config
                 .agent

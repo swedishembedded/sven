@@ -333,6 +333,13 @@ agent:
   # whitespace, key order.
   note_repeated_results: true
 
+  # Send every earlier answer back to the model as it wrote it: each tool
+  # call's argument text byte for byte (key order, whitespace, escapes) and
+  # the reasoning untrimmed, instead of the parsed arguments re-serialised.
+  # The history then repeats what was sampled, so a recorded session can be
+  # trained on as one record. Changes every request after the first.
+  history_as_generated: false
+
   # Fraction of the input budget set aside for what the token count does not
   # see (a dynamic context block, estimation error). The count of everything
   # already sent is the server's own, so the default is 0.
@@ -790,6 +797,7 @@ Controls the agent's autonomy and defaults.
 | `compaction_summary_tokens` | `10000` | Most tokens the compaction notes may take; also capped at a quarter of the window |
 | `tool_result_token_cap` | `4000` | Token cap per tool result before smart truncation; `0` disables |
 | `note_repeated_results` | `true` | Note on the result of a call that repeats an earlier one with the same result |
+| `history_as_generated` | `false` | Send each earlier answer back as the model wrote it: call arguments byte for byte, reasoning untrimmed; see [Training on recorded sessions](#training-on-recorded-sessions) |
 | `compaction_overhead_reserve` | `0.0` | Fraction of the input budget set aside for what the token count does not see |
 | `system_prompt` | - | System prompt override (leave unset to use built-in) |
 | `max_thinking_tokens` | none | Opt-in cap on estimated reasoning tokens per turn; see [Thinking-loop watchdog](#thinking-loop-watchdog) |
@@ -1026,6 +1034,29 @@ agent:
   first_token_timeout_secs: 900
   no_progress_timeout_secs: 1200
 ```
+
+#### Training on recorded sessions
+
+A session can be trained on as one record only when every request's prompt
+starts with the previous request's prompt followed by what the model generated.
+By default sven sends an earlier tool call's arguments back re-serialised from
+their parsed value (compact, keys sorted) and the reasoning trimmed, so the
+history differs from what was sampled. `history_as_generated: true` files each
+answer as the model wrote it: the argument text byte for byte, the reasoning
+and text untrimmed. The tool still runs on the parsed arguments. A call whose
+text is not the JSON it runs on (repaired, cut off or garbled) is sent as
+before.
+
+```yaml
+agent:
+  history_as_generated: true
+```
+
+How the server's chat template renders earlier turns is the server's: a
+template that writes an earlier answer differently from how the model generated
+it (an empty reasoning block left out) needs the server's own option as well,
+passed through `model.driver_options` (a brain server's is
+`chat_template_kwargs.history_as_generated`).
 
 ---
 
