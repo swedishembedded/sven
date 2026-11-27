@@ -168,9 +168,9 @@ impl DbusProvider {
     /// array - brain declares that parameter as `ParamType::Str`, so the array
     /// is serialised once into a string and the whole object once more.
     fn build_params(&self, req: &CompletionRequest) -> Result<String> {
-        let flattened = flatten_messages(&req.messages);
-        let messages_str =
-            serde_json::to_string(&flattened).context("serialising flattened messages")?;
+        let (flattened, sampled) = flatten_messages_with_sampled(&req.messages);
+        let messages_str = crate::openai_compat::messages_text(&flattened, &sampled)
+            .context("serialising flattened messages")?;
 
         let mut params = serde_json::Map::new();
         params.insert("messages".to_string(), json!(messages_str));
@@ -231,8 +231,21 @@ impl DbusProvider {
 /// the multimodal content arrays: blobs travel out-of-band on file
 /// descriptors, so image and audio parts collapse to the same `[image]` /
 /// `[audio]` textual markers the Cohere driver and the compactor use.
+///
+/// Each assistant turn goes as it was filed: its text, its reasoning, each
+/// call's argument text; its `sampled` record is returned beside the values
+/// (`(index, record)`), to be written verbatim ([`flatten_messages_with_sampled`]).
 pub fn flatten_messages(messages: &[Message]) -> Vec<Value> {
+    flatten_messages_with_sampled(messages).0
+}
+
+/// [`flatten_messages`] and the `sampled` record of each assistant turn that
+/// carries one, by its index among the values.
+pub fn flatten_messages_with_sampled(
+    messages: &[Message],
+) -> (Vec<Value>, Vec<(usize, &serde_json::value::RawValue)>) {
     let mut out = Vec::with_capacity(messages.len());
+    let mut sampled = Vec::new();
     for turn in turns(messages) {
         match turn {
             Turn::Message(m) => {
@@ -241,14 +254,17 @@ pub fn flatten_messages(messages: &[Message]) -> Vec<Value> {
                     "content": content_text(&m.content),
                 });
                 with_reasoning(&mut message, m.reasoning.as_deref());
+                if let Some(raw) = m.sampled.as_deref() {
+                    sampled.push((out.len(), raw));
+                }
                 out.push(message);
             }
             // One model turn, one message: its text and every call it made.
             Turn::Assistant {
                 reasoning,
+                sampled: turn_sampled,
                 content,
                 calls,
-                ..
             } => {
                 let mut message = json!({
                     "role": "assistant",
@@ -263,6 +279,9 @@ pub fn flatten_messages(messages: &[Message]) -> Vec<Value> {
                     })).collect::<Vec<_>>(),
                 });
                 with_reasoning(&mut message, reasoning);
+                if let Some(raw) = turn_sampled {
+                    sampled.push((out.len(), raw));
+                }
                 out.push(message);
             }
             Turn::ToolResults(results) => {
@@ -282,7 +301,7 @@ pub fn flatten_messages(messages: &[Message]) -> Vec<Value> {
             }
         }
     }
-    out
+    (out, sampled)
 }
 
 /// Adds an assistant turn's reasoning as brain's `reasoning_content`; the
@@ -558,6 +577,65 @@ impl sven_model::ModelProvider for DbusProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reply filed from a D-Bus answer goes back in the next request's
+    /// `messages` text as it came: argument text, reasoning and the `sampled`
+    /// record byte for byte, over many generated replies.
+    #[test]
+    fn the_messages_text_carries_each_reply_as_it_arrived() {
+        let mut seed: u64 = 7;
+        let mut next = || {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 33) as usize
+        };
+        const PIECES: [&str; 10] = ["a", " ", "\n", "\"", "\\", "{", "}", ":", "é", "😀"];
+        for case in 0..60 {
+            let mut text =
+                |n: usize| -> String { (0..n).map(|_| PIECES[next() % PIECES.len()]).collect() };
+            let reasoning = text(case % 7);
+            let arguments = format!(
+                "{{ \"z\" :{} , \"a\": [1, 2.50]}}",
+                serde_json::json!(text(5))
+            );
+            let record = format!("{{\"token_ids\":\"AQ{case}\" , \"context_len\":{case}}}");
+            let reply = sven_vocab::SampledReply {
+                text: text(4),
+                reasoning: reasoning.clone(),
+                calls: vec![sven_vocab::SampledCall {
+                    id: format!("c{case}"),
+                    name: "f".into(),
+                    arguments: arguments.clone(),
+                }],
+                sampled: Some(serde_json::value::RawValue::from_string(record.clone()).unwrap()),
+                finish: sven_vocab::ReplyFinish::Stop,
+            };
+            let mut messages = vec![Message::user("go")];
+            messages.extend(sven_model::reply_messages(&reply));
+            messages.push(Message::tool_result(format!("c{case}"), "ok"));
+            let (values, sampled) = flatten_messages_with_sampled(&messages);
+            let sent = crate::openai_compat::messages_text(&values, &sampled).unwrap();
+            let parsed: Vec<Value> = serde_json::from_str(&sent).unwrap();
+            assert_eq!(
+                parsed[1]["content"].as_str().unwrap_or(""),
+                reply.text,
+                "case {case}"
+            );
+            assert_eq!(
+                parsed[1]["reasoning_content"].as_str().unwrap_or(""),
+                reasoning,
+                "case {case}"
+            );
+            assert_eq!(
+                parsed[1]["tool_calls"][0]["function"]["arguments"],
+                arguments.as_str(),
+                "case {case}"
+            );
+            assert!(
+                sent.contains(&format!("\"sampled\":{record}")),
+                "case {case}: {sent}"
+            );
+        }
+    }
     use sven_model::FunctionCall;
 
     #[test]

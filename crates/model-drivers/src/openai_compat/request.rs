@@ -141,6 +141,19 @@ impl Serialize for MessageWithSampled<'_> {
     }
 }
 
+/// `values` as a JSON array with each `sampled` record written verbatim
+/// beside its message: the `messages` text a server that takes it as one
+/// string parameter is sent.
+pub(crate) fn messages_text(
+    values: &[Value],
+    sampled: &[(usize, &RawValue)],
+) -> serde_json::Result<String> {
+    serde_json::to_string(&Messages {
+        list: values,
+        sampled,
+    })
+}
+
 /// Convert a slice of [`Message`]s into the OpenAI wire format.
 ///
 /// **One message per model turn**: the API's assistant message carries the

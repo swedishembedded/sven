@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Decoding a brain `Run` reply into sven response events.
 
+use serde_json::value::RawValue;
 use serde_json::Value;
 use tracing::warn;
 
@@ -11,14 +12,16 @@ use sven_model::ResponseEvent;
 use crate::openai_compat::{policy_trace_events, served_identity};
 
 /// The response events a `Run` reply carries, in the order a streamed reply
-/// would emit them: the model's reasoning, its text, then its tool calls.
+/// would emit them: the model's reasoning, its text, its tool calls, then the
+/// server's `sampled` record.
 ///
 /// brain reports reasoning as `reasoning_content` and tool calls as
 /// `tool_calls`, a string of JSON text holding `{id, name, arguments}` calls
 /// (`arguments` itself JSON text); the OpenAI nesting `{function: {name,
-/// arguments}}` and an inline array are accepted too. Whitespace-only text next
-/// to tool calls is no reply. A call without a name is dropped with a warning
-/// rather than failing the turn; one without an id gets `call_<index>`.
+/// arguments}}` and an inline array are accepted too. Everything is taken as
+/// the server wrote it: the text whatever it holds, each call (one without a
+/// name or an id included: it is answered, not dropped), arguments sent as an
+/// object as their text, and the `sampled` record as the exact JSON it is.
 pub(super) fn reply_events(result_json: &str, text: String) -> Vec<ResponseEvent> {
     let result: Value = serde_json::from_str(result_json).unwrap_or(Value::Null);
     let mut events = Vec::new();
@@ -27,43 +30,80 @@ pub(super) fn reply_events(result_json: &str, text: String) -> Vec<ResponseEvent
             events.push(ResponseEvent::ThinkingDelta(reasoning.to_string()));
         }
     }
-    let calls = match result.get("tool_calls") {
-        Some(Value::String(s)) => serde_json::from_str::<Value>(s).unwrap_or_else(|e| {
-            warn!(error = %e, "D-Bus reply: tool_calls is not JSON; ignoring it");
-            Value::Null
-        }),
-        Some(v) => v.clone(),
-        None => Value::Null,
+    let calls_text = match result.get("tool_calls") {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Null) | None => None,
+        Some(_) => raw_field(result_json, "tool_calls"),
     };
-    let calls = calls.as_array().cloned().unwrap_or_default();
-    if !text.trim().is_empty() || calls.is_empty() {
+    let calls: Vec<RawCall<'_>> = calls_text
+        .as_deref()
+        .map(|text| {
+            serde_json::from_str(text).unwrap_or_else(|e| {
+                warn!(error = %e, "D-Bus reply: tool_calls is not a list of calls; ignoring it");
+                Vec::new()
+            })
+        })
+        .unwrap_or_default();
+    if !text.is_empty() || calls.is_empty() {
         events.push(ResponseEvent::TextDelta(text));
     }
     for (index, call) in calls.iter().enumerate() {
-        let field = |key: &str| {
-            call.get(key)
-                .or_else(|| call.pointer(&format!("/function/{key}")))
-        };
-        let Some(name) = field("name").and_then(Value::as_str) else {
-            warn!(call = %call, "D-Bus reply: tool call without a name; dropped");
-            continue;
-        };
-        let arguments = match field("arguments") {
-            Some(Value::String(s)) => s.clone(),
-            Some(v) => v.to_string(),
-            None => "{}".to_string(),
-        };
+        let function = call.function.as_ref();
+        let name = call
+            .name
+            .or_else(|| function.and_then(|f| f.name))
+            .unwrap_or_default();
+        let arguments = call
+            .arguments
+            .or_else(|| function.and_then(|f| f.arguments));
         events.push(ResponseEvent::ToolCall {
             index: index as u32,
             id: call
-                .get("id")
-                .and_then(Value::as_str)
+                .id
                 .map_or_else(|| format!("call_{index}"), str::to_owned),
             name: name.to_string(),
-            arguments,
+            arguments: arguments.map(argument_text).unwrap_or_default(),
         });
     }
+    if let Some(raw) = raw_field(result_json, "sampled").filter(|raw| raw != "null") {
+        if let Ok(raw) = RawValue::from_string(raw) {
+            events.push(ResponseEvent::Sampled(raw));
+        }
+    }
     events
+}
+
+/// One call as the reply wrote it, its arguments untouched.
+#[derive(serde::Deserialize)]
+struct RawCall<'a> {
+    #[serde(borrow, default)]
+    id: Option<&'a str>,
+    #[serde(borrow, default)]
+    name: Option<&'a str>,
+    #[serde(borrow, default)]
+    arguments: Option<&'a RawValue>,
+    #[serde(borrow, default)]
+    function: Option<RawFunction<'a>>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawFunction<'a> {
+    #[serde(borrow, default)]
+    name: Option<&'a str>,
+    #[serde(borrow, default)]
+    arguments: Option<&'a RawValue>,
+}
+
+/// A call's argument text: a JSON string's text, or the text of whatever else
+/// the server wrote there.
+fn argument_text(raw: &RawValue) -> String {
+    serde_json::from_str::<String>(raw.get()).unwrap_or_else(|_| raw.get().to_string())
+}
+
+/// The text of the top-level field `key` of `json`, as written.
+fn raw_field(json: &str, key: &str) -> Option<String> {
+    let map: std::collections::HashMap<&str, &RawValue> = serde_json::from_str(json).ok()?;
+    map.get(key).map(|raw| raw.get().to_string())
 }
 
 /// The serving identity and the capture a `Run` reply reports, as events: the
@@ -243,14 +283,13 @@ mod tests {
         let result = r#"{"finish_reason":"tool_calls","reasoning_content":"Let's use the read_file tool.","text":"\n\n","tool_calls":"[{\"arguments\":\"{\\\"path\\\": \\\"a.txt\\\"}\",\"id\":\"call_ae82_0\",\"name\":\"read_file\"}]"}"#;
         let events = reply_events(result, "\n\n".into());
         assert!(matches!(&events[0], ResponseEvent::ThinkingDelta(t) if t.contains("read_file")));
-        assert_eq!(
-            tool_call(&events[1]),
-            (0, "call_ae82_0", "read_file", r#"{"path": "a.txt"}"#)
+        assert!(
+            matches!(&events[1], ResponseEvent::TextDelta(t) if t == "\n\n"),
+            "the text is the reply's, whitespace too"
         );
         assert_eq!(
-            events.len(),
-            2,
-            "whitespace beside a tool call is no text reply"
+            tool_call(&events[2]),
+            (0, "call_ae82_0", "read_file", r#"{"path": "a.txt"}"#)
         );
     }
 
@@ -275,13 +314,28 @@ mod tests {
         assert_eq!(events.len(), 3, "no empty text delta beside tool calls");
     }
 
+    /// A call without a name is the model's and stays in the reply; it runs
+    /// nothing, and the model is told.
     #[test]
-    fn a_call_without_a_name_is_dropped() {
+    fn a_call_without_a_name_is_kept() {
         let result = r#"{"tool_calls": [{"id": "c1", "function": {"arguments": "{}"}}]}"#;
         let events = reply_events(result, String::new());
-        assert!(events
-            .iter()
-            .all(|e| !matches!(e, ResponseEvent::ToolCall { .. })));
+        assert_eq!(tool_call(&events[0]), (0, "c1", "", "{}"));
+    }
+
+    /// Arguments sent as an object keep their text, key order and spacing,
+    /// and the `sampled` record arrives as the exact JSON the server wrote.
+    #[test]
+    fn a_reply_is_read_as_the_server_wrote_it() {
+        let result = r#"{"text":"","tool_calls":[{"id":"c1","name":"f","arguments":{"z": 1, "a" :2.50}}],"sampled":{"token_ids":"AQI=", "finish":"stop"}}"#;
+        let events = reply_events(result, String::new());
+        assert_eq!(
+            tool_call(&events[0]),
+            (0, "c1", "f", r#"{"z": 1, "a" :2.50}"#)
+        );
+        assert!(
+            matches!(&events[1], ResponseEvent::Sampled(raw) if raw.get() == r#"{"token_ids":"AQI=", "finish":"stop"}"#)
+        );
     }
 
     /// brain's `prompt_tokens` is the whole prompt and `cached_tokens` the
