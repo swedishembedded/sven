@@ -342,12 +342,8 @@ impl Config {
         // `Option` of the type `Config` decoded, so a section that decode
         // accepted reads here too; one it could not read had the whole file
         // ignored, loudly, and settles as no section.
-        let section = document
-            .section::<ModelSection>("model")
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "the `model:` section cannot be read; no model is configured");
-                None
-            });
+        // That one was reported once, with the file; it is not reported again.
+        let section = document.section::<ModelSection>("model").ok().flatten();
         self.settle(section.as_ref());
         if !document.contains_path(&["tools", "disclosure", "mode"]) {
             self.tools.disclosure.mode = sven_tool_registry::Disclosure::Deferred;
