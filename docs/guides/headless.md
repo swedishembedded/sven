@@ -92,7 +92,7 @@ I'll list the directory first.
 {
   "tool_call_id": "call_1",
   "name": "find_file",
-  "args": { "pattern": "*" }
+  "arguments": "{\"pattern\": \"*\"}"
 }
 ```
 

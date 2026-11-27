@@ -210,30 +210,25 @@ pub(super) fn handle_event(event: AgentEvent, s: &mut StepState<'_>) {
                 serde_json::to_string(&tc.args).unwrap_or_default()
             ));
             tools_used.push(tc.name.clone());
-            let args_str = serde_json::to_string(&tc.args).unwrap_or_default();
-            // Stream tool call section to stdout in conversation format
-            if output_format == OutputFormat::Conversation {
-                // Ensure any open Sven text section is closed first
-                if *sven_header_emitted {
-                    write_stdout("\n\n");
-                    *sven_header_emitted = false;
-                }
-                let args_value: serde_json::Value =
-                    serde_json::from_str(&args_str).unwrap_or(serde_json::Value::Null);
-                let envelope = serde_json::json!({
-                    "tool_call_id": tc.id,
-                    "name": tc.name,
-                    "args": args_value,
-                });
-                let pretty = serde_json::to_string_pretty(&envelope).unwrap_or_default();
-                write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
-            }
         }
         AgentEvent::ContextRewritten { segment, cause } => {
             assembler.push_context_rewritten(segment, cause.as_str());
         }
         // The reply as it was filed: what the conversation and the trajectory hold.
         AgentEvent::ReplyFiled(reply) => {
+            // Each call's section in conversation format, its argument text as
+            // the model wrote it.
+            if output_format == OutputFormat::Conversation && !reply.calls.is_empty() {
+                if *sven_header_emitted {
+                    write_stdout("\n\n");
+                    *sven_header_emitted = false;
+                }
+                let calls: Vec<Message> = sven_model::reply_messages(&reply)
+                    .into_iter()
+                    .filter(|m| matches!(m.content, sven_model::MessageContent::ToolCall { .. }))
+                    .collect();
+                write_stdout(&sven_session_model::serialize_conversation_turn(&calls));
+            }
             for msg in sven_model::reply_messages(&reply) {
                 collected.push(msg.clone());
                 assembler.push_message(&msg);

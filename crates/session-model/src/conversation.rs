@@ -138,7 +138,8 @@ impl SectionKind {
 struct ToolCallEnvelope {
     pub tool_call_id: String,
     pub name: String,
-    pub args: serde_json::Value,
+    /// The argument text as the model wrote it.
+    pub arguments: String,
 }
 
 /// Parse error, shared with `sven-session-store`'s JSONL conversation format
@@ -172,7 +173,7 @@ pub enum ParseError {
 ///
 /// ## Tool
 /// ```json
-/// {"tool_call_id": "call_001", "name": "read_file", "args": {"path": "/src/main.rs"}}
+/// {"tool_call_id": "call_001", "name": "read_file", "arguments": "{\"path\": \"/src/main.rs\"}"}
 /// ```
 ///
 /// ## Tool Result
@@ -292,7 +293,7 @@ fn convert_sections_to_conversation(
                         tool_call_id: envelope.tool_call_id,
                         function: FunctionCall {
                             name: envelope.name,
-                            arguments: envelope.args.to_string(),
+                            arguments: envelope.arguments,
                         },
                     },
                     reasoning: None,
@@ -484,12 +485,11 @@ fn message_to_section_with_metadata(msg: &Message, metadata: Option<&TurnMetadat
                 function,
             },
         ) => {
-            let args_value: serde_json::Value =
-                serde_json::from_str(&function.arguments).unwrap_or(serde_json::Value::Null);
+            // The argument text as the model wrote it, never re-serialised.
             let envelope = serde_json::json!({
                 "tool_call_id": tool_call_id,
                 "name": function.name,
-                "args": args_value,
+                "arguments": function.arguments,
             });
             let pretty = serde_json::to_string_pretty(&envelope).unwrap_or_default();
             format!("## Tool\n```json\n{pretty}\n```\n\n")
@@ -557,7 +557,7 @@ mod tests {
         let md = concat!(
             "## User\nSearch files\n\n",
             "## Sven\nI'll search\n\n",
-            "## Tool\n```json\n{\"tool_call_id\":\"call_1\",\"name\":\"glob\",\"args\":{\"pattern\":\"**/*.rs\"}}\n```\n\n",
+            "## Tool\n```json\n{\"tool_call_id\":\"call_1\",\"name\":\"glob\",\"arguments\":\"{\\\"pattern\\\":\\\"**/*.rs\\\"}\"}\n```\n\n",
             "## Tool Result\n```\nsrc/main.rs\n```\n\n",
             "## Sven\nFound main.rs\n",
         );
@@ -799,7 +799,7 @@ mod tests {
     fn tool_result_without_code_fence_uses_raw_content() {
         let md = concat!(
             "## User\nRun it\n\n",
-            "## Tool\n```json\n{\"tool_call_id\":\"c1\",\"name\":\"shell\",\"args\":{}}\n```\n\n",
+            "## Tool\n```json\n{\"tool_call_id\":\"c1\",\"name\":\"shell\",\"arguments\":\"{}\"}\n```\n\n",
             "## Tool Result\nplain output line\n",
         );
         let conv = parse_conversation(md).unwrap();
@@ -817,7 +817,7 @@ mod tests {
         // Backtick-containing output wrapped in a fenced block
         let md = concat!(
             "## User\nTask\n\n",
-            "## Tool\n```json\n{\"tool_call_id\":\"c2\",\"name\":\"shell\",\"args\":{}}\n```\n\n",
+            "## Tool\n```json\n{\"tool_call_id\":\"c2\",\"name\":\"shell\",\"arguments\":\"{}\"}\n```\n\n",
             "## Tool Result\n```\nline with `backticks` inside\n```\n",
         );
         let conv = parse_conversation(md).unwrap();
@@ -835,9 +835,9 @@ mod tests {
     fn multiple_sequential_tool_calls_with_user() {
         let md = concat!(
             "## User\nSearch and read\n\n",
-            "## Tool\n```json\n{\"tool_call_id\":\"c1\",\"name\":\"glob\",\"args\":{\"p\":\"*.rs\"}}\n```\n\n",
+            "## Tool\n```json\n{\"tool_call_id\":\"c1\",\"name\":\"glob\",\"arguments\":\"{\\\"p\\\":\\\"*.rs\\\"}\"}\n```\n\n",
             "## Tool Result\n```\nsrc/main.rs\n```\n\n",
-            "## Tool\n```json\n{\"tool_call_id\":\"c2\",\"name\":\"read_file\",\"args\":{\"path\":\"src/main.rs\"}}\n```\n\n",
+            "## Tool\n```json\n{\"tool_call_id\":\"c2\",\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"src/main.rs\\\"}\"}\n```\n\n",
             "## Tool Result\n```\nfn main() {}\n```\n\n",
             "## Sven\nDone\n",
         );
@@ -924,26 +924,29 @@ mod tests {
         assert!(md.starts_with("## "), "starts directly with a section");
     }
 
+    /// A call's argument text survives the file as the model wrote it: key
+    /// order, spacing, number spelling and text that is not JSON.
     #[test]
-    fn serialize_tool_args_are_pretty_printed() {
-        let msg = Message {
-            role: Role::Assistant,
-            content: MessageContent::ToolCall {
-                tool_call_id: "id".into(),
-                function: FunctionCall {
-                    name: "fn".into(),
-                    arguments: r#"{"a":1,"b":2}"#.into(),
-                },
-            },
-            reasoning: None,
-            sampled: None,
-        };
-        let out = message_to_section(&msg);
-        // Args are nested inside the "args" envelope key so indented 4 spaces
-        assert!(out.contains("\"a\": 1"), "arg key a is present");
-        assert!(out.contains("\"b\": 2"), "arg key b is present");
-        // Verify it is actually pretty-printed (newlines between keys)
-        assert!(out.contains("{\n"), "pretty-printed JSON has newlines");
+    fn a_tool_calls_argument_text_round_trips_verbatim() {
+        for arguments in [
+            r#"{ "z": 1,"a" :2.50 ,"s":"t\n"}"#,
+            r#"{"path": "\{x"}"#,
+            "",
+        ] {
+            let messages = vec![
+                Message::user("go"),
+                Message::tool_call("call_1", "read_file", arguments),
+                Message::tool_result("call_1", "ok"),
+                Message::assistant("done"),
+            ];
+            let file = serialize_conversation_turn(&messages);
+            let parsed = parse_conversation(&file).expect("the file parses");
+            let back = parsed.history.iter().find_map(|m| match &m.content {
+                MessageContent::ToolCall { function, .. } => Some(function.arguments.clone()),
+                _ => None,
+            });
+            assert_eq!(back.as_deref(), Some(arguments), "{file}");
+        }
     }
 
     // ── Append simulation ─────────────────────────────────────────────────────

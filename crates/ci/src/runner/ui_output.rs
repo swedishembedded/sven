@@ -284,13 +284,6 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
             write_progress(&format!(
                 "[sven:tool:call] id=\"{call_id}\" name=\"{name}\" args={args_str}"
             ));
-            let envelope = serde_json::json!({
-                "tool_call_id": call_id,
-                "name": name,
-                "args": args,
-            });
-            let pretty = serde_json::to_string_pretty(&envelope).unwrap_or_default();
-            write_stdout(&format!("## Tool\n```json\n{pretty}\n```\n\n"));
         }
         UiEvent::ContextRewritten { segment, cause } => {
             state
@@ -299,6 +292,14 @@ pub(super) fn handle_ui_event(ev: UiEvent, state: &mut CiOutState) -> Option<i32
         }
         // The reply as it was filed: what the trajectory holds.
         UiEvent::ReplyFiled(reply) => {
+            // Each call's section, its argument text as the model wrote it.
+            let calls: Vec<Message> = sven_model::reply_messages(&reply)
+                .into_iter()
+                .filter(|m| matches!(m.content, sven_model::MessageContent::ToolCall { .. }))
+                .collect();
+            if !calls.is_empty() {
+                write_stdout(&sven_session_model::serialize_conversation_turn(&calls));
+            }
             for msg in sven_model::reply_messages(&reply) {
                 state.assembler.push_message(&msg);
             }
