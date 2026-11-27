@@ -83,8 +83,6 @@ does not honour refused or, on explicit best effort, recorded as `sampling_unhon
     `a-reply-is-kept-as-it-arrived-because-every-rewrite-of-it-broke-the-history.md`). JSON repair, `{}` stand-ins,
     early call ends, reasoning trimming, inline think extraction, the `[aborted]` stand-in and the opt-in
     `agent.history_as_generated` are gone. Events: `ReplyFiled`, `NoteFiled`, `ContextRewritten{segment, cause}`;
-    each request's step records `brain.history`. Open: the tools offered still change within a session when deferred
-    disclosure loads one (a `ContextRewritten{tools}` segment boundary, not yet an appended note); the dynamic system
-    suffix is no longer set by anything and its plumbing (`TurnRequest::dynamic_suffix`,
-    `CompletionRequest::system_dynamic_suffix`, the drivers' merge) is dead code to delete; the D-Bus driver does
-    not carry `sampled` yet; the markdown conversation format (`## Tool` envelopes) re-serialises arguments.
+    each request's step records `brain.history`. A deferred tool loaded mid-session is a segment boundary (cause
+    `tools`), the standard. The dynamic system suffix is deleted; the D-Bus driver and the conversation file's
+    `## Tool` envelope carry replies verbatim (2026-11-28).

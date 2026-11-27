@@ -26,7 +26,11 @@ run tools.
 - A reply's reasoning and its `sampled` record go back to every server; a provider that refuses either says so.
 - A request that rewrites what the thread sent (system prompt, tools, or a history that is not the previous one
   extended, as after a compaction) emits `ContextRewritten{segment, cause}`; a conditional instruction is announced
-  once as an appended note instead of in the system prompt.
+  once as an appended note instead of in the system prompt, and the dynamic system suffix is gone.
+- A deferred tool that a session loads changes the tools a request offers: that is a segment boundary with cause
+  `tools`, the standard (a trainer merges each segment on its own); the tool list is not frozen across it.
+- Every driver sends the reply back verbatim: OpenAI-compatible HTTP and D-Bus alike, and a conversation file's
+  `## Tool` envelope keeps the argument text.
 - A trajectory keeps each call's argument text (`extra.raw_arguments`) and the record (`extra.sven.sampled`), so a
   session resumed from it sends the same history byte for byte.
 
