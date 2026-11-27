@@ -8,9 +8,98 @@
 //! braces). [`attempt_json_repair`] applies a series of best-effort fixes so a
 //! recoverable argument object can still be parsed.
 //!
-//! Tool-call slot accumulation and dispatch are the responsibility of
-//! [`crate::stream_turn`] (accumulation) and the HSM kernel's `ToolExecutor`
-//! (execution); this module only owns the repair primitive they share.
+//! [`AccumSlot`] accumulates one streamed call's id, name and argument text
+//! for [`crate::stream_turn`], and [`unique_call_id`] keeps the calls of one
+//! turn apart. Dispatch is the HSM kernel's `ToolExecutor`'s.
+
+use tracing::warn;
+
+use sven_tool_api::ToolCall;
+
+/// `id` if no call of this turn has it yet, else `id` with a numeric suffix
+/// that no call has. Some servers send the same id (`call_0`) for every
+/// parallel call; ids are how results are paired with calls and how a call is
+/// marked unparsed, so two calls sharing one would answer for each other.
+pub(crate) fn unique_call_id(issued: &mut std::collections::HashSet<String>, id: &str) -> String {
+    if !id.is_empty() && issued.insert(id.to_owned()) {
+        return id.to_owned();
+    }
+    let stem = if id.is_empty() { "call" } else { id };
+    (1..)
+        .map(|n| format!("{stem}_{n}"))
+        .find(|candidate| issued.insert(candidate.clone()))
+        .expect("an unbounded range always yields a free id")
+}
+
+/// One tool call's id, name and argument text as they stream in.
+pub(crate) struct AccumSlot {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) args_buf: String,
+}
+
+impl AccumSlot {
+    pub(crate) fn feed(&mut self, id: &str, name: &str, args_chunk: &str) -> Option<ToolCall> {
+        if !id.is_empty() {
+            self.id = id.to_owned();
+        }
+        if !name.is_empty() {
+            self.name = name.to_owned();
+        }
+        self.args_buf.push_str(args_chunk);
+
+        if self.args_buf.ends_with('}') {
+            if let Some(tc) = self.try_finalize() {
+                return Some(tc);
+            }
+        }
+        None
+    }
+
+    fn try_finalize(&self) -> Option<ToolCall> {
+        let args: serde_json::Value = serde_json::from_str(&self.args_buf).ok()?;
+        Some(ToolCall {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            args,
+        })
+    }
+
+    /// Closes the slot into a call, plus the model's raw argument text when it
+    /// could not be parsed as JSON even after repair. The call then carries
+    /// `{}` so it still dispatches exactly as before; the raw text is the only
+    /// record of what the model actually sent.
+    pub(crate) fn finalize(self) -> (ToolCall, Option<String>) {
+        let mut unparsed = None;
+        let args = if self.args_buf.is_empty() {
+            warn!(
+                tool_name = %self.name,
+                tool_call_id = %self.id,
+                "model sent tool call with empty arguments; substituting {{}}"
+            );
+            serde_json::Value::Object(Default::default())
+        } else {
+            serde_json::from_str(&self.args_buf)
+                .or_else(|_| attempt_json_repair(&self.args_buf))
+                .unwrap_or_else(|_| {
+                    warn!(
+                        tool_name = %self.name,
+                        tool_call_id = %self.id,
+                        args_buf = %self.args_buf,
+                        "model sent tool call with invalid JSON; substituting {{}}"
+                    );
+                    unparsed = Some(self.args_buf.clone());
+                    serde_json::Value::Object(Default::default())
+                })
+        };
+        let call = ToolCall {
+            id: self.id,
+            name: self.name,
+            args,
+        };
+        (call, unparsed)
+    }
+}
 
 /// Attempt to repair common JSON syntax errors in streaming tool arguments.
 pub(crate) fn attempt_json_repair(json_str: &str) -> anyhow::Result<serde_json::Value> {
