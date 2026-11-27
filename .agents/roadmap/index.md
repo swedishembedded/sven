@@ -35,3 +35,4 @@ heading and a `Scope: <one sentence>` line under it, then run
 | [`research-upgrades`](research-upgrades.md) | research-to-stack - sven share | Isolated multi-attempt runs, per-attempt effects and the prompt each model call saw, for an embedding application. |
 | [`security`](security.md) | security | Hardening `sven rc` so that a compromised remote-control server (which chooses tool calls and relays approvals) gets no more than the machine owner allowed locally. |
 | [`training-instrumentation`](training-instrumentation.md) | Training-grade trajectories | What a trajectory records so an application that trains models can learn from it and a run can be reproduced. |
+| [`unlanded-branches`](unlanded-branches.md) | Unlanded branches - what was reviewed for trunk and why it did not land | The decision, per local branch checked on 2026-11-27, to land it on trunk or to keep it only as a record, and the one piece of real work (PDF pages) that is still open. |
