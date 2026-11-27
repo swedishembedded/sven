@@ -78,11 +78,13 @@ does not honour refused or, on explicit best effort, recorded as `sampling_unhon
     and per step (`sven_vocab::SamplerSupport`, one parser for both providers); a reply without them, or with a
     malformed or inconsistent one, fails the turn, and another provider refuses. The provider contract test covers it
     over HTTP and D-Bus. See the doc.
-17. (Done 2026-11-27.) History as generated: `agent.history_as_generated: true` (sven config or
-    `sven config set agent.history_as_generated true`; an embedding application sets `config.agent.history_as_generated`)
-    sends every earlier answer back as the model wrote it, each call's argument text byte for byte and the reasoning
-    untrimmed; default off. A server whose chat template rewrites earlier turns needs its own option too, passed through
-    `model.driver_options` (a brain server: `{"chat_template_kwargs": {"history_as_generated": true}}`). With both, 50/59
-    (4B), 41/59 (8B) and 60/60 (27B) recorded vim sessions are append-only, from 0, 0 and 58 (knowledge
-    `history-re-serialised-from-parsed-arguments-is-not-what-the-model-sampled.md`). Open: the history rebuilt from
-    session events between person turns (`reduce_history`) still re-serialises.
+17. (Done 2026-11-28.) Replies as they arrived, one behaviour: a reply is an immutable `SampledReply` filed and sent
+    back unchanged, a server's `sampled` record included (knowledge
+    `a-reply-is-kept-as-it-arrived-because-every-rewrite-of-it-broke-the-history.md`). JSON repair, `{}` stand-ins,
+    early call ends, reasoning trimming, inline think extraction, the `[aborted]` stand-in and the opt-in
+    `agent.history_as_generated` are gone. Events: `ReplyFiled`, `NoteFiled`, `ContextRewritten{segment, cause}`;
+    each request's step records `brain.history`. Open: the tools offered still change within a session when deferred
+    disclosure loads one (a `ContextRewritten{tools}` segment boundary, not yet an appended note); the dynamic system
+    suffix is no longer set by anything and its plumbing (`TurnRequest::dynamic_suffix`,
+    `CompletionRequest::system_dynamic_suffix`, the drivers' merge) is dead code to delete; the D-Bus driver does
+    not carry `sampled` yet; the markdown conversation format (`## Tool` envelopes) re-serialises arguments.
