@@ -181,7 +181,6 @@ pub(crate) fn compose(
         parts.cancel_handle,
     )
     .with_no_tools(parts.no_tools)
-    .with_history_as_generated(parts.config.agent.history_as_generated)
     .with_compaction_config(parts.config.agent.compaction())
     .with_turn_limits(
         parts

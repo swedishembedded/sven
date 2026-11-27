@@ -11,7 +11,6 @@
 
 use sven_hsm::{Event, ObservationSink, UiEvent};
 use sven_kernel::EventSink;
-use sven_model::{FunctionCall, Message, MessageContent, Role};
 
 use super::{
     replies, TurnExecutor, EMPTY_TURN_FAILURE_THRESHOLD, TRUNCATED_TURN_FAILURE_THRESHOLD,
@@ -40,26 +39,31 @@ impl TurnExecutor {
             judged_by_harness,
             withheld_tools,
         } = request;
-        let unparsed = turn.unparsed_arguments.clone();
-        let cut_off = turn.cut_off_calls;
+        let sven_turn::StreamedTurn {
+            reply,
+            tool_calls,
+            arg_errors,
+            truncated,
+            ..
+        } = turn;
+        // The text of each call that cannot run, by id: its refusal quotes it,
+        // and a trajectory flags it.
+        let unparsed: std::collections::HashMap<String, String> = reply
+            .calls
+            .iter()
+            .filter(|c| arg_errors.contains_key(&c.id))
+            .map(|c| (c.id.clone(), c.arguments.clone()))
+            .collect();
         if let Ok(mut store) = self.store.lock() {
-            store.record_unparsed_arguments(turn.unparsed_arguments);
+            store.record_unparsed_arguments(unparsed.clone());
         }
-        let (text, tool_calls, truncated) = (turn.text, turn.tool_calls, turn.truncated);
-        // As generated, the thread files what the model wrote; otherwise the
-        // reasoning trimmed and each call's parsed arguments re-serialised.
-        let (reasoning, mut generated_arguments) = if self.history_as_generated {
-            (turn.generated_reasoning, turn.generated_arguments)
-        } else {
-            (turn.reasoning, Default::default())
-        };
 
         // Track consecutive empty turns (no tool calls, and no text beyond
         // whitespace) per thread. One is tolerated - the machine's
         // `GeneratingAction::EmptyTurn` nudges the model to try again - but a
         // thread that keeps returning nothing must fail loudly, not end as a
         // silent success.
-        let is_empty_turn = text.trim().is_empty() && tool_calls.is_empty();
+        let is_empty_turn = reply.is_empty();
         let empty_turn_count = {
             let mut counts = self
                 .empty_turns
@@ -104,41 +108,9 @@ impl TurnExecutor {
             return;
         }
 
-        // Append the assistant turn to the thread (append-only, cache-safe).
-        // Build the messages list first, then call the non-async helper.
-        {
-            let mut msgs_to_append = Vec::new();
-            if !text.is_empty() {
-                msgs_to_append.push(Message::assistant(&text));
-            }
-            for tc in &tool_calls {
-                msgs_to_append.push(Message {
-                    role: Role::Assistant,
-                    content: MessageContent::ToolCall {
-                        tool_call_id: tc.id.clone(),
-                        function: FunctionCall {
-                            name: tc.name.clone(),
-                            arguments: generated_arguments
-                                .remove(&tc.id)
-                                .unwrap_or_else(|| tc.args.to_string()),
-                        },
-                    },
-                    reasoning: None,
-                    sampled: None,
-                });
-            }
-            // The turn's first message carries the reasoning that preceded
-            // it, so the reasoning travels with the turn wherever it goes.
-            match msgs_to_append.first_mut() {
-                Some(first) => first.reasoning = (!reasoning.is_empty()).then_some(reasoning),
-                None => {
-                    if let Ok(mut store) = self.store.lock() {
-                        store.record_unspoken_reasoning(&thread_id, reasoning);
-                    }
-                }
-            }
-            append_messages(&self.store, &thread_id, msgs_to_append);
-        }
+        // The reply is filed exactly as it arrived; every later request sends
+        // it back unchanged.
+        append_messages(&self.store, &thread_id, sven_model::reply_messages(&reply));
 
         // Annotate each tool call with its capability and register call_id → thread.
         // Uses the non-async helper to avoid holding any guard across an await.
@@ -156,11 +128,11 @@ impl TurnExecutor {
             self.tools.hold_back(call.call_id);
         }
 
-        // A call whose arguments the model garbled beyond repair carries `{}`;
-        // it is refused with the reason rather than run on those arguments.
+        // A call whose arguments cannot be read is refused with the reason
+        // rather than run.
         for (tc, call) in tool_calls.iter().zip(&proposed) {
             if let Some(raw) = unparsed.get(&tc.id) {
-                if cut_off.contains(&tc.id) {
+                if arg_errors.get(&tc.id) == Some(&sven_vocab::ArgError::CutOff) {
                     self.tools.refuse_truncated(call.call_id, &tc.name, raw);
                 } else {
                     self.tools.refuse_unparsed(call.call_id, &tc.name, raw);
@@ -175,7 +147,7 @@ impl TurnExecutor {
         let _ = sink
             .emit(Event::LlmTurnComplete {
                 thread: thread_id,
-                text,
+                text: reply.text,
                 tool_calls: proposed,
             })
             .await;

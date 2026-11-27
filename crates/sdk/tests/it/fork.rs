@@ -326,7 +326,7 @@ async fn a_call_the_runtime_refused_for_garbled_arguments_replays_as_that_refusa
         .await
         .expect("the refused call replays as the refusal it got");
     assert!(refusal.starts_with(
-        "The call was not run: the arguments of the `read_file` call are not valid JSON"
+        "The call was not run: the arguments of the `read_file` call cannot be read: they are not valid JSON"
     ));
 }
 

@@ -33,6 +33,7 @@ pub mod message;
 mod mode;
 pub mod notice;
 pub mod provenance;
+pub mod reply;
 pub mod request;
 pub mod sampling;
 pub mod served;
@@ -58,6 +59,7 @@ pub use tool_image::{ShownImages, ToolImage, MAX_IMAGES, MAX_IMAGE_BASE64_BYTES}
 pub use conclusion::announces_unfinished_work;
 pub use mode::AgentMode;
 pub use notice::{Notice, NoticeError};
+pub use reply::{ArgError, ReplyFinish, SampledCall, SampledReply};
 pub use request::{RequestFold, RequestRecord, Sampled, SamplerSupport, MAX_SAMPLER_SUPPORT};
 pub use sampling::{SamplingControl, SamplingControls};
 pub use served::{

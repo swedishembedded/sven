@@ -4,9 +4,10 @@
 //! A model request the kernel stops by dropping it (the turn's cancel scope)
 //! never reaches the executor's own cancel branch, so nothing would record
 //! that the turn was cut off. [`RecordOnDrop`] does it on drop, exactly as that
-//! branch does: the partial reply and an `[aborted: <reason>]` marker go into
-//! the thread, so the next turn knows, and `Aborted` is observed. The kernel
-//! itself posts the `UserCancelled` that ends the turn.
+//! branch does: `Aborted` is observed with the partial reply, which is not
+//! filed in the thread (the history holds only replies the model finished);
+//! a user-role runtime note `[aborted: <reason>]` says it was stopped.
+//! The kernel itself posts the `UserCancelled` that ends the turn.
 //!
 //! Swedish Embedded AB implements agent runtimes that stop cleanly and say
 //! why for its clients. If your team needs expertise in agent cancellation
@@ -16,9 +17,9 @@
 use std::sync::{Arc, Mutex};
 
 use sven_hsm::{ObservationSink, UiEvent};
-use sven_model::Message;
 
-use crate::thread_store::{append_messages, ThreadStore};
+use crate::thread_store::ThreadStore;
+use sven_model::Message;
 
 /// Armed while a model request is in flight; disarmed once the executor has
 /// handled its outcome itself.
@@ -72,18 +73,17 @@ impl Drop for RecordOnDrop {
             .lock()
             .map(|text| text.clone())
             .unwrap_or_default();
-        let marker = format!("[aborted: {reason}]");
-        let persisted = if partial.is_empty() {
-            marker
-        } else {
-            format!("{partial}\n\n{marker}")
-        };
-        append_messages(
-            &self.store,
-            &self.thread_id,
-            vec![Message::assistant(&persisted)],
-        );
+        record_cut(&self.store, &self.thread_id, &reason);
         report_cut(&self.obs, partial, self.machine_ends_turn);
+    }
+}
+
+/// Files the runtime's note that the reply of `thread` was stopped before it
+/// ended, and why. The cut reply itself is not filed: the history holds only
+/// what the model finished, and the note is a user-role turn of its own.
+pub(super) fn record_cut(store: &Arc<Mutex<ThreadStore>>, thread: &str, reason: &str) {
+    if let Ok(mut store) = store.lock() {
+        store.append(thread, Message::user(format!("[aborted: {reason}]")));
     }
 }
 

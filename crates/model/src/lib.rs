@@ -28,6 +28,7 @@ pub mod manifest;
 mod provider;
 pub mod registry;
 pub mod repeat;
+mod reply;
 pub mod sanitize;
 pub mod time_notice;
 mod turns;
@@ -39,5 +40,6 @@ pub use provider::{
     AdapterRef, ModelChange, ModelProvider, ResponseStream, ServedModel, ServedModels,
 };
 pub use registry::{get_driver, list_drivers, DriverMeta, RequestExtras};
+pub use reply::reply_messages;
 pub use turns::{turns, Turn, TurnCall};
 pub use types::*;

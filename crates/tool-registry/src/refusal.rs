@@ -49,12 +49,17 @@ impl Refused {
     }
 }
 
-/// What the model is told when the arguments of its `tool` call were not
-/// valid JSON.
+/// What the model is told when the arguments of its `tool` call cannot be
+/// read: not valid JSON, or JSON that is not an object. The call stays in the
+/// history as the model wrote it.
 pub fn unparsed_reason(tool: &str, raw: &str) -> String {
     let head: String = raw.chars().take(QUOTED_CHARS).collect();
+    let why = match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(_) => "they are JSON but not an object".to_string(),
+        Err(e) => format!("they are not valid JSON ({e})"),
+    };
     format!(
-        "the arguments of the `{tool}` call are not valid JSON, so it was not run \
+        "the arguments of the `{tool}` call cannot be read: {why}, so it was not run \
          ({} bytes received, starting: {head}). Send the call again with a complete \
          JSON object of arguments.",
         raw.len()

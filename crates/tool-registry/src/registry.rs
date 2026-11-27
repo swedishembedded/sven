@@ -412,9 +412,9 @@ impl ToolRegistry {
 }
 
 impl ToolRegistry {
-    /// Records that the model's `call` to `tool` carried arguments that were
-    /// not valid JSON even after repair (`raw` is what it sent), so the
-    /// executor refuses it instead of running the tool on `{}`.
+    /// Records that the model's `call` to `tool` carried arguments that cannot
+    /// be read (`raw` is what it sent), so the executor refuses it with the
+    /// reason instead of running the tool.
     pub fn refuse_unparsed(&self, call: sven_hsm::ToolCallId, tool: &str, raw: &str) {
         if let Ok(mut refused) = self.refused.lock() {
             refused.insert(call, crate::refusal::unparsed_reason(tool, raw));

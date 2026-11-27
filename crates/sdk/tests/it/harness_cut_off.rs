@@ -74,7 +74,7 @@ async fn run(
 }
 
 #[tokio::test]
-async fn a_turn_cut_inside_an_unclosed_think_block_keeps_its_reasoning() {
+async fn a_turn_cut_inside_an_unclosed_think_block_keeps_its_text_as_written() {
     const DOC: &str = r#"
 api_version: "2"
 name: cut
@@ -97,12 +97,13 @@ workflow:
         "{:?}",
         outcome.result
     );
-    let reasoning: Vec<_> = conversations
-        .iter()
-        .flat_map(|(_, c)| &c.steps)
-        .filter_map(|s| s.reasoning_content.as_deref())
-        .collect();
-    assert_eq!(reasoning, ["weighing the options, still weighing"]);
+    // The reply is kept as the model wrote it: an unclosed think block in the
+    // text stays text, nothing is moved out of it.
+    let steps = format!("{conversations:?}");
+    assert!(
+        steps.contains("<think>weighing the options, still weighing"),
+        "{steps}"
+    );
 }
 
 #[tokio::test]

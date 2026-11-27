@@ -141,14 +141,6 @@ pub struct AgentConfig {
     /// whitespace, key order).
     #[serde(default = "default_note_repeated_results")]
     pub note_repeated_results: bool,
-    /// Send every earlier answer back to the model as it wrote it: each tool
-    /// call's argument text byte for byte (key order, whitespace, escapes)
-    /// instead of its parsed value re-serialised, and the reasoning
-    /// untrimmed. A session whose history repeats what was sampled can be
-    /// trained on as one record. Off by default: on, it changes the prompt
-    /// of every request after the first.
-    #[serde(default)]
-    pub history_as_generated: bool,
     /// Fraction of the input budget set aside for what the token count does
     /// not see (a dynamic context block, estimation error). Reduces the
     /// effective compaction trigger threshold. The count is the server's own
@@ -295,7 +287,6 @@ impl AgentConfig {
             "compaction_summary_tokens",
             "tool_result_token_cap",
             "note_repeated_results",
-            "history_as_generated",
             "compaction_overhead_reserve",
             "compaction_output_reserve",
             "system_prompt",
@@ -424,7 +415,6 @@ impl Default for AgentConfig {
             compaction_summary_tokens: default_compaction_summary_tokens(),
             tool_result_token_cap: default_tool_result_token_cap(),
             note_repeated_results: default_note_repeated_results(),
-            history_as_generated: false,
             compaction_overhead_reserve: default_compaction_overhead_reserve(),
             compaction_output_reserve: default_compaction_output_reserve(),
             system_prompt: None,

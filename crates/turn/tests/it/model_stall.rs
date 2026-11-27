@@ -129,7 +129,7 @@ async fn a_slow_model_that_keeps_producing_is_not_aborted() {
     });
     let (result, events) = run(&provider, limits(30, 60, 90)).await;
     let turn = result.expect("a live model must finish its turn");
-    assert_eq!(turn.text, "tok ".repeat(40));
+    assert_eq!(turn.reply.text, "tok ".repeat(40));
     assert!(
         !waiting_phases(&events).contains(&ModelWaitPhase::Connecting),
         "{events:?}"

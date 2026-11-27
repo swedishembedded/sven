@@ -6,12 +6,12 @@
 // trained on as they were sampled, for its clients. If your team needs
 // expertise in agent trajectories as training data then you can procure our
 // services by sending an email to info@swedishembedded.com.
-//! Spec: with `history_as_generated` on, every earlier answer goes back to the
-//! model as the model wrote it - each call's argument text byte for byte (key
-//! order, whitespace, escapes), its text and its reasoning untrimmed - while
-//! the tool still runs on the parsed arguments. Off (the default), history is
-//! sent exactly as before: arguments re-serialised compact with sorted keys,
-//! reasoning trimmed.
+//! Spec: every earlier answer goes back to the model as it arrived - each
+//! call's argument text byte for byte (key order, whitespace, escapes, and a
+//! call whose text is not JSON at all), its text and its reasoning untrimmed,
+//! and the server's `sampled` record as it was sent - while a tool runs on the
+//! parsed arguments, and a call that cannot be parsed runs nothing and is
+//! answered with the reason.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -44,6 +44,10 @@ const ARGS_A: [&str; 2] = [
 ];
 /// The second call's arguments: keys in reverse alphabetical order.
 const ARGS_B: &str = "{\"z\": 1, \"a\": {\"y\": null, \"x\": true}}";
+/// The third call's arguments: not JSON (an invalid escape).
+const ARGS_C: &str = "{\"path\": \"\\{x\"}";
+/// The server's record of what it sampled, with its own spacing.
+const SAMPLED: &str = "{\"token_ids\":\"AQID\", \"finish\":\"stop\"}";
 
 /// Turn one says something, reasons, and makes two calls; turn two records
 /// the history it is sent and answers.
@@ -86,6 +90,15 @@ impl ModelProvider for ScriptedModel {
                     name: "echo".into(),
                     arguments: ARGS_B.into(),
                 },
+                ResponseEvent::ToolCall {
+                    index: 2,
+                    id: "call_c".into(),
+                    name: "echo".into(),
+                    arguments: ARGS_C.into(),
+                },
+                ResponseEvent::Sampled(
+                    serde_json::value::RawValue::from_string(SAMPLED.into()).unwrap(),
+                ),
                 ResponseEvent::Done,
             ]
         } else {
@@ -139,21 +152,34 @@ impl Outcome {
             .collect()
     }
 
-    /// The answer's text message and the reasoning it carries.
-    fn text_and_reasoning(&self) -> (&str, Option<&str>) {
+    /// The answer's text message, the reasoning and the record it carries.
+    fn text_reasoning_sampled(&self) -> (&str, Option<&str>, Option<&str>) {
         self.history
             .iter()
             .find_map(|m| match &m.content {
-                MessageContent::Text(t) if m.role == sven_model::Role::Assistant => {
-                    Some((t.as_str(), m.reasoning.as_deref()))
-                }
+                MessageContent::Text(t) if m.role == sven_model::Role::Assistant => Some((
+                    t.as_str(),
+                    m.reasoning.as_deref(),
+                    m.sampled.as_deref().map(|r| r.get()),
+                )),
                 _ => None,
             })
             .expect("the answer's text is in the history")
     }
+
+    /// What the tool results said, in order.
+    fn results(&self) -> Vec<String> {
+        self.history
+            .iter()
+            .filter_map(|m| match &m.content {
+                MessageContent::ToolResult { content, .. } => Some(format!("{content:?}")),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
-async fn session(as_generated: Option<bool>) -> Outcome {
+async fn session() -> Outcome {
     let second = Arc::new(Mutex::new(None));
     let ran_on = Arc::new(Mutex::new(Vec::new()));
     let mut registry = ToolRegistry::new();
@@ -161,7 +187,7 @@ async fn session(as_generated: Option<bool>) -> Outcome {
     let registry = Arc::new(registry);
     let store = Arc::new(Mutex::new(ThreadStore::new()));
     let call_threads = Arc::new(Mutex::new(HashMap::new()));
-    let mut turn = TurnExecutor::new(
+    let turn = TurnExecutor::new(
         Arc::new(ScriptedModel {
             second: Arc::clone(&second),
         }),
@@ -171,9 +197,6 @@ async fn session(as_generated: Option<bool>) -> Outcome {
         Arc::clone(&call_threads),
         Arc::new(tokio::sync::Mutex::new(None)),
     );
-    if let Some(on) = as_generated {
-        turn = turn.with_history_as_generated(on);
-    }
     let tools = ToolExecutor::with_shared_store(
         registry,
         HashSet::from([ToolCapability::ReadFile]),
@@ -218,27 +241,18 @@ fn parsed(text: &str) -> Value {
 }
 
 #[tokio::test]
-async fn history_as_generated_sends_each_answer_back_as_the_model_wrote_it() {
-    let out = session(Some(true)).await;
+async fn each_answer_goes_back_as_it_arrived() {
+    let out = session().await;
     let generated_a = ARGS_A.concat();
-    assert_eq!(out.arguments(), vec![generated_a.as_str(), ARGS_B]);
-    assert_eq!(out.text_and_reasoning(), (TEXT, Some(REASONING)));
-    // The tool runs on the parsed value either way.
+    assert_eq!(out.arguments(), vec![generated_a.as_str(), ARGS_B, ARGS_C]);
+    assert_eq!(
+        out.text_reasoning_sampled(),
+        (TEXT, Some(REASONING), Some(SAMPLED))
+    );
+    // The tools run on the parsed values; the call that cannot be parsed runs
+    // nothing and is answered with why.
     assert_eq!(out.ran_on, vec![parsed(&generated_a), parsed(ARGS_B)]);
-}
-
-/// Golden: the default sends history exactly as sven always has.
-#[tokio::test]
-async fn by_default_history_is_sent_re_serialised_as_before() {
-    for out in [session(None).await, session(Some(false)).await] {
-        assert_eq!(
-            out.arguments(),
-            vec![
-                r#"{"b":[1,2.5],"text":"hé \"q\" \n😀"}"#,
-                r#"{"a":{"x":true,"y":null},"z":1}"#,
-            ]
-        );
-        assert_eq!(out.text_and_reasoning(), (TEXT, Some("I will look twice.")));
-        assert_eq!(out.ran_on, vec![parsed(&ARGS_A.concat()), parsed(ARGS_B)]);
-    }
+    let results = out.results();
+    assert_eq!(results.len(), 3, "{results:?}");
+    assert!(results[2].contains("not valid JSON"), "{results:?}");
 }

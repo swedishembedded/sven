@@ -17,7 +17,7 @@
 //! `TextDelta`, `ThinkingDelta`, `ThinkingComplete`, `ToolCallStarted`,
 //! `TokenUsage`, and `TextComplete` are all emitted.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -50,16 +50,15 @@ pub fn to_model_schemas(schemas: Vec<sven_tool_registry::ToolSchema>) -> Vec<Too
         .collect()
 }
 
-use crate::inline_markup::{
-    extract_inline_invoke_tool_calls, extract_inline_think_block, keep_reasoning,
-    strip_think_wrappers,
-};
 use crate::ledger_recorder::LedgerRecorder;
 use crate::repetition::{RepetitionWatch, TOOL_CALL_REPEATS};
 use crate::sampled_checks::{check_sampler_support, check_top_logprobs};
 use crate::stall::{StallLimits, StallWatch};
 use crate::tool_slots::{unique_call_id, AccumSlot};
-use sven_vocab::{ReportedUsage, Sampled, SessionEvent as AgentEvent};
+use sven_vocab::{
+    ArgError, ReplyFinish, ReportedUsage, Sampled, SampledCall, SampledReply,
+    SessionEvent as AgentEvent,
+};
 
 pub use crate::aborted::{AbortedError, Repetition};
 
@@ -227,42 +226,22 @@ impl TurnLimits {
 }
 
 /// What one streamed model turn produced.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StreamedTurn {
-    /// Complete assistant text (empty when the model made only tool calls).
-    pub text: String,
-    /// Every tool call proposed during the turn, JSON-accumulated and
-    /// **not executed**.
+    /// The reply exactly as it arrived: filed in the history unchanged.
+    pub reply: SampledReply,
+    /// Each call of the reply as its tool runs it, **not executed**, in the
+    /// reply's order: the parsed arguments, or `null` for a call that cannot
+    /// run (see `arg_errors`).
     pub tool_calls: Vec<ToolCall>,
-    /// Raw argument text, by call id, of each call whose arguments were not
-    /// valid JSON and could not be repaired. Such a call is in `tool_calls`
-    /// with `{}` arguments; the text here is what the model really sent.
-    pub unparsed_arguments: HashMap<String, String>,
-    /// Ids of the calls in `tool_calls` that the output-token limit cut off
-    /// before their arguments were complete. Their arguments are `{}` and the
-    /// raw text received is in `unparsed_arguments`: a call that is cut off is
-    /// never run, even when its text could be closed into valid JSON.
-    pub cut_off_calls: std::collections::HashSet<String>,
-    /// The provider stopped the reply at its output-token limit, so `text`
+    /// Why a call cannot run, by call id: its arguments are not a JSON object,
+    /// or the output limit cut them.
+    pub arg_errors: HashMap<String, ArgError>,
+    /// The provider stopped the reply at its output-token limit, so the text
     /// (and any call) may be cut off.
     pub truncated: bool,
     /// Estimated tokens the model spent thinking in this reply (chars/4).
     pub thinking_tokens: u32,
-    /// What the model reasoned before and while answering, with the
-    /// `<think>` wrappers some servers leave in removed; empty when it did
-    /// not reason. It goes back with the turn only to a server whose chat
-    /// template reads it (a local one).
-    pub reasoning: String,
-    /// The argument text of each call in `tool_calls`, by call id, exactly as
-    /// the model streamed it (key order, whitespace and escapes kept), for
-    /// every call whose text is the JSON its arguments were parsed from. A
-    /// call parsed only after repair, cut off, garbled or written inline in
-    /// the text has no entry.
-    pub generated_arguments: HashMap<String, String>,
-    /// The reasoning as the model streamed it: each stretch untrimmed and
-    /// with any `<think>` wrapper left in, stretches joined as in
-    /// `reasoning`. Empty when it did not reason.
-    pub generated_reasoning: String,
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -389,9 +368,9 @@ pub async fn stream_turn_attributed(
         .await?;
 
     let mut full_text = String::new();
+    // The reasoning of the stretch being streamed, and every stretch before it.
     let mut thinking_buf = String::new();
     let mut reasoning = String::new();
-    let mut generated_reasoning = String::new();
     let mut repetition = RepetitionWatch::default();
     // The arguments of the call being streamed, watched for the same block
     // written over and over (a model that loops there never closes the call).
@@ -402,16 +381,10 @@ pub async fn stream_turn_attributed(
     // Set on the first ThinkingDelta of an uninterrupted reasoning stretch;
     // cleared on any TextDelta or tool-call delta (forward progress).
     let mut thinking_stall_started: Option<crate::clock::Instant> = None;
-    let mut slots: HashMap<u32, AccumSlot> = HashMap::new();
-    let mut completed: Vec<ToolCall> = Vec::new();
-    let mut completed_indices: Vec<u32> = Vec::new();
-    let mut unparsed_arguments: HashMap<String, String> = HashMap::new();
-    // The call id each slot's call was issued under, for the slots that
-    // completed while streaming: their text may still grow after that.
-    let mut streamed_ids: Vec<(u32, String)> = Vec::new();
-    let mut cut_off_calls: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Each call's id, name and argument text as streamed, by its index.
+    let mut slots: BTreeMap<u32, AccumSlot> = BTreeMap::new();
+    let mut server_record = None;
     let mut truncated = false;
-    let mut issued_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut sampled = Sampled {
         decoding: Some(limits.recorded_decoding())
             .filter(|d| !d.is_empty())
@@ -421,9 +394,10 @@ pub async fn stream_turn_attributed(
         ..Sampled::default()
     };
 
-    loop {
+    // A watchdog's abort: the reply is not filed, but what was sampled is recorded.
+    let aborted: Option<anyhow::Error> = loop {
         let event = match watch.next_event(&mut stream, tx).await? {
-            None => break,
+            None => break None,
             Some(e) => e?,
         };
 
@@ -462,7 +436,7 @@ pub async fn stream_turn_attributed(
                 let looped = repetition.feed(&delta);
                 let _ = tx.send(AgentEvent::ThinkingDelta(delta)).await;
                 if let Some(times) = looped {
-                    return Err(anyhow::Error::new(AbortedError::reasoning_loop(format!(
+                    break Some(anyhow::Error::new(AbortedError::reasoning_loop(format!(
                         "{REASONING_LOOP_PREFIX} the model is looping in its reasoning (the same stretch occurs {times} \
                          times in the last few thousand characters; ~{thinking_token_estimate} thinking \
                          tokens so far)"
@@ -477,7 +451,7 @@ pub async fn stream_turn_attributed(
                 // aborted only a quarter past it, for a server that does not.
                 if let Some(cap) = thinking_token_cap.map(|cap| cap.saturating_add(cap / 4)) {
                     if thinking_token_estimate >= cap {
-                        return Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
+                        break Some(anyhow::Error::new(AbortedError::by_watchdog(format!(
                             "thinking-token limit exceeded ({thinking_token_estimate} >= {cap} estimated tokens); \
                              raise agent.max_thinking_tokens if the model needs to reason longer"
                         ))));
@@ -485,7 +459,7 @@ pub async fn stream_turn_attributed(
                 }
                 if let Some(cap) = thinking_time_cap {
                     if stall_started.elapsed() >= cap {
-                        return Err(anyhow::Error::new(AbortedError::by_watchdog(format!(
+                        break Some(anyhow::Error::new(AbortedError::by_watchdog(format!(
                             "thinking timeout exceeded ({}s with no forward progress); \
                              raise agent.thinking_timeout_secs if the model needs longer",
                             cap.as_secs()
@@ -497,11 +471,9 @@ pub async fn stream_turn_attributed(
                 thinking_stall_started = None; // forward progress resets the stall clock
                 repetition.reset();
                 if !thinking_buf.is_empty() {
-                    let raw = std::mem::take(&mut thinking_buf);
-                    keep_reasoning(&mut generated_reasoning, &raw);
-                    let content = strip_think_wrappers(raw);
-                    keep_reasoning(&mut reasoning, &content);
-                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                    let stretch = std::mem::take(&mut thinking_buf);
+                    reasoning.push_str(&stretch);
+                    let _ = tx.send(AgentEvent::ThinkingComplete(stretch)).await;
                 }
                 full_text.push_str(&delta);
                 let _ = tx.send(AgentEvent::TextDelta(delta)).await;
@@ -522,7 +494,7 @@ pub async fn stream_turn_attributed(
                 args_token_estimate =
                     args_token_estimate.saturating_add(estimate_tokens(&arguments));
                 if let Some(times) = args_repetition.feed(&arguments) {
-                    return Err(anyhow::Error::new(AbortedError::tool_call_loop(format!(
+                    break Some(anyhow::Error::new(AbortedError::tool_call_loop(format!(
                         "{TOOL_CALL_LOOP_PREFIX} the model is repeating itself inside a tool call's arguments (the \
                          same block occurs {times} times in a row; ~{args_token_estimate} argument tokens \
                          so far)"
@@ -532,27 +504,13 @@ pub async fn stream_turn_attributed(
                 // begins, as it is when text begins: observers file it with
                 // the reply that calls, not after it.
                 if !thinking_buf.is_empty() {
-                    let raw = std::mem::take(&mut thinking_buf);
-                    keep_reasoning(&mut generated_reasoning, &raw);
-                    let content = strip_think_wrappers(raw);
-                    keep_reasoning(&mut reasoning, &content);
-                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
+                    let stretch = std::mem::take(&mut thinking_buf);
+                    reasoning.push_str(&stretch);
+                    let _ = tx.send(AgentEvent::ThinkingComplete(stretch)).await;
                 }
-                let slot = slots.entry(index).or_insert_with(|| AccumSlot {
-                    id: String::new(),
-                    name: String::new(),
-                    args_buf: String::new(),
-                });
-                if let Some(mut tc) = slot.feed(&id, &name, &arguments) {
-                    if !tc.name.is_empty() {
-                        tc.id = unique_call_id(&mut issued_ids, &tc.id);
-                        let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
-                        streamed_ids.push((index, tc.id.clone()));
-                        completed_indices.push(index);
-                        completed.push(tc);
-                    }
-                }
+                slots.entry(index).or_default().feed(&id, &name, &arguments);
             }
+            ResponseEvent::Sampled(record) => server_record = Some(record),
             ResponseEvent::Usage {
                 input_tokens,
                 output_tokens,
@@ -606,21 +564,29 @@ pub async fn stream_turn_attributed(
                 sampling.note_reported_seed(&mut sampled, identity.seed);
                 sampled.identity.merge(identity);
             }
-            ResponseEvent::Done => {
-                if !thinking_buf.is_empty() {
-                    let raw = std::mem::take(&mut thinking_buf);
-                    keep_reasoning(&mut generated_reasoning, &raw);
-                    let content = strip_think_wrappers(raw);
-                    keep_reasoning(&mut reasoning, &content);
-                    let _ = tx.send(AgentEvent::ThinkingComplete(content)).await;
-                }
-                break;
-            }
+            ResponseEvent::Done => break None,
             ResponseEvent::Error(e) => {
                 return Err(anyhow::anyhow!("model stream error: {e}"));
             }
             _ => {}
         }
+    };
+    if !thinking_buf.is_empty() {
+        let stretch = std::mem::take(&mut thinking_buf);
+        reasoning.push_str(&stretch);
+        let _ = tx.send(AgentEvent::ThinkingComplete(stretch)).await;
+    }
+    if let Some(abort) = aborted {
+        // Cut mid-reply: nothing of it is filed, and the record of the
+        // request says what was sampled before the cut.
+        sampled.truncated = true;
+        if !sampled.is_empty() {
+            let _ = tx
+                .send(AgentEvent::ResponseSampled(Box::new(sampled)))
+                .await;
+        }
+        let _ = tx.send(ledger.into_event()).await;
+        return Err(abort);
     }
 
     if let Some(k) = limits.top_logprobs {
@@ -630,121 +596,72 @@ pub async fn stream_turn_attributed(
         check_sampler_support(&sampled, n)?;
     }
 
-    // Reclassify inline <think> blocks emitted by models that don't use
-    // reasoning_content (e.g. local GGUF without reasoning_format: deepseek).
-    if !full_text.is_empty() && thinking_buf.is_empty() {
-        if let Some(inline_think) = extract_inline_think_block(&full_text) {
-            keep_reasoning(&mut reasoning, &inline_think);
-            let _ = tx.send(AgentEvent::ThinkingComplete(inline_think)).await;
-            full_text.clear();
-        }
-    }
-
-    let mut generated_arguments: HashMap<String, String> = HashMap::new();
-    for (index, id) in streamed_ids {
-        if let Some(slot) = slots.get(&index) {
-            generated_arguments.insert(id, slot.args_buf.clone());
-        }
-    }
-
-    // Finalise any slots whose JSON args were still incomplete when Done arrived.
-    let slot_count = slots.len();
-    for (idx, slot) in slots {
-        if completed_indices.contains(&idx) {
-            continue;
-        }
-        if slot.name.is_empty() {
-            warn!(
-                tool_call_id = %slot.id,
-                "dropping tool call with empty name; cannot dispatch"
-            );
-            continue;
-        }
-        let raw_arguments = slot.args_buf.clone();
-        let (mut tc, mut unparsed) = slot.finalize();
-        let mut generated = None;
-        let cut_off =
-            truncated && serde_json::from_str::<serde_json::Value>(&raw_arguments).is_err();
-        if cut_off {
-            // Closing the text into valid JSON would run a call the model
-            // never finished.
-            tc.args = serde_json::Value::Object(serde_json::Map::new());
-            unparsed = Some(raw_arguments);
-        } else if unparsed.is_none() {
-            generated = Some(raw_arguments);
-        }
-        if tc.id.is_empty() {
-            tc.id = format!("tc_synthetic_{slot_count}");
-            warn!(
-                tool_name = %tc.name,
-                tool_call_id = %tc.id,
-                "tool call had empty id; generated synthetic id"
-            );
-        }
-        tc.id = unique_call_id(&mut issued_ids, &tc.id);
-        if cut_off {
-            cut_off_calls.insert(tc.id.clone());
-        }
-        if let Some(raw) = unparsed {
-            unparsed_arguments.insert(tc.id.clone(), raw);
-        }
-        if let Some(text) = generated {
-            generated_arguments.insert(tc.id.clone(), text);
-        }
-        let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
-        completed.push(tc);
-    }
-
-    // Anthropic-style <invoke> fallback for models that don't emit native tool
-    // calls and instead embed function-call markup in the text.
-    if completed.is_empty() && full_text.contains("<invoke ") {
-        let (cleaned, invoke_calls) = extract_inline_invoke_tool_calls(&full_text);
-        if !invoke_calls.is_empty() {
-            warn!(
-                count = invoke_calls.len(),
-                "model emitted Anthropic-style <invoke> tool calls in text; extracting"
-            );
-            full_text = cleaned;
-            for tc in invoke_calls {
-                let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
-                completed.push(tc);
+    // The calls in the order the model wrote them. An id is the server's,
+    // made unique where it repeats one: a result is paired with its call by id.
+    let mut issued_ids = std::collections::HashSet::new();
+    let calls: Vec<SampledCall> = slots
+        .into_values()
+        .enumerate()
+        .map(|(n, slot)| {
+            let id = if slot.id.is_empty() {
+                format!("call_{n}")
+            } else {
+                slot.id
+            };
+            SampledCall {
+                id: unique_call_id(&mut issued_ids, &id),
+                name: slot.name,
+                arguments: slot.args,
             }
-        }
+        })
+        .collect();
+    let reply = SampledReply {
+        text: full_text,
+        reasoning,
+        calls,
+        sampled: server_record,
+        finish: if truncated {
+            ReplyFinish::Length
+        } else {
+            ReplyFinish::Stop
+        },
+    };
+    // Each call as the tool runs it: its parsed arguments, or why it cannot run.
+    let mut arg_errors = HashMap::new();
+    let mut tool_calls = Vec::with_capacity(reply.calls.len());
+    for (i, call) in reply.calls.iter().enumerate() {
+        let args = reply.arguments(i).unwrap_or_else(|e| {
+            warn!(tool_name = %call.name, tool_call_id = %call.id, error = %e, "tool call cannot run");
+            arg_errors.insert(call.id.clone(), e);
+            serde_json::Value::Null
+        });
+        let tc = ToolCall {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            args,
+        };
+        let _ = tx.send(AgentEvent::ToolCallStarted(tc.clone())).await;
+        tool_calls.push(tc);
     }
 
-    if !full_text.is_empty() {
-        let _ = tx.send(AgentEvent::TextComplete(full_text.clone())).await;
+    if !reply.text.is_empty() {
+        let _ = tx.send(AgentEvent::TextComplete(reply.text.clone())).await;
     }
     if !sampled.is_empty() {
         let _ = tx
             .send(AgentEvent::ResponseSampled(Box::new(sampled)))
             .await;
     }
-    // Only text that parses to the very arguments its call carries: a
-    // repaired call's text is not the JSON it runs on.
-    let generated_arguments: HashMap<String, String> = completed
-        .iter()
-        .filter_map(|call| {
-            let text = generated_arguments.remove(&call.id)?;
-            serde_json::from_str::<serde_json::Value>(&text)
-                .is_ok_and(|value| value == call.args)
-                .then(|| (call.id.clone(), text))
-        })
-        .collect();
     // Last, so a consumer that folds events into turn-shaped steps has the
     // response's content in hand when the request's ledger record arrives.
     let _ = tx.send(ledger.into_event()).await;
 
     Ok(StreamedTurn {
-        text: full_text,
-        tool_calls: completed,
-        unparsed_arguments,
-        cut_off_calls,
+        reply,
+        tool_calls,
+        arg_errors,
         truncated,
         thinking_tokens: thinking_token_estimate,
-        reasoning,
-        generated_arguments,
-        generated_reasoning,
     })
 }
 
@@ -966,7 +883,7 @@ mod thinking_watchdog_tests {
             thought < called,
             "the reasoning is filed with the reply that calls: {events:?}"
         );
-        assert_eq!(turn.reasoning, "ask the tool");
+        assert_eq!(turn.reply.reasoning, "ask the tool");
     }
 
     fn drained_channel() -> (mpsc::Sender<AgentEvent>, tokio::task::JoinHandle<()>) {
@@ -1438,7 +1355,7 @@ mod max_tokens_tests {
         let cut_off = drain.await.unwrap();
 
         let turn = result.expect("MaxTokens must not fail the turn");
-        assert_eq!(turn.text, "partial ans");
+        assert_eq!(turn.reply.text, "partial ans");
         assert_eq!(
             cut_off,
             Some(true),

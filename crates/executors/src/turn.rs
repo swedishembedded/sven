@@ -179,9 +179,6 @@ pub struct TurnExecutor {
     time_notices: std::collections::HashMap<String, sven_turn::NoticeReplay>,
     /// What a request's `attachments` are relative to: the project root.
     attachment_root: Option<std::path::PathBuf>,
-    /// Earlier answers go back to the model as it wrote them; see
-    /// [`Self::with_history_as_generated`].
-    history_as_generated: bool,
 }
 
 impl TurnExecutor {
@@ -216,7 +213,6 @@ impl TurnExecutor {
             time_budget: None,
             time_notices: std::collections::HashMap::new(),
             attachment_root: None,
-            history_as_generated: false,
             no_tools: false,
             compaction: CompactionConfig::default(),
             cache_totals: Arc::new(Mutex::new(HashMap::new())),
@@ -728,25 +724,17 @@ impl EffectExecutor for TurnExecutor {
                     }
                 }
                 let partial = partial_text.lock().map(|g| g.clone()).unwrap_or_default();
-                let marker = format!("[aborted: {aborted}]");
                 // The abort still ends the turn as a cancel (see the module
                 // docs), but a cut-off nobody asked for says why, as an error,
                 // before it: a headless run then ends as a failure with its
-                // reason instead of as a silent success.
+                // reason instead of as a silent success. The cut reply is not
+                // filed: the history holds only what the model finished, and
+                // the request's record says what was sampled before the cut.
                 if !aborted.by_user {
                     obs.emit(UiEvent::Error(aborted.to_string()));
                     replies::tell_watchdog(sink, &aborted.reason).await;
                 }
-                let persisted = if partial.is_empty() {
-                    marker
-                } else {
-                    format!("{partial}\n\n{marker}")
-                };
-                append_messages(
-                    &self.store,
-                    &thread_id,
-                    vec![Message::assistant(&persisted)],
-                );
+                interrupted::record_cut(&self.store, &thread_id, &aborted.to_string());
                 interrupted::report_cut(obs, partial, self.machine_ends_turn);
                 let _ = sink.emit(Event::UserCancelled).await;
                 return;

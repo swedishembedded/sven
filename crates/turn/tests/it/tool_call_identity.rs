@@ -81,11 +81,11 @@ async fn an_unparsed_call_is_reported_under_its_own_id_only() {
         .find(|c| c.name == "edit_file")
         .expect("the garbled call is still proposed");
     let good = turn.tool_calls.iter().find(|c| c.name == "grep").unwrap();
-    assert!(turn.unparsed_arguments.contains_key(&broken.id));
+    assert!(turn.arg_errors.contains_key(&broken.id));
     assert!(
-        !turn.unparsed_arguments.contains_key(&good.id),
+        !turn.arg_errors.contains_key(&good.id),
         "a well-formed call must not be marked unparsed: {:?}",
-        turn.unparsed_arguments
+        turn.arg_errors
     );
     assert_eq!(good.args["pattern"], "a");
 }
@@ -107,25 +107,48 @@ async fn a_reply_cut_at_the_output_limit_says_so() {
     assert!(!whole.truncated);
 }
 
-/// The text a call was streamed as is kept only where it is the JSON the call
-/// runs on: a repaired call, a garbled one and an inline one have none, so
-/// history never repeats text the tool did not get.
+/// Every call keeps the text the model streamed, whether or not it parses,
+/// in the order the model wrote the calls; a call whose text is not a JSON
+/// object runs no tool and says why, with nothing repaired.
 #[tokio::test]
-async fn generated_argument_text_is_kept_only_for_calls_that_run_on_it() {
+async fn every_call_keeps_its_text_and_one_that_cannot_run_says_why() {
     let turn = run(vec![
-        tool_call(0, "call_a", "grep", "{\"pattern\" :"),
-        tool_call(0, "", "", " \"a\",  \"path\": \"x\"}"),
-        tool_call(1, "call_b", "read_file", r#"{"path":"\c"}"#),
         tool_call(2, "call_c", "edit_file", "<<not json>>"),
+        tool_call(0, "call_a", "grep", "{\"pattern\" :"),
+        tool_call(1, "call_b", "read_file", r#"{"path":"\c"}"#),
+        tool_call(0, "", "", " \"a\",  \"path\": \"x\"} "),
+        tool_call(3, "call_d", "ls", "[1]"),
         ResponseEvent::Done,
     ])
     .await;
 
-    assert_eq!(turn.tool_calls.len(), 3);
+    let texts: Vec<(&str, &str)> = turn
+        .reply
+        .calls
+        .iter()
+        .map(|c| (c.id.as_str(), c.arguments.as_str()))
+        .collect();
     assert_eq!(
-        turn.generated_arguments.get("call_a").map(String::as_str),
-        Some("{\"pattern\" : \"a\",  \"path\": \"x\"}")
+        texts,
+        vec![
+            ("call_a", "{\"pattern\" : \"a\",  \"path\": \"x\"} "),
+            ("call_b", r#"{"path":"\c"}"#),
+            ("call_c", "<<not json>>"),
+            ("call_d", "[1]"),
+        ]
     );
-    assert!(!turn.generated_arguments.contains_key("call_b"), "repaired");
-    assert!(!turn.generated_arguments.contains_key("call_c"), "garbled");
+    assert_eq!(turn.tool_calls[0].args["path"], "x");
+    for (id, want) in [
+        ("call_b", "not valid JSON"),
+        ("call_c", "not valid JSON"),
+        ("call_d", "not an object"),
+    ] {
+        let why = turn
+            .arg_errors
+            .get(id)
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert!(why.contains(want), "{id}: {why}");
+    }
+    assert!(!turn.arg_errors.contains_key("call_a"));
 }

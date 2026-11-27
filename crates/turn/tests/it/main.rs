@@ -16,6 +16,7 @@ mod model_stall;
 mod openai_compat_stall;
 mod prompt_sections;
 mod reconstruct;
+mod reply_round_trip;
 mod request_manifest;
 mod system_prompt_golden;
 mod tool_call_identity;

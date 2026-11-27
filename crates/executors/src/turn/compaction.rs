@@ -343,7 +343,8 @@ impl TurnExecutor {
         obs: &ObservationSink,
     ) -> Option<sven_hsm::Effect> {
         let thread_id = req.thread.as_str();
-        let exhausted = turn.truncated && turn.text.trim().is_empty() && turn.tool_calls.is_empty();
+        let exhausted =
+            turn.truncated && turn.reply.text.trim().is_empty() && turn.tool_calls.is_empty();
         if !exhausted {
             self.recovery.exhaustion_retried.remove(thread_id);
             return None;
@@ -643,7 +644,7 @@ impl TurnExecutor {
             let _ = drain.await;
 
             match result {
-                Ok(turn) if !turn.text.trim().is_empty() => {
+                Ok(turn) if !turn.reply.text.trim().is_empty() => {
                     if turn.truncated {
                         tracing::warn!(
                             "compaction: the notes hit the {output}-token reply cap and may be cut off"
@@ -655,7 +656,7 @@ impl TurnExecutor {
                         tools = self.recovery.fork_tools.len(),
                         "compaction: the notes were written"
                     );
-                    return Notes::Text(turn.text);
+                    return Notes::Text(turn.reply.text);
                 }
                 Ok(_) => tracing::warn!(
                     ?thinking,
