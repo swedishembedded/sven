@@ -58,6 +58,37 @@ impl ModelProvider for Silent {
     }
 }
 
+/// A model whose answer reports its usage a moment before its stream ends,
+/// as a server that sends the usage frame ahead of the closing one does.
+struct UsageBeforeEnd;
+
+#[async_trait::async_trait]
+impl ModelProvider for UsageBeforeEnd {
+    fn name(&self) -> &str {
+        "usage-before-end"
+    }
+    fn model_name(&self) -> &str {
+        "usage-before-end"
+    }
+    async fn complete(&self, _req: CompletionRequest) -> anyhow::Result<ResponseStream> {
+        let answer = futures::stream::iter([
+            Ok(ResponseEvent::TextDelta("a long answer, cut".into())),
+            Ok(ResponseEvent::Usage {
+                input_tokens: 10,
+                output_tokens: 600,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                cost_usd: None,
+            }),
+        ]);
+        let end = futures::stream::once(async {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok(ResponseEvent::Done)
+        });
+        Ok(answer.chain(end).boxed())
+    }
+}
+
 fn engine(provider: Arc<dyn ModelProvider>) -> Engine {
     Engine::builder()
         .model_provider(provider)
@@ -161,6 +192,35 @@ async fn a_spent_output_budget_ends_the_run() {
     .expect("an outcome");
     assert_eq!(outcome.conclusion, RunConclusion::BudgetExhausted);
     assert_eq!(outcome.usage.output_tokens, Some(600));
+}
+
+/// The reply that spends the budget was sampled and answered: it is an agent
+/// step of the trajectory like any other, not lost with the turn the budget
+/// ends. A trainer pairs the answered request with that step.
+#[tokio::test]
+async fn the_reply_that_spends_the_output_budget_is_recorded() {
+    let mut agent = engine(Arc::new(UsageBeforeEnd)).agent("agent");
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(20),
+        agent.send_with("answer", RunOptions::new().max_output_tokens(500)),
+    )
+    .await
+    .expect("the budget stops the run")
+    .expect("an outcome");
+    assert_eq!(outcome.conclusion, RunConclusion::BudgetExhausted);
+    let trajectory = agent.trajectory();
+    let agent_steps: Vec<_> = trajectory
+        .steps
+        .iter()
+        .filter(|s| s.source == sven_sdk::atif::StepOrigin::Agent)
+        .collect();
+    assert_eq!(agent_steps.len(), 1, "{:#?}", trajectory.steps);
+    assert_eq!(
+        agent_steps[0].message.as_text(),
+        Some("a long answer, cut"),
+        "{:#?}",
+        trajectory.steps
+    );
 }
 
 #[tokio::test]

@@ -531,7 +531,15 @@ impl Agent {
                         );
                         meter.observe(&event, Some(self.state.record.len()));
                         match &event {
-                            SessionEvent::TokenUsage { .. } => {
+                            // Checked on the record that closes a request, the
+                            // last event of its response: the reply that spends
+                            // the budget is filed first, and is a step of the
+                            // trajectory like any other. Stopping on the usage
+                            // frame a server sends before its stream ends
+                            // aborted the turn before its reply was filed.
+                            SessionEvent::TokenUsage {
+                                breakdown: Some(_), ..
+                            } => {
                                 let spent = meter.output_tokens();
                                 if stopped.is_none()
                                     && bounds.max_output_tokens.is_some_and(|max| spent >= max)
